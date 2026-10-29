@@ -389,6 +389,13 @@ function createClassObjects(
     : null;
   builtinClass.constructor = classConstructor;
   builtinClass.prototype = prototype;
+  const { namesReadByNativeCodeOnPrototype } = declaration.columns;
+  if (namesReadByNativeCodeOnPrototype !== undefined && prototype !== null) {
+    builder.namesReadByNativeCode.set(prototype, {
+      names: namesReadByNativeCodeOnPrototype.map(name => builder.internComponent(name)),
+      namesOnlyInspected: [],
+    });
+  }
   if (classConstructor !== null) classConstructor.instanceClass = builtinClass;
   if (prototype !== null) prototype.instanceClass = builtinClass;
   for (const [sides, flag] of [

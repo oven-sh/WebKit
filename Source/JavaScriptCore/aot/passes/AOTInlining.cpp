@@ -31,6 +31,7 @@
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineHeads.h"
+#include "AOTKnownClosures.h"
 #include "AOTKnownValue.h"
 #include "AOTMemoryLocation.h"
 #include "AOTOperatorForms.h"
@@ -47,6 +48,7 @@
 #include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <array>
@@ -576,6 +578,84 @@ static bool onlyForwardsRestParameter(const Program& program, const Function& fu
     return isHandedOn;
 }
 
+static InliningSummary::Difference reversed(InliningSummary::Difference difference)
+{
+    using Difference = InliningSummary::Difference;
+    switch (difference) {
+    case Difference::None:
+        return Difference::None;
+    case Difference::FirstMinusSecond:
+        return Difference::SecondMinusFirst;
+    case Difference::SecondMinusFirst:
+        return Difference::FirstMinusSecond;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The body holds casts, tests of types, subtractions of one parameter from the other, all in one order, and calls that hand both parameters on. It returns the result of one of those.
+static void findDifferenceOfParameters(const Function& function, InliningSummary& summary)
+{
+    using Difference = InliningSummary::Difference;
+    constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest };
+    if (!function.hasBody() || function.numberOfPositionalParameters() != 2 || function.flags.containsAny(otherForms))
+        return;
+    if (function.at(entryBlock).parameters.size() < function.firstParameterIndex() + 2)
+        return;
+    ValueID first = function.at(entryBlock).parameters[function.firstParameterIndex()];
+    ValueID second = function.at(entryBlock).parameters[function.firstParameterIndex() + 1];
+    auto orderOf = [&](ValueID left, ValueID right) {
+        left = definitionThroughTests(function, left);
+        right = definitionThroughTests(function, right);
+        if (left == first && right == second)
+            return Difference::FirstMinusSecond;
+        return left == second && right == first ? Difference::SecondMinusFirst : Difference::None;
+    };
+
+    Difference found = Difference::None;
+    Vector<InliningSummary::DifferenceCall, 2> calls;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (sameValueOperandOf(value) || value.opcode == Opcode::TypeTest)
+                continue;
+            if (value.opcode == Opcode::CallDirect && value.numberOfOperands() >= 2) {
+                Difference order = orderOf(value.operand(value.numberOfOperands() - 2), value.operand(value.numberOfOperands() - 1));
+                if (order == Difference::None)
+                    return;
+                calls.append({ value.function(), order == Difference::SecondMinusFirst });
+                continue;
+            }
+            if (value.opcode != Opcode::Sub)
+                return;
+            Difference order = orderOf(value.operand(0), value.operand(1));
+            if (order == Difference::None || (found != Difference::None && found != order))
+                return;
+            found = order;
+        }
+        switch (block.terminator.kind) {
+        case TerminatorKind::Jump:
+        case TerminatorKind::Branch:
+        case TerminatorKind::TestAndBranch:
+        case TerminatorKind::Unreachable:
+            break;
+        case TerminatorKind::Return:
+        case TerminatorKind::ReturnCall: {
+            ValueID returned = block.terminator.kind == TerminatorKind::Return ? block.terminator.valueOperand() : block.terminator.operand(0);
+            if (!returned)
+                return;
+            Opcode opcode = function.at(definitionThroughTests(function, returned)).opcode;
+            if (opcode != Opcode::Sub && opcode != Opcode::CallDirect)
+                return;
+            break;
+        }
+        default:
+            return;
+        }
+    }
+    summary.difference = found;
+    summary.differenceCalls = WTF::move(calls);
+}
+
 InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
@@ -1010,6 +1090,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.barrier = computeBarrier();
     if (summary.barrier == InlineBarrier::NoBody)
         return summary;
+    findDifferenceOfParameters(function, summary);
 
     const CFG& cfg = analyses.cfg();
     for (BlockID id : cfg.reversePostOrder()) {
@@ -1105,6 +1186,35 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
             noReturnFunctions.quickSet(caller.index());
             worklist.append(caller);
         }
+    }
+
+    // A function that hands its parameters on is what its callees are. The callees are few and lie one or two calls deep.
+    Vector<uint32_t> handingOn = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
+        return !summaries[index].differenceCalls.isEmpty();
+    });
+    AOT_THRESHOLD(unsigned, mostCallsDeep, 3);
+    for (unsigned depth = 0; depth < mostCallsDeep && !handingOn.isEmpty(); ++depth) {
+        handingOn.removeAllMatching([&](uint32_t index) {
+            InliningSummary& summary = summaries[index];
+            if (std::ranges::any_of(summary.differenceCalls, [&](const auto& call) { return !summaries[call.callee.index()].differenceCalls.isEmpty(); }))
+                return false;
+            for (const InliningSummary::DifferenceCall& call : std::exchange(summary.differenceCalls, { })) {
+                InliningSummary::Difference ofCallee = summaries[call.callee.index()].difference;
+                if (call.swapsParameters)
+                    ofCallee = reversed(ofCallee);
+                bool agrees = ofCallee != InliningSummary::Difference::None && (summary.difference == InliningSummary::Difference::None || summary.difference == ofCallee);
+                if (!agrees) {
+                    summary.difference = InliningSummary::Difference::None;
+                    return true;
+                }
+                summary.difference = ofCallee;
+            }
+            return true;
+        });
+    }
+    for (uint32_t index : handingOn) {
+        summaries[index].difference = InliningSummary::Difference::None;
+        summaries[index].differenceCalls.clear();
     }
 
     result.m_build = &build;
@@ -2732,6 +2842,37 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
     }
 }
 
+static FunctionID libraryFunctionFor(const Program& program, BuiltinID builtin)
+{
+    std::span<const BuiltinOverload> overloads = program.builtins().overloadsOf(builtin);
+    if (overloads.empty() || overloads.front().code.implementation.kind != BuiltinImplementationKind::Compiled)
+        return { };
+    const RuntimeFunctionEntry* entry = findRuntimeFunction(program, overloads.front().code.implementation.function);
+    return entry && entry->function && program.at(entry->function).hasBody() ? entry->function : FunctionID();
+}
+
+// `list.sort((a, b) => a - b)`: what sorts a short list of numbers in place without a call. It takes the operands of sort() and leaves every other list to it.
+static FunctionID sortWithoutCallsFor(FunctionPassContext& context, const Value& call)
+{
+    const Program& program = context.program;
+    constexpr uint32_t comparatorOperand = 1;
+    if (call.numberOfOperands() != comparatorOperand + 1 || call.function() != libraryFunctionFor(program, Builtins::ArrayPrototypeSort))
+        return { };
+    const Type& passed = program.typeOf(context.function, call.operand(comparatorOperand));
+    FunctionID comparator = passed.singleFunction();
+    if (!comparator || passed.mayBeUndefinedOrNull() || ProvisionalFunctions::contains(comparator))
+        return { };
+    switch (inliningSummaryOf(context, comparator).difference) {
+    case InliningSummary::Difference::None:
+        return { };
+    case InliningSummary::Difference::FirstMinusSecond:
+        return libraryFunctionFor(program, Builtins::CompilerHelpersSortByDifference);
+    case InliningSummary::Difference::SecondMinusFirst:
+        return libraryFunctionFor(program, Builtins::CompilerHelpersSortByReversedDifference);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static PassOutcome callCalleeVersions(FunctionPassContext& context, std::span<const InlineSite> sites)
 {
     const Program& program = context.program;
@@ -2742,6 +2883,11 @@ static PassOutcome callCalleeVersions(FunctionPassContext& context, std::span<co
         if (decision == InlineDecision::Inline || decision == InlineDecision::Barrier || decision == InlineDecision::SignatureMismatch)
             continue;
         const Value& call = caller.at(site.call);
+        if (FunctionID sort = sortWithoutCallsFor(context, call)) {
+            caller.edit(site.call, ValueEdit::Definition).setFunction(sort);
+            outcome = PassOutcome::Changed;
+            continue;
+        }
         const Function& callee = program.at(call.function());
         for (size_t index : site.summary->calledParameters) {
             if (index >= call.numberOfOperands())

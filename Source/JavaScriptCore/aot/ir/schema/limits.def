@@ -175,6 +175,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxFrameSizeInBytes(GenerateCode, BitWidth, BuildError, 1048560, 1048560, 0, "stack frame size")
     MaxBarrierBlocks(GenerateCode, CompileTime, NotOptimized, 4096, 4096, 0, "the size of a function whose write barriers are optimized")
     MaxFrameMapRoots(GenerateCode, BitWidth, BuildError, 65535, 65535, 0, "live references across an await or yield")
+    MaxFrameMapWords(GenerateCode, BitWidth, BuildError, 262144, 262144, 0, "what one function keeps across all its awaits and yields together")
     MaxLandingPadsSearched(GenerateCode, CompileTime, NotOptimized, 4, 4, 0, "exception landing pads compared for sharing")
 
     MaxClonedValuesPerLoopVersion(GenerateCode, CodeSize, NotOptimized, 48, 48, 0, "code size of a specialized loop copy")

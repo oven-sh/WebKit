@@ -843,6 +843,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Insta
 
 #endif
 
+static NEVER_INLINE JSValue enterWithManyArguments(VM& vm, const CallData& callData, JSObject* callee, JSValue thisSlot, JSCell* context, const ArgList& args)
+{
+    ProtoCallFrame protoCallFrame;
+    if (args.size() <= adapterArgumentCountWithOutOfLineArguments) {
+        protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
+        return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
+    }
+    std::array<EncodedJSValue, adapterArgumentCountWithOutOfLineArguments> frameArguments;
+    std::copy_n(args.data(), numberOfArgumentGPRs, frameArguments.begin());
+    frameArguments[numberOfArgumentGPRs] = static_cast<EncodedJSValue>(static_cast<uint64_t>(outOfLineArgumentCountTag) << outOfLineArgumentCountTagShift | args.size());
+    frameArguments[numberOfArgumentGPRs + 1] = std::bit_cast<EncodedJSValue>(args.data());
+    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + frameArguments.size(), frameArguments.data());
+    return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
+}
+
 static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callData, JSObject* callee, JSValue thisSlot, JSCell* context, const ArgList& args)
 {
     switch (args.size()) {
@@ -861,24 +876,13 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
     case 6:
         return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4), args.at(5));
     default:
-        break;
+        return enterWithManyArguments(vm, callData, callee, thisSlot, context, args);
     }
-    ProtoCallFrame protoCallFrame;
-    if (args.size() <= adapterArgumentCountWithOutOfLineArguments) {
-        protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
-        return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
-    }
-    std::array<EncodedJSValue, adapterArgumentCountWithOutOfLineArguments> frameArguments;
-    std::copy_n(args.data(), numberOfArgumentGPRs, frameArguments.begin());
-    frameArguments[numberOfArgumentGPRs] = static_cast<EncodedJSValue>(static_cast<uint64_t>(outOfLineArgumentCountTag) << outOfLineArgumentCountTagShift | args.size());
-    frameArguments[numberOfArgumentGPRs + 1] = std::bit_cast<EncodedJSValue>(args.data());
-    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + frameArguments.size(), frameArguments.data());
-    return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 
 // As Interpreter::executeCall and Interpreter::executeConstruct enter a function of the engine.
 template<bool isConstruct>
-static ALWAYS_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const CallData& callData, JSValue thisSlot, JSCell* context, const ArgList& args)
+static NEVER_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const CallData& callData, JSValue thisSlot, JSCell* context, const ArgList& args)
 {
     ASSERT(callData.type == CallData::Type::Compiled);
 
@@ -912,7 +916,14 @@ static ALWAYS_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const Cal
 
 JSValue callCompiledCode(VM& vm, JSObject* callee, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
-    return enterFromEngine<false>(vm, callee, callData, thisValue, context, args);
+    // A callback of a native function called from JavaScript: a scope is open and the arguments fit in the entry's registers and stack words, so this needs no frame of its own to speak of.
+    if (!vm.entryScope || !vm.isSafeToRecurseSoft() || vm.disallowVMEntryCount || args.size() > 6) [[unlikely]]
+        return enterFromEngine<false>(vm, callee, callData, thisValue, context, args);
+    ASSERT(!vm.isCollectorBusyOnCurrentThread());
+    vm.clearLastException();
+    JSValue result = enterWithArgumentList(vm, callData, callee, thisValue, context, args);
+    vm.didEnterVM = true;
+    return result;
 }
 
 JSValue callCompiledCode(JSGlobalObject* realm, JSCell* closure, JSValue thisValue, const ArgList& arguments)

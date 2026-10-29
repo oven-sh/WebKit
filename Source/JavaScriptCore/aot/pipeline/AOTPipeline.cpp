@@ -1849,7 +1849,7 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     auto listCalledFunctions = [&](FunctionID id) {
         Vector<FunctionID>& called = m_output->calledFunctions[id.index()];
         called.shrink(0);
-        forEachCalledFunction(m_program.functions[id.index()], [&](FunctionID target) {
+        forEachCalledFunction(m_program, m_program.functions[id.index()], [&](FunctionID target) {
             called.append(target);
         });
     };

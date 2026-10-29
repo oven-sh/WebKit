@@ -116,6 +116,13 @@ static bool mayEnterTableLookup(const Program& program, const Value& tableCall)
     return known->mayBeEntered;
 }
 
+std::span<const FunctionID> entrypointsOfTableCall(const Program& program, const Value& call)
+{
+    if (call.opcode != Opcode::CallTable)
+        return { };
+    return program.at(call.entrypoints()).written().functions;
+}
+
 CalleeList calleesOfCall(const Program& program, const Value& call)
 {
     CalleeList namedCallees = CalleeList::none();
@@ -123,6 +130,8 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
         if (isCall(kind))
             namedCallees.add(callee);
     });
+    for (FunctionID entrypoint : entrypointsOfTableCall(program, call))
+        namedCallees.add(entrypoint);
     if (call.opcode == Opcode::CallTable && !mayEnterTableLookup(program, call))
         namedCallees.remove(call.function());
     if (!namedCallees.runsNothing())
@@ -132,12 +141,12 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
     return CalleeList::unknown();
 }
 
-CalleeSetID calleeSetOfCall(const Program& program, const Value& call)
+static CalleeSetID stampThatListsCalleesOf(const Program& program, const Value& call)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode))
         return { };
     bool namesCallee = false;
-    bool namesOnlyTableLookup = call.opcode == Opcode::CallTable;
+    bool namesOnlyTableLookup = call.opcode == Opcode::CallTable && entrypointsOfTableCall(program, call).empty();
     forEachFunctionReference(call, [&](FunctionID callee, FunctionReferenceKind kind) {
         if (!isCall(kind))
             return;
@@ -147,6 +156,26 @@ CalleeSetID calleeSetOfCall(const Program& program, const Value& call)
     if (namesCallee && (!namesOnlyTableLookup || mayEnterTableLookup(program, call)))
         return { };
     return call.callees();
+}
+
+CalleeSetID calleeSetOfCall(const Program& program, const Value& call)
+{
+    if (!entrypointsOfTableCall(program, call).empty())
+        return mayEnterTableLookup(program, call) ? CalleeSetID() : call.entrypoints();
+    return stampThatListsCalleesOf(program, call);
+}
+
+// A long set of entrypoints is read from the call by whoever wants the functions that are entered.
+static void addFunctionsEnteredBeside(const Program& program, const Value& call, EffectDescription& description)
+{
+    forEachFunctionReference(call, [&](FunctionID entered, FunctionReferenceKind kind) {
+        if (isCall(kind))
+            description.addSlowPathFunction(entered);
+    });
+    if (call.opcode != Opcode::CallTable || program.at(call.entrypoints()).isLong())
+        return;
+    for (FunctionID entrypoint : entrypointsOfTableCall(program, call))
+        description.addSlowPathFunction(entrypoint);
 }
 
 static bool listsWhatReceiverFinds(const Program& program, const Value& call)
@@ -164,19 +193,15 @@ CalleeSetID longCalleeSetRunBy(const Program& program, const Value& call)
         return { };
     if (declaredEffectsOf(program, call).maySuspend)
         return { };
-    return listsWhatReceiverFinds(program, call) ? call.callees() : calleeSetOfCall(program, call);
+    return listsWhatReceiverFinds(program, call) ? call.callees() : stampThatListsCalleesOf(program, call);
 }
 
 EffectDescription describeCodeRunBesideLongCalleeSet(const Program& program, const Value& call, CalleeSetID set)
 {
     EffectDescription description;
     description.leavesOutOwnEffects = true;
-    if (listsWhatReceiverFinds(program, call)) {
-        forEachFunctionReference(call, [&](FunctionID entered, FunctionReferenceKind kind) {
-            if (isCall(kind))
-                description.addSlowPathFunction(entered);
-        });
-    }
+    if (listsWhatReceiverFinds(program, call))
+        addFunctionsEnteredBeside(program, call, description);
     if (!program.at(set).listsEveryCallee())
         description.addUnknownCode();
     return description;
@@ -358,10 +383,7 @@ void describeCall(const Program& program, const Function& function, const Value&
     CalleeList callees = calleesThatBoundEffectsOf(program, value);
     if (listsWhatReceiverFinds(program, value)) {
         description.addOwn(effectsOfFindingCallee());
-        forEachFunctionReference(value, [&](FunctionID entered, FunctionReferenceKind kind) {
-            if (isCall(kind))
-                description.addSlowPathFunction(entered);
-        });
+        addFunctionsEnteredBeside(program, value, description);
     }
     if (callsThatCopyArgumentsOfAnyNumber.contains(value.opcode))
         description.addThrow();

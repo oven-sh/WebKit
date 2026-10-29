@@ -851,7 +851,6 @@ private:
     template<PutMode>
     ASCIILiteral putDirectInternal(VM&, PropertyName, JSValue, unsigned attr, PutPropertySlot&);
     void setStructureForAddedProperty(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
-    JS_EXPORT_PRIVATE NEVER_INLINE void setStructureForAddedPropertySlow(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
 #if ENABLE(AOT)
     bool hasPrivateBrandAsField(VM&, JSValue brand) const;
     JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributesOrNull) const;

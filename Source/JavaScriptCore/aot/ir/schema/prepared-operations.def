@@ -80,7 +80,7 @@ operation IsElementInStorage (object: Any/inspects, position: Number/inspects) -
 operation ToEnumeratorPosition (position: Number/inspects) -> natural(uint32) ; none
 operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true
-operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read
+operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read ; hasOwnFoldingRule = true
 
 family Arguments Prepared..Placed ; boundTo = Frame
 operation GetArgument (argumentIndex: UInt32) -> unknown ; none

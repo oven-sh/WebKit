@@ -496,6 +496,37 @@ static PassOutcome removeLinksOfUnusedObjects(FunctionPassContext& context)
 
 static PassOutcome declareListsOfNumbers(FunctionPassContext&);
 
+// `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No array iterator has a `return`.
+// Read as undefined, the member leaves the handler without a use of the iterator, which then need not be made.
+static PassOutcome readAbsentMembersOfArrayIterators(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PropGet) || !context.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
+        return PassOutcome::Unchanged;
+
+    Vector<ValueID, 2> reads;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& read = function.at(id);
+            if (read.opcode != Opcode::PropGet)
+                continue;
+            // Flow has proven that the program gives this iterator no member of its own.
+            const ClassPart* iterator = context.program.typeOf(function, read.objectOperand()).singleBuiltinClass();
+            if (!iterator || iterator->builtinClass != BuiltinClasses::ArrayIterator || !iterator->provenPristine.contains(PristineAspects::Names))
+                continue;
+            BuiltinMemberAnswer member = findMemberOfInstances({ context.program, context.inputs.flow }, BuiltinClasses::ArrayIterator, read.key());
+            if (member.outcome == BuiltinMemberLookup::Outcome::Absent && member.proof == LocationProof::Constant)
+                reads.append(id);
+        }
+    }
+    for (ValueID id : reads)
+        becomeUndefined(function, id);
+    if (reads.isEmpty())
+        return PassOutcome::Unchanged;
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
     AOT_THRESHOLD(unsigned, maxEdgeSplittingRounds, 3);
@@ -503,7 +534,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
 
     if (!context.analyses.opcodesOfValues().intersects(allocations))
         return PassOutcome::Unchanged;
-    if ((removeLinksOfUnusedObjects(context) | declareListsOfNumbers(context)) == PassOutcome::Changed)
+    if ((removeLinksOfUnusedObjects(context) | declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
         return PassOutcome::Changed;
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;

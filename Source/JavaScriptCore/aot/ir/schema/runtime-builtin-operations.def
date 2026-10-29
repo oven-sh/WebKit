@@ -35,6 +35,7 @@ runtime ObjectValues, ObjectEntries : JSCell* (EncodedJSValue object) ; unknownC
 runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
+runtime ObjectAssignWithoutCode : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
 runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
 
 runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)

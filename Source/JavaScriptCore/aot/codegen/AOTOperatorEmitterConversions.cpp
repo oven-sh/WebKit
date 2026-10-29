@@ -269,6 +269,9 @@ CellPointer OperatorEmitter::concatenationOfParts(const ValueContext& value)
     auto concatenateAll = [&] {
         return emitter<StringEmitter>().concatenateKey(value, primitives.span(), keyUse);
     };
+    // The stub finds such a key by its parts, whatever they are.
+    if (parts.size() == 2 && value.shape() != CodeShape::Compact)
+        return concatenateAll();
     for (unsigned index : { 1u, 0u }) {
         if (parts.size() != 2 || !typeOf(parts[index]).isString())
             continue;

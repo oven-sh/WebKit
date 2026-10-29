@@ -338,6 +338,8 @@ struct ValueFlowStatement {
     uint32_t firstGuard { 0 };
     // Four bits for each of the first eight operands: bit g says that the operand is the very value that guard g tested for the type of its cell, which never changes. The rules see it as the test lets it through.
     uint32_t guardsOfOperands { 0 };
+    // Of an operation that names a key: that key. Of a call of a member read from its receiver: the key of that member.
+    PropertyKeyID key;
 };
 
 enum class ValueFlowCallKind : uint8_t {

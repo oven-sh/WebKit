@@ -366,6 +366,7 @@ private:
     void generateNativeModuleForLoader(ModuleID);
     void bindLatestCapture(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
+    void captureExportsOfLibraryModules(ModuleID root);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
     JSValue evaluateForCapture(ModuleID);
     bool tryCaptureFields(ModuleID, JSValue exports);

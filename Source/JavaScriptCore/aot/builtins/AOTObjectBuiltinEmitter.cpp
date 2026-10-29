@@ -201,6 +201,15 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     finish(call, get(argument), type);
 }
 
+void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
+{
+    ValueID target = call.argument(0);
+    CellPointer object = objectOrMiss(call, target);
+    Boxed source = boxedOperand(call.context(), call.argument(1));
+    missUnless(call, callOperation<Condition>(call.context(), RuntimeOperation::ObjectAssignWithoutCode, { object, source }, { .calledBuiltin = functionOf(call.overload()) }));
+    finish(call, get(target), typeOf(target));
+}
+
 void ObjectBuiltinEmitter::generateObjectPrototypeToString(const InlineCall& call)
 {
     CellPointer object = objectOrMiss(call, call.receiver());

@@ -153,3 +153,20 @@ function f8 name="variableTakesLessThanTheValue" parameters=[{type=anything}] re
 # CHECK: Branch v1
 # CHECK: AssumeType
 }
+
+function f9 name="testOfAnElementStays" parameters=[{type=Array<int, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int}] results=[{type=undefined}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v3 = TypeTest v2 testedType=int
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4: int):
+    SetGlobalBinding v4 key="answer" level=Expected
+    Jump -> next b3()
+  b2(v6: undefined):
+    SetGlobalBinding v6 key="answer" level=Expected
+    Jump -> next b3()
+  b3():
+    v8 = Undefined
+    Return v8
+# CHECK: TypeTest
+# CHECK-NEXT: Branch
+}

@@ -808,6 +808,24 @@ RecordID TypeArena::didUse(TypeInterningPhase::Storage& storage, uint32_t positi
 }
 
 template<typename Record, typename RecordID>
+std::optional<RecordID> TypeArena::useAgainInStorage(RecordID id)
+{
+    if (!TypeTable::isProvisional(id))
+        return id;
+    // A new arena holds no storage yet. intern() leases one here for any record that is not final.
+    if (m_storages.isEmpty() && m_phase)
+        m_storages.append(&m_phase->leaseStorage());
+    for (TypeInterningPhase::Storage* storage : m_storages) {
+        if (storage->number == TypeTable::storageNumberOf(id))
+            return didUse<Record, RecordID>(*storage, TypeTable::positionOf(id));
+    }
+    return std::nullopt;
+}
+
+std::optional<LayoutSetID> TypeArena::useAgain(LayoutSetID id) { return useAgainInStorage<LayoutSet, LayoutSetID>(id); }
+std::optional<CalleeSetID> TypeArena::useAgain(CalleeSetID id) { return useAgainInStorage<CalleeSet, CalleeSetID>(id); }
+
+template<typename Record, typename RecordID>
 std::optional<RecordID> TypeArena::useExistingIn(TypeInterningPhase::Storage& storage, const Record& record, uint32_t hash)
 {
     auto& provisionalRecords = storage.recordsOf<Record>();

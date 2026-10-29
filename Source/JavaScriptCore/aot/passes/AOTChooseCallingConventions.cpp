@@ -1004,6 +1004,10 @@ static CalledCodeKind classifyCalledCode(const EffectContext& context, const Fun
         auto& callee = context.program.at(target);
         hasUncheckedCallee |= !callee.hasBody() || isCandidate.get(target.index()) || callee.creator.is<CreatorRecord::Entrypoint>();
     });
+    for (FunctionID target : entrypointsOfTableCall(context.program, value)) {
+        auto& callee = context.program.at(target);
+        hasUncheckedCallee |= !callee.hasBody() || isCandidate.get(target.index()) || callee.creator.is<CreatorRecord::Entrypoint>();
+    }
     return hasCallee && !hasUncheckedCallee ? CalledCodeKind::FunctionWithStackCheck : CalledCodeKind::Unknown;
 }
 

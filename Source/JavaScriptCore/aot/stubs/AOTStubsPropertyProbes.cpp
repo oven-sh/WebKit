@@ -329,8 +329,23 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         isNotOutOfLineValue.link(&jit);
     };
     const bool testsOutOfLineValuesSecond = jit.bindingPolicy().readsTestOutOfLineValuesSecond;
+    const bool testsDoublesSecond = jit.bindingPolicy().readsTestDoublesSecond;
+    // Infinity goes the long way with the NaNs, which may be markers.
+    auto readDouble = [&](int32_t firstDouble) {
+        jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -firstDouble * static_cast<int32_t>(sizeof(double))), word);
+        boxDoubleBits(jit, PureDoubleBits::branchIfNotFinite(jit, word, operand, slotIsSilent));
+        jit.move(word, result);
+        finish();
+    };
 
     isNotInlineValue.link(&jit);
+    if (testsDoublesSecond) {
+        // The doubles are the last operands of the last form.
+        constexpr int32_t firstDouble = static_cast<int32_t>((static_cast<uint32_t>(Form::Field) << FieldTableEntry::formShift) + FieldTableEntry::firstDouble);
+        Jump isNotDouble = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(firstDouble));
+        readDouble(firstDouble);
+        isNotDouble.link(&jit);
+    }
     if (testsOutOfLineValuesSecond)
         readOutOfLineValue();
     Jump isNotInt32 = branchUnlessFormIs(Form::InlineInt32);
@@ -370,18 +385,18 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     finish();
 
     isNotEncodedByte.link(&jit);
-    Jump isDouble = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstDouble)));
+    Jump isDouble;
+    if (!testsDoublesSecond)
+        isDouble = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstDouble)));
     jit.load8(BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne, -first(FieldTableEntry::firstBoolean)), word);
     jit.or32(TrustedImm32(JSValue::ValueFalse), word);
     jit.move(word, result);
     finish();
 
-    // Infinity goes the long way with the NaNs, which may be markers.
-    isDouble.link(&jit);
-    jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -first(FieldTableEntry::firstDouble) * static_cast<int32_t>(sizeof(double))), word);
-    boxDoubleBits(jit, PureDoubleBits::branchIfNotFinite(jit, word, operand, slotIsSilent));
-    jit.move(word, result);
-    finish();
+    if (!testsDoublesSecond) {
+        isDouble.link(&jit);
+        readDouble(first(FieldTableEntry::firstDouble));
+    }
 
     if (!probe.answersMissingFields) {
         otherwise.append(slotIsEmpty);

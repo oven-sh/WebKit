@@ -868,24 +868,116 @@ std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& i
     return first;
 }
 
-// A re-export names the variable of the module that declares it. Without a name: every export.
-static void appendVariablesExportedBy(const Program& program, ModuleID id, StringID name, unsigned stepsLeft, Vector<VariableID>& variables)
-{
-    const Module& module = program.at(id);
-    for (const ModuleExport& entry : module.exports) {
-        if (name && entry.name != name)
-            continue;
+namespace {
+
+// A file that hands on the exports of many others has thousands of them, and each is looked up by name in the file that it comes from.
+class ExportedVariables {
+public:
+    explicit ExportedVariables(const Program& program)
+        : m_program(program)
+        , m_exportsByName(program.modules.size())
+        , m_syntheticExportsByName(program.modules.size())
+    {
+    }
+
+    void appendAll(ModuleID id, Vector<VariableID>& variables)
+    {
+        const Module& module = m_program.at(id);
+        for (const ModuleExport& entry : module.exports)
+            append(entry, m_program.modules.size(), variables);
+        for (const SyntheticExport& entry : module.syntheticExports)
+            append(entry, variables);
+    }
+
+    void appendNamed(ModuleID id, StringID name, Vector<VariableID>& variables)
+    {
+        if (!name)
+            return appendAll(id, variables);
+        appendNamed(id, name, m_program.modules.size(), variables);
+    }
+
+private:
+    // A re-export names the variable of the module that declares it.
+    void append(const ModuleExport& entry, unsigned stepsLeft, Vector<VariableID>& variables)
+    {
         if (entry.kind == ModuleExportKind::Variable && entry.variable)
             variables.append(entry.variable);
         if (entry.kind == ModuleExportKind::Indirect && entry.module && entry.importName && stepsLeft)
-            appendVariablesExportedBy(program, entry.module, entry.importName, stepsLeft - 1, variables);
+            appendNamed(entry.module, entry.importName, stepsLeft - 1, variables);
     }
-    for (const SyntheticExport& entry : module.syntheticExports) {
-        if ((!name || entry.name == name) && entry.variable)
+
+    static void append(const SyntheticExport& entry, Vector<VariableID>& variables)
+    {
+        if (entry.variable)
             variables.append(entry.variable);
     }
-}
 
+    void appendNamed(ModuleID id, StringID name, unsigned stepsLeft, Vector<VariableID>& variables)
+    {
+        const Module& module = m_program.at(id);
+        forEachNamed(module.exports, m_exportsByName[id.index()], name, [&](const ModuleExport& entry) {
+            append(entry, stepsLeft, variables);
+        });
+        forEachNamed(module.syntheticExports, m_syntheticExportsByName[id.index()], name, [&](const SyntheticExport& entry) {
+            append(entry, variables);
+        });
+    }
+
+    template<typename Entry>
+    static void forEachNamed(const Vector<Entry>& entries, Vector<uint32_t>& byName, StringID name, NOESCAPE const Invocable<void(const Entry&)> auto& functor)
+    {
+        AOT_THRESHOLD(size_t, fewestEntriesToSort, 16);
+        if (entries.size() < fewestEntriesToSort) {
+            for (const Entry& entry : entries) {
+                if (entry.name == name)
+                    functor(entry);
+            }
+            return;
+        }
+        auto nameAt = [&](uint32_t position) {
+            return entries[position].name.index();
+        };
+        if (byName.isEmpty()) {
+            byName = Vector<uint32_t>(entries.size(), [](size_t position) {
+                return static_cast<uint32_t>(position);
+            });
+            AOT::sort(byName, { }, [&](uint32_t position) {
+                return std::pair { nameAt(position), position };
+            });
+        }
+        for (uint32_t position : std::ranges::equal_range(byName, name.index(), { }, nameAt))
+            functor(entries[position]);
+    }
+
+    const Program& m_program;
+    Vector<Vector<uint32_t>> m_exportsByName;
+    Vector<Vector<uint32_t>> m_syntheticExportsByName;
+};
+
+struct KeysOfSpies {
+    void add(ValueSetMaker& maker, ValueSetID otherKeys, bool otherMayBeAnyKey)
+    {
+        isSpiedOn = true;
+        mayBeAnyKey |= otherMayBeAnyKey;
+        if (!mayBeAnyKey && otherKeys != keys)
+            keys = maker.unite(keys, otherKeys);
+    }
+
+    void add(ValueSetMaker& maker, const KeysOfSpies& other)
+    {
+        if (other.isSpiedOn)
+            add(maker, other.keys, other.mayBeAnyKey);
+    }
+
+    bool isSpiedOn { false };
+    bool mayBeAnyKey { false };
+    ValueSetID keys { ValueSets::nothing };
+};
+
+} // anonymous namespace
+
+// Spies replace under several sets of keys what they replace under all those keys together. A test run has thousands of spies and of modules,
+// so the keys are gathered per set of holders, then per module, and the exports of a module are looked at once.
 Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& inputs)
 {
     const Program& program = inputs.program;
@@ -904,61 +996,73 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
 
     ValueFlowHeapView heap(inputs);
     ValueSetMaker& maker = heap.maker();
-    unsigned numberOfModules = program.modules.size();
-    Vector<VariableID> variables;
     auto forEachNamespaceIn = [&](ValueSetID objects, NOESCAPE const Invocable<void(ModuleID)> auto& functor) {
         if (ValueSets::isComplement(objects))
             return;
-        inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
-            if (universe.kindOf(object) == ValueFlowObjectKind::Namespace)
-                functor(universe.moduleOf(object));
+        inputs.sets().forEachMember(maker.intersect(objects, universe.namespaces()), [&](ValueFlowObjectID object) {
+            functor(universe.moduleOf(object));
         });
     };
-    // Listed once: a test run has thousands of spies, and most of what is out of sight is no namespace object.
-    std::optional<Vector<ModuleID>> namespacesOutOfSight;
-    auto forEachNamespaceOutOfSight = [&](NOESCAPE const Invocable<void(ModuleID)> auto& functor) {
-        if (!namespacesOutOfSight) {
-            namespacesOutOfSight.emplace();
-            for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
-                forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
-                    namespacesOutOfSight->append(id);
-                });
-            }
-        }
-        for (ModuleID id : *namespacesOutOfSight)
-            functor(id);
-    };
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysReplacedOutOfSight;
     auto holdsPlaceholder = [&](ValueSetID values) {
         return ValueSets::isComplement(values) || inputs.sets().contains(values, ValueFlowUniverse::unknownObject()) || inputs.sets().contains(values, ValueFlowUniverse::untrackedObject());
     };
 
+    struct SpiedHolders {
+        ValueSetID holders;
+        KeysOfSpies keys;
+    };
+    Vector<SpiedHolders> spiedHolders;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionOfHolders;
     forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
         ValueSetID holders = application.valueAt(BuiltinOperand::argument(0), maker);
         ValueSetID keys = application.valueAt(BuiltinOperand::argument(1), maker);
         bool mayBeAnyKey = holdsPlaceholder(keys) || inputs.sets().contains(keys, ValueFlowUniverse::primitive(PrimitiveSet::String));
-        auto replaceIn = [&](ModuleID id) {
-            const Module& module = program.at(id);
-            if (mayBeAnyKey || !module.namespaceLayout)
-                return appendVariablesExportedBy(program, id, { }, numberOfModules, variables);
-            for (uint32_t index = 0; index < module.exports.size(); ++index) {
-                if (inputs.sets().contains(keys, universe.keyConstant(program.at(module.namespaceLayout).fields[index].key)))
-                    appendVariablesExportedBy(program, id, module.exports[index].name, numberOfModules, variables);
-            }
-        };
-        forEachNamespaceIn(holders, replaceIn);
-        if (holdsPlaceholder(holders) && keysReplacedOutOfSight.add(keys.index()).isNewEntry)
-            forEachNamespaceOutOfSight(replaceIn);
+        auto position = positionOfHolders.add(holders.index(), spiedHolders.size());
+        if (position.isNewEntry)
+            spiedHolders.append({ holders, { } });
+        spiedHolders[position.iterator->value].keys.add(maker, keys, mayBeAnyKey);
     });
+
+    Vector<KeysOfSpies> keysOfModule(program.modules.size());
+    KeysOfSpies keysOutOfSight;
+    for (const SpiedHolders& spied : spiedHolders) {
+        forEachNamespaceIn(spied.holders, [&](ModuleID id) {
+            keysOfModule[id.index()].add(maker, spied.keys);
+        });
+        if (holdsPlaceholder(spied.holders))
+            keysOutOfSight.add(maker, spied.keys);
+    }
 
     // A spy that has gone out of sight may be called with any namespace object that has, under any key.
     Vector<ValueFlowObjectID, 32> objectsOfSpies;
     for (size_t index : spies)
         universe.appendObjectsOf(BuiltinID(static_cast<uint32_t>(index)), objectsOfSpies);
-    if (std::ranges::any_of(objectsOfSpies, [&](ValueFlowObjectID spy) { return inputs.hasEscaped(spy) || inputs.isLost(spy); })) {
-        forEachNamespaceOutOfSight([&](ModuleID id) {
-            appendVariablesExportedBy(program, id, { }, numberOfModules, variables);
-        });
+    if (std::ranges::any_of(objectsOfSpies, [&](ValueFlowObjectID spy) { return inputs.hasEscaped(spy) || inputs.isLost(spy); }))
+        keysOutOfSight.add(maker, ValueSets::nothing, true);
+    if (keysOutOfSight.isSpiedOn) {
+        for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
+            forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
+                keysOfModule[id.index()].add(maker, keysOutOfSight);
+            });
+        }
+    }
+
+    ExportedVariables exported(program);
+    Vector<VariableID> variables;
+    for (uint32_t index = 0; index < keysOfModule.size(); ++index) {
+        const KeysOfSpies& spied = keysOfModule[index];
+        if (!spied.isSpiedOn)
+            continue;
+        ModuleID id(index);
+        const Module& module = program.at(id);
+        if (spied.mayBeAnyKey || !module.namespaceLayout) {
+            exported.appendAll(id, variables);
+            continue;
+        }
+        for (uint32_t position = 0; position < module.exports.size(); ++position) {
+            if (inputs.sets().contains(spied.keys, universe.keyConstant(program.at(module.namespaceLayout).fields[position].key)))
+                exported.appendNamed(id, module.exports[position].name, variables);
+        }
     }
 
     variables.removeAllMatching([&](VariableID variable) {

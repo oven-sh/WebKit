@@ -1044,6 +1044,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
                 tables.functions.functionsWithOtherEscapeOrigins.set(index);
         }
     }
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (markedMutationsOf(inputs, universe.closureOf(FunctionID(index))).contains(ObjectMutation::ChangeIntegrity))
+            tables.functions.functionsWhoseClosuresChangeIntegrity.set(index);
+    }
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         FunctionFlow& flow = tables.functions.functions[index];
         ValueFlowObjectID closure = universe.closureOf(FunctionID(index));

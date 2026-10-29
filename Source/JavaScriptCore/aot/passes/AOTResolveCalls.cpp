@@ -3324,7 +3324,10 @@ struct CallResolver {
             retireReads(site.memberRead, checksReceiverAtRead, selector.key);
 
             FunctionID lookup = context.derivedFunction(tableLookupKey(selector));
-            auto entrypoints = methods.map<Vector<FunctionID, 4>>([&](FunctionID method) { return context.derivedFunction(tableEntrypointKey(method, selector)); });
+            // Many calls enter the same entrypoints, so a call names their set.
+            CalleeSet entered = CalleeSet::complete(methods.map<Vector<FunctionID>>([&](FunctionID method) { return context.derivedFunction(tableEntrypointKey(method, selector)); }), { });
+            canonicalize(entered);
+            CalleeSetID entrypoints = context.types.intern(WTF::move(entered));
             auto finishWithTableCall = [&](uint32_t, ValueID narrowed) {
                 const Value& original = expansion.original();
                 Vector<ValueID, 8> operands { narrowed };
@@ -3335,7 +3338,7 @@ struct CallResolver {
                 tableCall.setArgumentsOperands(operands.span());
                 tableCall.setKey(selector.key);
                 tableCall.setReceivers(receivers);
-                tableCall.setEntrypoints(entrypoints.span());
+                tableCall.setEntrypoints(entrypoints);
                 tableCall.setAccessSite(original.accessSite());
                 tableCall.setCallees(original.callees());
                 expansion.finishArm(expansion.append(WTF::move(tableCall)));

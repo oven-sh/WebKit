@@ -128,6 +128,8 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinSite& site)
         return callIf(site, !receiverTypeOf(site).hasObjects(), InlineForm::TwoWay);
     case InlineBuiltin::ObjectFreeze:
         return callIf(site, !canFreezeInPlace(site), InlineForm::TwoWay);
+    case InlineBuiltin::ObjectAssign:
+        return callIf(site, site.arguments().size() != 2 || !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::ObjectIs: {
         std::span<const ValueID> arguments = site.arguments();
         RELEASE_ASSERT(arguments.size() == 2);

@@ -1078,7 +1078,7 @@ void HeapRule::runOperation()
     switch (m_statement.opcode) {
     case Opcode::PropGet:
         static_assert(!At::PropGet::object && !At::ElemGet::object && !At::PropHas::object && !At::ElemHas::object);
-        read(withoutProxiesAskedByTheirTraps(operand(At::PropGet::object)), keyNamed(operation().key()));
+        read(withoutProxiesAskedByTheirTraps(operand(At::PropGet::object)), keyNamed(m_statement.key));
         return;
     case Opcode::ElemGet: {
         if (readsRestArgumentOfInstance())
@@ -1099,7 +1099,7 @@ void HeapRule::runOperation()
     }
     case Opcode::PropSet:
         static_assert(!At::PropSet::object && !At::ElemSet::object && !At::PropDelete::object && !At::ElemDelete::object);
-        store(withoutProxiesAskedByTheirTraps(operand(At::PropSet::object)), keyNamed(operation().key()), operand(At::PropSet::value));
+        store(withoutProxiesAskedByTheirTraps(operand(At::PropSet::object)), keyNamed(m_statement.key), operand(At::PropSet::value));
         return;
     case Opcode::ElemSet: {
         ValueFlowOperand object = withoutProxiesAskedByTheirTraps(operand(At::ElemSet::object));
@@ -1113,7 +1113,7 @@ void HeapRule::runOperation()
     }
     case Opcode::PropDefine:
         defineUndefinedOnObjectsNobodyKnows(operand(At::PropDefine::object), operand(At::PropDefine::value));
-        define(operand(At::PropDefine::object), keyNamed(operation().key()), HeapPropertyPart::Value, operand(At::PropDefine::value));
+        define(operand(At::PropDefine::object), keyNamed(m_statement.key), HeapPropertyPart::Value, operand(At::PropDefine::value));
         return;
     case Opcode::ElemDefine:
         forEachKey(operand(At::ElemDefine::property), [&](const HeapKey& key) {
@@ -1143,7 +1143,7 @@ void HeapRule::runOperation()
         answerBoolean();
         return;
     case Opcode::PropHas:
-        test(withoutProxiesAskedByTheirTraps(operand(At::PropHas::object)), keyNamed(operation().key()));
+        test(withoutProxiesAskedByTheirTraps(operand(At::PropHas::object)), keyNamed(m_statement.key));
         return;
     case Opcode::ElemHas: {
         ValueFlowOperand object = withoutProxiesAskedByTheirTraps(operand(At::ElemHas::object));
@@ -1157,7 +1157,7 @@ void HeapRule::runOperation()
         return;
     }
     case Opcode::PropDelete:
-        remove(withoutProxiesAskedByTheirTraps(operand(At::PropDelete::object)), keyNamed(operation().key()));
+        remove(withoutProxiesAskedByTheirTraps(operand(At::PropDelete::object)), keyNamed(m_statement.key));
         return;
     case Opcode::ElemDelete: {
         ValueFlowOperand object = withoutProxiesAskedByTheirTraps(operand(At::ElemDelete::object));
@@ -1235,7 +1235,7 @@ void HeapRule::runOperation()
     }
     case Opcode::ScopeHasBinding: {
         const ValueFlowOperand& scope = operand(At::ScopeHasBinding::scope);
-        HeapKey key = keyNamed(operation().key());
+        HeapKey key = keyNamed(m_statement.key);
         test(scope, key);
         ValueFlowNodeID unscopables = m_context.lookup(m_context.valueOf(scope), ValueFlowName::property(m_program.keyOf(BuiltinNames::unscopablesSymbol)));
         m_context.lookup(m_context.valueOf(unscopables), foundName(key, HeapPropertyPart::Value));
@@ -1471,7 +1471,7 @@ void HeapRule::runOperation()
         return;
     }
     case Opcode::GetOwnProperty:
-        read(operand(At::GetOwnProperty::object), keyNamed(operation().key()));
+        read(operand(At::GetOwnProperty::object), keyNamed(m_statement.key));
         return;
     case Opcode::GetByValWithThis: {
         ClimbingSet holders = m_context.valueOf(operand(At::GetByValWithThis::object));

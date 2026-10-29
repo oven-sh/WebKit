@@ -543,7 +543,7 @@ void AccessSiteObserver::observe(FunctionID id)
 {
     m_state->observations[id.index()] = observeAccessSites(m_state->program, m_state->flow, m_state->build, m_state->heat, id);
     Vector<FunctionID>& called = m_state->calledFunctions[id.index()];
-    forEachCalledFunction(m_state->program.at(id), [&](FunctionID target) {
+    forEachCalledFunction(m_state->program, m_state->program.at(id), [&](FunctionID target) {
         called.append(target);
     });
 }

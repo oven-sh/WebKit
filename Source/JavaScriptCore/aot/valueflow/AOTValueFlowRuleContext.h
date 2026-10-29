@@ -30,6 +30,11 @@ struct ValueFlowInstancedFunction;
 struct ValueFlowNodeKey;
 enum class ValueFlowRareWrite : uint8_t;
 
+struct ValueFlowObjectsToldApart {
+    Vector<ValueSetID, 16> groups;
+    ValueSetID rest { ValueSets::nothing };
+};
+
 class ClimbingSet {
 public:
     ClimbingSet() = default;
@@ -121,6 +126,19 @@ public:
             });
         }
         return m_closuresTakingReceiver.members.span();
+    }
+    // How a set is told apart hangs on its members and on whether all else is at rest: the thread remembers the latest answer.
+    // n calls of a method on any of n objects ask about the same set, and listing the set takes n.
+    const ValueFlowObjectsToldApart& objectsToldApartRememberedOf(ClimbingSet objects, bool isAllElseAtRest, NOESCAPE const Invocable<ValueFlowObjectsToldApart()> auto& find) LIFETIME_BOUND
+    {
+        ObjectsToldApart& known = m_objectsToldApart;
+        if (!known.isFilled || known.objects != objects.m_set || known.isAllElseAtRest != isAllElseAtRest) {
+            known.isFilled = true;
+            known.objects = objects.m_set;
+            known.isAllElseAtRest = isAllElseAtRest;
+            known.answer = find();
+        }
+        return known.answer;
     }
     bool forEachBlock(ClimbingSet set, NOESCAPE const Invocable<void(uint64_t nameOfBlock)> auto& functor) const
     {
@@ -269,6 +287,13 @@ private:
         Vector<ValueFlowObjectID> members;
     };
     ClosuresTakingReceiver m_closuresTakingReceiver;
+    struct ObjectsToldApart {
+        bool isFilled { false };
+        bool isAllElseAtRest { false };
+        ValueSetID objects;
+        ValueFlowObjectsToldApart answer;
+    };
+    ObjectsToldApart m_objectsToldApart;
     RunCache m_edgeCache { };
     RunCache m_addCache { };
     RunCache m_holdsAnyOfCache { };

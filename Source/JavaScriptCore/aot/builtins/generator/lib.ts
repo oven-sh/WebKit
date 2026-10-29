@@ -1190,6 +1190,7 @@ const classColumnKeys = [
   "closedToOtherNames",
   "openNamesOfPrototype",
   "openNamesOfConstructor",
+  "namesReadByNativeCodeOnPrototype",
   "hasConstructor",
   "hasPrototype",
   "constructorHoldsPrototype",

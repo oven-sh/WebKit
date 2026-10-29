@@ -31,27 +31,11 @@ static bool constructs(Opcode opcode)
     return opcode != Opcode::Call && opcode != Opcode::CallList;
 }
 
-static PropertyKeyID keyReadFromReceiver(const Program& program, const ValueFlowStatement& statement)
-{
-    if (constructs(statement.opcode))
-        return { };
-    const Function& function = program.at(statement.function);
-    const Value& call = function.at(statement.site);
-    PropertyKeyID key = call.calleeKey();
-    ValueID receiver = call.thisValueOperand();
-    if (!key || !receiver || program.isIndexLike(key))
-        return { };
-    const Value& read = function.at(definitionThroughSameValues(function, call.calleeOperand()));
-    if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != key)
-        return { };
-    return definitionThroughSameValues(function, read.objectOperand()) == definitionThroughSameValues(function, receiver) ? key : PropertyKeyID();
-}
-
 static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees, ValueFlowCallKind kind, ValueSetID receiversFollowedBehindUnknownObject = ValueSets::nothing)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet builtins = context.restrict(callees, universe.builtinFunctions());
-    PropertyKeyID key = context.meet(builtins, ValueSets::anything) ? keyReadFromReceiver(context.program(), statement) : PropertyKeyID();
+    PropertyKeyID key = context.meet(builtins, ValueSets::anything) ? statement.key : PropertyKeyID();
     ValueFlowObjectsToldApart receivers;
     Vector<ClimbingSet, 16> answers;
     if (key) {
@@ -119,14 +103,15 @@ void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGr
 static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, ClimbingSet closures)
 {
     AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
+    if (context.numberOfMembers(closures) > mostCalleesLookedAt)
+        return numberOfGroupedArguments;
     const ValueFlowUniverse& universe = context.universe();
-    unsigned numberOfCallees = 0;
     unsigned positions = 0;
     context.forEachMember(closures, [&](ValueFlowObjectID closure) {
         if (positions == numberOfGroupedArguments)
             return;
         FunctionID function = universe.closureFunction(closure);
-        if (!function || ++numberOfCallees > mostCalleesLookedAt || context.sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), closure)) {
+        if (!function || context.sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), closure)) {
             positions = numberOfGroupedArguments;
             return;
         }
@@ -139,7 +124,7 @@ static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, Climbing
     return positions;
 }
 
-ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, ClimbingSet knownObjects)
+static ValueFlowObjectsToldApart tellManyObjectsApart(ValueFlowRuleContext& context, ClimbingSet knownObjects, bool isAllElseAtRest)
 {
     const ValueFlowUniverse& universe = context.universe();
     uint64_t mostGroups = context.mostMembersToldApart();
@@ -154,11 +139,9 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
 
     ValueFlowObjectsToldApart result;
     // Of many, some may yet turn out to have escaped, and a set that holds the object nobody knows lists none of those. How many are left shows once all else is at rest: until then the first are told apart and the others wait.
-    if (members.size() > mostGroups && !isHostFlagRaised(context, ValueFlowHostNode::AllElseIsAtRest))
-        members.shrink(mostGroups);
-    if (members.size() <= mostGroups) {
-        for (const Member& member : members)
-            result.groups.append(context.maker().of(member.object));
+    if (!isAllElseAtRest) {
+        for (size_t index = 0; index < mostGroups; ++index)
+            result.groups.append(context.maker().of(members[index].object));
         return result;
     }
 
@@ -202,8 +185,24 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
             result.groups.append(set);
         first = end;
     }
-    if (result.rest != ValueSets::nothing)
-        context.noteMembersNotToldApart();
+    return result;
+}
+
+ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, ClimbingSet knownObjects)
+{
+    if (context.numberOfMembers(knownObjects) > context.mostMembersToldApart()) {
+        bool isAllElseAtRest = isHostFlagRaised(context, ValueFlowHostNode::AllElseIsAtRest);
+        const ValueFlowObjectsToldApart& known = context.objectsToldApartRememberedOf(knownObjects, isAllElseAtRest, [&] {
+            return tellManyObjectsApart(context, knownObjects, isAllElseAtRest);
+        });
+        if (known.rest != ValueSets::nothing)
+            context.noteMembersNotToldApart();
+        return known;
+    }
+    ValueFlowObjectsToldApart result;
+    context.forEachMember(knownObjects, [&](ValueFlowObjectID object) {
+        result.groups.append(context.maker().of(object));
+    });
     return result;
 }
 
@@ -471,7 +470,7 @@ ValueID definitionThroughTests(const Function& function, ValueID id)
 
 static PropertyKeyID keyOfMemberCalledOnItsHolder(const Program& program, const ValueFlowStatement& statement)
 {
-    if (PropertyKeyID key = keyReadFromReceiver(program, statement))
+    if (PropertyKeyID key = statement.key)
         return key;
     if (constructs(statement.opcode))
         return { };
@@ -508,7 +507,7 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
-    PropertyKeyID key = keyReadFromReceiver(program, statement);
+    PropertyKeyID key = statement.key;
     if (!key)
         return { };
 
@@ -625,7 +624,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     // A proxy answers any name with what its trap returns.
     if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
         letWhateverHasEscapedBeCalled(context);
-    callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID(), true);
+    callOperandOfDescribedCall(statement, context, receiversAreToldApart && statement.key == key ? key : PropertyKeyID(), true);
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)
@@ -826,7 +825,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     }
     // A promise of the realm answers with the methods of promises, whatever else the callee may be.
     ClimbingSet listedCallees = callees;
-    if (PropertyKeyID key = context.contains(callees, ValueFlowUniverse::unknownObject()) ? keyReadFromReceiver(context.program(), statement) : PropertyKeyID()) {
+    if (PropertyKeyID key = context.contains(callees, ValueFlowUniverse::unknownObject()) ? statement.key : PropertyKeyID()) {
         ClimbingSet all = context.valueOf(context.operandsOf(statement)[1]);
         ClimbingSet receivers = context.restrict(all, context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Promise), promisesAllocatedByBuiltins(context, all)));
         if (context.meet(receivers, ValueSets::anything))

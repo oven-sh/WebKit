@@ -439,7 +439,7 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
 
 void HeapRule::forEachKeyOfOperation(uint32_t computedKeyIndex, NOESCAPE const Invocable<void(const HeapKey&)> auto& functor, HeapKeyUse use)
 {
-    if (PropertyKeyID name = operation().key())
+    if (PropertyKeyID name = m_statement.key)
         functor(keyNamed(name));
     else
         forEachKey(operand(computedKeyIndex), functor, use);

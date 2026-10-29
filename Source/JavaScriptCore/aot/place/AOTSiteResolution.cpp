@@ -244,6 +244,8 @@ struct WordResolver {
         switch (value.encoding()) {
         case DataEncoding::ReadOnlyTree:
             return DataRecord { data, std::nullopt, std::nullopt };
+        case DataEncoding::MadeOnce:
+            return DataRecord { data, std::nullopt, std::nullopt, offsetOfKey(steps.sites.dataMadeOnce, steps.literals.cellOffsetsOfDataMadeOnce, data) };
         case DataEncoding::CopyOnWriteArray:
             if (isStorageOfArray(context.program.at(data).root.as<DataNode::Array>()))
                 return DataRecord { data, std::nullopt, offsetOfKey(steps.sites.arraysWithStorageInImage, steps.literals.nodesOfStorageInImage, data) };

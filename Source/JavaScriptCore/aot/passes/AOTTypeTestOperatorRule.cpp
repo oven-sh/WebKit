@@ -159,7 +159,7 @@ static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, const Value& us
     return operatorsThatTakeNullish.contains(user.opcode) ? admitExpectedNullish(reporter, other, TypeTable::number) : TypeTable::number;
 }
 
-static bool isBetterForm(Opcode opcode, const OperatorChoice& now, const OperatorChoice& then)
+static bool isBetterForm(Opcode opcode, const OperatorChoice& now, const OperatorChoice& then, bool narrowsWideInteger = false)
 {
     if (then.form == OperatorForm::Generic || then.form == now.form)
         return false;
@@ -168,6 +168,9 @@ static bool isBetterForm(Opcode opcode, const OperatorChoice& now, const Operato
     if (now.effects.normal.mayCallUnknownCode && !then.effects.normal.mayCallUnknownCode)
         return true;
     if (mayCallRuntime(opcode, now.form) && !mayCallRuntime(opcode, then.form))
+        return true;
+    // With an integer beyond 32 bits the checked form answers with a double, which whoever reckons on converts back.
+    if (narrowsWideInteger && now.form == OperatorForm::CheckedIntegers && then.form == OperatorForm::Integers)
         return true;
     return now.form == OperatorForm::Numbers && (then.form == OperatorForm::Integers || then.form == OperatorForm::CheckedIntegers);
 }
@@ -198,7 +201,12 @@ static std::optional<OperatorTests> findFewestTests(TestSiteReporter& reporter, 
         if ((isTested[leftOperand] && !tested[leftOperand]) || (isTested[rightOperand] && !tested[rightOperand]))
             continue;
         OperatorChoice then = chooseFormUnderTests(reporter, site, value, tested, isTested);
-        if (!isBetterForm(value.opcode, best, then))
+        bool narrowsWideInteger = false;
+        for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+            const Type& type = reporter.typeOf(value.operand(operandIndex));
+            narrowsWideInteger |= isTested[operandIndex] && type.isInteger() && !type.isInt32();
+        }
+        if (!isBetterForm(value.opcode, best, then, narrowsWideInteger))
             continue;
         best = WTF::move(then);
         chosen = isTested;

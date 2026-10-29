@@ -109,8 +109,8 @@ void addExpectedFieldTableEntries(StubPolicy& policy, const Typed::Program& prog
 
 void chooseOrderOfFieldTableForms(StubPolicy& policy, const Typed::Program& program, const Typed::SlotPlan& slots, const KeyUses& uses)
 {
-    // By key: in how many layouts the field is a JSValue in the cell, a JSValue in the Extension, anything else.
-    enum Place : uint8_t { InCell, InExtension, Elsewhere, NumberOfPlaces };
+    // By key: in how many layouts the field is a JSValue in the cell, a JSValue in the Extension, a double in the cell, anything else.
+    enum Place : uint8_t { InCell, InExtension, DoubleInCell, Elsewhere, NumberOfPlaces };
     Vector<std::array<uint32_t, NumberOfPlaces>> layoutsByKey(FillWith { }, uses.byKey.size(), std::array<uint32_t, NumberOfPlaces> { });
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         Typed::LayoutID id(index);
@@ -123,21 +123,27 @@ void chooseOrderOfFieldTableForms(StubPolicy& policy, const Typed::Program& prog
             if (key >= layoutsByKey.size() || !slot.hasStorage())
                 continue;
             bool isValue = slot.representation == SlotRepresentation::JSValue || slot.representation == SlotRepresentation::Cell;
-            ++layoutsByKey[key][!isValue ? Elsewhere : slot.isOutOfLine() ? InExtension : InCell];
+            bool isDoubleInCell = traitsOf(slot.representation).valueKind == SlotValueKind::Double && !slot.isOutOfLine();
+            ++layoutsByKey[key][isDoubleInCell ? DoubleInCell : !isValue ? Elsewhere : slot.isOutOfLine() ? InExtension : InCell];
         }
     }
     // A place that reads the name counts for each form by the share of the layouts that have it.
     std::array<double, NumberOfPlaces> reads { };
     for (size_t key = 0; key < layoutsByKey.size(); ++key) {
         const auto& layouts = layoutsByKey[key];
-        double total = layouts[InCell] + layouts[InExtension] + layouts[Elsewhere];
+        double total = layouts[InCell] + layouts[InExtension] + layouts[DoubleInCell] + layouts[Elsewhere];
         if (!total)
             continue;
+        // A read under a key that the build does not know may ask for any name, so each name counts once by itself.
+        const auto& usesOfKey = uses.byKey[key].usesByAccess;
+        double places = 1 + usesOfKey[static_cast<size_t>(Typed::Access::Read)] + usesOfKey[static_cast<size_t>(Typed::Access::Has)];
         for (unsigned place = 0; place < NumberOfPlaces; ++place)
-            reads[place] += uses.byKey[key].usesByAccess[static_cast<size_t>(Typed::Access::Read)] * (layouts[place] / total);
+            reads[place] += places * (layouts[place] / total);
     }
     // It saves two tests on the one side and costs one on the other.
-    policy.readsTestOutOfLineValuesSecond = 2 * reads[InExtension] > reads[Elsewhere];
+    policy.readsTestOutOfLineValuesSecond = 2 * reads[InExtension] > reads[Elsewhere] + reads[DoubleInCell];
+    // A double is the last form asked for: that saves six tests and costs one.
+    policy.readsTestDoublesSecond = 6 * reads[DoubleInCell] > reads[Elsewhere] + reads[InExtension];
 }
 
 void addRegExpLiterals(StubPolicy& policy, const RegExpRequests& requests, bool legacyStaticsMayBeRead, BuildContext& context)

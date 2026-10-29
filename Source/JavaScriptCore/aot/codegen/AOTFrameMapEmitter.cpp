@@ -23,6 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // A root lies in a word of the frame, or two narrow ones in one. Nothing else about a map depends on how many there are.
 static_assert(defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture()) == SavedFrame::maxNumberOfWords);
+static_assert(defaultLimitValue(LimitID::MaxFrameMapWords, hostArchitecture()) == 1u << SavedFrame::liveSlotMapOffsetBits);
 static_assert(B3::AirLimits::maxWordsClearedAtFirstSuspension == SavedFrame::maxClearedWords);
 
 static RegisterSet registersClobberedBySuspension(const B3::Air::Code& code)

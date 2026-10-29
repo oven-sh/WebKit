@@ -27,7 +27,14 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
+    if (level == TypeLevel::Proven)
+        return program.provenTypeOf(declared);
+    // Integers that end where a step of one is lost to rounding are those of a counter, which seldom outgrows 32 bits.
+    TypeID expected = declared.expected().predicted();
+    const Type& type = types.at(expected);
+    bool isCounter = type.isInteger() && (type.integers.maximum == maxExactInteger || type.integers.minimum == -maxExactInteger);
+    Range small = type.integers.intersectWith(Range::int32());
+    return isCounter && !small.isEmpty() ? types.intern(Type::integer(small)) : expected;
 }
 
 static TypeID typeIDOfField(const TypingContext& context, const Field& field)

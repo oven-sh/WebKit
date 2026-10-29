@@ -175,6 +175,7 @@ struct FlowFunctionTables {
     BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
     BitVector functionsWhoseClosuresMayBeNamedOutOfSight;
     BitVector functionsWhoseClosuresAreGivenDisplayName;
+    BitVector functionsWhoseClosuresChangeIntegrity;
     BitVector functionsWhoseClosuresAreMadeOnce;
     // By the function as it is written: all its forms together.
     BitVector writtenFunctionsWithOneFunctionObject;
@@ -394,6 +395,8 @@ public:
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
     // By a statement that is seen to reach the closures and names the key.
     bool closuresAreStoredUnder(FunctionID closureFunction, PropertyKeyID) const;
+    // No freeze, seal or preventExtensions reaches them: a store under a name that is no built-in's takes.
+    bool closuresKeepTheirIntegrity(FunctionID closureFunction) const;
     bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
     bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;

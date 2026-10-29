@@ -465,7 +465,7 @@ export default b.declarations(
         args: { string: b.string.loose },
         returns: b.union(b.object, b.strictNull),
         runsOnlyOperandCode: true,
-        uses: { this: [runsMembers(b.named("flags", "lastIndex"), b.calls("exec"), "OwnValues"), storesLastIndex] },
+        uses: { this: [runsMembers(b.named("flags", "lastIndex"), b.calls("exec"), "OwnValues"), storesLastIndex, b.returned] },
         usesFeature: "RegExp",
       }),
       "@@matchAll": symbolMethod("regExpProtoFuncMatchAll", {

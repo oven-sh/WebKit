@@ -524,7 +524,8 @@ static JSFinalObject* tryCopyWithElements(VM& vm, JSGlobalObject* globalObject, 
         return nullptr;
     if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->mayHaveImmutableProperties())
         return nullptr;
-    if (structure->mayBePrototype() || structure->didPreventExtensions() || structure->hasBeenFlattenedBefore() || structure->hasPolyProto())
+    // A branded Structure would hand the copy the private brand of the source.
+    if (structure->variant() != Structure::StructureVariant::Normal || structure->mayBePrototype() || structure->didPreventExtensions() || structure->hasBeenFlattenedBefore() || structure->hasPolyProto())
         return nullptr;
     if (structure->realm() != globalObject || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
         return nullptr;
@@ -561,14 +562,12 @@ static JSFinalObject* tryCopyWithElements(VM& vm, JSGlobalObject* globalObject, 
         butterfly->arrayStorage()->m_indexBias = 0;
         butterfly->arrayStorage()->m_sparseMap.clear();
     }
-    JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
-    PropertyOffset endOfInlineOffsets = std::min<PropertyOffset>(structure->maxOffset() + 1, structure->inlineCapacity());
-    for (PropertyOffset offset = 0; offset < endOfInlineOffsets; ++offset)
-        copy->locationForOffset(offset)->setWithoutWriteBarrier(source->getDirect(offset));
+    JSFinalObject* copy = JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, source->inlineStorage());
     if (sparse) {
         SparseArrayValueMap* map = SparseArrayValueMap::create(vm);
         for (const SparseArrayEntry& entry : *sparse)
             map->add(copy, entry.index()).iterator->forceSet(vm, map, entry.get(), 0);
+        vm.mutatorFence();
         butterfly->arrayStorage()->m_sparseMap.set(vm, copy, map);
     }
     return copy;

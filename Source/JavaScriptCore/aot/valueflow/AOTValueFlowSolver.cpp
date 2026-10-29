@@ -871,9 +871,15 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
                         thread.thrownOfStatementsThatWait.append(statementToRun.thrown);
                     continue;
                 }
+                MonotonicTime startOfStatement = m_stepTimes.isOn ? MonotonicTime::now() : MonotonicTime();
                 context.begin(statement);
                 m_rule(statementToRun, context);
                 context.end();
+                if (m_stepTimes.isOn) {
+                    constexpr Seconds longest = 20_ms;
+                    if (Seconds wall = MonotonicTime::now() - startOfStatement; wall >= longest)
+                        dataLogLn("AOT flow long statement | ", wall.milliseconds(), " ms | round ", m_counters.rounds, " | kind ", static_cast<unsigned>(statementToRun.kind), " | opcode ", static_cast<unsigned>(statementToRun.opcode), " | operands ", statementToRun.operandCount, " | function ", statementToRun.function.index());
+                }
                 if (statement.index() < m_input.statements.size())
                     m_hasStatementOfBodyRun.set(statement.index());
                 if (m_statementsWait && statement.index() < m_input.statements.size())
@@ -5333,18 +5339,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         };
         m_stepTimes.didFinish("behind the rounds: covered: stores, calls and reads listed by node"_s);
         findOnAllThreadsAndDo(calls.size(), findCall, runCall);
-        // The class above a class is seen to be the one that its declaration names. Where it names none, that is what the definition of the class is seen to extend.
-        HashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> definitionsOfClasses;
-        for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
-            const ValueFlowStatement& statement = m_input.statements[index];
-            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewClass || !isReached(statement.function))
-                return false;
-            const Value& definition = m_input.program->at(statement.function).at(statement.site);
-            return definition.heritageOperand() && !m_input.program->at(definition.layout()).base;
-        })) {
-            const ValueFlowStatement& statement = m_input.statements[index];
-            definitionsOfClasses.ensure(m_input.program->at(statement.function).at(statement.site).layout().index(), [] { return Vector<uint32_t, 1>(); }).iterator->value.append(index);
-        }
+        // The class above a class is seen to be the one that its declaration names.
         for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
             const ValueFlowStatement& statement = m_input.statements[index];
             return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::GetSuperBase && statement.result && isReached(statement.function);
@@ -5356,17 +5351,6 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             LayoutID base = m_input.program->at(function.constructedClass).base;
             if (FunctionID constructor = base ? m_input.program->at(base).constructor : FunctionID())
                 arriveAt(statement.result, maker.intersect(maker.of(m_input.universe->closureOf(constructor)), followed));
-            auto definitions = definitionsOfClasses.find(function.constructedClass.index());
-            if (definitions == definitionsOfClasses.end())
-                continue;
-            for (uint32_t definition : definitions->value) {
-                const ValueFlowOperand& heritage = operandsOf(m_input.statements[definition])[OperandIndex::NewClass::heritage];
-                arriveAt(statement.result, seenAt(heritage));
-                if (!heritage.node || !holdsUnknownObject(heritage.node))
-                    continue;
-                statementsAnsweredFrom.ensure(heritage.node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
-                answersStatements.quickSet(heritage.node.index());
-            }
         }
         // What stands in sight in one node and goes on to a node that holds the unknown object is covered there. It has come all the same.
         Vector<Vector<FoundStep>> arrivalsFromVisibleNodesPerShare((firstNodeOfHost + nodesPerShare - 1) / nodesPerShare);

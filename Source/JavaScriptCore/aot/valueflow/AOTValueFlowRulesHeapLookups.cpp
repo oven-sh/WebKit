@@ -1253,9 +1253,15 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         if (described)
             readMember(member, module, described, getters);
     };
+    FunctionID reader = m_context.functionOfStatement();
+    bool isReadByProgram = reader && isWrittenInProgram(m_program.at(reader));
     forEachMemberUnder(found, key, [&](BuiltinID member, ModuleID module) {
-        if (m_tables.letsInUnseenCode(member))
-            answer(member, module);
+        if (!m_tables.letsInUnseenCode(member))
+            return;
+        answer(member, module);
+        // The program holds a loader that it reads off its holder by name, however it came by the holder.
+        if (isReadByProgram)
+            add(m_context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), only(m_universe.objectOf(m_builtins.canonicalID(member))));
     });
     if (mayAnswerMemberLeftOut) {
         ClimbingSet leftOut = m_context.valueWithin(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed));

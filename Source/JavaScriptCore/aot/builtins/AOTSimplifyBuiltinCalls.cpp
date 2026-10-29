@@ -328,6 +328,46 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A generator is not stepped where it is running, has ended or belongs to another realm.
+static unsigned markNotSteppedArmsRare(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    auto isComparisonWithNotStepped = [&](const Use& use) {
+        const Value& user = function.at(use.user);
+        if (use.kind != Use::Kind::Operand || user.opcode != Opcode::StrictEq)
+            return false;
+        const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
+        return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);
+    };
+
+    Vector<BlockID, 2> arms;
+    for (const ValueSite& site : context.sitesIn(SiteList::SimplifiedIntrinsics)) {
+        if (function.at(site.value).opcode != Opcode::StepGenerator)
+            continue;
+        for (const Use& read : useLists.usesOf(site.value)) {
+            if (read.kind != Use::Kind::Operand || function.at(read.user).opcode != Opcode::ResultAt || function.at(read.user).index() != static_cast<uint32_t>(StepGeneratorResult::Status))
+                continue;
+            for (const Use& comparison : useLists.usesOf(read.user)) {
+                if (!isComparisonWithNotStepped(comparison))
+                    continue;
+                for (const Use& use : useLists.usesOf(comparison.user)) {
+                    if (use.kind != Use::Kind::TerminatorOperand || function.at(use.block).terminator.kind != TerminatorKind::Branch)
+                        continue;
+                    BlockID arm = function.at(use.block).terminator.targets[0].block;
+                    if (function.at(arm).frequency.predicted() != BlockFrequency::Rare && context.analyses.cfg().incomingEdges(arm).size() == 1)
+                        arms.append(arm);
+                }
+            }
+        }
+    }
+    for (BlockID arm : arms)
+        function.edit(arm, BlockEdit::Rest).frequency = BlockFrequency::Rare;
+    if (!arms.isEmpty())
+        context.analyses.invalidate(FunctionAnalysis::Frequencies);
+    return arms.size();
+}
+
 unsigned simplifyIntrinsics(FunctionPassContext& context)
 {
     return rewriteValues(context, SiteList::SimplifiedIntrinsics, [&](const Value& value) {
@@ -911,8 +951,10 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     auto hasSitesIn = [&](SiteList list) {
         return !context.sitesIn(list).empty();
     };
-    if (hasSitesIn(SiteList::SimplifiedIntrinsics))
+    if (hasSitesIn(SiteList::SimplifiedIntrinsics)) {
         rewrites += simplifyIntrinsics(context);
+        rewrites += markNotSteppedArmsRare(context);
+    }
     if (hasSitesIn(SiteList::TemplateObjects))
         rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))

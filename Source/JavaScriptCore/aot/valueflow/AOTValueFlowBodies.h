@@ -591,6 +591,7 @@ struct ValueFlowBody {
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
         uint32_t guardsOfOperands { 0 };
+        PropertyKeyID key;
     };
 
     struct ObservedValue {

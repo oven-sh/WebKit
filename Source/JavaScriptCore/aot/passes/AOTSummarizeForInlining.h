@@ -121,6 +121,15 @@ struct InliningSummary {
     bool isWrapper { false };
     // Its rest parameter is only spread into its calls, and it is short.
     bool onlyForwardsRestParameter { false };
+    // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
+    enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
+    Difference difference { Difference::None };
+    // It returns what these answer when handed its two parameters: the versions behind the tests of the declared types.
+    struct DifferenceCall {
+        FunctionID callee;
+        bool swapsParameters { false };
+    };
+    Vector<DifferenceCall, 0> differenceCalls;
     enum class Answer : uint8_t { NotAsked, No, Yes };
     // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
     mutable Answer returnsFreshAggregate { Answer::NotAsked };

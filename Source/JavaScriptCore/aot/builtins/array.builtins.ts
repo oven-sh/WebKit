@@ -589,7 +589,7 @@ export default b.declarations(
           this: arrayLike,
           returns: b.any,
           ...operandCodeEffects,
-          uses: { this: [...readsArrayLike, convertsElements, b.runs(b.calls("join"), b.named("@@toStringTag"))] },
+          uses: { this: [...readsArrayLike, convertsElements, b.runs(b.calls("join"), b.named("@@toStringTag")), b.returned] },
           implementation: b.hostCall,
         },
       ],

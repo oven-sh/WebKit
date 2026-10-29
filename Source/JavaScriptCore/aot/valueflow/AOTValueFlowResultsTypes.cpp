@@ -20,6 +20,7 @@
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTInductionVariables.h"
 #include "AOTKnownClosures.h"
 #include "AOTLedger.h"
 #include "AOTNarrowFieldTypes.h"
@@ -56,6 +57,42 @@ static DeadZone deadZoneOf(const LocationFlow& flow)
     return flow.initialization == InitializationState::Unknown ? DeadZone::MayBeObserved : DeadZone::IsNeverObserved;
 }
 
+// At 2 ** 53 a step of one is lost to rounding: 2 ** 53 + 1 lies halfway between two doubles and goes to the even one, 2 ** 53 again. So an integer that a double holds exactly is one still after a step of one.
+// The bound is 2 ** 53 and not the largest safe integer, 2 ** 53 - 1: a step up from there is exact and leaves that range.
+static std::optional<Type> typeAfterStepOfOne(Opcode opcode, std::span<const Type> operands)
+{
+    auto stepIn = [](const Type& type) -> int64_t {
+        bool isStep = type.isInteger() && type.integers.isSingleValue() && std::abs(type.integers.minimum) == 1;
+        return isStep ? type.integers.minimum : 0;
+    };
+    const Type* stepped = &operands[0];
+    int64_t step = 0;
+    if (opcode == Opcode::Increment)
+        step = 1;
+    if (opcode == Opcode::Decrement)
+        step = -1;
+    if (opcode == Opcode::Sub)
+        step = -stepIn(operands[1]);
+    if (opcode == Opcode::Add) {
+        step = stepIn(operands[1]);
+        if (!step) {
+            step = stepIn(operands[0]);
+            stepped = &operands[1];
+        }
+    }
+    if (!step || !stepped->isInteger() || !stepped->integers.isSubsetOf(Range::exact()))
+        return std::nullopt;
+    auto afterStep = [&](int64_t integer) {
+        return std::clamp(integer + step, -maxExactInteger, maxExactInteger);
+    };
+    return Type::integer({ afterStep(stepped->integers.minimum), afterStep(stepped->integers.maximum) });
+}
+
+static bool mayBeStepOfOne(Opcode opcode)
+{
+    return opcode == Opcode::Increment || opcode == Opcode::Decrement || opcode == Opcode::Add || opcode == Opcode::Sub;
+}
+
 namespace {
 
 class NumbersOfPositions final : public ValueFlowNumbersOfValues {
@@ -72,6 +109,7 @@ public:
     const ValueFlowNumbers* ofEntryParameter(FunctionID function, uint32_t index) const { return find(m_firstEntryParameter[function.index()] + index); }
     const ValueFlowNumbers* ofResult(FunctionID function, uint32_t index) const { return find(m_firstResult[function.index()] + index); }
     std::optional<ValueFlowNumbers> ofCall(FunctionID caller, ValueID call) const;
+    ValueFlowNumbers numbersOfStep(FunctionID, ValueID) const;
 
 private:
     struct Writer {
@@ -109,6 +147,8 @@ private:
         TypeArena& arena;
         Vector<uint32_t>* positionsRead { nullptr };
         unsigned stepsLeft { maxSteps };
+        // What flow says of a place that holds primitives alone goes through casts and conversions whole, not only its numbers.
+        bool tellsKindsApart { false };
     };
 
     class KnownTypes final : public KnownPositionTypes {
@@ -189,7 +229,7 @@ private:
     const ManyCallees* findManyCallees(ValueSetID) const;
     uint32_t positionOf(const ManyCallees& callees) const { return m_numbers.size() + static_cast<uint32_t>(&callees - m_manyCallees.span().data()); }
     void updateManyCallees(bool onlyWhereResultsHaveMoved);
-    ValueFlowNumbers numbersArrivingFrom(TypeArena&, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead) const;
+    ValueFlowNumbers numbersArrivingFrom(TypeArena&, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead, bool tellsKindsApart = false) const;
     void evaluateSharedRanges(bool isFirstRound);
     BitVector collectWritersOfMaps(ValueFlowHeapView&);
     std::optional<uint32_t> indexOfMap(ValueFlowObjectID) const;
@@ -203,6 +243,8 @@ private:
     Type typeWithoutProof(const DeclaredType& declared) const { return m_inputs.program.at(m_inputs.program.provenTypeOf(declared)); }
     bool typeWritersByRules(TypeArena&, FunctionID, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked);
     bool typeLoopsByRules();
+    void assumeIntegersOfCounters();
+    BitVector findPlacesTakenAsValues(const BitVector& places) const;
     bool runRound();
 
     const ValueFlowResultInputs& m_inputs;
@@ -375,6 +417,7 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
     m_mapsWithOtherWriter = { };
     collectWriters(tables);
     updateManyCallees(false);
+    assumeIntegersOfCounters();
     times.didFinish("numbers: writers"_s);
     for (unsigned typing = 0; typing <= maxTypingsOfLoops; ++typing) {
         for (unsigned round = 0; round < maxRounds && runRound(); ++round) { }
@@ -1244,6 +1287,8 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         return known;
     --evaluation.stepsLeft;
     auto withNumbersOf = [&](const Type& type) {
+        if (evaluation.tellsKindsApart && !type.hasObjects())
+            return known.intersectWith(type, evaluation.arena);
         ValueFlowNumbers numbers;
         numbers.add(type);
         numbers.narrow(known);
@@ -1302,7 +1347,8 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         operandTypes.append(typeOf(evaluation, id, value.operand(index), depth - 1));
         operandTypes.last().primitives &= ~Primitive::Absent;
     }
-    Type computed = computeOperatorResultType(TypingContext { program, function, evaluation.arena }, value.opcode, operandTypes.span());
+    std::optional<Type> stepped = typeAfterStepOfOne(value.opcode, operandTypes.span());
+    Type computed = stepped ? *stepped : computeOperatorResultType(TypingContext { program, function, evaluation.arena }, value.opcode, operandTypes.span());
     return isBehindCheck ? computed : withNumbersOf(computed);
 }
 
@@ -1310,6 +1356,15 @@ ValueFlowNumbers NumbersOfPositions::numbersOf(FunctionID id, ValueID value) con
 {
     ScratchTypeArena scratch(m_inputs.program.types);
     Evaluation evaluation { scratch.arena() };
+    ValueFlowNumbers numbers;
+    numbers.add(typeOf(evaluation, id, value, maxDepth));
+    return numbers;
+}
+
+ValueFlowNumbers NumbersOfPositions::numbersOfStep(FunctionID id, ValueID value) const
+{
+    ScratchTypeArena scratch(m_inputs.program.types);
+    Evaluation evaluation { scratch.arena(), nullptr, maxSteps, true };
     ValueFlowNumbers numbers;
     numbers.add(typeOf(evaluation, id, value, maxDepth));
     return numbers;
@@ -1400,16 +1455,161 @@ bool NumbersOfPositions::typeLoopsByRules()
     return m_someRulesHaveMoved;
 }
 
-ValueFlowNumbers NumbersOfPositions::numbersArrivingFrom(TypeArena& arena, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead) const
+ValueFlowNumbers NumbersOfPositions::numbersArrivingFrom(TypeArena& arena, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead, bool tellsKindsApart) const
 {
     ValueFlowNumbers arriving;
     for (uint32_t index = firstWriter; index < endOfWriters; ++index) {
-        Evaluation evaluation { arena, positionsRead };
+        Evaluation evaluation { arena, positionsRead, maxSteps, tellsKindsApart };
         ValueFlowNumbers handedOver;
         handedOver.add(typeOf(evaluation, m_writers[index].function, m_writers[index].value, maxDepth));
         arriving.unite(handedOver.meetWith(m_numbersByRules[index]));
     }
     return arriving;
+}
+
+// A double takes a step at no cost, an integer beyond 32 bits does not. The integers of a place are worth knowing where something is done with the number that an integer is better for, in code that may run more than once.
+// A place that is compared there counts the turns of a loop or stands against a limit: what bounds, unrolls and folds those knows it as a number, and it stays one.
+BitVector NumbersOfPositions::findPlacesTakenAsValues(const BitVector& places) const
+{
+    const Program& program = m_inputs.program;
+    constexpr OpcodeSet comparisons = relationalOperators | OpcodeSet { Opcode::StrictEq, Opcode::Eq };
+    constexpr OpcodeSet conversions { Opcode::ToNumeric, Opcode::ToNumber };
+    constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
+    constexpr size_t maxNames = 32;
+    auto placeOf = [&](const Value& value) -> std::optional<uint32_t> {
+        if (value.opcode == Opcode::GetModuleVariable || value.opcode == Opcode::PutModuleVariable)
+            return value.variable().index();
+        if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
+            return m_firstField[value.layout().index()] + value.field();
+        return std::nullopt;
+    };
+    constexpr uint32_t isCompared = 1u << 31;
+    BitVector taken(places.size());
+    BitVector compared(places.size());
+    for (uint32_t place : collectInParallel<uint32_t>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+        FunctionID id(index);
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || !m_inputs.isReached(id))
+            return;
+        Vector<ValueID, 8> reads;
+        for (uint32_t value = 0; value < function.values.size(); ++value) {
+            Opcode opcode = function.values[value].opcode;
+            if ((opcode == Opcode::GetModuleVariable || opcode == Opcode::GetEnvironmentField) && places.get(*placeOf(function.values[value])))
+                reads.append(ValueID(value));
+        }
+        if (reads.isEmpty())
+            return;
+        Function copy = function;
+        AnalysisContext context { m_inputs.build, program, nullptr, nullptr, id };
+        FunctionAnalyses analyses(context, copy);
+        auto runsOnce = [&](BlockID block) {
+            return function.isModuleBody() && !analyses.naturalLoops().innerMostLoopOf(block);
+        };
+        // Beside a number that is held as a double an integer is converted each time, and a quotient is a double whatever goes in.
+        auto isReckonedAsDouble = [&](const Value& user, uint32_t operandIndex) {
+            if (!arithmetic.contains(user.opcode))
+                return false;
+            const Type& other = program.typeOf(copy, user.operand(1 - operandIndex));
+            return user.opcode == Opcode::Div || (other.isNumber() && !other.isInteger());
+        };
+        for (ValueID read : reads) {
+            uint32_t place = *placeOf(copy.at(read));
+            Vector<ValueID, maxNames> names { read };
+            bool isTaken = false;
+            for (size_t name = 0; name < names.size() && !isTaken; ++name) {
+                for (const Use& use : analyses.useLists().usesOf(names[name])) {
+                    if (runsOnce(use.block))
+                        continue;
+                    const Value* user = use.kind == Use::Kind::Operand ? &copy.at(use.user) : nullptr;
+                    if (user && comparisons.contains(user->opcode)) {
+                        found.append(place | isCompared);
+                        continue;
+                    }
+                    if (user && (isReckonedAsDouble(*user, use.operandIndex) || ((user->opcode == Opcode::PutModuleVariable || user->opcode == Opcode::PutEnvironmentField) && placeOf(*user) == place)))
+                        continue;
+                    bool isFollowed = user && (isCast(user->opcode) || conversions.contains(user->opcode) || mayBeStepOfOne(user->opcode)) && names.size() < maxNames;
+                    if (!isFollowed) {
+                        isTaken = true;
+                        break;
+                    }
+                    if (!names.contains(use.user))
+                        names.append(use.user);
+                }
+            }
+            if (isTaken)
+                found.append(place);
+        }
+    }))
+        (place & isCompared ? compared : taken).set(place & ~isCompared);
+    taken.exclude(compared);
+    return taken;
+}
+
+// The rounds only ever take numbers away, and a place that is stored what it held plus one is handed back whatever it is said to hold: they never get below "any number without a fraction".
+// So such a place is taken to hold integers in a range. If all that its writers then hand over lies in that range, it does: they start inside it and no store leaves it.
+void NumbersOfPositions::assumeIntegersOfCounters()
+{
+    const Program& program = m_inputs.program;
+    uint32_t endOfPlaces = m_firstEntryParameter.isEmpty() ? m_firstMap : m_firstEntryParameter[0];
+    auto isStep = [&](const Writer& writer) {
+        const Function& function = program.at(writer.function);
+        const Value& value = function.at(definitionThroughSameValues(function, writer.value));
+        auto isOne = [&](ValueID operand) {
+            const Type& type = program.typeOf(function, operand);
+            return type.isInteger() && type.integers.isSingleValue() && std::abs(type.integers.minimum) == 1;
+        };
+        if (value.opcode == Opcode::Add || value.opcode == Opcode::Sub)
+            return isOne(value.operand(1)) || (value.opcode == Opcode::Add && isOne(value.operand(0)));
+        return value.opcode == Opcode::Increment || value.opcode == Opcode::Decrement;
+    };
+    BitVector counters(endOfPlaces);
+    for (const FollowedPosition& followed : m_followed) {
+        if (followed.position < endOfPlaces && m_numbers[followed.position].mayBeOtherThanIntegers && followed.firstSharedRange == followed.endOfSharedRanges
+            && std::ranges::any_of(m_writers.subspan(followed.firstWriter, followed.endOfWriters - followed.firstWriter), isStep))
+            counters.quickSet(followed.position);
+    }
+    if (counters.isEmpty())
+        return;
+    counters.filter(findPlacesTakenAsValues(counters));
+
+    ScratchTypeArena arena(program.types);
+    auto assume = [&](const FollowedPosition& followed) {
+        ValueFlowNumbers& numbers = m_numbers[followed.position];
+        ValueFlowNumbers known = numbers;
+        auto holds = [&](Range range) {
+            numbers = { false, range };
+            ValueFlowNumbers arriving = numbersArrivingFrom(arena, followed.firstWriter, followed.endOfWriters, nullptr, true);
+            return std::pair { !arriving.mayBeOtherThanIntegers && arriving.integers.isSubsetOf(range), arriving.integers };
+        };
+        Range widest = known.integers.intersectWith(Range::exact());
+        if (widest.isEmpty() || !holds(widest).first) {
+            numbers = known;
+            return false;
+        }
+        // From what the other writers hand over, an end that a step moves goes all the way: the rounds would take it back one step at a time.
+        ValueFlowNumbers start;
+        for (uint32_t writer = followed.firstWriter; writer < followed.endOfWriters; ++writer) {
+            if (!isStep(m_writers[writer]))
+                start.unite(numbersArrivingFrom(arena, writer, writer + 1, nullptr, true));
+        }
+        Range range = start.integers;
+        while (!range.isEmpty() && range != widest) {
+            auto [isKept, arriving] = holds(range);
+            if (isKept)
+                break;
+            Range wider { arriving.minimum < range.minimum ? widest.minimum : range.minimum, arriving.maximum > range.maximum ? widest.maximum : range.maximum };
+            range = wider == range ? widest : wider;
+        }
+        numbers = { false, range.isEmpty() ? widest : range };
+        return true;
+    };
+    Vector<const FollowedPosition*, 8> waiting;
+    for (const FollowedPosition& followed : m_followed) {
+        if (followed.position < endOfPlaces && counters.quickGet(followed.position))
+            waiting.append(&followed);
+    }
+    // A counter that is also stored another counter waits for that one.
+    while (waiting.removeAllMatching([&](const FollowedPosition* followed) { return assume(*followed); })) { }
 }
 
 void NumbersOfPositions::evaluateSharedRanges(bool isFirstRound)
@@ -2101,8 +2301,11 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         bool keepsTypeAsRead = !isTypedByReplacedCheck.get(value.index());
         const Type& asRead = keepsTypeAsRead ? program.typeOf(function, value) : *anyValue;
         std::optional<ValueFlowNumbers> answered = function.at(value).opcode == Opcode::Call ? numbers.ofCall(id, value) : std::nullopt;
+        if (mayBeStepOfOne(function.at(value).opcode) && !program.typeOf(function, value).isInteger())
+            answered = numbers.numbersOfStep(id, value);
         bool isRemembered = valuesWithoutProof && !answered && keepsTypeAsRead;
-        uint64_t question = static_cast<uint64_t>(function.at(value).type.index()) << 32 | held.index();
+        bool isReadByName = function.at(value).opcode == Opcode::PropGet;
+        uint64_t question = static_cast<uint64_t>(function.at(value).type.index()) << 33 | static_cast<uint64_t>(isReadByName) << 32 | held.index();
         if (isRemembered) {
             if (valuesWithoutProof->inside.contains(question))
                 return;
@@ -2115,7 +2318,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         ValueFlowPositionResult result = positions.resultAt(typeByRules, held, DeadZone::MayBeObserved, answered ? &*answered : nullptr);
         std::optional<Type>& narrowed = result.narrowed;
         bool isTestedLookup = narrowed && inputs.build.validates() && function.at(value).opcode == Opcode::PropGet && !asRead.isSubsetOf(*narrowed, program);
-        if (!narrowed || (!isTestedLookup && !isWorthNarrowing(program, asRead, *narrowed))) {
+        bool readsNoObject = narrowed && isReadByName && asRead.hasObjects() && !narrowed->hasObjects();
+        if (!narrowed || (!isTestedLookup && !readsNoObject && !isWorthNarrowing(program, asRead, *narrowed))) {
             if (isRemembered)
                 (result.proof == ValueFlowProof::OutsideFamily ? valuesWithoutProof->outsideFamily : valuesWithoutProof->inside).add(question);
             return;

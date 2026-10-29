@@ -442,6 +442,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
+// Object.assign(target, source) where it runs no code of the program: nothing the source has may call back, and nothing above the target may intercept a store. Otherwise the call of the built-in does it from the start.
+JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectAssignWithoutCode);
+    JSValue source = JSValue::decode(encodedSource);
+    if (!source.isCell())
+        OPERATION_RETURN(scope, true);
+    if (!source.isObject())
+        OPERATION_RETURN(scope, false);
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
+        OPERATION_RETURN(scope, true);
+    OPERATION_RETURN(scope, PropertyWalk::tryAssign(vm, cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode), asObject(source)));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectCreate);

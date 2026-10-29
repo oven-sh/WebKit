@@ -702,6 +702,8 @@ export interface ClassColumns {
   closedToOtherNames?: readonly ("constructor" | "prototype")[];
   openNamesOfPrototype?: readonly string[];
   openNamesOfConstructor?: readonly string[];
+  /** Native code that was not handed the prototype looks up these names on it and no other, and it stores to none. */
+  namesReadByNativeCodeOnPrototype?: readonly string[];
   hasConstructor?: boolean;
   hasPrototype?: boolean;
   /** False: the constructor has no property `prototype`. The prototype object lies above the instances, and no path from the constructor leads to it. */

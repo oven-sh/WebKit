@@ -491,7 +491,12 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     };
     std::span<const SyntheticExportData> syntheticExports = m_table.syntheticExports(module);
     auto found = std::ranges::find_if(syntheticExports, isNamed);
-    if (found == syntheticExports.end() || !found->isReplaceable)
+    // No code binds a name that is not listed: it is read off the namespace object alone.
+    bool isListed = found != syntheticExports.end();
+    if (isListed ? !found->isReplaceable : !data(m_table.fileBehindFace(module).value_or(module)).mayBeMocked())
+        return false;
+    // An ES module captures nothing: a name that it does not export stays out of it.
+    if (!isListed && data(module).hasExportTable() && !m_table.fileBehindFace(module))
         return false;
 
     Identifier key = Identifier::fromUid(vm, name);
@@ -503,7 +508,7 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
         uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    if (found->hasVariable)
+    if (isListed && found->hasVariable)
         ProgramStatics::writeVariable(m_instance, found->variable, value);
     return true;
 }
@@ -2443,16 +2448,22 @@ bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
 
 void mockExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name, JSValue value)
 {
-    Modules& modules = *modulesOf(realm);
-    modules.tryReplaceExport(modules.moduleWithExportsOf(module), name, value);
+    if (Modules* modules = modulesOf(realm))
+        modules->tryReplaceExport(modules->moduleWithExportsOf(module), name, value);
 }
 
 void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports)
 {
-    Modules& modules = *modulesOf(realm);
-    // Compiled code names objects of a module of the library, so its body runs: the mock stands under its names alone.
-    if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module))
+    // Bun finds the module in the image, whatever the realm.
+    Modules* found = modulesOf(realm);
+    if (!found)
         return;
+    Modules& modules = *found;
+    // Compiled code names objects of a module of the library, so its body runs: the mock stands under its names alone. The body runs now, or it would store over them.
+    if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
+        modules.evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        return;
+    }
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs)
         return;

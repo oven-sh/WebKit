@@ -211,6 +211,9 @@ public:
     TypeID intern(Type&&);
     LayoutSetID intern(LayoutSet&&);
     CalleeSetID intern(CalleeSet&&);
+    // What intern() of the same record would answer, without hashing it, if this arena holds the storage of the id. n tasks of a worker that intern the same long set need not hash it n times.
+    std::optional<LayoutSetID> useAgain(LayoutSetID);
+    std::optional<CalleeSetID> useAgain(CalleeSetID);
     PropertyKeyID intern(const PropertyKey&);
 
     Type adopt(const Type& fromOtherArena);
@@ -282,6 +285,7 @@ private:
     template<typename Record, typename RecordID> RecordID internCanonical(Record&&);
     template<typename Record, typename RecordID> std::optional<RecordID> useExistingIn(TypeInterningPhase::Storage&, const Record&, uint32_t hash);
     template<typename Record, typename RecordID> RecordID didUse(TypeInterningPhase::Storage&, uint32_t position);
+    template<typename Record, typename RecordID> std::optional<RecordID> useAgainInStorage(RecordID);
 
     bool hasLeasedStorage(uint32_t number) const;
     bool shouldCacheResult(LayoutSetID, LayoutSetID) const;

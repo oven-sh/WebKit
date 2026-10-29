@@ -2740,7 +2740,8 @@ public:
     // .*?\] stops at the first ], as [^\]]*\] does, unless what stands behind the ] fails there and matches behind a later ]. That cannot be
     // - where nothing stands behind it: the pattern, or the lookahead, which is not gone back into, ends there;
     // - where another run without an upper bound stands behind it that takes all the first run takes, and the ]. Entered behind a later ], it has only ends that it had behind the
-    //   first, and the search from an end depends on the position alone. Steps of one unit may stand between the two: where one fails, the first run cannot go on either.
+    //   first, and the search from an end depends on the position alone. Steps of one unit may stand between the two: where one fails, the first run cannot go on, and no earlier step can
+    //   take that unit behind a later ], so each step holds the run, the ] and the step in front of it.
     // The run that stops there never goes back, and \[.*?\].*?# no longer walks to the end of the line from every ].
     bool stopsAtFirstEnd(const PatternTerm& run, const TermsInOrder& behind)
     {
@@ -2761,6 +2762,8 @@ public:
             return false;
         for (unsigned step = 1; step < next; ++step) {
             if (!holdsRunAndEnd(*behind[step]) || !isSubset(sets.set(behind[step]->m_matchedSet), sets.set(behind[next]->m_matchedSet)))
+                return false;
+            if (step > 1 && !isSubset(sets.set(behind[step - 1]->m_matchedSet), sets.set(behind[step]->m_matchedSet)))
                 return false;
         }
         return std::ranges::all_of(behind.span().subspan(next + 1), [](const PatternTerm* term) {

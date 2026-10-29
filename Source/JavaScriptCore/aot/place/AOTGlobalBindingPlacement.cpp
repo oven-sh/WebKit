@@ -127,10 +127,15 @@ GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementCon
             function.edit(site.value, ValueEdit::Definition).setBinding(findBinding(ascendingBindings.span(), site.key));
     });
 
+    BitVector keysStoredThroughBindings(program.types.numberOfPropertyKeys());
+    for (const FirstUse& use : firstUses) {
+        if (use.key.isStore)
+            keysStoredThroughBindings.quickSet(use.key.key.index());
+    }
     GlobalBindingTable table;
     table.bindings = Vector<PlacedGlobalBinding>(count, [&](size_t index) {
         const GlobalBindingKey& key = firstUses[index].key;
-        return PlacedGlobalBinding { key, keysStoredByName.quickGet(key.key.index()) };
+        return PlacedGlobalBinding { key, keysStoredByName.quickGet(key.key.index()), !key.isStore && !key.isForTypeOf && keysStoredThroughBindings.quickGet(key.key.index()) };
     });
     context.build.statistics().count(StatisticID::GlobalBindingsPlaced, count);
     return table;
@@ -148,6 +153,8 @@ void encodeGlobalBindingTable(TableEncoder& encoder)
             word |= GlobalBindingTable::isStoredByNameFlag;
         if (binding.key.isForTypeOf)
             word |= GlobalBindingTable::isForTypeOfFlag;
+        if (binding.isStoredThroughBinding)
+            word |= GlobalBindingTable::isStoredThroughBindingFlag;
         return word;
     }));
 }

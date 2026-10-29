@@ -285,7 +285,9 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
     bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
-        if (names.contains(name) || !mayBeReference(analyses.program().typeOf(function, name)))
+        // The values of a function with several results are the operands of a Results, which has no type of its own.
+        bool mayNameObject = mayBeReference(analyses.program().typeOf(function, name)) || numberOfResultsOf(analyses.program(), function, function.at(name)).has_value();
+        if (names.contains(name) || !mayNameObject)
             return;
         if (names.size() < maxNames)
             names.append(name);

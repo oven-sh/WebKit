@@ -119,7 +119,8 @@ class Stringifier {
 public:
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
 #if ENABLE(AOT)
-    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders);
+    enum class ToJSONStep : bool { Pending, Done };
+    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders, ToJSONStep = ToJSONStep::Pending);
 #endif
 
 private:
@@ -159,6 +160,7 @@ private:
 
     enum StringifyResult { StringifyFailed, StringifySucceeded, StringifyFailedDueToUndefinedOrSymbolValue };
     StringifyResult appendStringifiedValue(StringBuilder&, JSValue, const Holder&, const PropertyNameForFunctionCall&);
+    StringifyResult appendValueBehindToJSON(StringBuilder&, JSValue, const Holder&, const PropertyNameForFunctionCall&);
 
     bool willIndent() const;
     void indent();
@@ -332,7 +334,7 @@ String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSVal
 }
 
 #if ENABLE(AOT)
-String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders)
+String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders, ToJSONStep toJSONStep)
 {
     VM& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -343,7 +345,7 @@ String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue valu
 
     StringBuilder result(OverflowPolicy::RecordOverflow);
     Holder root(Holder::RootHolder, nullptr);
-    auto stringifyResult = stringifier.appendStringifiedValue(result, value, root, propertyName);
+    auto stringifyResult = toJSONStep == ToJSONStep::Done ? stringifier.appendValueBehindToJSON(result, value, root, propertyName) : stringifier.appendStringifiedValue(result, value, root, propertyName);
     RETURN_IF_EXCEPTION(scope, { });
     if (result.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(&globalObject, scope);
@@ -406,6 +408,14 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
         value = toJSON(value, propertyName);
         RETURN_IF_EXCEPTION(scope, StringifyFailed);
     }
+
+    RELEASE_AND_RETURN(scope, appendValueBehindToJSON(builder, value, holder, propertyName));
+}
+
+ALWAYS_INLINE Stringifier::StringifyResult Stringifier::appendValueBehindToJSON(StringBuilder& builder, JSValue value, const Holder& holder, const PropertyNameForFunctionCall& propertyName)
+{
+    VM& vm = m_globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Call the replacer function.
     if (isCallableReplacer()) {
@@ -3038,7 +3048,7 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 }
 
 #if ENABLE(AOT)
-static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property, const AOT::JSONHolderRecord* innermostHolder)
+static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property, const AOT::JSONHolderRecord* innermostHolder, Stringifier::ToJSONStep toJSONStep = Stringifier::ToJSONStep::Pending)
 {
     VM& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3054,10 +3064,10 @@ static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSV
         holders.append(JSValue::decode(record->holder).asCell());
 
     if (property.isNumber())
-        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span()));
+        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span(), toJSONStep));
     Identifier name = asString(property)->toIdentifier(&globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span()));
+    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span(), toJSONStep));
 }
 
 static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index)
@@ -3185,6 +3195,19 @@ static bool tryAppendScalarsOfObjectWithExtraProperties(JSGlobalObject& globalOb
     return true;
 }
 
+// A function found under toJSON by a lookup that runs no code. Empty: the general path has to look, and no code has run.
+static JSValue findToJSONWithoutRunningCode(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = object->getPropertySlot(globalObject, vm.propertyNames->toJSON, slot);
+    slot.disallowVMEntry.reset();
+    if (!isFound || slot.isTaintedByOpaqueObject() || !slot.isValue())
+        return { };
+    JSValue function = slot.getPureResult();
+    return function.isCallable() ? function : JSValue();
+}
+
 bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property, const JSONHolderRecord* holders)
 {
     VM& vm = globalObject->vm();
@@ -3203,6 +3226,33 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
         RETURN_IF_EXCEPTION(scope, false);
         if (isAppended)
             return true;
+
+        // An object with a toJSON that answers a primitive needs no serializer of its own. A cycle among the holders is thrown before toJSON runs.
+        JSValue toJSON = value.isObject() && !StringBuilderStorage::hasRepeatedHolder(holders) ? findToJSONWithoutRunningCode(globalObject, asObject(value)) : JSValue();
+        if (toJSON) {
+            JSValue key = property;
+            if (key.isNumber()) {
+                key = jsString(vm, String::number(static_cast<unsigned>(property.asNumber())));
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            auto arguments = WTF::toArray<EncodedJSValue>({ JSValue::encode(key) });
+            JSValue answer = call(globalObject, toJSON, JSC::getCallData(toJSON), value, ArgList { arguments.data(), arguments.size() });
+            RETURN_IF_EXCEPTION(scope, false);
+            failureReason = std::nullopt;
+            if (answer.isNumber() || answer.isBoolean() || answer.isNull() || answer.isString()) {
+                bool isAnswerAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, answer, failureReason);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (isAnswerAppended)
+                    return true;
+            }
+            // toJSON has run: it does not run again, for this object or for what it answered.
+            String text = stringifyProperty(*globalObject, answer, property, holders, Stringifier::ToJSONStep::Done);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (text.isNull())
+                return false;
+            auto result = text.is8Bit() ? builder.append(globalObject, text.span8()) : builder.append(globalObject, text.span16());
+            RELEASE_AND_RETURN(scope, result == StringBuilderStorage::AppendResult::Appended);
+        }
     }
 
     // Only the general serializer calls toJSON, which is told the key.

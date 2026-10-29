@@ -19,6 +19,7 @@
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <concepts>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -747,6 +748,8 @@ Type computeResultType(const TypingContext& context, const Value& value)
     return computeResultType(context, value, 0);
 }
 
+static std::optional<SharedAnswers> answerSharingFor(const Value&);
+
 namespace {
 
 struct ResultRulesWithoutType {
@@ -754,9 +757,9 @@ struct ResultRulesWithoutType {
 
     const TypingContext& context;
 
-    enum class Key : uint32_t { Opcode = UINT32_MAX - 15, Constant, Closure, Layout, NamedRead, SlotRead, CastToType, CastOfOperand };
+    enum class Key : uint32_t { Opcode = UINT32_MAX - 15, Constant, Closure, Layout, NamedRead, SlotRead, CastToType, CastOfOperand, ElementRead };
 
-    TypeID rememberedResult(Key key, SharedAnswers answers, const Value& value, NOESCAPE const auto& addWords)
+    TypeID rememberedResult(Key key, std::optional<SharedAnswers> answers, const Value& value, NOESCAPE const auto& addWords)
     {
         if (!context.memo)
             return { };
@@ -966,6 +969,23 @@ struct ResultRulesWithoutType {
         });
     }
 
+    // Reads of one list differ in their access sites, which the answer does not hang on. A list of n functions read at n sites would hash the n functions at each.
+    TypeID declaredContents(const Value& value, std::integral auto operandIndex, auto&&)
+    {
+        if (value.opcode == Opcode::ElemGet) {
+            return rememberedResult(Key::ElementRead, answerSharingFor(value), value, [&](auto& hasher) {
+                hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), context.typeIDOf(value.propertyOperand()).index());
+                hasher.add(level());
+            });
+        }
+        if (value.opcode == Opcode::GetArrayElement) {
+            return rememberedResult(Key::ElementRead, answerSharingFor(value), value, [&](auto& hasher) {
+                hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), level());
+                hasher.add(value.flags, static_cast<uint32_t>(value.arrayStorage()));
+            });
+        }
+        return { };
+    }
     TypeID declaredContents(auto&&...) { return { }; }
     TypeID declaredResult(auto&&...) { return { }; }
 };

@@ -10827,7 +10827,9 @@ class YarrGenerator final : public YarrJITInfo {
         storeToFrame(m_regs.regT0, frameLocation);
         m_jit.popToRestore(m_regs.regT0);
         MacroAssembler::JumpList done;
-        if (required.greatestDistance <= greatestRequiredTextDistance) {
+        // A pattern that counts turns can run out of them at a place that the text rules out, as the JIT does: makes an attempt at every place. A text that is absent still answers, since giving up answers as no match does.
+        bool movesStart = !m_containsNestedSubpatterns;
+        if (movesStart && required.greatestDistance <= greatestRequiredTextDistance) {
             m_jit.sub32(MacroAssembler::TrustedImm32(required.greatestDistance), m_regs.index);
             MacroAssembler::Jump isBehindStart = m_jit.branch32(MacroAssembler::GreaterThan, m_regs.index, m_regs.regT0);
             m_jit.move(m_regs.regT0, m_regs.index);
@@ -10853,7 +10855,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.popToRestore(m_regs.regT0);
         generateFailReturn();
         done.link(&m_jit);
-        if (required.knowsUnitsInFront) {
+        if (movesStart && required.knowsUnitsInFront) {
             loadFromFrame(frameLocation, m_regs.regT0);
             m_jit.sub32(MacroAssembler::TrustedImm32(static_cast<int32_t>(claimed) - static_cast<int32_t>(required.leastDistance)), m_regs.regT0);
             generateWalkBackOver(required.asciiMembersInFront, required.allNonASCIICanStandInFront);
@@ -10933,7 +10935,7 @@ class YarrGenerator final : public YarrJITInfo {
         bool hasStartSearch = hasSelectiveStartSearch();
         m_requiredTexts.removeAllMatching([&](const RequiredText& required) {
             if (required.isAllThatMatchesAtEndHold)
-                return false;
+                return m_containsNestedSubpatterns;
             // An attempt that fails within a few units costs less than the code of a search: what pays is a text behind a run.
             return hasStartSearch || required.greatestDistance == required.leastDistance || required.leastDistance > greatestRequiredTextDistance || !canGenerateSharedRoutine(SharedRoutine { requiredTextRoutine(required) });
         });
@@ -11013,6 +11015,24 @@ class YarrGenerator final : public YarrJITInfo {
                 if (std::ranges::none_of(rest, canFail) || std::ranges::any_of(rest, dependsOnMoreThanPosition))
                     break;
                 bool isGreedy = op.m_term->quantityType == QuantifierType::Greedy;
+                // Behind runs that never go back, an attempt goes one way up to the last run and enters it no further left than the attempt before. That run keeps its place in a slot.
+                if (hasOneAlternative && !isInLookahead && op.m_term->possessive() && m_frameMode != FrameMode::Omitted) {
+                    size_t lastRun = 0;
+                    for (size_t j = i + 1; j < end; ++j) {
+                        const YarrOp& next = m_ops[j];
+                        if (next.m_op != YarrOpCode::Term || next.m_direction != Forward || (next.m_term->type != PatternTerm::Type::PatternCharacter && next.m_term->type != PatternTerm::Type::CharacterClass))
+                            break;
+                        if (next.m_term->quantityType == QuantifierType::FixedCount)
+                            continue;
+                        if (next.m_term->quantityMaxCount != quantifyInfinite)
+                            break;
+                        lastRun = j;
+                        if (!next.m_term->possessive())
+                            break;
+                    }
+                    if (lastRun && std::ranges::any_of(m_ops.span().subspan(lastRun + 1, end - lastRun - 1), canFail))
+                        m_ops[lastRun].m_failedRunSlot = firstSlot + slots++;
+                }
                 if (!hasOneAlternative) {
                     if (!isGreedy || !isInLookahead)
                         op.m_failedRunSlot = firstSlot + slots++;

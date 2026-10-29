@@ -2,7 +2,7 @@ enum AllocationStorage { | engine Heap Frame FrameUntilMaterialized }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum ArrayLiteralStorage { | engine Fresh Profiled }
 enum TailCallRequirement { | engine Required Allowed }
-enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray }
+enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray MadeOnce }
 enum ExpectedElements { | engine Anything Int32Array Uint8Array }
 enum OperatorForm {
     | engine Unselected Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
@@ -28,7 +28,7 @@ operation String (string: String) -> constant ; CreatesConstant ; runtime = Stri
 operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigIntConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves
-operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
+operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) [| engine isNeverToldApart] -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
 operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowsWithoutRule = true
 engine operation KeyConstant (key: PropertyKey) -> constant ; CreatesConstant ; runtime = KeyConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Unspecified (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed
@@ -112,7 +112,7 @@ operation StrictEq (left: Any/inspects, right: Any/inspects, engine from Selecte
 operation InstanceOf (value: Any/inspects+runs(PrototypeChain), constructor: Any/inspects+runs(HasInstance+Named(prototype)), writtenExpression?: String) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = InstanceOfAndCache ; branches = May ; flow = TableProves ; flowRule = InstanceOf
 operation ToBoolean (value: Any/inspects, engine from Selected form: OperatorForm) -> natural(boolean) ; none ; runtime = ToBoolean ; proves = Truthiness ; branches = May ; interpreted = Test ; flow = TableProves ; hasKnownValueRule = true ; hasOwnFoldingRule = true
 operation LogicalNot (value: Boolean/inspects) -> natural(boolean) ; none ; flow = TableProves ; hasKnownValueRule = true
-operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves
+operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves ; hasOwnFoldingRule = true
 operation ToString (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves ; hasOwnFoldingRule = true
 operation Strcat (parts...: Any/Converted) [| engine isLikelyKey] -> natural(string) ; CreatesString ; runtime = Concatenate ; flow = TableProves
 operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
@@ -138,7 +138,7 @@ operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: A
 operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, engine calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
 operation ConstructList (callee: Any/calls, newTarget?: Any/retains, list: Array/Listed, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = ConstructWithArray ; flow = TableProves ; flowRule = Call
 operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin) [| engine isNeverInlined isAlwaysInlined isAfterInlinedHead isConstruction callsOwnFunctionObject calleeIsKeptInFrame calleeIsPredicted] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; flowsWithoutRule = true
-engine operation CallTable (function: Function(Call), arguments...: Declared/retains, key: PropertyKey, receivers: LayoutSet, entrypoints: List<Function(Call)>, with CallStamp) -> declared(function) ; unknownCode by Call ; Prepared..Placed ; accessClass = IndirectCall
+engine operation CallTable (function: Function(Call), arguments...: Declared/retains, key: PropertyKey, receivers: LayoutSet, entrypoints: CalleeSet, with CallStamp) -> declared(function) ; unknownCode by Call ; Prepared..Placed ; accessClass = IndirectCall
 operation Results (values...: Declared/returns) -> results(..) ; none ; flow = Copies ; flowsWithoutRule = true
 operation ResultAt (results: Results/inspects, index: UInt32) -> declared(results) ; none ; interpreted = List ; flow = Copies ; flowsWithoutRule = true
 

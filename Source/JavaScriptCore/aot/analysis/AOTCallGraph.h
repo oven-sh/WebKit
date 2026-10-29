@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
+#include "AOTEffectsDescription.h"
 #include "AOTGrouping.h"
 #include "AOTIR.h"
 #include "AOTOpcodesNamingRecords.h"
@@ -269,10 +270,12 @@ struct ReferencesOfBody {
         return functionsOfSites.subspan(first, sitesThatRunCode[position].endOfFunctions - first);
     }
 
-    // Without the functions of the long sets among calleeSets, unless something else names them.
+    // Without the functions of the long sets among calleeSets and enteredSets, unless something else names them.
     Vector<FunctionID> callees;
     Vector<FunctionID> directCallees;
     Vector<CalleeSetID> calleeSets;
+    // The long sets of entrypoints of calls through the method table, one entry for each call. The entrypoints of a short set are among directCallees.
+    Vector<CalleeSetID> enteredSets;
     Vector<FunctionID> otherReferences;
     Vector<TypeID> expectedFunctionTypes;
     Vector<SiteThatRunsCode> sitesThatRunCode;
@@ -410,6 +413,7 @@ void forEachFunctionReferenceAmong(const Program& program, const Function& funct
     };
     Vector<LayoutID, 16> layouts;
     Vector<CalleeSetID, 16> calleeSets;
+    Vector<CalleeSetID, 4> enteredSets;
     auto visitNamed = [&]<typename Reference, typename... Role>(const Reference& reference, Role... role) {
         if constexpr (std::same_as<Reference, FunctionID>)
             visitWritten(reference, role...);
@@ -425,17 +429,23 @@ void forEachFunctionReferenceAmong(const Program& program, const Function& funct
                 functor(declaration, FunctionReferenceKind::Closure);
         }
     };
-    forEachEntry([&](const auto& entry) {
+    forEachEntry([&]<typename Entry>(const Entry& entry) {
         walkReferences(entry, visitNamed);
+        if constexpr (std::same_as<Entry, Value>) {
+            if (entry.opcode == Opcode::CallTable && (enteredSets.isEmpty() || enteredSets.last() != entry.entrypoints()))
+                enteredSets.append(entry.entrypoints());
+        }
     });
 
     AOT::sort(calleeSets);
     removeRepeatedElements(calleeSets);
+    AOT::sort(enteredSets);
     for (CalleeSetID set : calleeSets) {
         if (!shouldRead(set))
             continue;
+        FunctionReferenceKind kind = std::ranges::binary_search(enteredSets, set) ? FunctionReferenceKind::Call : FunctionReferenceKind::Dispatch;
         for (FunctionID callee : program.at(set).written().functions)
-            functor(callee, FunctionReferenceKind::Dispatch);
+            functor(callee, kind);
     }
 
     const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
@@ -486,7 +496,7 @@ void forEachFunctionReference(const Program& program, FunctionID id, const Invoc
     forEachFunctionReference(program, id, functor, [](CalleeSetID) { return true; });
 }
 
-void forEachCalledFunctionAmong(const Function& function, const auto& forEachEntry, const Invocable<void(FunctionID)> auto& functor)
+void forEachCalledFunctionAmong(const Program& program, const Function& function, const auto& forEachEntry, const Invocable<void(FunctionID)> auto& functor)
 {
     auto visitCalled = [&](FunctionID target, FunctionReferenceKind kind) {
         if (kind == FunctionReferenceKind::Call)
@@ -494,6 +504,8 @@ void forEachCalledFunctionAmong(const Function& function, const auto& forEachEnt
     };
     forEachEntry([&](const auto& entry) {
         forEachFunctionReference(entry, visitCalled);
+        for (FunctionID entrypoint : entrypointsOfTableCall(program, entry))
+            functor(entrypoint);
     });
     const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
     forEachFunctionReference(function.creator, [&](FunctionID target, FunctionReferenceKind kind) {
@@ -502,9 +514,9 @@ void forEachCalledFunctionAmong(const Function& function, const auto& forEachEnt
     });
 }
 
-void forEachCalledFunction(const Function& function, const Invocable<void(FunctionID)> auto& functor)
+void forEachCalledFunction(const Program& program, const Function& function, const Invocable<void(FunctionID)> auto& functor)
 {
-    forEachCalledFunctionAmong(function, [&](const auto& visit) {
+    forEachCalledFunctionAmong(program, function, [&](const auto& visit) {
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values)
                 visit(function.at(id));
@@ -519,7 +531,7 @@ void forEachCalledFunction(const Program& program, FunctionID id, const Invocabl
         RELEASE_ASSERT(findTerminatorKindsNaming<FunctionID>().isEmpty());
         return findOpcodesNaming<FunctionID>();
     }();
-    forEachCalledFunctionAmong(program.at(id), [&](const auto& visit) {
+    forEachCalledFunctionAmong(program, program.at(id), [&](const auto& visit) {
         forEachListedValue(program, id, wanted, [&](BlockID, uint32_t, ValueID, const Value& value) {
             visit(value);
         });

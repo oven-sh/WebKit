@@ -15,6 +15,8 @@ export default b.declarations(
     "%CompilerHelpers%.scanPlainURL",
     "%CompilerHelpers%.scanPlainURLWithBase",
     "%CompilerHelpers%.scanPlainURLWithPlainBase",
+    "%CompilerHelpers%.sortByDifference",
+    "%CompilerHelpers%.sortByReversedDifference",
     "%CompilerHelpers%.traverseArray",
   ),
   b.hostRoles(

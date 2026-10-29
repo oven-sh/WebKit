@@ -21,7 +21,7 @@ function firstMatchByStickyForm(source, flags, subject) {
     return null;
 }
 
-const prefixes = ["", "\\[", "a", "[ab]", "\\b", "^", "x.", "(x)", "(?:\\[)"];
+const prefixes = ["", "\\[", "a", "[ab]", "\\b", "^", "x.", "(x)", "(?:\\[)", "\\[[^\\]]*\\]", "a*x", "\\[(\\w*)\\W"];
 const opens = [["", ""], ["(", ")"], ["(?:", ")"], ["(?=(", "))"], ["(?=", ")"], ["(?!", ")"], ["(?=(", "))\\1"], ["(?:", ")?"], ["(?:", "){2}"]];
 const runs = [".*?", ".+?", ".*", ".+", "[^\\]]*", "[^\\]]+?", "\\w+", "\\w*?", "a*", "a+?", "\\s+", "[^]*?", ".{2,}", ".{2,}?", ".{0,3}", "ā*"];
 const rests = ["#", "\\]\\(#", "\\]", "$", "b", "\\b#", "(?:c|#)", "(#)", "(?=#)", "(?<=a)#", ".*#", "\\s*=", ""];
@@ -63,3 +63,7 @@ shouldBe(/\[.*\]\(#/.exec(links), null, "no match, greedy");
 shouldBe(/x*y/.exec("x".repeat(8000)), null, "no match from the first unit on");
 shouldBe(show(/x*y/.exec("x".repeat(8000) + "zy")), "8001:y", "a run that takes nothing");
 shouldBe("a  b   c".replace(/\s+(?=c)/g, "_"), "a  b_c", "every match of a global pattern");
+shouldBe(/\[[^\]]*\].*?#/.exec(links), null, "no match, a run behind a run that never goes back");
+shouldBe(show(/\[[^\]]*\].*?#/.exec(links + "\n[b](#")), "8001:[b](#", "a run behind a run that never goes back");
+shouldBe(show(new RegExp("\\[[^\\]]*\\][^#\\n]*#").exec(links + "\n[b](#")), "8001:[b](#", "two runs that never go back");
+shouldBe(show(new RegExp("\\w+ \\w+ .*?!").exec("a b ".repeat(500) + "\nc d e!")), "2001:c d e!", "three runs");

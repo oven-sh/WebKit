@@ -264,7 +264,8 @@ static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, J
 // A pristine list has no toJSON, and a hole in it reads as undefined.
 static ALWAYS_INLINE bool isListOfNumbers(const JSCell& cell)
 {
-    return cell.type() == ArrayType && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
+    // A subclass of Array can have the mark too, and compiled code writes nothing else for a list that passed its test.
+    return (cell.type() == ArrayType || cell.type() == DerivedArrayType) && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
 }
 
 // A comma or the closing bracket follows each number.

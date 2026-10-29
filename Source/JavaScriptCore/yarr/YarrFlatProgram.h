@@ -193,7 +193,7 @@ public:
         if (startScan == FlatStartScan::None)
             startScan = FlatStartScan::RequiredTextsAlone;
         // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
-        if (std::exchange(hasRunBehindFixedSteps, false))
+        if (std::exchange(skipsStartsBehindFailedRuns, false))
             firstStartFoundByTablesAlone = 0;
     }
 
@@ -217,17 +217,26 @@ public:
     uint8_t startTableDepth { 0 };
     // Some matches begin with a ^ that holds at the start of the input alone. The tables say nothing about them.
     bool mayMatchOnlyAtInputStart { false };
-    // In front of this place there is more to ask than the tables. 1: mayMatchOnlyAtInputStart. The greatest number: hasRunBehindFixedSteps.
+    // In front of this place there is more to ask than the tables. 1: mayMatchOnlyAtInputStart. The greatest number: skipsStartsBehindFailedRuns.
     unsigned firstStartFoundByTablesAlone { 0 };
-    // Every match begins with these steps of one unit each, and then comes a run without an upper bound. See findStartBehindFailedRun().
+    bool skipsStartsBehindFailedRuns { false };
+    // How every match begins: steps of one unit and runs without an upper bound. Only the last, a run, may have a choice of where to end. See findStartBehindFailedRun().
+    struct StepOrRun {
+        uint16_t set { 0 };
+        bool isRun { false };
+    };
+    static constexpr unsigned maxStepsAndRunsAtStart = 8;
+    std::array<StepOrRun, maxStepsAndRunsAtStart> stepsAndRunsAtStart { };
+    uint8_t numberOfStepsAndRunsAtStart { 0 };
+    // The same for the search that knows one run. With several runs there are more steps than a subject has units: that search finds no room for them and hands over, at no cost to the others.
     struct RunBehindFixedSteps {
         static constexpr unsigned maxSteps = 4;
+        static constexpr unsigned moreStepsThanUnits = 1u << 31;
         std::array<uint16_t, maxSteps> stepSets { };
         uint16_t runSet { 0 };
-        uint8_t steps { 0 };
+        unsigned steps { 0 };
     };
     RunBehindFixedSteps runBehindFixedSteps;
-    bool hasRunBehindFixedSteps { false };
     static constexpr unsigned maxStartTableDepth = 4;
     // For sixteen characters at once. Bit i is set in the entry of a character's low four bits and in the entry of its high four bits if the character can be at place i, and for some that cannot.
     // The bits of the places from startTableDepth on are set everywhere.

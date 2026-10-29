@@ -2191,6 +2191,8 @@ SplitStringStep appendSplitStringStep(IRBuilder& builder, const SplitString& spl
     return { branch.notTaken, start, end, next };
 }
 
+AOT_THRESHOLD(uint64_t, maxBytesOfJoinedTexts, 256);
+
 PassOutcome fuseConcatenations(FunctionPassContext& context)
 {
     const Program& program = context.program;
@@ -2721,9 +2723,50 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
         }
     }
     numberOfAbsorbedValues += eraseAbsorbedValues();
+
+    // Neighboring texts of a concatenation are one text: `s + "a" + "b"`.
+    bool didJoinTexts = false;
+    auto textOf = [&](ValueID part) -> std::optional<StringID> {
+        KnownValue known = knownValueOf(program, function, part);
+        return known.kind() == KnownValue::Kind::String ? std::optional(known.asString()) : std::nullopt;
+    };
+    // In UTF-8 a larger byte begins a character outside Latin-1.
+    auto isWide = [&](StringID text) { return std::ranges::any_of(program.string(text), [](uint8_t byte) { return byte > 0xc3; }); };
+    for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& concatenation = function.at(values[index]);
+            if (concatenation.opcode != Opcode::Strcat)
+                continue;
+            Vector<ValueID, 16> parts;
+            for (ValueID part : concatenation.operands()) {
+                std::optional<StringID> right = textOf(part);
+                std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
+                // How a text is held follows its literal, so a narrow one and a wide one stay apart.
+                if (!left || isWide(*left) != isWide(*right) || program.string(*left).size() + program.string(*right).size() > maxBytesOfJoinedTexts) {
+                    parts.append(part);
+                    continue;
+                }
+                Vector<char16_t> leftBuffer;
+                Vector<char16_t> rightBuffer;
+                Value joined = IRBuilder::make(Opcode::String);
+                String text = makeString(program.strings.viewOf(*left, leftBuffer), program.strings.viewOf(*right, rightBuffer));
+                joined.setString(context.strings.intern(StringView(text)));
+                parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
+            }
+            // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
+            if (parts.size() < 2 || parts.size() == concatenation.numberOfOperands())
+                continue;
+            becomeConcatenationOf(values[index], parts.span());
+            didJoinTexts = true;
+        }
+        builder.applyInsertions();
+    }
+
     if (numberOfAbsorbedValues)
         context.build.statistics().count(StatisticID::ConcatenationsFused, numberOfAbsorbedValues);
-    else if (!didMoveStrings && !didDropParts)
+    else if (!didMoveStrings && !didDropParts && !didJoinTexts)
         return PassOutcome::Unchanged;
     // The analyses were told of every edit, so whatever they hold was made behind the last one.
     context.keptAnalyses = allAnalyses;

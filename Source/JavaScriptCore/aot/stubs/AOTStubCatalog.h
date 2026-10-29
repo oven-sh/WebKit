@@ -87,6 +87,7 @@ struct StubPolicy {
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> expectedFieldTableEntries;
     // A lookup in the field table tests the forms one after the other. In a program with many optional fields most reads by name that miss the first form find a JSValue in the Extension.
     bool readsTestOutOfLineValuesSecond { false };
+    bool readsTestDoublesSecond { false };
     // [RegExpRecordID::index()], for the literal without the flag g.
     Vector<RegExpLiteralConstants> regExpLiterals;
 };

@@ -271,7 +271,11 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     // Whoever has the setter in hand calls it with any value.
     if (replaceMembersThroughSettersFoundFrom(receivers, key, search, nullptr, part == HeapPropertyPart::Setter))
         addFunctionNobodyFollows();
-    if (search == PropertySearch::OwnProperty && holdsOnlyWhatWasWritten(receivers) && holdsOnlyWhatWasWritten(withSourcesOfCopies(m_context, known(receivers)))) {
+    // The "length" of a function of native code is a value, whoever made the function. Only a program lays an accessor there.
+    ClimbingSet mayHoldAccessorOfTable = receivers;
+    if (search == PropertySearch::OwnProperty && key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::length))
+        mayHoldAccessorOfTable = m_context.restrict(receivers, ValueSets::complement(m_universe.builtinFunctions()));
+    if (search == PropertySearch::OwnProperty && holdsOnlyWhatWasWritten(mayHoldAccessorOfTable) && holdsOnlyWhatWasWritten(withSourcesOfCopies(m_context, known(mayHoldAccessorOfTable)))) {
         readOwn(withSourcesOfCopies(m_context, known(receivers)), foundName(key, part), m_statement.result);
         if (mayFindAccessorOfArguments)
             addFunctionNobodyFollows();

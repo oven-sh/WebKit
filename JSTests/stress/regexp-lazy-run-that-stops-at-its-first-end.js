@@ -15,11 +15,11 @@ const heads = ["", "\\[", "a", "(x)?", "^"];
 const runs = [".*?", ".+?", "[^]*?", "[ab]*?", "\\w*?", "[^c]+?", "a*?", "(.*?)", "(?:\\w+?)", "((a)*?)"];
 const ends = ["\\]", "b", "c", "[bc]", "#", "\\n", "B", "."];
 const rests = [
-    "", ".*?#", ".*#", ".+?#", "(.*?)#", "..*?#", "[^]*?#", "\\w*#", "[ab]*?#", "a.*?#", "$", "\\b", "(?=#)", ".*?(?:#|c)", ".*?#\\1", ".*?(?:ab)*#", ".*?\\].*?#", "(.*)", "(?:.*?#)?", "\\]",
+    "", ".*?#", ".*#", ".+?#", "(.*?)#", "..*?#", "[^]*?#", "\\w*#", "[ab]*?#", "a.*?#", "$", "\\b", "(?=#)", ".*?(?:#|c)", ".*?#\\1", ".*?(?:ab)*#", ".*?\\].*?#", "(.*)", "(?:.*?#)?", "\\]", "[^].[^]*", "[^].[^]*#", ".[^][^]*#", "..[^]*#", "[^][^][^]*#",
 ];
 const subjects = [
     "", "a", "]", "a]", "[a]", "[a]b#", "[a][b]#", "[a]\n[b]#", "ab]ab]#", "aab", "abcabc#", "abc\nabc#", "b#b", "a]]#", "[]#", "xa]b]c#", "aBb#", "[a](".repeat(6) + "#", "ab".repeat(8) + "]",
-    "ā]ā#", "[ā]b#ā", "cccb#", "]a#]b", "a]a#\\", "bbbb", "####",
+    "ā]ā#", "[ā]b#ā", "cccb#", "]a#]b", "a]a#\\", "bbbb", "####", "x]]\nZ", "x]]\n#", "a]b]\nc#",
 ];
 let matches = 0;
 for (const head of heads) {
@@ -42,6 +42,8 @@ for (const head of heads) {
 }
 shouldBe(matches > 100000, true, "matches");
 
+shouldBe(/^.*?\][^].[^]*/.test("x]]\nZ"), true, "a step that fails where a later end can pass it");
+shouldBe(show(/.*?\][^].[^]*/.exec("x]]\nZ")), "0:x]]\nZ", "the same, with the start free");
 shouldBe(show(/"(.*?)"/.exec('say "a" and "b"')), '4:"a",a', "a quoted word");
 shouldBe(show(/\[(.*?)\].*?"(.*?)"/.exec('x [a] b [c] "d" "e"')), '2:[a] b [c] "d",a,d', "three lazy runs");
 shouldBe(show(/\[.*?\]x/.exec("[a]y[b]x")), "0:[a]y[b]x", "a run that has to pass its first end");

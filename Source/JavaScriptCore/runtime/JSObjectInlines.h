@@ -535,11 +535,9 @@ ALWAYS_INLINE void JSObject::growOutOfLineStorageForTransition(VM& vm, Structure
 
 ALWAYS_INLINE void JSObject::setStructureForAddedProperty(VM& vm, Structure* previous, Structure* next, PropertyOffset offset, PutPropertySlot& slot)
 {
-    if (vm.mayHaveUncacheableTransitions()) [[unlikely]] {
-        setStructureForAddedPropertySlow(vm, previous, next, offset, slot);
-        return;
-    }
     setStructure(vm, next);
+    if (vm.mayHaveUncacheableTransitions() && !next->isCacheableTransitionFrom(previous))
+        return;
     slot.setNewProperty(this, offset);
 }
 

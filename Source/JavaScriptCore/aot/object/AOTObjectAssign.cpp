@@ -101,6 +101,9 @@ static bool isCopiedAsDictionary(Structure* structure)
         return false;
     if (!structure->canPerformFastPropertyEnumeration() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties())
         return false;
+    // A branded Structure would hand the copy the private brand of the source.
+    if (structure->variant() != Structure::StructureVariant::Normal)
+        return false;
     return !structure->mayHaveImmutableProperties() && !structure->mayBePrototype() && !structure->didPreventExtensions() && !structure->hasPolyProto();
 }
 
@@ -125,15 +128,12 @@ static JSFinalObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
     }
     if (extra->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasPrivateNames(vm, structure))
         return nullptr;
+    // Every value is in place before the copy's fence, so a concurrent marker never sees an empty slot.
     Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
-    JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
     PropertyOffset maxOffset = structure->maxOffset();
-    PropertyOffset endOfInlineOffsets = std::min<PropertyOffset>(maxOffset + 1, structure->inlineCapacity());
-    for (PropertyOffset offset = 0; offset < endOfInlineOffsets; ++offset)
-        copy->locationForOffset(offset)->setWithoutWriteBarrier(extra->getDirect(offset));
     for (PropertyOffset offset = firstOutOfLineOffset; offset <= maxOffset; ++offset)
-        copy->locationForOffset(offset)->setWithoutWriteBarrier(extra->getDirect(offset));
-    return copy;
+        butterfly->propertyStorage()[offsetInOutOfLineStorage(offset)].setWithoutWriteBarrier(extra->getDirect(offset));
+    return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, extra->inlineStorage());
 }
 
 JSFinalObject* tryCopyDictionary(VM& vm, JSObject* source)

@@ -542,9 +542,104 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
         uint32_t numberReachedBefore;
     };
     Vector<Step, 32> steps;
+    auto forEachLoadedImport = [&](uint32_t importer, auto&& visit) {
+        for (uint32_t index = graph[importer].firstRequest; index < graph[importer + 1].firstRequest; ++index) {
+            if (isLoadedWithImporter(requests[index]))
+                visit(index, requests[index].target());
+        }
+    };
+    // What a module imports mostly comes behind it here, so one pass over these places carries what reaches a module to its imports. Only a cycle asks for one more.
+    Vector<uint32_t> placeOf(FillWith { }, numberOfModules, 0);
+    {
+        BitVector isVisited(numberOfModules);
+        uint32_t nextPlace = numberOfModules;
+        Vector<std::pair<uint32_t, uint32_t>, 32> path;
+        for (uint32_t start = 0; start < numberOfModules; ++start) {
+            if (isVisited.quickSet(start))
+                continue;
+            path.append({ start, graph[start].firstRequest });
+            while (!path.isEmpty()) {
+                auto& [module, index] = path.last();
+                if (index == graph[module + 1].firstRequest) {
+                    placeOf[module] = --nextPlace;
+                    path.removeLast();
+                    continue;
+                }
+                const ModuleRequestData& request = requests[index++];
+                if (isLoadedWithImporter(request) && !isVisited.quickSet(request.target()))
+                    path.append({ request.target(), graph[request.target()].firstRequest });
+            }
+        }
+    }
+    // A program of many roots spends all its time here: each root's walk goes over what most of the others lead to. So roots with no root below them go as many at once as a word has bits:
+    // a bit for each, carried over the imports in one walk. Modules of a group that the same of them reach stay together.
+    Vector<uint64_t> rootsThatReach(FillWith { }, numberOfModules, 0);
+    Vector<uint32_t> visited;
+    auto splitGroupsByRoots = [&](std::span<const uint32_t> roots) {
+        for (size_t index = 0; index < roots.size(); ++index) {
+            if (reachedFrom[roots[index]])
+                continue;
+            if (!rootsThatReach[roots[index]])
+                visited.append(roots[index]);
+            rootsThatReach[roots[index]] |= 1ull << index;
+        }
+        for (size_t next = 0; next < visited.size(); ++next) {
+            uint32_t importer = visited[next];
+            forEachLoadedImport(importer, [&](uint32_t index, uint32_t target) {
+                if (reachedFrom[target])
+                    return;
+                requestsInsideReachOfRoot.quickSet(index);
+                if (!rootsThatReach[target])
+                    visited.append(target);
+                rootsThatReach[target] |= rootsThatReach[importer];
+            });
+        }
+        AOT::sort(visited, { }, [&](uint32_t module) {
+            return placeOf[module];
+        });
+        bool isInCycle;
+        do {
+            isInCycle = false;
+            for (uint32_t importer : visited) {
+                forEachLoadedImport(importer, [&](uint32_t, uint32_t target) {
+                    if (reachedFrom[target] || (rootsThatReach[target] | rootsThatReach[importer]) == rootsThatReach[target])
+                        return;
+                    rootsThatReach[target] |= rootsThatReach[importer];
+                    isInCycle |= placeOf[target] <= placeOf[importer];
+                });
+            }
+        } while (isInCycle);
+        AOT::sort(visited, { }, [&](uint32_t module) {
+            return std::pair { groupOf[module], rootsThatReach[module] };
+        });
+        std::pair<uint32_t, uint64_t> previous { none, 0 };
+        uint32_t group = none;
+        for (uint32_t module : visited) {
+            std::pair<uint32_t, uint64_t> current { groupOf[module], rootsThatReach[module] };
+            if (current != previous) {
+                previous = current;
+                group = groups.size();
+                groups.append(Group { none, 0 });
+            }
+            groupOf[module] = group;
+            rootsThatReach[module] = 0;
+        }
+        visited.shrink(0);
+    };
     auto goThroughRootsBelow = [&](uint32_t root) {
-        for (const std::pair<uint32_t, uint32_t>& below : rootsBelow(root) | std::views::reverse)
-            steps.append(Step { below.second, none });
+        Vector<uint32_t, 64> roots;
+        for (const std::pair<uint32_t, uint32_t>& below : rootsBelow(root) | std::views::reverse) {
+            if (!rootsBelow(below.second).empty()) {
+                steps.append(Step { below.second, none });
+                continue;
+            }
+            roots.append(below.second);
+            if (roots.size() == 64) {
+                splitGroupsByRoots(roots.span());
+                roots.shrink(0);
+            }
+        }
+        splitGroupsByRoots(roots.span());
     };
     Vector<uint32_t, 32> importers;
     goThroughRootsBelow(outside);
@@ -637,6 +732,8 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
                 lists.append(headOf[static_cast<uint32_t>(pair)]);
         }
         lists[placeOfLength] = lists.size() - placeOfLength - 1;
+        // The numbers of groups depend on the order roots went in.
+        AOT::sort(lists.mutableSpan().subspan(placeOfLength + 1));
     }
     return lists;
 }

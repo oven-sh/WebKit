@@ -1421,6 +1421,7 @@ struct JSONTextWriter final : Emission {
             if (!form.holdsCells) {
                 // Nothing but numbers and holes: the run time writes the list in one call, in fewer instructions a number than a loop here takes.
                 append(make<&Value::setJsonPosition, &Value::setValueOperand>(Opcode::JSONAppendValue, { }, JSONPosition::Element, array));
+                appendLeaveHolders(listed);
                 jumpTo(written);
                 builder().moveToEndOf(hasStorage.notTaken);
                 continue;

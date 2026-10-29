@@ -16,6 +16,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCoroutines.h"
 #include "AOTFrameMapEmitter.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTGenerator.h"
 #include "AOTHeldOperands.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -108,9 +109,15 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     Origin originOfSuspension = value.origin();
     originOfSuspension.isTailCall = false;
     uint32_t site = calls.addSite(value, { .origin = originOfSuspension });
-    patchpoint->setGenerator([records = &m_records, build = &build(), function = m_id, valueID = value.id(), key, site, roots, driverChild, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, build = &build(), function = m_id, valueID = value.id(), subject = analyses().subject(value.id()), key, site, roots, driverChild, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<uint64_t> word = FrameMapEmitter::siteWordFor(records->frameMaps, params, roots, driverChild);
+        if (size_t numberOfWords = records->frameMaps.words.size(); numberOfWords > build->limit(LimitID::MaxFrameMapWords)) {
+            if (!std::exchange(records->frameMaps.didReportLimit, true))
+                build->reportLimitExceeded(LimitID::MaxFrameMapWords, numberOfWords, subject);
+            jit.breakpoint();
+            return;
+        }
         if (!word) {
             build->diagnostics().add(InternalError { .kind = InternalErrorKind::FrameMapNotEncodable, .function = function, .value = valueID });
             jit.breakpoint();

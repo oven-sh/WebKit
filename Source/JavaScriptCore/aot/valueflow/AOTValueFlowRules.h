@@ -19,10 +19,6 @@ ValueSetID unknownValue(ValueFlowRuleContext&, ValueFlowUnknownSource);
 ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
 void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, unsigned numberOfPositionsTaken = numberOfGroupedArguments);
 
-struct ValueFlowObjectsToldApart {
-    Vector<ValueSetID, 16> groups;
-    ValueSetID rest { ValueSets::nothing };
-};
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext&, ClimbingSet knownObjects);
 
 ValueSetID unknownCalleeOfStatement(ValueFlowRuleContext&);

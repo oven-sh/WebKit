@@ -5,7 +5,7 @@
 # STATISTIC: EnvironmentsPromotedToVariables = 1
 # STATISTIC: CapturesPromotedToVariables = 0
 # CHECK: layout L0 kind=Environment name="once"{{*}}flow={allocation=NeverAllocated
-# CHECK: variable g0 name="counter.0" module=m0 declared={type=int|whole} flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+# CHECK: variable g0 name="counter.0" module=m0 declared={type=int[0, 9007199254740992]} flow={writers=AllKnown initialization=StoredBeforeEveryRead}
 # CHECK: variable g1 name="bump.1" module=m0 declared={type=f2{{*}}flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=OnlyCalled}
 # CHECK-NOT: variable g2
 

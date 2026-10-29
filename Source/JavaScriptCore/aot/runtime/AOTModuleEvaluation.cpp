@@ -896,6 +896,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     }
 
     // No link has come to the files. Whoever evaluates a record takes the names behind the body.
+    bool didCaptureLibraryModules = false;
     for (const ModuleRequestData& request : m_table.requests(root)) {
         if (request.isRequire)
             continue;
@@ -904,6 +905,10 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             if (request.isHoisted)
                 continue;
             break;
+        }
+        if (!std::exchange(didCaptureLibraryModules, true)) {
+            captureExportsOfLibraryModules(root);
+            RETURN_IF_EXCEPTION(scope, false);
         }
         if (data(imported).capturesExportsBehindEvaluation()) {
             captureExportsBehindEvaluation(imported);
@@ -2708,7 +2713,7 @@ JSValue Modules::answerRequire(ModuleID target)
             loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
         return loaded.exportsWhileRequired.get();
     }
-    bool answersDefaultExport = targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !isHeldForImport(target));
+    bool answersDefaultExport = targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && !isHeldForImport(target));
     if (status(target) != ModuleStatus::Evaluated) {
         // An evaluation that an import has begun shows the namespace object, with its bindings as they are.
         loaded.isBeingRequired = status(target) != ModuleStatus::Evaluating;

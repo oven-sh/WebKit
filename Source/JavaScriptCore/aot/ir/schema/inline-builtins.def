@@ -26,7 +26,7 @@ inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ;
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
 inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
 inline ObjectHasOwn ObjectPropertyIsEnumerable OwnPropertyDescriptorFields ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
-inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ; asOverload ; family ObjectBuiltin
+inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ObjectAssign ; asOverload ; family ObjectBuiltin
 inline ObjectIs ReturnThis ; none ; family ObjectBuiltin ; optionalSlowPath
 inline NewMap NewSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
 inline MapGet MapHas SetHas ; CreatesConstant ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath

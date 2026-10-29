@@ -464,13 +464,29 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         seenAtSite.seesListsAsTargets = seesLists;
         listingsOfWorker[receiver.worker].proxiesSeenAtSites.append(WTF::move(seenAtSite));
     };
+    AOT_THRESHOLD(uint32_t, fewestReceiversToRemember, 32);
+    Vector<UncheckedKeyHashMap<uint32_t, LayoutSetID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> receiversOfWorker(inputs.loops().width());
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
         noteProxiesSeenAt(receiver);
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
+        // n accesses of a value that may be any of n objects name the same set: its layouts are listed, hashed and interned once for a worker.
+        bool remembersReceivers = !ValueSets::isComplement(receiver.held) && sets.size(receiver.held) >= fewestReceiversToRemember;
+        if (remembersReceivers) {
+            auto& known = receiversOfWorker[receiver.worker];
+            if (auto found = known.find(receiver.held.index()); found != known.end()) {
+                if (std::optional<LayoutSetID> again = receiver.types.useAgain(found->value)) {
+                    receiver.update.accesses.append(FlowAccessStamp { site, *again });
+                    return;
+                }
+            }
+        }
         if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.held)) {
-            receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
+            LayoutSetID interned = receiver.types.intern(WTF::move(*receivers));
+            if (remembersReceivers)
+                receiversOfWorker[receiver.worker].set(receiver.held.index(), interned);
+            receiver.update.accesses.append(FlowAccessStamp { site, interned });
             return;
         }
         if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver)) {
@@ -534,7 +550,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
     // Where nothing is constructed the callees follow from the two sets of values. n calls of a value that may be any of n functions name the same two sets:
-    // the set of callees is made, hashed and interned for the first. An id of an arena is good in the task of the arena.
+    // the set of callees is made, hashed and interned once for a worker, and each task takes it again from the storage that its arena holds.
     AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
     struct CalleesOfValues {
         bool isKnown { false };
@@ -542,11 +558,8 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
         bool isEmpty { true };
         CalleeSetID interned;
     };
-    struct CalleesOfTask {
-        FunctionID task;
-        UncheckedKeyHashMap<uint64_t, CalleesOfValues, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> ofValues;
-    };
-    Vector<CalleesOfTask> calleesOfWorker(inputs.loops().width());
+    using CalleesOfWorker = UncheckedKeyHashMap<uint64_t, CalleesOfValues, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    Vector<CalleesOfWorker> calleesOfWorker(inputs.loops().width());
     auto findCallees = [&](const StampedOperand& callee, bool isConstruction) {
         std::optional<CalleeSet> found = callee.positions.calleesAt(callee.held, callee.seen, isConstruction ? &callee.operand : nullptr);
         if (!found)
@@ -562,15 +575,16 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
         if (isConstruction || ValueSets::isComplement(callee.held) || ValueSets::isComplement(callee.seen) || inputs.sets().size(callee.held) < fewestMembersToRemember)
             found = findCallees(callee, isConstruction);
         else {
-            CalleesOfTask& known = calleesOfWorker[callee.worker];
-            if (known.task != callee.id) {
-                known.task = callee.id;
-                known.ofValues.clear();
-            }
-            auto added = known.ofValues.add(static_cast<uint64_t>(callee.held.index()) << 32 | callee.seen.index(), CalleesOfValues { });
-            if (added.isNewEntry)
-                added.iterator->value = findCallees(callee, false);
-            found = added.iterator->value;
+            auto added = calleesOfWorker[callee.worker].add(static_cast<uint64_t>(callee.held.index()) << 32 | callee.seen.index(), CalleesOfValues { });
+            CalleesOfValues& known = added.iterator->value;
+            std::optional<CalleeSetID> again;
+            if (!added.isNewEntry && known.interned)
+                again = callee.types.useAgain(known.interned);
+            if (added.isNewEntry || (known.interned && !again))
+                known = findCallees(callee, false);
+            else if (again)
+                known.interned = *again;
+            found = known;
         }
         const CalleesOfValues* callees = found.isKnown ? &found : nullptr;
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);

@@ -87,6 +87,9 @@ void describeOperandCode(const Program&, const Type& operand, const OperandBehav
 void describeOperandCode(const Program&, TypeID operand, const OperandBehavior&, EffectDescription&);
 
 CalleeList calleesOfCall(const Program&, const Value& call);
+// Empty for every other operation. The call enters them, so it keeps them alive, which a stamp does not.
+std::span<const FunctionID> entrypointsOfTableCall(const Program&, const Value& call);
+inline std::span<const FunctionID> entrypointsOfTableCall(const Program&, const Terminator&) { return { }; }
 // The set that calleesOfCall() copies its answer from, if it is one. Reading the set costs nothing per callee.
 CalleeSetID calleeSetOfCall(const Program&, const Value& call);
 // The long set whose functions are the functions that describeCodeRunBy() lists for the call, if there is one.

@@ -4765,13 +4765,6 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
     }
 }
 
-void JSObject::setStructureForAddedPropertySlow(VM& vm, Structure* previous, Structure* next, PropertyOffset offset, PutPropertySlot& slot)
-{
-    setStructure(vm, next);
-    if (next->isCacheableTransitionFrom(previous))
-        slot.setNewProperty(this, offset);
-}
-
 ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     unsigned currentAttributes;

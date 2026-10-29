@@ -1193,6 +1193,20 @@ struct DeadCodeEliminator {
         return block.values.isEmpty() && block.parameters.isEmpty() && block.terminator.kind == TerminatorKind::Jump;
     }
 
+    // What dies in the two arms of a test may leave them the same code.
+    bool isArmOfTestWithSimilarArms(BlockID id) const
+    {
+        std::span<const Edge> edges = cfg.incomingEdges(id);
+        if (edges.size() != 1)
+            return false;
+        const Terminator& test = function.at(edges[0].from).terminator;
+        if (test.kind != TerminatorKind::Branch)
+            return false;
+        const Terminator& taken = function.at(test.taken().block).terminator;
+        const Terminator& notTaken = function.at(test.notTaken().block).terminator;
+        return taken.kind == notTaken.kind && std::ranges::equal(taken.targets, notTaken.targets, { }, &Target::block, &Target::block);
+    }
+
     bool sweep()
     {
         // Whatever is dead at the end was left behind as dead by the walk, or found dead by an edge.
@@ -1218,13 +1232,14 @@ struct DeadCodeEliminator {
                     tookProofsFromEdges |= !!numberOfEdgeResults(function, edges[index].from, edges[index].targetIndex);
                     madeEdgesAlikeOrBlocksEmpty |= index && edges[index - 1].from == edges[index].from;
                     tookArgumentsFromEmptyBlocks |= isEmptyBlockThatJumps(function.at(edges[index].from));
+                    madeEdgesAlikeOrBlocksEmpty |= isArmOfTestWithSimilarArms(edges[index].from);
                 }
                 builder.removeParameters(id, deadParameters);
             }
             if (deadValues.isEmpty() && deadParameters.isEmpty())
                 continue;
             changed = true;
-            madeEdgesAlikeOrBlocksEmpty |= isEmptyBlockThatJumps(block);
+            madeEdgesAlikeOrBlocksEmpty |= isEmptyBlockThatJumps(block) || isArmOfTestWithSimilarArms(id);
         }
         RELEASE_ASSERT(changed);
         return true;
@@ -1273,19 +1288,20 @@ AOT_THRESHOLD(uint64_t, foldedStringBytesPerValue, 64);
 AOT_THRESHOLD(uint64_t, maxFullLengthFoldedStringsPerBody, 16);
 AOT_THRESHOLD(unsigned, maxOperationsBetweenTextAndPattern, 8);
 
+static constexpr std::pair<ASCIILiteral, TypeofType> namesOfTypeofTypes[] = {
+    { "undefined"_s, TypeofType::Undefined },
+    { "bigint"_s, TypeofType::BigInt },
+    { "boolean"_s, TypeofType::Boolean },
+    { "number"_s, TypeofType::Number },
+    { "string"_s, TypeofType::String },
+    { "symbol"_s, TypeofType::Symbol },
+    { "object"_s, TypeofType::Object },
+    { "function"_s, TypeofType::Function },
+};
+
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
 {
-    static constexpr std::pair<ASCIILiteral, TypeofType> names[] = {
-        { "undefined"_s, TypeofType::Undefined },
-        { "bigint"_s, TypeofType::BigInt },
-        { "boolean"_s, TypeofType::Boolean },
-        { "number"_s, TypeofType::Number },
-        { "string"_s, TypeofType::String },
-        { "symbol"_s, TypeofType::Symbol },
-        { "object"_s, TypeofType::Object },
-        { "function"_s, TypeofType::Function },
-    };
-    for (auto& [name, type] : names) {
+    for (auto& [name, type] : namesOfTypeofTypes) {
         if (equalSpans(name.span8(), text))
             return type;
     }
@@ -1531,6 +1547,10 @@ struct ConstantFolder {
         case Opcode::StrictEq:
         case Opcode::Eq:
             return becomeBoolean(id, evaluateTestByTypes(program, function, value)) || foldComparisonOfOneClosure(id, value) || foldTypeOfComparison(id, value);
+        case Opcode::TypeOf:
+            return foldTypeOf(id, value);
+        case Opcode::GetStringCodeUnit:
+            return foldCodeUnitOfConstant(id, value);
         case Opcode::ToBoolean:
             return typeOf(value.valueOperand()).isBoolean() ? becomeOperand(id, value) : becomeBoolean(id, evaluateTestByTypes(program, function, value));
         case Opcode::ToString:
@@ -1540,6 +1560,7 @@ struct ConstantFolder {
             return !type.isNever() && type.hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol) && becomeOperand(id, value);
         }
         case Opcode::ElemGet:
+            return foldCharacterOfConstant(id, value) || convertToNamedAccess(id, value);
         case Opcode::ElemSet:
         case Opcode::ElemHas:
         case Opcode::ElemDelete:
@@ -1619,6 +1640,32 @@ struct ConstantFolder {
             return becomeTypeTest(id, other, Type::forFunction(callee));
         }
         return false;
+    }
+
+    bool foldTypeOf(ValueID id, const Value& value)
+    {
+        const Type& source = typeOf(value.valueOperand());
+        if (source.isNever())
+            return false;
+        for (auto& [name, type] : namesOfTypeofTypes) {
+            std::optional<Type> tested = typeTestedByTypeOf(program, type, source);
+            if (tested && evaluateTypeTest(program, source, *tested) == KnownBoolean::True)
+                return becomeConstant(id, KnownValue::string(context.strings.intern(name.span8())));
+        }
+        return false;
+    }
+
+    bool foldCodeUnitOfConstant(ValueID id, const Value& read)
+    {
+        KnownValue text = knownValueOf(read.stringOperand());
+        KnownValue position = knownValueOf(read.positionOperand());
+        if (text.kind() != KnownValue::Kind::String || position.kind() != KnownValue::Kind::Integer)
+            return false;
+        Vector<char16_t> buffer;
+        StringView characters = program.strings.viewOf(text.asString(), buffer);
+        if (position.asInteger() < 0 || position.asInteger() >= static_cast<int64_t>(characters.length()))
+            return false;
+        return becomeConstant(id, KnownValue::integer(characters[position.asInteger()]));
     }
 
     bool foldTypeOfComparison(ValueID id, const Value& value)
@@ -1977,6 +2024,21 @@ struct ConstantFolder {
         access.setComputedKeyOperand({ });
         access.setKey(key);
         return true;
+    }
+
+    // `'hello'[0]`: the characters of a string are its own properties, and nothing can change them. Past the end the read asks String.prototype, so it stays.
+    bool foldCharacterOfConstant(ValueID id, const Value& read)
+    {
+        KnownValue text = knownValueOf(read.objectOperand());
+        KnownValue index = knownValueOf(read.propertyOperand());
+        if (text.kind() != KnownValue::Kind::String || index.kind() != KnownValue::Kind::Integer)
+            return false;
+        Vector<char16_t> buffer;
+        StringView characters = program.strings.viewOf(text.asString(), buffer);
+        if (index.asInteger() < 0 || index.asInteger() >= static_cast<int64_t>(characters.length()))
+            return false;
+        explainOperationThatGoes(function, id, InPlaceOfOperation::NothingByProofOfThePass);
+        return becomeConstant(id, KnownValue::string(context.strings.intern(characters.substring(index.asInteger(), 1))));
     }
 
     bool convertToNamedAccess(ValueID id, const Value& value)
@@ -2884,6 +2946,9 @@ struct ControlFlowSimplifier {
         if (first.terminator.kind != second.terminator.kind || first.parameters.size() != second.parameters.size() || std::max(first.values.size(), second.values.size()) > maxValuesInSameArms)
             return false;
         if (first.isHandlerBlock() || second.isHandlerBlock() || !haveSameHandler(first, second))
+            return false;
+        // A test of an element also asks whether the element is there. What it finds makes the read itself cheaper, whatever the arms do with the value.
+        if (const Value& test = function.at(branch.conditionOperand()); test.opcode == Opcode::TypeTest && function.at(sameObjectThroughCasts(function, test.valueOperand())).opcode == Opcode::GetArrayElement)
             return false;
         Edge takenEdge { from, 0 };
         Edge notTakenEdge { from, 1 };

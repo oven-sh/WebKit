@@ -433,6 +433,12 @@ bool FlowResults::closuresAreStoredUnder(FunctionID closureFunction, PropertyKey
     });
 }
 
+bool FlowResults::closuresKeepTheirIntegrity(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && !m_tables.functions.functionsWhoseClosuresChangeIntegrity.get(analyzed.index());
+}
+
 bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {

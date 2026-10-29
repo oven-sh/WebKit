@@ -1615,6 +1615,7 @@ private:
                 statement.guardCount,
                 first.operand + statement.firstGuard,
                 statement.guardsOfOperands,
+                statement.key,
             };
         });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {

@@ -120,9 +120,21 @@ void BodyReferenceCollector::readInstruction(const auto& instruction, const Effe
     forEachFunctionReference(instruction, [&](FunctionID target, FunctionReferenceKind kind) {
         addReference(target, kind);
     });
+    CalleeSetID entered;
+    if constexpr (std::same_as<std::remove_cvref_t<decltype(instruction)>, Value>) {
+        if (instruction.opcode == Opcode::CallTable)
+            entered = instruction.entrypoints();
+    }
     forEachCalleeSet(instruction, [&](CalleeSetID set) {
-        m_references.calleeSets.append(set);
+        if (set != entered)
+            m_references.calleeSets.append(set);
     });
+    if (entered && m_program.at(entered).isLong())
+        m_references.enteredSets.append(entered);
+    else {
+        for (FunctionID entrypoint : entrypointsOfTableCall(m_program, instruction))
+            addReference(entrypoint, FunctionReferenceKind::Call);
+    }
     // The description may list the functions of the set or leave them out.
     bool runsLongSet = !!longCalleeSetRunBy(m_program, instruction);
     if (!runsLongSet) {
@@ -167,6 +179,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
         for (FunctionID callee : m_program.at(sets[index]).followed().value())
             add(callee);
     }
+    AOT::sort(m_references.enteredSets);
 
     Vector<FunctionID, 8> sources;
     auto addSource = [&](FunctionID source) {
@@ -201,6 +214,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     moveToExactBuffer(m_references.callees);
     moveToExactBuffer(m_references.directCallees);
     moveToExactBuffer(m_references.calleeSets);
+    moveToExactBuffer(m_references.enteredSets);
     moveToExactBuffer(m_references.otherReferences);
     moveToExactBuffer(m_references.sitesThatRunCode);
     moveToExactBuffer(m_references.functionsOfSites);
@@ -911,6 +925,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             return recordLooksDifferentToCallers[callee.index()];
         }) || std::ranges::any_of(body.calleeSets, [&](CalleeSetID set) {
             return !!longSetListsRecordThatLooksDifferent[set.index()];
+        }) || std::ranges::any_of(body.enteredSets, [&](CalleeSetID set) {
+            return !!longSetListsRecordThatLooksDifferent[set.index()];
         });
         if (callsOne)
             return false;
@@ -956,6 +972,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     Vector<uint32_t> directCallSites(FillWith { }, count, 0u);
     Vector<uint32_t> linkedCallSites(FillWith { }, count, 0u);
     Vector<uint32_t> calleeSetCallSites(FillWith { }, program.types.numberOfCalleeSets(), 0u);
+    Vector<uint32_t> enteredSetCallSites(FillWith { }, program.types.numberOfCalleeSets(), 0u);
     Vector<uint8_t> hasOtherReference(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint8_t> callsUnknownCode(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint8_t> hasBodyByFunction(count);
@@ -998,6 +1015,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
         for (CalleeSetID set : body.calleeSets)
             WTF::atomicExchangeAdd(&calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+        for (CalleeSetID set : body.enteredSets)
+            WTF::atomicExchangeAdd(&enteredSetCallSites[set.index()], 1u, std::memory_order_relaxed);
     });
     std::partial_sum(calleeOffsets.begin(), calleeOffsets.end(), calleeOffsets.begin());
     callees.grow(calleeOffsets[count]);
@@ -1038,7 +1057,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     }
     Vector<uint32_t> longSets;
     for (uint32_t index = 0; index < calleeSetCallSites.size(); ++index) {
-        if (calleeSetCallSites[index] && program.at(CalleeSetID(index)).isLong())
+        if (enteredSetCallSites[index] || (calleeSetCallSites[index] && program.at(CalleeSetID(index)).isLong()))
             longSets.append(index);
     }
     if (!longSets.isEmpty()) {
@@ -1063,12 +1082,18 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         });
         groupByIndex(count, lists.firstSetOfUser, lists.setsOfUsers, [&](const auto& add) {
             for (unsigned index = 0; index < count; ++index) {
-                CalleeSetID previous;
-                for (CalleeSetID set : bodies.m_bodies[index].calleeSets) {
-                    if (set == std::exchange(previous, set) || !program.at(set).isLong())
-                        continue;
-                    add(index, static_cast<uint32_t>(std::ranges::lower_bound(longSets, set.index()) - longSets.begin()));
+                Vector<uint32_t, 8> setsOfUser;
+                for (const Vector<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
+                    CalleeSetID previous;
+                    for (CalleeSetID set : *sets) {
+                        if (set != std::exchange(previous, set) && program.at(set).isLong())
+                            setsOfUser.append(static_cast<uint32_t>(std::ranges::lower_bound(longSets, set.index()) - longSets.begin()));
+                    }
                 }
+                AOT::sort(setsOfUser);
+                removeRepeatedElements(setsOfUser);
+                for (uint32_t set : setsOfUser)
+                    add(index, set);
             }
         });
         groupByIndex(longSets.size(), lists.firstUser, lists.users, [&](const auto& add) {
@@ -1084,6 +1109,13 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             return;
         for (FunctionID callee : program.at(CalleeSetID(index)).followed().value())
             WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
+    });
+    forEachIndexInParallel(loops, enteredSetCallSites.size(), [&](unsigned index) {
+        uint32_t numberOfSites = enteredSetCallSites[index];
+        if (!numberOfSites)
+            return;
+        for (FunctionID entrypoint : program.at(CalleeSetID(index)).written().functions)
+            WTF::atomicExchangeAdd(&directCallSites[entrypoint.index()], numberOfSites, std::memory_order_relaxed);
     });
     times.didFinish("addUpReferences"_s);
     markRecordReferences(program, hasOtherReference, loops);

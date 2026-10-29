@@ -42,6 +42,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="keepsOtherAlive" results=[{type=anything}] {
     v0 = GetModuleVariable variable=g0
-    v1 = TypeOf v0
-    Return v1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = StrictEq v0, v2
+    Return v3
 }

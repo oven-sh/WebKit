@@ -504,6 +504,22 @@ void Modules::captureExportsBehindEvaluation(ModuleID module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The loader has the names of a module of the library when it fetches the module, ahead of the files that the graph runs while it loads.
+// A native module is generated where the graph is linked.
+void Modules::captureExportsOfLibraryModules(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
+    walk->replay(scope, [&](ModuleID module) {
+        return status(module) == ModuleStatus::Unlinked;
+    }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (leaf == ModuleLinkWalk::Leaf::CapturesExports && data(module).exportRule == SyntheticExportRule::RuntimeModule && !isNativeModule(module))
+            captureExports(module);
+    }, [](ModuleID, bool) { });
+    RETURN_IF_EXCEPTION(scope, void());
+    keepLinkWalk(WTF::move(walk));
+}
+
 // What the names are found in.
 JSValue Modules::evaluateForCapture(ModuleID module)
 {

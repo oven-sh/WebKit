@@ -17,6 +17,7 @@
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
 # RUN(IR): pipeline Select
+# REQUIRES(IR): unsanitized-code
 # RUN(X64): lower-to-air loops f1
 # REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1

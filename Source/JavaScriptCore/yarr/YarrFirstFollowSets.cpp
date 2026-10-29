@@ -188,6 +188,8 @@ struct CharacterSetWalker::Walk {
     bool includesEndOfInput { false };
     bool reachedEndOfGroup { false };
     bool reachedEndOfPattern { false };
+    // The walk ended at a lookahead, which takes no input: what stands behind it was not looked at.
+    bool stoppedAtLookahead { false };
     unsigned budget { maxTermsVisitedPerSet };
     std::optional<WordClassKind> failingWordBoundary;
 };
@@ -239,8 +241,10 @@ Outcome CharacterSetWalker::collect(const PatternAlternative& alternative, unsig
             continue;
         case PatternTerm::Type::ParentheticalAssertion:
             if (!term.invert() && term.matchDirection() == Forward) {
-                if (collectLookahead(term, walk) == Outcome::Done)
+                if (collectLookahead(term, walk) == Outcome::Done) {
+                    walk.stoppedAtLookahead = true;
                     return Outcome::Done;
+                }
                 if (!walk.budget)
                     return Outcome::GaveUp;
             }
@@ -359,7 +363,7 @@ Outcome CharacterSetWalker::collectBackReference(const PatternTerm& reference, c
             break;
     }
     walk.budget = body.budget;
-    if (outcome == Outcome::GaveUp || body.reachedEndOfGroup || body.includesEndOfInput)
+    if (outcome == Outcome::GaveUp || body.reachedEndOfGroup || body.stoppedAtLookahead || body.includesEndOfInput)
         return Outcome::GaveUp;
     walk.members.appendVector(body.members);
     return Outcome::Done;

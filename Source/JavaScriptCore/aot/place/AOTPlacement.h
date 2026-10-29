@@ -246,13 +246,16 @@ struct GlobalBindingKey {
 struct PlacedGlobalBinding {
     GlobalBindingKey key;
     bool isStoredByName { false };
+    // Of a read: the program also stores under the name through a binding. Such a read looks at the location alone.
+    bool isStoredThroughBinding { false };
 };
 
 struct GlobalBindingTable {
     static constexpr uint32_t seesScriptBindingsFlag = 1u << 31;
     static constexpr uint32_t isStoredByNameFlag = 1u << 30;
     static constexpr uint32_t isForTypeOfFlag = 1u << 29;
-    static constexpr uint32_t identifierMask = isForTypeOfFlag - 1;
+    static constexpr uint32_t isStoredThroughBindingFlag = 1u << 28;
+    static constexpr uint32_t identifierMask = isStoredThroughBindingFlag - 1;
 
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
 

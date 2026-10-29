@@ -16,6 +16,7 @@
 #include "AOTOperatorEmitter.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTRuntimeValidationEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsArrays.h"
 #include "ArrayConventions.h"
@@ -423,6 +424,33 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
     } else if (generator().validatesOrChecksProofs() && !readsHoleAsNaN(value))
         emitter<RuntimeValidationEmitter>().checkPrecondition(value, logicalNot(this->isHole(form, rawElement)));
     return convertRawElement(form, rawElement, value.representation(), typeOf(value.id()));
+}
+
+const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
+{
+    const Type& receiver = typeOf(read->objectOperand());
+    if (read.shape() != CodeShape::Fast || !receiver.hasOnlyLayouts() || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+        return nullptr;
+    std::span<const LayoutID> layouts = m_program.at(receiver.layouts).completeMembers();
+    if (layouts.size() != 1)
+        return nullptr;
+    // A record's layout may be one that a test has guessed, on a rare arm: what is read by position there has any storage.
+    if (m_program.at(layouts[0]).kind != LayoutKind::Container)
+        return nullptr;
+    const PlacedSlot& word = m_placement.slots().extraPropertiesWord(layouts[0]);
+    return word.hasStorage() ? &word : nullptr;
+}
+
+Boxed ElementAccessEmitter::readElementOfExtraProperties(CellPointer object, const PlacedSlot& extraPropertiesWord, Integer index, LBasicBlock notFound)
+{
+    CellPointer holder = emitter<SlotEmitter>().extraPropertiesOf(object, extraPropertiesWord, notFound);
+    branchUnless(holdsBoxedElements(indexingMode(holder, arrayStorageTestMask)), notFound);
+    ArrayElements elements = elementsOf(holder);
+    LengthTest test = testLength(index, elements);
+    branchUnless(test.isInside, notFound);
+    Boxed rawElement = loadBoxedElement(elements, test.indexInside);
+    branchUnless(isNotEmpty(rawElement), notFound);
+    return rawElement;
 }
 
 Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const ArrayElements& elements, Integer index, LBasicBlock isAbsent)

@@ -12,6 +12,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTFieldTable.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTNameClass.h"
 #include "AOTPlacement.h"
@@ -478,6 +479,19 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
 
     bool seesScriptBindings = value->seesScriptBindings();
     Pointer record = globalBindingAddress(binding);
+    if (probesBindingLocationInline(value.shape()) && m_placement.globalBindings().bindings[binding.index()].isStoredThroughBinding) {
+        LBasicBlock slowPath = newBlock();
+        Join<Boxed> join(m_out);
+        Boxed read(m_out.load64(globalBindingLocationOrElse(record, seesScriptBindings, slowPath)));
+        branchUnless(isNotEmpty(read), slowPath);
+        validateGlobalBinding(value, read);
+        join.add(read);
+        m_out.appendTo(slowPath);
+        RuntimeOperation operation = seesScriptBindings ? RuntimeOperation::GetGlobalBinding : RuntimeOperation::GetGlobalObjectBinding;
+        join.add(callOperation<Boxed>(value, operation, { word32(static_cast<int32_t>(binding.index())) }, { .isOnRarePath = true }));
+        define(value, join.finish());
+        return;
+    }
     LBasicBlock constantCase = newBlock();
     LBasicBlock slowPath = newBlock();
     Join<Boxed> join(m_out);
@@ -728,7 +742,26 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
     } else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
         stub = getByValCachedCells();
     recordArrival(value, object);
-    define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
+    if (!extraPropertiesWord) {
+        define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
+        return;
+    }
+    LBasicBlock outOfLine = newBlock();
+    OperandJoin join(m_out, Representation::JSValue);
+    Integer index;
+    if (key->isInteger)
+        index = Integer(key->value);
+    else {
+        Boxed boxedKey(key->value);
+        branchUnless(isInt32(boxedKey), outOfLine);
+        index = signExtended(unboxInt32(boxedKey));
+    }
+    join.add(elements.readElementOfExtraProperties(in<CellPointer>(value->objectOperand()), *extraPropertiesWord, index, outOfLine));
+    m_out.appendTo(outOfLine);
+    join.add(Boxed(callStub(value, stub, { object.value(), key->value }).first));
+    define(value, join.finish());
 }
 
 void AccessEmitter::generateElemSet(const ValueContext& value)

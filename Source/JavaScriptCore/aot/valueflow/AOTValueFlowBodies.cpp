@@ -1116,27 +1116,11 @@ private:
             addSite({ ValueFlowSiteOrigin::Operation, id, 2, { }, BuiltinClasses::Array });
         }
 
-        if (const Module* required = value.opcode == Opcode::RequireModule && isWrittenInProgram() ? &m_program.at(value.module()) : nullptr; required && required->kind == ModuleKind::Runtime) {
-            const BuiltinTable& builtins = m_program.builtins();
-            BuiltinID holder = builtins.namespaceOf(required->runtimeModule);
-            auto isLoader = [&](BuiltinID member) {
-                return builtins.letsInUnseenCode(builtins.canonicalID(member));
-            };
-            if (holder && std::ranges::any_of(builtins.membersOf(builtins.canonicalID(holder)), isLoader))
-                m_requiredHoldersOfLoaders.append({ id, builtins.canonicalID(holder) });
-        }
-
         if (value.opcode == Opcode::PropGet) {
             const BuiltinTable& builtins = m_program.builtins();
             BuiltinID named = entryNamedByOperations(m_program, m_function, id);
             if (const Value& holder = m_function.at(definitionThroughSameValues(m_function, value.objectOperand())); !named && holder.opcode == Opcode::ModuleBuiltin)
                 named = findOwnMember(m_program, builtins.canonicalID(holder.builtin()), value.key());
-            // require("node:module").createRequire, or a pattern that takes it out.
-            for (auto [required, holder] : m_requiredHoldersOfLoaders) {
-                BuiltinID member = named ? BuiltinID() : findOwnMember(m_program, holder, value.key());
-                if (member && builtins.letsInUnseenCode(builtins.canonicalID(member)) && definitionThroughTests(m_function, value.objectOperand()) == required)
-                    named = member;
-            }
             if (named && builtins.letsInUnseenCode(builtins.canonicalID(named)) && isWrittenInProgram())
                 m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), constantOf({ ValueFlowObjectKind::Builtin, builtins.canonicalID(named).index(), { } }), 0 });
             if (named && builtins.at(named).origin == BuiltinOrigin::Host && isCallableBuiltin(builtins, named))
@@ -2117,10 +2101,27 @@ private:
         return entry.flags.contains(BuiltinFlag::IsCompilerHelper) || entry.holder == Builtins::BunBundle;
     }
 
+    PropertyKeyID keyOfStatement(const Value& value) const
+    {
+        if (Value::opcodesWithKey.contains(value.opcode))
+            return value.key();
+        if (!Value::opcodesWithCalleeKey.contains(value.opcode))
+            return { };
+        PropertyKeyID key = value.calleeKey();
+        ValueID receiver = value.thisValueOperand();
+        if (!key || !receiver || m_program.isIndexLike(key))
+            return { };
+        const Value& read = m_function.at(definitionThroughSameValues(m_function, value.calleeOperand()));
+        if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != key)
+            return { };
+        return definitionThroughSameValues(m_function, read.objectOperand()) == definitionThroughSameValues(m_function, receiver) ? key : PropertyKeyID();
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
+        statement.key = keyOfStatement(value);
         if (value.opcode == Opcode::PropGet || value.opcode == Opcode::ModuleNamespace) {
             if (!std::exchange(m_hasFoundReadsHandedOn, true))
                 findReadsHandedOn();
@@ -2245,7 +2246,6 @@ private:
     Vector<ValueID, 96> m_statementOperands;
     Vector<ObservedValue, 16> m_observedValues;
     Vector<std::pair<ValueID, ValueID>, 4> m_comparedValues;
-    Vector<std::pair<ValueID, BuiltinID>, 1> m_requiredHoldersOfLoaders;
     Vector<ValueID, 8> m_checks;
     BitVector m_isBehindCheck;
     Vector<Forms, 48> m_forms;

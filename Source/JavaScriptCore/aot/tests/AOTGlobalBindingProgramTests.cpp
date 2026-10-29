@@ -28,6 +28,7 @@ std::span<const NativeTest> globalBindingProgramTests();
 static_assert(GlobalBindings::seesScriptBindingsFlag == Typed::GlobalBindingTable::seesScriptBindingsFlag);
 static_assert(GlobalBindings::isStoredByNameFlag == Typed::GlobalBindingTable::isStoredByNameFlag);
 static_assert(GlobalBindings::isForTypeOfFlag == Typed::GlobalBindingTable::isForTypeOfFlag);
+static_assert(GlobalBindings::isStoredThroughBindingFlag == Typed::GlobalBindingTable::isStoredThroughBindingFlag);
 static_assert(GlobalBindings::identifierMask == Typed::GlobalBindingTable::identifierMask);
 
 // The program stores to the name, so no proof says what a read of it finds.

@@ -1,3 +1,4 @@
+// As in GeneratorPrototype.ts, every path makes the result in one place.
 $visibility = "Private";
 export function next() {
     "use strict";
@@ -7,11 +8,15 @@ export function next() {
 
     const generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);
     const step = $stepGenerator(generator, $resumeModeNext, undefined, $generatorStepCheckIsGenerator);
-    const result = $resultAt(step, $stepGeneratorResultValue);
+    let result = $resultAt(step, $stepGeneratorResultValue);
     const status = $resultAt(step, $stepGeneratorResultStatus);
-    if (status === $generatorStepStatusNotStepped)
-        return $resumeGenerator(generator, $resumeModeNext, undefined);
-    return $makeIteratorResult(result, status === $generatorStepStatusCompleted);
+    let done = status === $generatorStepStatusCompleted;
+    if (status === $generatorStepStatusNotStepped) {
+        const answer = $resumeGenerator(generator, $resumeModeNext, undefined);
+        result = answer.value;
+        done = answer.done === true;
+    }
+    return $makeIteratorResult(result, done);
 }
 
 $overriddenName = "return";
@@ -24,11 +29,15 @@ export function return_() {
     var generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);
     if (!$isGeneratorSuspendedAtStart(generator)) {
         const step = $stepGenerator(generator, $resumeModeReturn, undefined, $generatorStepCheckIsGenerator);
-        const result = $resultAt(step, $stepGeneratorResultValue);
+        let result = $resultAt(step, $stepGeneratorResultValue);
         const status = $resultAt(step, $stepGeneratorResultStatus);
-        if (status === $generatorStepStatusNotStepped)
-            return $resumeGenerator(generator, $resumeModeReturn, undefined);
-        return $makeIteratorResult(result, status === $generatorStepStatusCompleted);
+        let done = status === $generatorStepStatusCompleted;
+        if (status === $generatorStepStatusNotStepped) {
+            const answer = $resumeGenerator(generator, $resumeModeReturn, undefined);
+            result = answer.value;
+            done = answer.done === true;
+        }
+        return $makeIteratorResult(result, done);
     }
 
     $resumeGenerator(generator, $resumeModeReturn, undefined);

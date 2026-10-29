@@ -111,7 +111,7 @@ public:
             program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
-        findRunBehindFixedSteps();
+        findStepsAndRunsAtStart();
         computeDirtyCaptureRanges();
 
         if (!program->text.isEmpty()) {
@@ -1057,12 +1057,39 @@ private:
         return term.quantityType == QuantifierType::FixedCount && term.quantityMinCount == 1 && term.quantityMaxCount == 1 && term.parentheses.disjunction->m_alternatives.size() == 1;
     }
 
-    // See findStartBehindFailedRun(). The claim there needs an attempt that got through the steps to fail only after the run has tried all its ends, and the search from an end
-    // to depend on the position alone. So the run is the first choice of the only alternative, in no repeated group, with no back reference behind it.
-    // A lookahead is not gone back into: with the run in one, the attempt has to match as soon as the lookahead does. Nothing may stand behind it but a reference to a group
-    // that is all of it, which reads again what the lookahead has just read: (?=(..))\1, an atomic group by other means.
+    using TermsInOrder = Vector<const PatternTerm*, 16>;
+
+    // A group that is taken once and has one alternative gives its terms.
+    static void appendTermsInOrder(const PatternAlternative& alternative, TermsInOrder& terms)
+    {
+        for (auto& term : alternative.m_terms) {
+            if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.matchDirection() == Forward && isTakenOnce(term))
+                appendTermsInOrder(*term.parentheses.disjunction->m_alternatives[0], terms);
+            else
+                terms.append(&term);
+        }
+    }
+
+    // (?=(..))\\1: an atomic group by other means. The reference reads again what the lookahead has just read.
+    static bool isLookaheadThatEndsPattern(std::span<const PatternTerm* const> terms)
+    {
+        const PatternTerm& lookahead = *terms[0];
+        if (lookahead.type != PatternTerm::Type::ParentheticalAssertion || lookahead.matchDirection() != Forward || lookahead.invert() || lookahead.parentheses.disjunction->m_alternatives.size() != 1)
+            return false;
+        if (terms.size() == 1)
+            return true;
+        auto& inside = lookahead.parentheses.disjunction->m_alternatives[0]->m_terms;
+        const PatternTerm& reference = *terms[1];
+        return terms.size() == 2 && reference.type == PatternTerm::Type::NumberedBackReference && reference.quantityType == QuantifierType::FixedCount && reference.quantityMaxCount == 1
+            && inside.size() == 1 && inside[0].type == PatternTerm::Type::ParenthesesSubpattern && inside[0].capture() && isTakenOnce(inside[0])
+            && inside[0].parentheses.subpatternId == reference.backReferenceSubpatternId;
+    }
+
+    // See findStartBehindFailedRun(). The claim there needs an attempt to go one way up to the last run, to fail only after that run has tried all its ends, and the search from a run's
+    // end to depend on the position alone. So these are the first terms of the only alternative, in no repeated group, with no back reference behind the first run.
+    // A lookahead is not gone back into: with the runs in one, the attempt has to match as soon as the lookahead does.
     // The JIT counts turns in the attempts that are left out here, and gives a match up by their number.
-    void findRunBehindFixedSteps()
+    void findStepsAndRunsAtStart()
     {
         auto& alternatives = m_pattern.m_body->m_alternatives;
         bool hasTables = m_program->startScan == FlatStartScan::OneCharacter || m_program->startScan == FlatStartScan::Table;
@@ -1071,68 +1098,53 @@ private:
         if (alternatives.size() != 1 || alternatives[0]->onceThrough())
             return;
 
-        FlatProgram::RunBehindFixedSteps found;
-        // About the terms behind the groups that are open.
-        bool standsInFrontOfNothing = true;
-        bool standsInFrontOfReference = false;
-        std::span<const PatternTerm> terms = alternatives[0]->m_terms.span();
-        for (;;) {
-            if (terms.empty())
-                return;
-            const PatternTerm& term = terms.front();
-            terms = terms.subspan(1);
-            if (term.matchDirection() != Forward)
-                return;
-            switch (term.type) {
-            case PatternTerm::Type::PatternCharacter:
-            case PatternTerm::Type::CharacterClass: {
-                unsigned set = setForTerm(term);
-                if (hasExceededIndexLimit())
-                    return;
-                if (term.quantityType != QuantifierType::FixedCount) {
-                    if (term.quantityMaxCount != quantifyInfinite)
-                        return;
-                    if (standsInFrontOfReference || std::ranges::any_of(terms, dependsOnMoreThanPosition))
-                        return;
-                    found.runSet = set;
-                    m_program->runBehindFixedSteps = found;
-                    m_program->hasRunBehindFixedSteps = true;
-                    m_program->firstStartFoundByTablesAlone = std::numeric_limits<unsigned>::max();
-                    return;
-                }
-                if (term.quantityMaxCount > FlatProgram::RunBehindFixedSteps::maxSteps - found.steps)
-                    return;
-                for (unsigned i = 0; i < term.quantityMaxCount; ++i)
-                    found.stepSets[found.steps++] = set;
+        TermsInOrder terms;
+        appendTermsInOrder(*alternatives[0], terms);
+        auto& found = m_program->stepsAndRunsAtStart;
+        unsigned count = 0;
+        unsigned countWithLastRun = 0;
+        for (unsigned i = 0; i < terms.size(); ++i) {
+            const PatternTerm& term = *terms[i];
+            if (!countWithLastRun && isLookaheadThatEndsPattern(terms.span().subspan(i))) {
+                terms.shrink(i);
+                appendTermsInOrder(*term.parentheses.disjunction->m_alternatives[0], terms);
+                --i;
                 continue;
             }
-            case PatternTerm::Type::ParenthesesSubpattern:
-                if (!isTakenOnce(term))
-                    return;
-                standsInFrontOfNothing &= terms.empty();
-                standsInFrontOfReference |= std::ranges::any_of(terms, dependsOnMoreThanPosition);
+            if ((term.type != PatternTerm::Type::PatternCharacter && term.type != PatternTerm::Type::CharacterClass) || term.matchDirection() != Forward)
                 break;
-            case PatternTerm::Type::ParentheticalAssertion: {
-                if (term.invert() || term.parentheses.disjunction->m_alternatives.size() != 1)
-                    return;
-                auto& inside = term.parentheses.disjunction->m_alternatives[0]->m_terms;
-                if (!terms.empty()) {
-                    const PatternTerm& reference = terms.front();
-                    bool readsWholeLookahead = reference.type == PatternTerm::Type::NumberedBackReference && reference.quantityType == QuantifierType::FixedCount && reference.quantityMaxCount == 1
-                        && inside.size() == 1 && inside[0].type == PatternTerm::Type::ParenthesesSubpattern && inside[0].capture() && isTakenOnce(inside[0])
-                        && inside[0].parentheses.subpatternId == reference.backReferenceSubpatternId;
-                    if (!readsWholeLookahead || terms.size() > 1)
-                        return;
-                }
-                if (!standsInFrontOfNothing)
-                    return;
+            bool isRun = term.quantityType != QuantifierType::FixedCount;
+            if (isRun ? term.quantityMaxCount != quantifyInfinite : term.quantityMaxCount > FlatProgram::maxStepsAndRunsAtStart)
                 break;
-            }
-            default:
+            unsigned times = isRun ? 1 : term.quantityMaxCount.value();
+            if (times > FlatProgram::maxStepsAndRunsAtStart - count || (!countWithLastRun && !isRun && times > FlatProgram::RunBehindFixedSteps::maxSteps - count))
+                break;
+            unsigned set = setForTerm(term);
+            if (hasExceededIndexLimit())
                 return;
-            }
-            terms = term.parentheses.disjunction->m_alternatives[0]->m_terms.span();
+            if (isRun && !countWithLastRun && std::ranges::any_of(terms.span().subspan(i + 1), [](const PatternTerm* behind) { return dependsOnMoreThanPosition(*behind); }))
+                return;
+            for (; times; --times)
+                found[count++] = { static_cast<uint16_t>(set), isRun };
+            if (!isRun)
+                continue;
+            auto& oneRun = m_program->runBehindFixedSteps;
+            if (!countWithLastRun) {
+                oneRun.steps = count - 1;
+                oneRun.runSet = set;
+                for (unsigned step = 0; step < oneRun.steps; ++step)
+                    oneRun.stepSets[step] = found[step].set;
+            } else
+                oneRun.steps = FlatProgram::RunBehindFixedSteps::moreStepsThanUnits;
+            countWithLastRun = count;
+            if (!term.possessive())
+                break;
         }
+        if (!countWithLastRun)
+            return;
+        m_program->numberOfStepsAndRunsAtStart = countWithLastRun;
+        m_program->skipsStartsBehindFailedRuns = true;
+        m_program->firstStartFoundByTablesAlone = std::numeric_limits<unsigned>::max();
     }
 
     void computeStartScan(Alternatives alternatives)
