@@ -174,3 +174,48 @@ let log = [];
     shouldBe(seen, undefined, "residue from a sibling microtask");
     shouldBe(get(), undefined, "residue after a microtask that captured nothing");
 }
+
+// The module loader loads, links and evaluates an import() in jobs of its own. Where a context was current at the
+// import(), they run under it, and what a module puts in the slot ends with the job that ran the module.
+{
+    log = [];
+    const entered = ["entered"];
+    globalThis.entered = entered;
+    const settled = [];
+    const settle = name => [() => settled.push([name, get()]), error => settled.push([name, get(), error])];
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "graph.js").then(...settle("graph"));
+        import(resources + "tla-importer.js").then(...settle("tla importer"));
+        import(resources + "thenable.js").then(...settle("thenable"));
+        import(resources + "enters.js").then(...settle("enters"));
+    });
+    inContext(B, () => {
+        import(resources + "other-graph.js").then(...settle("other graph"));
+    });
+    import(resources + "plain.js").then(...settle("plain"));
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the jobs of the module loader");
+    const expected = {
+        // Module bodies, a static dependency first, and an import() that a body starts.
+        "graph dependency": A, "graph": A, "graph nested": A,
+        "other graph dependency": B, "other graph": B,
+        // A body behind its own await, and the module that waits for it.
+        "tla before await": A, "tla after await": A, "tla importer": A,
+        // The `then` of a module namespace.
+        "namespace then": A,
+        // A module that enters a context keeps it to the end of its job, and no longer.
+        "enters dependency": A, "enters": entered,
+        // An import() under no context.
+        "plain dependency": undefined, "plain": undefined,
+    };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "all module bodies ran");
+    const expectedSettled = { "graph": A, "tla importer": A, "thenable": A, "enters": A, "other graph": B, "plain": undefined };
+    for (const [name, ctx, error] of settled) {
+        shouldBe(error, undefined, "import() of " + name + " rejected with " + error + ":");
+        shouldBe(ctx, expectedSettled[name], "import() of " + name);
+    }
+    shouldBe(settled.length, Object.keys(expectedSettled).length, "all imports settled");
+}

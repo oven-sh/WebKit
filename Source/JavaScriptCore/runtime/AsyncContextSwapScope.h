@@ -30,6 +30,8 @@
 #include "InternalFieldTuple.h"
 #include "JSCast.h"
 #include "JSGlobalObject.h"
+#include "VM.h"
+#include <optional>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
 
@@ -158,6 +160,33 @@ private:
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
+};
+
+// For a job of the module loader, and for what the loader calls on its way. The loader keeps the async context of
+// whoever asked for a module with the request (ModuleLoadingContext, ModuleLoaderPayload, ModuleRegistryEntry), or in
+// the job where the job has the slot free. Where that context is a store, the job is a continuation of the import()
+// that asked: it runs under the store, and what it leaves in the slot ends with it.
+//
+// Two cases differ from AsyncContextSwapScope:
+// - A job whose request captured no store runs as such a job always did: under what is in the slot, and what it leaves
+//   there stays. An entry point is evaluated by such a job, and what it enters is where the program goes on from.
+// - While a synchronous load drains its jobs, a job under the context that is current already is part of the
+//   require() call. What it enters is the caller's, as it is for a CommonJS module.
+class ModuleLoaderAsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(ModuleLoaderAsyncContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+    {
+        if (asyncContext.isEmpty() || asyncContext.isUndefined()) [[likely]]
+            return;
+        if (vm.synchronousModuleQueue() && asyncContext == AsyncContextSwapScope::current(vm, globalObject)) [[unlikely]]
+            return;
+        m_scope.emplace(vm, globalObject, asyncContext);
+    }
+
+private:
+    std::optional<AsyncContextSwapScope> m_scope;
 };
 
 } // namespace JSC

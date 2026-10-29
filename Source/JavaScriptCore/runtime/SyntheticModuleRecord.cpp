@@ -27,9 +27,15 @@
 #include "SyntheticModuleRecord.h"
 
 #include "ArgList.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSModuleLoader.h"
+#endif
 #include "JSModuleNamespaceObject.h"
 #include "JSONObject.h"
 
@@ -118,7 +124,14 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
     Ref generator = *m_deferredGenerator;
     MarkedArgumentBuffer exportValues;
     Vector<Identifier, 4> exportNames;
-    JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
+    JSObject* lazyExportsSource;
+    {
+        // As JSModuleRecord::evaluate() does for the body of an ES module.
+        std::optional<AsyncContextSwapScope> loaderAsyncContext;
+        if (JSValue asyncContext = moduleLoader()->asyncContext())
+            loaderAsyncContext.emplace(vm, globalObject, asyncContext);
+        lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
+    }
     if (Exception* exception = scope.exception()) [[unlikely]] {
         failed(exception);
         return;

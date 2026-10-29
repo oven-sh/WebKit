@@ -29,6 +29,9 @@
 #if ENABLE(AOT)
 #include "AOTModuleRecord.h"
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include "BuiltinNames.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
@@ -735,7 +738,12 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
+#if USE(BUN_JSC_ADDITIONS)
+    // The modules that wait for this one run in that job, under the async context of whoever evaluates this one.
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, AsyncContextSwapScope::current(vm, globalObject));
+#else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+#endif
     // 9. Perform ! module.ExecuteModule(capability).
     execute(globalObject, promise);
     RETURN_IF_EXCEPTION(scope, void());

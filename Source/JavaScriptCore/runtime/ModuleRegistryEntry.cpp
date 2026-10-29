@@ -26,6 +26,9 @@
 #include "config.h"
 #include "ModuleRegistryEntry.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
@@ -141,7 +144,12 @@ JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject
 #endif
 
     JSPromise* fetchPromise = ensureFetchPromise(globalObject);
-    fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, this);
+#if USE(BUN_JSC_ADDITIONS)
+    // The job makes the record, which runs the body of a CommonJS module: it runs under the async context of whoever first asked for the module (ModuleLoaderAsyncContextScope).
+    fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, nullptr, this, AsyncContextSwapScope::current(vm, globalObject));
+#else
+    fetchPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, nullptr, this);
+#endif
 
     return modulePromise;
 }

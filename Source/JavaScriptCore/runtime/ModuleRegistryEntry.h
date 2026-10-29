@@ -75,6 +75,8 @@ public:
     AbstractModuleRecord* record() const;
     JSPromise* ensureFetchPromise(JSGlobalObject*);
     JSPromise* ensureModulePromise(JSGlobalObject*);
+    // What ModuleRegistryFetchSettled settles. The job reads it here: its reaction keeps the async context where it would keep a cell.
+    JSPromise* modulePromise() const { return m_modulePromise.get(); }
     JSPromise* loadPromise() const;
     JSValue error(JSGlobalObject*) const;
     JSValue fetchError() const;

@@ -30,6 +30,9 @@
 #if ENABLE(AOT)
 #include "AOTModuleRecord.h"
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include "ProgramExecutable.h"
 
 #include "BuiltinNames.h"
@@ -447,7 +450,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
-    auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = ModuleLoadingContext::create(globalObject, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -539,7 +542,12 @@ JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObjec
 
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
+#if USE(BUN_JSC_ADDITIONS)
+    // The job has no other use for its context: it is the async context of the import(), under which the job asks the namespace for then().
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, AsyncContextSwapScope::current(vm, globalObject));
+#else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, resultPromise, jsUndefined());
+#endif
 
     return resultPromise;
 }
@@ -835,7 +843,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     if (!mapEntry) {
         // 8. Let url be the result of resolving a module specifier given referencingScript and moduleRequest.[[Specifier]], catching any exceptions. If they throw an exception, let resolutionError be the thrown exception.
-        resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
+        {
+#if USE(BUN_JSC_ADDITIONS)
+            // What a hook of the host leaves in the async context ends with the hook, so that what this request captures below is the context of the load.
+            ModuleLoaderAsyncContextScope asyncContextOfLoad(vm, globalObject, AsyncContextSwapScope::current(vm, globalObject));
+#endif
+            resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
+        }
         // 9. If the previous step threw an exception, then:
         if (Exception* resolutionError = scope.exception()) {
             // A TerminationException is not a resolution failure: it can be neither cleared
@@ -954,7 +968,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);
                 RETURN_IF_EXCEPTION(scope, nullptr);
             } else {
-                auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
+                auto* context = ModuleLoadingContext::create(globalObject, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
                 JSPromise* resultPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
                 resultPromise->markAsHandled();
                 promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, resultPromise, context);
@@ -966,7 +980,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     } else {
 #if ENABLE(AOT)
         if (auto file = vm.hasCompiledCode() ? AOT::ModuleRecord::fileToWaitFor(globalObject, resolved) : std::nullopt) [[unlikely]]
-            return AOT::ModuleRecord::deferRequest(globalObject, *file, ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, nullptr, scriptFetcher), useImportMap);
+            return AOT::ModuleRecord::deferRequest(globalObject, *file, ModuleLoadingContext::create(globalObject, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, nullptr, scriptFetcher), useImportMap);
 #endif
         mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
@@ -991,8 +1005,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 #endif
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
-        if (!promise)
+        if (!promise) {
+#if USE(BUN_JSC_ADDITIONS)
+            ModuleLoaderAsyncContextScope asyncContextOfLoad(vm, globalObject, AsyncContextSwapScope::current(vm, globalObject));
+#endif
             promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
+        }
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
@@ -1001,7 +1019,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
+    auto* context = ModuleLoadingContext::create(globalObject, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
     JSPromise* loadPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
     loadPromise->markAsHandled();
 
@@ -1031,7 +1049,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     JSPromise* promise = hostLoadImportedModule(globalObject, referrer, moduleRequest, payload, scriptFetcher, flags.contains(ModuleLoadFlag::UseImportMap));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
+    auto* context = ModuleLoadingContext::create(globalObject, this, moduleRequest, WTF::move(scriptFetcher), flags);
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 
@@ -1754,7 +1772,14 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
         MarkedArgumentBuffer args;
         Vector<Identifier, 4> exportNames;
-        JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
+        JSObject* lazyExportsSource;
+        {
+            // As JSModuleRecord::evaluate() does for the body of an ES module.
+            std::optional<AsyncContextSwapScope> loaderAsyncContext;
+            if (JSValue asyncContext = this->asyncContext())
+                loaderAsyncContext.emplace(vm, globalObject, asyncContext);
+            lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
+        }
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
         auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);

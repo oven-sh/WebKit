@@ -20,6 +20,7 @@
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
+#include "AsyncContextSwapScope.h"
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
@@ -894,13 +895,18 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
+    filesBeingRun.asyncContext = AsyncContextSwapScope::current(vm, m_instance.globalObject);
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
     if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
-            callBodyUnderOwnMark(root, false, true);
+            {
+                // As for a file below. The files run in one call here, so one of them leaves the next what it entered.
+                ModuleLoaderAsyncContextScope asyncContextOfFiles(vm, m_instance.globalObject, filesBeingRun.asyncContext);
+                callBodyUnderOwnMark(root, false, true);
+            }
             didRunFile = true;
             if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
                 ModuleID file = *filesBeingRun.fileHandedToLoader;
@@ -977,11 +983,17 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
         filesBeingRun.fileOrFace = imported;
         filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
-        // As the start of the root would call it.
-        if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
-            evaluateByCallingBody(imported);
-        else
-            evaluateModuleInRecord(imported);
+        {
+            // The loader of `bun run` runs the file in a job of its own, under the async context of whoever asked for the file: what the file enters ends with that job where the job has a store.
+            std::optional<ModuleLoaderAsyncContextScope> asyncContextOfFile;
+            if (jobs == JobsOfImportedFiles::WaitForLoader)
+                asyncContextOfFile.emplace(vm, m_instance.globalObject, filesBeingRun.asyncContext);
+            // As the start of the root would call it.
+            if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
+                evaluateByCallingBody(imported);
+            else
+                evaluateModuleInRecord(imported);
+        }
         Exception* exception = scope.exception();
         if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
             JSValue errorOfFile;
@@ -1110,6 +1122,8 @@ void Modules::handGraphToLoader(FilesBeingRun& files)
         SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
         // The steps were due before any require() of the file began.
         SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
+        // And before the file entered an async context: they take what was current then, for themselves and for the requests that they make.
+        AsyncContextSwapScope asyncContextBeforeFiles(vm, m_instance.globalObject, files.asyncContext);
         if (files.load) {
             ModuleRecord* record = recordIfExists(files.root);
             files.load->forgetVisited(record);

@@ -60,8 +60,8 @@ public:
         Cached, // cached loadPromise settled -> finishLoading or evaluationError
     };
 
-    static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    static ModuleLoadingContext* create(JSGlobalObject*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
+    static ModuleLoadingContext* create(JSGlobalObject*, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -74,6 +74,11 @@ public:
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
     JSModuleLoader* loader() const { return m_loader.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context of whoever asked for the module: create() takes what is current in its realm. The jobs that this
+    // context goes to (ModuleLoadStep, ModuleLoadTopSettled, ModuleLoadLinkEvaluateSettled) run under it where it is a store.
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+#endif
 
     bool evaluate() const { return m_flags.contains(ModuleLoadFlag::Evaluate); }
     bool dynamic() const { return m_flags.contains(ModuleLoadFlag::Dynamic); }
@@ -84,8 +89,8 @@ public:
 #endif
 
 private:
-    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
+    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>, JSValue asyncContext);
+    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder, JSValue asyncContext);
 
     Step m_step { Step::Main };
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
@@ -96,6 +101,7 @@ private:
     WriteBarrier<AbstractModuleRecord> m_module;
     WriteBarrier<JSModuleLoader> m_loader;
 #if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
     int64_t m_referrerAsyncOrder { -1 };
 #endif
     OptionSet<ModuleLoadFlag> m_flags;

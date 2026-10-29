@@ -26,6 +26,9 @@
 #include "config.h"
 #include "ModuleLoadingContext.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 #include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
@@ -36,7 +39,12 @@ namespace JSC {
 
 const ClassInfo ModuleLoadingContext::s_info = { "ModuleLoadingContext"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleLoadingContext) };
 
-ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, Step step, const JSModuleLoader::ModuleReferrer& referrer, AbstractModuleRecord::ModuleRequest&& moduleRequest, JSCell* payload, ModuleRegistryEntry* entry, RefPtr<ScriptFetcher> scriptFetcher)
+#if USE(BUN_JSC_ADDITIONS)
+// m_asyncContext is in what was padding of the cell: a context takes the memory that it took without it.
+static_assert(sizeof(ModuleLoadingContext) <= 112);
+#endif
+
+ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, Step step, const JSModuleLoader::ModuleReferrer& referrer, AbstractModuleRecord::ModuleRequest&& moduleRequest, JSCell* payload, ModuleRegistryEntry* entry, RefPtr<ScriptFetcher> scriptFetcher, JSValue asyncContext)
     : Base(vm, structure)
     , m_step(step)
     , m_moduleRequest(WTF::move(moduleRequest))
@@ -45,7 +53,25 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
     , m_entry(entry, WriteBarrierEarlyInit)
     , m_referrer(referrer.toJSValue(), WriteBarrierEarlyInit)
     , m_loader(loader, WriteBarrierEarlyInit)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_asyncContext(asyncContext, WriteBarrierEarlyInit)
+#endif
 {
+#if !USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(asyncContext);
+#endif
+}
+
+// The async context that a request keeps: what is current where it is made.
+static JSValue asyncContextOfRequest(VM& vm, JSGlobalObject* globalObject)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    return AsyncContextSwapScope::current(vm, globalObject);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(globalObject);
+    return { };
+#endif
 }
 
 void ModuleLoadingContext::destroy(JSCell* cell)
@@ -54,34 +80,38 @@ void ModuleLoadingContext::destroy(JSCell* cell)
     thisObject->~ModuleLoadingContext();
 }
 
-ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, Step step, const JSModuleLoader::ModuleReferrer& referrer, const AbstractModuleRecord::ModuleRequest& moduleRequest, JSCell* payload, ModuleRegistryEntry* entry, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleLoadingContext* ModuleLoadingContext::create(JSGlobalObject* globalObject, JSModuleLoader* loader, Step step, const JSModuleLoader::ModuleReferrer& referrer, const AbstractModuleRecord::ModuleRequest& moduleRequest, JSCell* payload, ModuleRegistryEntry* entry, RefPtr<ScriptFetcher> scriptFetcher)
 {
+    VM& vm = globalObject->vm();
     ASSERT(isModuleLoaderHostDefinedPayload(payload));
     AbstractModuleRecord::ModuleRequest requestCopy { moduleRequest };
-    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, step, referrer, WTF::move(requestCopy), payload, entry, WTF::move(scriptFetcher));
+    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, step, referrer, WTF::move(requestCopy), payload, entry, WTF::move(scriptFetcher), asyncContextOfRequest(vm, globalObject));
     context->finishCreation(vm);
     return context;
 }
 
-ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, JSValue asyncContext)
     : Base(vm, structure)
     , m_moduleRequest(WTF::move(moduleRequest))
     , m_scriptFetcher(WTF::move(scriptFetcher))
     , m_loader(loader, WriteBarrierEarlyInit)
 #if USE(BUN_JSC_ADDITIONS)
+    , m_asyncContext(asyncContext, WriteBarrierEarlyInit)
     , m_referrerAsyncOrder(referrerAsyncOrder)
 #endif
     , m_flags(flags)
 {
 #if !USE(BUN_JSC_ADDITIONS)
     UNUSED_PARAM(referrerAsyncOrder);
+    UNUSED_PARAM(asyncContext);
 #endif
 }
 
-ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext* ModuleLoadingContext::create(JSGlobalObject* globalObject, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
 {
+    VM& vm = globalObject->vm();
     AbstractModuleRecord::ModuleRequest requestCopy { moduleRequest };
-    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder, asyncContextOfRequest(vm, globalObject));
     context->finishCreation(vm);
     return context;
 }
@@ -107,6 +137,9 @@ void ModuleLoadingContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_entry);
     visitor.append(thisObject->m_referrer);
     visitor.append(thisObject->m_module);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoadingContext);

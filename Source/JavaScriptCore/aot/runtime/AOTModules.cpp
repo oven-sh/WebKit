@@ -29,6 +29,7 @@
 #include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AsyncContextSwapScope.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "DisallowVMEntry.h"
@@ -713,20 +714,29 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
     throwException(realm, scope, createModuleMissingAtBuildError(realm, specifier, importer, isForRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s));
 }
 
-static void queueImportJob(JSGlobalObject* realm, JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
+// asyncContext: the async context of the call of import(), which every job of that import() is queued with and runs under where it is a store (ModuleLoaderAsyncContextScope).
+// It is handed on from job to job, not read again: a module that the import() runs may have entered another.
+static void queueImportJob(JSGlobalObject* realm, JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext)
 {
     constexpr uint8_t unusedPayload = 0;
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, jsNumber(module.index()), referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined());
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, jsNumber(module.index()), referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined(), asyncContext);
+}
+
+Strong<Unknown> Modules::currentAsyncContext() const
+{
+    VM& vm = *m_instance.vm;
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, m_instance.globalObject);
+    return asyncContext.isUndefined() ? Strong<Unknown>() : Strong<Unknown>(vm, asyncContext);
 }
 
 // A synchronous module load runs the jobs it diverts in its own realm, so the realm of a job is the one its import promise was created in.
-void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder)
+void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     Modules* modules = modulesOf(promise->realm());
     if (modules->continueCountedImport(promise, module, referrerAsyncOrder))
         return;
-    modules->continueImport(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())));
+    modules->continueImport(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())), asyncContext);
 }
 
 // The jobs, one behind the other, in which the loader of `bun run` hands on the namespace object of a module that it has evaluated.
@@ -747,17 +757,17 @@ static constexpr uint32_t jobsFromRequestToGenerator = 2;
 static constexpr size_t numberOfJobsBehindEvaluation = std::size(jobsOfImportOfEvaluatedModule) - 2;
 
 // The error is empty where the evaluation has not failed.
-static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft, JSValue error = { })
+static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft, JSValue asyncContext, JSValue error = { })
 {
     JSGlobalObject* realm = importPromise->realm();
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error);
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error, asyncContext);
 }
 
-void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft)
+void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     if (--stepsLeft)
-        queueStepOfImport(promise, module, stepsLeft, error);
+        queueStepOfImport(promise, module, stepsLeft, asyncContext, error);
     else
         modulesOf(promise->realm())->finishImportOfEvaluatedModule(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), error);
 }
@@ -768,8 +778,9 @@ void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSVa
     RELEASE_ASSERT(status != JSPromise::Status::Pending);
     Modules* modules = modulesOf(promise->realm());
     ModuleID imported(static_cast<uint32_t>(module.asInt32()));
+    // This job has a cell, and with it no place for the async context of the import(): the steps behind it are queued without one.
     if (modules->isImportedByLoader(imported))
-        queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, status == JSPromise::Status::Rejected ? resolution : JSValue());
+        queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, JSValue(), status == JSPromise::Status::Rejected ? resolution : JSValue());
     else if (status == JSPromise::Status::Rejected)
         promise->reject(promise->vm(), resolution);
     else
@@ -870,7 +881,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         if (isCalledByProgram && (!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
             if (promise->isThenFastAndNonObservable()) [[likely]] {
-                queueStepOfImport(promise, jsNumber(module.index()), std::size(jobsOfImportOfEvaluatedModule));
+                queueStepOfImport(promise, jsNumber(module.index()), std::size(jobsOfImportOfEvaluatedModule), AsyncContextSwapScope::current(vm, realm));
                 return promise;
             }
         }
@@ -886,13 +897,13 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
             if (promise->isThenFastAndNonObservable()) [[likely]] {
                 uint32_t serial = m_serialOfNextCountedImport++;
-                m_countedImports.append(CountedImport { Strong<JSPromise>(vm, promise), module, referrerAsyncOrder, serial });
+                m_countedImports.append(CountedImport { Strong<JSPromise>(vm, promise), currentAsyncContext(), module, referrerAsyncOrder, serial });
                 ++m_numberOfCountedImports;
                 if (!m_orderOfCountedJobs.isEmpty()) {
                     m_orderOfCountedJobs.append(serial);
                     m_modulesOfCountedImports.set(module.index());
                 }
-                queueImportJob(realm, promise, module, referrerAsyncOrder);
+                queueImportJob(realm, promise, module, referrerAsyncOrder, AsyncContextSwapScope::current(vm, realm));
                 return promise;
             }
         }
@@ -900,7 +911,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         if (asyncLoadMustWaitFor(module) && !loader()->registryEntry(moduleKey(module))) [[unlikely]] {
             JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
-            m_deferredImports.append(DeferredImport { fileOf(module), Strong<JSPromise>(vm, promise) });
+            m_deferredImports.append(DeferredImport { fileOf(module), Strong<JSPromise>(vm, promise), currentAsyncContext() });
             return promise;
         }
         // `bun run` has loaded a module with the graph that first came to it, and its loader knows the module from then on.
@@ -929,7 +940,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     }
 
     JSPromise* importPromise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
-    queueImportJob(realm, importPromise, module, referrerAsyncOrder);
+    queueImportJob(realm, importPromise, module, referrerAsyncOrder, AsyncContextSwapScope::current(*m_instance.vm, realm));
     return importPromise;
 }
 
@@ -945,7 +956,7 @@ void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
         }
         // A failed load skips ModuleLoadingContext::Step::Requested and DynamicImportEvaluateSettled.
         uint8_t skippedJobs = error ? 2 : 0;
-        queueStepOfImport(import.promise.get(), jsNumber(file.index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, error);
+        queueStepOfImport(import.promise.get(), jsNumber(file.index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, import.asyncContext.get(), error);
         return true;
     });
 }
@@ -1098,6 +1109,8 @@ void Modules::handCountedImportsToLoader()
     // The steps run no code of the program, so nothing joins or leaves the list.
     for (uint32_t serial : std::exchange(m_orderOfCountedJobs, { })) {
         CountedImport& import = find(serial);
+        // What the loader keeps for the requests of an import() is the async context of its call, whoever hands the import() over.
+        AsyncContextSwapScope asyncContextOfImport(vm, m_instance.globalObject, import.asyncContext.get());
         if (!import.jobsOfLoader) {
             import.jobsOfLoader = MicrotaskQueue::create(vm);
             JSPromise* loaded = askLoaderForImport(import.module, import.referrerAsyncOrder);
@@ -1152,7 +1165,7 @@ bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JS
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(counted.serial);
         constexpr uint8_t unusedPayload = 0;
-        m_instance.globalObject->queueMicrotask(*m_instance.vm, InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, module, referrerAsyncOrder);
+        m_instance.globalObject->queueMicrotask(*m_instance.vm, InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, module, referrerAsyncOrder, counted.asyncContext.get());
         return true;
     }
     CountedImport import = WTF::move(counted);
@@ -1290,7 +1303,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         import.jobsRun = job;
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(import.serial);
-        queueImportJob(m_instance.globalObject, importPromise, module, import.referrerAsyncOrder);
+        queueImportJob(m_instance.globalObject, importPromise, module, import.referrerAsyncOrder, import.asyncContext.get());
         didLeaveJob.release();
         m_innermostCountedImportInOwnJob = std::exchange(import.outerInOwnJob, nullptr);
         m_countedImports.append(WTF::move(import));
@@ -1338,11 +1351,11 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
     RETURN_IF_EXCEPTION(scope, void());
     switch (evaluation->status()) {
     case JSPromise::Status::Fulfilled:
-        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation);
+        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation, import.asyncContext.get());
         return;
     case JSPromise::Status::Rejected:
         evaluation->markAsHandled();
-        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation, evaluation->result());
+        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation, import.asyncContext.get(), evaluation->result());
         return;
     case JSPromise::Status::Pending:
         evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, jsNumber(module.index()));
@@ -1401,22 +1414,22 @@ void Modules::keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&& walk)
     m_linkWalksOfLoads.append(WTF::move(walk));
 }
 
-void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
+void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (status(module) == ModuleStatus::Evaluating) {
         // The body of the module is on the stack below this job, so a job queued now would run, and queue itself again, before the body can go on.
-        vm.whenIdle([realm = m_instance.globalObject, importPromise = Strong<JSPromise>(vm, importPromise), module, referrerAsyncOrder] {
-            queueImportJob(realm, importPromise.get(), module, referrerAsyncOrder);
+        vm.whenIdle([realm = m_instance.globalObject, importPromise = Strong<JSPromise>(vm, importPromise), asyncContext = asyncContext && !asyncContext.isUndefined() ? Strong<Unknown>(vm, asyncContext) : Strong<Unknown>(), module, referrerAsyncOrder] {
+            queueImportJob(realm, importPromise.get(), module, referrerAsyncOrder, asyncContext.get());
         });
         return;
     }
 
     if (m_importThatWaitsForQueuedJobs == importPromise) {
         if (!vm.defaultMicrotaskQueue().isEmpty()) {
-            queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
+            queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder, asyncContext);
             return;
         }
         m_importThatWaitsForQueuedJobs = nullptr;
@@ -1438,7 +1451,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
         m_importThatWaitsForQueuedJobs = importPromise;
     if (didRunModule || didRunFile) {
         keepLinkWalk(WTF::move(linkWalk));
-        queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
+        queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder, asyncContext);
         return;
     }
 
@@ -2499,6 +2512,8 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     ASSERT(hasTLA());
 
+    // As CyclicModuleRecord::executeAsync(), which registers the job before it runs the body: the modules that wait for this one run under the async context of whoever evaluates it, not under what the body has entered.
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
     JSValue result = modules().callBodyOfModuleEnteredByLoader(m_module);
     RETURN_IF_EXCEPTION(scope, void());
     auto* promise = dynamicDowncast<JSPromise>(result);
@@ -2506,7 +2521,7 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
         promise = JSPromise::resolvedPromise(globalObject, result);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, asyncContext);
 }
 
 void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
