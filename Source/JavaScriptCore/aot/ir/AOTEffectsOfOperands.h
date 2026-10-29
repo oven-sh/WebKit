@@ -21,6 +21,7 @@ struct EffectDescription;
 struct Type;
 
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
+Effects effectsOfAllocatingWithPrototype(const Program&, LayoutID allocated);
 
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 
@@ -40,6 +41,7 @@ struct OperandBehavior {
     bool isDescribedWhenRefused { false };
     BuiltinTypeID accepted { };
     bool onlyBoxedPrimitivesAreConverted { false };
+    bool contentsOfContentsAreOnlyStored { false };
 
     bool saysTheSameFromTheSameLists(const OperandBehavior&) const;
 };

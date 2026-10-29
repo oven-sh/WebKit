@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <wtf/Forward.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -46,6 +47,15 @@ std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);
 // For a validating image, while the mutators are stopped. Allocates nothing and runs no code, so a thread that marks may call it.
 void validateSlotsOf(VM&, const JSCell* compiledObject);
 
+// While a heap snapshot names an object after the function that it finds under `constructor`. The name is a label for whoever reads the snapshot, so the compiler
+// counts no read for it. A validating image lets this one look name a field that was removed as unread, and no other name and no other look.
+class LookForConstructorBySnapshot {
+    WTF_MAKE_NONCOPYABLE(LookForConstructorBySnapshot);
+public:
+    JS_EXPORT_PRIVATE LookForConstructorBySnapshot();
+    JS_EXPORT_PRIVATE ~LookForConstructorBySnapshot();
+};
+
 } // namespace HeapHooks
 
 // They belong behind the constraints of the heap itself. Static variables are visited for a global object that is marked, and in a full collection the roots of the heap are what marks it.
@@ -67,6 +77,10 @@ public:
 
     static constexpr size_t segmentCapacity = CapacityFromSize<Segment::blockSize>::value;
     static constexpr ptrdiff_t offsetOfFirstCellInSegment = sizeof(Segment);
+#if ASSERT_ENABLED
+    // The segment counts its cells too, and append() compares the two counts.
+    static constexpr ptrdiff_t offsetOfTopInSegment = OBJECT_OFFSETOF(Segment, m_top);
+#endif
     static ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_top); }
     // The list of segments begins with its head. initializeCollectorWords() checks that.
     static ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_segments); }

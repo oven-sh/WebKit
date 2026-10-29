@@ -430,6 +430,13 @@ private:
                 testing = withoutFlag(testing, TestingSwitch::FailPredictions);
             }
         }
+        const Wire::FlowScheduleWords& schedule = m_wire.bisection.flowSchedule;
+        if (schedule.number && hasFlag(testing, TestingSwitch::DelayFlowRules) && schedule.number <= UINT8_MAX)
+            recorded.numberOfFlowSchedule = static_cast<uint8_t>(schedule.number);
+        else if (schedule.number)
+            reportInvalid(schedule.number);
+        if (schedule.reserved)
+            reportInvalid(schedule.reserved);
         recorded.testing = static_cast<uint16_t>(testing);
     }
 
@@ -443,6 +450,7 @@ private:
         options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
+        options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
@@ -726,6 +734,11 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
         if (*testingSwitch == Wire::TestingSwitch::FailPredictions) {
             if (auto sentence = applyNumbersOfFailPredictions(options, numbers))
                 return sentence;
+        } else if (*testingSwitch == Wire::TestingSwitch::DelayFlowRules) {
+            auto number = parseNumber<uint8_t>(numbers.value_or("0"_s));
+            if (!number)
+                return notANumberSentence(*numbers);
+            options.bisection.flowSchedule.number = *number;
         } else if (numbers)
             return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);

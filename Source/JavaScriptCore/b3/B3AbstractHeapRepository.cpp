@@ -243,15 +243,6 @@ void AbstractHeapRepository::placeTemporaryHeaps()
     }
 }
 
-bool AbstractHeapRepository::holdsLengthOfData(HeapRange range) const
-{
-    for (const AbstractHeap* heap : { &Butterfly_vectorLength, &JSArrayBufferView_length, &StringImpl_length }) {
-        if (heap->hasRange() && rangeOf(*heap) == range)
-            return true;
-    }
-    return false;
-}
-
 void AbstractHeapRepository::decorateMemory(const AbstractHeap* heap, Value* value)
 {
     m_heapForMemory.append(HeapForValue(heap, value));

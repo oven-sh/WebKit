@@ -56,6 +56,8 @@ export default b.declarations(
     }),
     // The error makes `stack` at the first read: a text, or what Error.prepareStackTrace answers for the error and its call sites.
     namesMadeByStaticMembers: { stack: "prepareStackTrace" },
+    // The text begins with them, and so does what is printed for an error.
+    namesReadToDescribeInstances: ["name", "message"],
     constructorOnlyReadsPrototypeOfNewTarget: true,
     types: [b.viewType("Error")],
     prototypeTable: b.staticTable("runtime/ErrorPrototype.cpp", "errorPrototypeTable"),
@@ -76,6 +78,7 @@ export default b.declarations(
       isError: {
         args: { value: b.any },
         returns: b.bool,
+        answersWhetherInstance: { value: b.instance("Error") },
         capability: "heap",
         uses: { value: b.inspected },
         implementation: b.hostCall,

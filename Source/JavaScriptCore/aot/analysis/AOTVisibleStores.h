@@ -39,6 +39,10 @@ public:
     Expected<OptionSet<StoredKind>> kindsPassedTo(FunctionID function, unsigned parameter) const { return m_parameterKinds.isEmpty() ? OptionSet<StoredKind> { } : m_parameterKinds[function.index()][parameter]; }
     Expected<bool> typesPassedLieInInt32(FunctionID function, unsigned parameter) const { return !m_parametersPassedOtherTypes.isEmpty() && !m_parametersPassedOtherTypes[function.index()].get(parameter); }
     Expected<bool> isUsedAsInteger(LayoutID layout, uint32_t field) const { return !m_fieldsUsedAsIntegers.isEmpty() && m_fieldsUsedAsIntegers[layout.index()].get(field); }
+    // What the field holds is an operand of `&`, `|`, `^` or a shift, which take 32 bits of it. `| 0` is a conversion.
+    Expected<bool> isUsedAsBits(LayoutID layout, uint32_t field) const { return !m_fieldsUsedAsBits.isEmpty() && m_fieldsUsedAsBits[layout.index()].get(field); }
+    // The field is stored what a field that is used as an integer holds.
+    Expected<bool> isStoredCopiesOfIntegers(LayoutID layout, uint32_t field) const { return !m_fieldsStoredCopiesOfIntegers.isEmpty() && m_fieldsStoredCopiesOfIntegers[layout.index()].get(field); }
     // What the field holds goes into a sum or a difference that is stored back into it.
     Expected<bool> isAddedTo(LayoutID layout, uint32_t field) const { return !m_fieldsAddedTo.isEmpty() && m_fieldsAddedTo[layout.index()].get(field); }
     Expected<bool> typesOfInitialValuesFitInt32Slot(LayoutID layout, uint32_t field) const { return m_fieldsStartedWithOtherTypes.isEmpty() || !m_fieldsStartedWithOtherTypes[layout.index()].get(field); }
@@ -48,6 +52,8 @@ private:
     Vector<Vector<OptionSet<StoredKind>>> m_parameterKinds;
     Vector<BitVector> m_parametersPassedOtherTypes;
     Vector<BitVector> m_fieldsUsedAsIntegers;
+    Vector<BitVector> m_fieldsUsedAsBits;
+    Vector<BitVector> m_fieldsStoredCopiesOfIntegers;
     Vector<BitVector> m_fieldsAddedTo;
     Vector<BitVector> m_fieldsStartedWithOtherTypes;
 };

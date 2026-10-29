@@ -25,6 +25,12 @@ ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource 
     return context.restrict(ClimbingSet(unknownValue(context, source)), context.universe().objects());
 }
 
+// It stands over a namespace object of the program. No class of the host has it as an instance.
+static ClimbingSet objectThatLoaderMakes(ValueFlowRuleContext& context)
+{
+    return context.restrict(ClimbingSet(undescribedValueThatIsNoBuffer(context)), context.universe().objects());
+}
+
 static ValueFlowName writtenNameOf(const Program& program, StringID text)
 {
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = text });
@@ -178,6 +184,18 @@ struct OwnProperties {
     ValueFlowSources held;
     ValueFlowSources others;
 };
+
+ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext& context, ClimbingSet set)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet objects = context.restrict(set, universe.knownObjects());
+    if (!context.contains(set, ValueFlowUniverse::unknownObject()))
+        return objects;
+    ClimbingSet listedForTheirCalls = context.restrict(objects, universe.builtinTables().heap().objectsThatLetInUnseenCode());
+    if (!context.meet(listedForTheirCalls, ValueSets::anything))
+        return objects;
+    return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.valueWithin(listedForTheirCalls, ValueFlowProgramNodes::escaped()))));
+}
 
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objects)
 {
@@ -339,7 +357,7 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         if (const ModuleExport* entry = name ? findExport(module, program.stringOf(name)) : nullptr)
             append(context, sources, exportedValueOf(context, *entry));
         if (module.kind == ModuleKind::SourceText)
-            append(context, sources, sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult)));
+            append(context, sources, sourcesOf(objectThatLoaderMakes(context)));
         return sources;
     }
     }
@@ -405,7 +423,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
                 break;
             }
             context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
-            context.add(location, unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.add(location, objectThatLoaderMakes(context));
             break;
         }
         }
@@ -436,7 +454,15 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         connect(context, value, context.written(namespaceObject, writtenNameOf(program, program.stringOf(BuiltinNames::defaultKeyword))));
         ClimbingSet values = valueOf(context, value);
         context.add(holdersOfNames, context.restrict(values, universe.knownObjects()));
-        connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+        // Where every own key of what the module exports is known, what the getter under a key answers lies under that key.
+        std::optional<ValueSetID> keysAtCreation = keysThatObjectsWereMadeWith(context, values, OwnKeys::All);
+        ClimbingSet keys = keysAtCreation ? context.unite(ClimbingSet(*keysAtCreation), context.valueOf(context.read(values, ValueFlowCellName { ValueFlowNameKind::AddedNames }))) : ClimbingSet();
+        if (keysAtCreation && !context.meet(keys, ValueSets::complement(universe.keys()))) {
+            context.forEachMember(keys, [&](ValueFlowObjectID key) {
+                connect(context, readOwnProperties(context, values, universe.keyOf(key)).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
+            });
+        } else
+            connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
         listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
@@ -497,7 +523,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         return sourcesOf(namespaceObject);
     case ImportPhase::Defer:
         context.add(ValueFlowProgramNodes::escaped(), namespaceObject);
-        return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        return sourcesOf(objectThatLoaderMakes(context));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -531,7 +557,9 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         return;
 
     const BuiltinTable& builtins = program.builtins();
-    ValueSetID filled = unknownValue(context, sourceOfWhatLoaderMakes(module));
+    auto filled = [&] {
+        return unknownValue(context, sourceOfWhatLoaderMakes(module));
+    };
     BuiltinID object = module.kind == ModuleKind::Runtime && module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
     if (object)
         runGettersThatProgramLaidOn(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)));
@@ -543,7 +571,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
         BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
         if (!member) {
-            context.add(variable, filled);
+            context.add(variable, filled());
             if (key)
                 connect(context, ownPropertyOf(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)), key), variable);
             continue;
@@ -554,7 +582,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::escaped())
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::lost());
         if (mayBeMadeAnew)
-            context.add(variable, filled);
+            context.add(variable, filled());
         if (!isObjectKind(builtins.at(member).kind))
             context.add(variable, context.universe().undefinedValue());
         else if (context.universe().builtinTables().heap().letsInUnseenCode(member)) {
@@ -566,7 +594,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     }
     for (const ModuleExport& entry : module.exports) {
         if (entry.kind == ModuleExportKind::Variable && entry.variable)
-            context.add(context.nodes().variable(entry.variable), filled);
+            context.add(context.nodes().variable(entry.variable), filled());
     }
 }
 
@@ -627,6 +655,9 @@ static void passOperandsOfBody(ValueFlowRuleContext& context, const Module& modu
 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     context.connect(nodes.thrown(body), escaped);
+    // What is thrown or what a promise is rejected with ends at the host where nobody catches it. The host prints it the way console.error does, whatever lies inside it too.
+    if (mayProgramHaveStoredMethodThatHostLooksFor(context))
+        letHostChooseOperands(context);
     if (function.isUnsplitCoroutine()) {
         context.add(escaped, only(context, universe.coroutineResultOf(body)));
         for (unsigned index = 0; index < function.results.size(); ++index)
@@ -728,6 +759,7 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
         connect(context, ownPropertyOf(context, values, key), variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
+        letSeenCodeCallEscapedFunctionsAmong(context, variable);
     }
 }
 
@@ -841,19 +873,6 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
         context.add(statement.thrown, unknown);
 }
 
-static void forEachFormInImage(const Program& program, ModuleID outside, NOESCAPE const Invocable<void(ModuleID)> auto& functor)
-{
-    if (program.at(outside).kind != ModuleKind::External)
-        return;
-    std::span<const uint8_t> path = program.string(program.at(outside).path);
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& module = program.modules[index];
-        std::span<const uint8_t> pathOfForm = program.string(module.path);
-        if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
-            functor(ModuleID(index));
-    }
-}
-
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -884,9 +903,10 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
             connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
         };
         import(operation.module());
-        // The attributes say as what a module outside of the image is loaded, and the image may hold it as that.
-        if (!context.operandsOf(statement).empty())
-            forEachFormInImage(program, operation.module(), import);
+        if (!context.operandsOf(statement).empty()) {
+            for (ModuleID form : formsInImage(program, operation.module()))
+                import(form);
+        }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
     }

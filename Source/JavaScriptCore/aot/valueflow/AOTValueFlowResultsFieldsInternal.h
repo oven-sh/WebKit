@@ -611,6 +611,7 @@ private:
         return m_sharedStoresOfLayouts.subspan(first, m_firstSharedStoresOfLayout[layout.index() + 1] - first);
     }
     void forEachTableOfKnownObjects(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
+    bool hasAllocationListing(LayoutID, PropertyKeyID) const;
     void noteNamesStoredThroughDeclaredReceivers();
     using AccessesByKeyAndLayout = HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }

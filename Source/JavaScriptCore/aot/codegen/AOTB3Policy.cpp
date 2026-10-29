@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTFaultTable.h"
+#include "AOTHeaps.h"
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubBodyConvention.h"
@@ -155,7 +156,8 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
-    loops.omitsPollsFromLoopsThatEndWithinData = true;
+    loops.pollsBetweenStretches = true;
+    loops.vectorizes = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
@@ -176,6 +178,16 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
+    validation.overlooksWritesToWhatLoopsReadAgain = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
+    validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
+    validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
+    validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);
+    validation.overlooksWritesBetweenReadsOfBound = build.isSabotaged(Sabotage::BoundsReadTwiceOutlastWrites);
+    validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
+    validation.takesLanesToHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
+    validation.takesSumsOfNumbersToBeWhole = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
+    validation.comparesAllLanesWithSign = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
+    validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
     return validation;
 }
 
@@ -187,6 +199,7 @@ static B3::Air::RegisterPolicy registerPolicyFor(const FunctionBackEndTraits& tr
     registers.hintsTwoAddressOperands = true;
     registers.usesSecondPreferredRegister = true;
     registers.evictsHolderOfPreferredRegister = true;
+    registers.patchpointsKeepOnlyLowerHalvesOfVectors = true;
     registers.unsavedCalleeSaves = unsavedCalleeSaves();
     switch (traits.convention) {
     case BackEndConvention::Function:
@@ -220,10 +233,11 @@ static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const Func
 {
     B3::Air::FramePolicy frame;
     frame.emitsFrame = true;
-    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may have done something, and may stand in a try of its own, which the error would pass by.
+    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may stand in a try of its own, which the error would pass by.
     frame.shrinkWraps = !traits.savesFrameOnSuspend;
     frame.setsUpFrameAtEntry = traits.hasHandlers || traits.rejectsOnThrow;
     frame.maxBytesAllocatedBeforeStackCheck = maxBytesAllocatedBeforeStackCheck;
+    frame.smallestFrameTestedAtSetup = traits.smallestFrameTestedAtSetup;
     if constexpr (isARM64())
         frame.registersClobberedByFrameSetup = RegisterSet::macroClobberedGPRs();
     frame.mayPlaceSlotsAboveFrameRecord = !traits.readsCallerFrame && !traits.isAsync && !traits.savesFrameOnSuspend;
@@ -279,6 +293,11 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
     policy.selection.extendsInstructionSelection = true;
     policy.selection.attributesTrapsToAccesses = true;
     policy.loops = loopPolicyFor(traits);
+    // Lists are. Views are not.
+    policy.holdsMostlyShortArrays = createSharedTask<bool(B3::Procedure&, const B3::HeapRange&)>([](B3::Procedure& procedure, const B3::HeapRange& range) {
+        AOTHeaps& heaps = AOTHeaps::of(procedure);
+        return !range.overlaps(heaps.rangeOf(heaps.entire(Typed::AbstractHeap::TypedArrayElements)));
+    });
     policy.switchLowering.usesBitTests = true;
     policy.switchLowering.usesValueTables = true;
     policy.switchLowering.minCasesForJumpTable = minCasesForJumpTableInConstantData;

@@ -12836,11 +12836,12 @@ void SpeculativeJIT::emitSwitchStringOnString(Node* node, SwitchData* data, GPRR
         isRopeCases.link(this);
         JumpList notReadableInPlace;
         notReadableInPlace.append(branchTest64(Zero, tempGPR, TrustedImm64(JSRopeString::isSubstringInPointer)));
-        notReadableInPlace.append(branchTest64(Zero, tempGPR, TrustedImm64(JSRopeString::is8BitInPointer)));
 
         load64(Address(stringGPR, JSRopeString::offsetOfFiber1Lower()), tempGPR);
         and64(TrustedImm64(JSRopeString::CompactFibers::addressMask), tempGPR);
         loadPtr(Address(tempGPR, JSString::offsetOfValue()), tempGPR);
+        // The rope's cached is8Bit bit can go stale: atomizing the base may swap in an equal 16-bit StringImpl.
+        notReadableInPlace.append(branchTest32(Zero, Address(tempGPR, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
 
         load32(Address(stringGPR, JSRopeString::offsetOfFiber2Lower()), lengthGPR);
         loadPtr(Address(tempGPR, StringImpl::dataOffset()), tempGPR);

@@ -137,7 +137,8 @@ void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRR
 // The cell of the front table for a Structure and a name lies at plane + index * 8. structureIDAndIndex holds the StructureID.
 void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
 // Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
-void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
+// countMissAtSite: for a site that holds the slot of another Structure, whose header is in cell. A value that lies at the place the site names is read there and is no miss.
+void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName, const ScopedLambda<void()>* countMissAtSite = nullptr);
 #endif
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 

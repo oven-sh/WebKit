@@ -28,6 +28,7 @@ bool hasCallableParts(const Type&);
 bool includesFunction(const Type&, FunctionID);
 bool includesBuiltin(const Type&, BuiltinID, const BuiltinTable&);
 bool mayContainAnyCallable(const BuiltinTable&, const Type&);
+bool mayContainAnyClosure(const BuiltinTable&, const Type&);
 bool mayBeInstanceOf(const BuiltinTable&, BuiltinID, BuiltinClassID);
 bool mayBeClosureOf(const TypeTable&, BuiltinID, FunctionID);
 struct LibraryClosuresOfBuiltin {

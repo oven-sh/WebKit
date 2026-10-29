@@ -559,9 +559,6 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             return notePlanWithoutUse("a field of the target is stored once or has a form"_s);
         if (isPreparedBeforeLookups(vm, property.name))
             return notePlanWithoutUse("the target is asked to prepare itself before a store to a field"_s);
-        // A run writes slots by itself, and a marker in such a slot has to set the mark of the cell.
-        if (field->holdsRawValueFromBirth)
-            return notePlanWithoutUse("the mark of the target's cell answers for a field"_s);
         if (extraProperties && isValidOffset(extraPropertiesBefore->get(vm, property.name)))
             return notePlanWithoutUse("a field of the target lies among its extra properties"_s);
         const SlotTraits traits = traitsOf(field->slot.representation());
@@ -578,11 +575,13 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,
             .hasAbsent = traits.hasAbsent,
+            .leavesUndefinedAndNullToOtherWay = !!field->holdsRawValueFromBirth,
             .width = traits.width,
             .absentBits = traits.absentBits,
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
-        store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure;
+        store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
+            && !(store.leavesUndefinedAndNullToOtherWay && property.field->slotHoldsUndefinedAndNull);
         plan.mayStoreCells |= traits.holdsCell;
         plan.readsOutOfLineFields |= property.field && property.field->isOutOfLine();
         if (field->isOutOfLine())

@@ -17,6 +17,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeCounters.h"
@@ -92,7 +93,6 @@ static StructuralRead readGeneric(VM& vm, JSObject* base, UniquedStringImpl* uid
 static JSValue readFieldGeneric(Instance* instance, Object* object, UniquedStringImpl* uid)
 {
     VM& vm = *instance->vm;
-    DeferGCForAWhile deferGC(vm);
     const FieldData* field = object->fieldNamed(object->state(), uid);
     if (!field || field->isAccessor() || field->isPrivate() || field->slot.representation() == SlotRepresentation::DeferredClosure)
         return { };
@@ -223,7 +223,6 @@ static bool isHeldByCacheableDictionary(Structure* structure, UniquedStringImpl*
 static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedStringImpl* uid, bool& isDueForFiling)
 {
     VM& vm = *instance->vm;
-    DeferGCForAWhile deferGC(vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = base->structure();
     const Slot* filedSlot = caches.findByKey(structure, uid, SlotAccess::Read);
@@ -490,7 +489,6 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key, EncodedJSValue encodedValue))
 {
     LeafOperationScope leaf(*instance->vm);
-    DeferGCForAWhile deferGC(*instance->vm);
     JSValue value = JSValue::decode(encodedValue);
     LeafAnswer answer = LeafAnswer::TakeSlowPath;
     KeyName name = base->isObject() ? nameOfKeyForLeaf(instance, key, KeyAtomization::Atomize) : KeyName { };

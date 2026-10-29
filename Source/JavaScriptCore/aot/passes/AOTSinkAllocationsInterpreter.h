@@ -62,6 +62,7 @@ public:
     ObjectValueMap& values() { return *m_values; }
 
     void execute(ValueID);
+    void executeByInterpretation(ValueID);
     void executeTerminator(const Terminator&);
     void executeRelevantValue(const BlockValues&, uint32_t entry);
     void executeTerminatorOf(BlockID);

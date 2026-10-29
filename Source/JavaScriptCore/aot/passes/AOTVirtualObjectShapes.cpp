@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTMemoryLocation.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTVector.h"
 #include <algorithm>

@@ -577,17 +577,10 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 
-#if ENABLE(SHADOW_REALM)
-JSObject* createModuleInShadowRealmError(JSGlobalObject* globalObject, StringView path)
-{
-    return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported inside a ShadowRealm"_s)));
-}
-#else
 JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView path)
 {
     return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported in another realm"_s)));
 }
-#endif
 
 JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {

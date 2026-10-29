@@ -12,6 +12,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
+#include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -665,8 +666,11 @@ void Object::ensureStructureForExtraProperties(VM& vm)
     if (current.extraPropertiesStructureID() == extra->structureID())
         return;
     CompiledStructure* updatedStructure = state().objects->structures.withExtraProperties(vm, current, extra->structure());
-    if (updatedStructure != &current)
-        JSCell::setStructure(vm, updatedStructure);
+    if (updatedStructure == &current)
+        return;
+    JSCell::setStructure(vm, updatedStructure);
+    // The next exit finds the Structure that names these extra properties.
+    state().propertyCaches->forgetFieldExits();
 }
 
 bool Object::ensureStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)

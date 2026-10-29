@@ -20,6 +20,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/Noncopyable.h>
@@ -74,6 +75,8 @@ private:
     void checkCellForms();
     void checkUses();
     AllocationHeapCause checkUse(ObjectID, const ObjectUse&) const;
+    OperandSummary summarizeUse(ValueID user, uint32_t operandIndex) const;
+    bool writesOnlyInsideFrameCells(ValueID user, uint32_t operandIndex) const;
     bool mayLeakContentsThrough(const ObjectUse&) const;
     bool leaksContents(ObjectID cell) const;
     void checkUsesOfArrays();
@@ -97,6 +100,15 @@ private:
     BitVector m_isCandidate;
     Vector<FrameDecision> m_decisions;
     FramePlan m_plan;
+
+    // What the callees of a call do with an operand is the same for every object that may arrive there.
+    struct OperandOfCall {
+        std::optional<OperandSummary> summary;
+        std::optional<bool> writesOnlyInsideFrameCells;
+    };
+    OperandOfCall& operandOfCall(ValueID call, uint32_t operandIndex) const;
+    mutable Vector<uint32_t> m_endOfOperandsOfCall;
+    mutable Vector<OperandOfCall> m_operandsOfCalls;
 };
 
 } // anonymous namespace
@@ -500,6 +512,18 @@ bool FramePlanner::isPassedOnByBranch(const Use& use) const
     return !findNarrowedParameters(m_function, m_analyses.useLists(), use).isEmpty();
 }
 
+static bool mayFollow(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID definition, const Use& earlier, const Use& later)
+{
+    if (earlier.block == later.block && useLists.isBefore(earlier, later))
+        return true;
+    BlockID blockOfDefinition = useLists.blockOf(definition);
+    BitVector barrier(function.blocks.size());
+    barrier.quickSet(blockOfDefinition.index());
+    return std::ranges::any_of(cfg.successors(earlier.block), [&](BlockID successor) {
+        return successor != blockOfDefinition && cfg.blocksReachableFrom(successor, barrier).get(later.block.index());
+    });
+}
+
 // Whoever borrows the closure cannot tell it from another one afterwards.
 bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 {
@@ -515,8 +539,11 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
     std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
+    bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
     bool isBorrowed = false;
+    Vector<Use, 2> usesThatRunIt;
     Vector<Use, 2> lastUses;
     Vector<Use, 1> madeAgainAt;
     for (const Use& use : uses) {
@@ -526,6 +553,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
+            if (isListedUnderItsOwnName && known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }))
+                usesThatRunIt.append(use);
             isBorrowed = true;
             continue;
         }
@@ -543,6 +572,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     }
     if (!isLent && !isBorrowed)
         return false;
+    for (const Use& earlier : usesThatRunIt) {
+        for (const Use& later : lastUses) {
+            if (mayFollow(m_function, m_analyses.cfg(), useLists, definition, earlier, later))
+                return false;
+        }
+    }
     if (isLent && closureFormOf(m_program, *m_flow, m_function.at(definition).function()) != ClosureForm::Slim)
         return false;
     for (const Use& use : lastUses) {
@@ -681,10 +716,11 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
 
     if (!mayLookAtFrameCells(rule) && rule == EffectRule::Builtin && entry.uses.containsOnly(inlineUsesOfFrameCells))
         return AllocationHeapCause::SeenByNativeCode;
-    if (mayLeakFramePointer(m_program, m_flow, m_function, user, operandIndex)) {
+    OperandSummary summary = summarizeUse(entry.use.user, operandIndex);
+    if (mayLeakFramePointer(m_program, m_function, user, operandIndex, summary)) {
         bool isDecidedByHolder = isInFrame(object)
             && entry.uses.contains(OperandUse::Retains)
-            && summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex).retainedIn != RetainedIn::UnknownMemory;
+            && summary.retainedIn != RetainedIn::UnknownMemory;
         if (!isDecidedByHolder)
             return AllocationHeapCause::Escapes;
     }
@@ -721,8 +757,49 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
     if (isClosure || isEnvironment)
         return AllocationHeapCause::None;
 
-    OperandMemory memory = memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(entry.use.user));
-    return memory.writes.containsOnly(heapsInsideFrameCells) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
+    return writesOnlyInsideFrameCells(entry.use.user, operandIndex) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
+}
+
+FramePlanner::OperandOfCall& FramePlanner::operandOfCall(ValueID call, uint32_t operandIndex) const
+{
+    if (m_endOfOperandsOfCall.isEmpty())
+        m_endOfOperandsOfCall.fill(0, m_function.values.size());
+    uint32_t& end = m_endOfOperandsOfCall[call.index()];
+    uint32_t numberOfOperands = m_function.at(call).numberOfOperands();
+    if (!end) {
+        m_operandsOfCalls.grow(m_operandsOfCalls.size() + numberOfOperands);
+        end = m_operandsOfCalls.size();
+    }
+    return m_operandsOfCalls[end - numberOfOperands + operandIndex];
+}
+
+OperandSummary FramePlanner::summarizeUse(ValueID id, uint32_t operandIndex) const
+{
+    const Value& user = m_function.at(id);
+    if (effectRuleOf(user.opcode) != EffectRule::Call)
+        return summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
+    std::optional<OperandSummary>& summary = operandOfCall(id, operandIndex).summary;
+    if (!summary) {
+        summary = summarizeFramePointerUse(m_program, m_flow, m_function, user, operandIndex);
+        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+    }
+    return *summary;
+}
+
+bool FramePlanner::writesOnlyInsideFrameCells(ValueID id, uint32_t operandIndex) const
+{
+    const Value& user = m_function.at(id);
+    auto ask = [&] {
+        return memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(id)).writes.containsOnly(heapsInsideFrameCells);
+    };
+    if (effectRuleOf(user.opcode) != EffectRule::Call)
+        return ask();
+    std::optional<bool>& answer = operandOfCall(id, operandIndex).writesOnlyInsideFrameCells;
+    if (!answer) {
+        answer = ask();
+        m_build.statistics().count(StatisticID::CallOperandsSummarizedForFrames);
+    }
+    return *answer;
 }
 
 bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
@@ -730,7 +807,7 @@ bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
     if (entry.use.kind != Use::Kind::Operand)
         return false;
     const Value& user = m_function.at(entry.use.user);
-    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && mayLeakContents(m_program, m_flow, m_function, user, entry.use.operandIndex);
+    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && summarizeUse(entry.use.user, entry.use.operandIndex).uses.containsAny(usesLeakingContents);
 }
 
 bool FramePlanner::leaksContents(ObjectID cell) const
@@ -1013,7 +1090,7 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
         return std::nullopt;
 
     const Value& user = m_function.at(use.user);
-    OperandSummary summary = summarizeFramePointerUse(m_program, m_flow, m_function, user, use.operandIndex);
+    OperandSummary summary = summarizeUse(use.user, use.operandIndex);
     switch (summary.retainedIn) {
     case RetainedIn::UnknownMemory:
         return std::nullopt;

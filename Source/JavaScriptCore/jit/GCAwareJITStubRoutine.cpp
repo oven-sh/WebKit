@@ -249,6 +249,11 @@ GCAwareJITStubRoutineWithExceptionHandler::~GCAwareJITStubRoutineWithExceptionHa
     // This means that CallSiteIndex can be reserved correctly so long as the code owned by GCAwareJITStubRoutineWithExceptionHandler is on the stack.
     // This is important since CallSite can be queried so long as this code is on the stack: StackVisitor can retreive CallSiteIndex from the stack.
     ASSERT((!isCompilationThread() && !Thread::mayBeGCThread()) || vm().heap.isInPhase(CollectorPhase::End));
+#if USE(BUN_JSC_ADDITIONS)
+    // The handler stays in the CodeBlock's table until this routine is destroyed, as the CallSiteIndex stays reserved.
+    if (m_codeBlockWithExceptionHandler && !m_ownerIsDead)
+        m_codeBlockWithExceptionHandler->removeExceptionHandlerForCallSite(m_exceptionHandlerCallSiteIndex);
+#endif
     if (m_codeOriginPool)
         m_codeOriginPool->removeDisposableCallSiteIndex(m_exceptionHandlerCallSiteIndex);
 #endif
@@ -256,7 +261,7 @@ GCAwareJITStubRoutineWithExceptionHandler::~GCAwareJITStubRoutineWithExceptionHa
 
 void GCAwareJITStubRoutineWithExceptionHandler::observeZeroRefCountImpl()
 {
-#if ENABLE(DFG_JIT)
+#if ENABLE(DFG_JIT) && !USE(BUN_JSC_ADDITIONS)
     if (m_codeBlockWithExceptionHandler) {
         m_codeBlockWithExceptionHandler->removeExceptionHandlerForCallSite(m_exceptionHandlerCallSiteIndex);
         m_codeBlockWithExceptionHandler = nullptr;

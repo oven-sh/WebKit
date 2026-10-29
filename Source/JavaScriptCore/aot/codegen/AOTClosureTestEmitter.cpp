@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureWord.h"
+#include "AOTDecidedBranches.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFlowResults.h"
@@ -41,21 +42,20 @@ bool ClosureTestEmitter::closureWordNames(FunctionID function) const
         && inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
 }
 
+bool ClosureTestEmitter::closuresStayAsCreated(FunctionID function) const
+{
+    return m_program.at(function).role != FunctionRole::BoundFunction && inputs().flow.function(function).closureUse == ClosureUse::CalledOnly && inputs().flow.closuresAreNeverCompared(function);
+}
+
 // A closure that has got a property, another prototype or another level of integrity has a butterfly where its word was, and the comparison refuses it.
 bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type& tested) const
 {
-    if (!closureWordNames(function))
-        return false;
-    const Function& callee = m_program.at(function);
-    if (callee.role != FunctionRole::BoundFunction && inputs().flow.function(function).closureUse == ClosureUse::CalledOnly && inputs().flow.closuresAreNeverCompared(function))
-        return true;
-    return (tested.anyFunction || tested.anyObject) && !m_options.recorded.validates;
+    return closureWordNames(function) && (closuresStayAsCreated(function) || (mayRefuseChangedClosures(tested) && !m_passesChangedClosures));
 }
 
-// In a validating build only a function whose closures stay as they were created is decided so.
-Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, FunctionID genericEntrypoint)
+Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, FunctionID function, FunctionID genericEntrypoint)
 {
-    if (m_options.recorded.validates) {
+    if (m_options.recorded.validates && closuresStayAsCreated(function)) {
         LBasicBlock hasProperties = newBlock();
         LBasicBlock continuation = newBlock();
         m_out.branch(hasMutableCellType(cell, SlimClosureWithPropertiesType).value(), rareEdge(hasProperties), normalEdge(continuation));
@@ -79,7 +79,7 @@ Word32 ClosureTestEmitter::upperHalfOfWordAtSlimClosureWord(CellPointer cell)
 Condition ClosureTestEmitter::isClosureOf(CellPointer cell, FunctionID function, const Type& tested, CodeShape shape)
 {
     if (isDecidedByClosureWord(function, tested))
-        return hasClosureWordThatDecides(cell, inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function)));
+        return hasClosureWordThatDecides(cell, function, inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function)));
     return asBoolean([&](BranchTargets targets) {
         branchOnIsClosureOf(cell, function, tested, targets, shape);
     });
@@ -112,7 +112,7 @@ void ClosureTestEmitter::branchOnIsClosureOf(CellPointer cell, FunctionID functi
         return;
     }
     if (isDecidedByClosureWord(function, tested)) {
-        branch(hasClosureWordThatDecides(cell, entrypoint), targets);
+        branch(hasClosureWordThatDecides(cell, function, entrypoint), targets);
         return;
     }
     if (m_placement.closureIdentityOf(function) == ClosureIdentity::TableCell) {
@@ -337,7 +337,7 @@ TypedPointer ClosureTestEmitter::closureCellOf(FunctionID genericEntrypoint)
     RELEASE_ASSERT(number);
     size_t cellSize = m_options.recorded.useWideReferences() ? sizeof(JSCell*) : sizeof(uint32_t);
     Pointer table = loadImmutablePointer(AOT_INSTANCE_OFFSET(closureCells));
-    return m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), table.value(), static_cast<ptrdiff_t>(number * cellSize));
+    return m_out.address(m_heaps.AOTInstance_closureCells, table.value(), static_cast<ptrdiff_t>(number * cellSize));
 }
 
 ptrdiff_t ClosureTestEmitter::offsetOfClosureHeader(FunctionKindData kind) const

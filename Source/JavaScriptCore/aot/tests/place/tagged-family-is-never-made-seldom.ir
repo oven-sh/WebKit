@@ -42,6 +42,6 @@ function f3 name="look" parameters=[{type=undefined|null|L2}] results=[{type=any
     Return
 }
 
-# CHECK: L4 CompiledObject size=64 extension=152
-# CHECK: "late23" JSValue out@144
+# CHECK: L4 CompiledObject size=48 extension=200
+# CHECK: "late23" JSValue out@192
 # CHECK-NEXT: extension Cell32 @16

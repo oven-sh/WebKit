@@ -136,8 +136,9 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                     somebodySaysWhenItBegins.set(entry.module.index());
                 break;
             case FlowWayIntoFile::StaticImport:
+                // A file that imports itself has begun, and begins once.
                 forEachRequest([&](ModuleID requester, const ModuleRequest& request) {
-                    if (request.kind == ModuleRequestKind::Import)
+                    if (request.kind == ModuleRequestKind::Import && request.target != requester)
                         begins(requester.index(), request.target);
                 });
                 break;

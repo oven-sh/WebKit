@@ -19,8 +19,6 @@ public:
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
-    Expected<bool> endsWithinLengthOfData(BlockID);
-    Expected<bool> likelyTurnsEndWithinLengthOfData(BlockID);
     bool allocatesWhereErrorsAreCaught(BlockID);
     void emitPoll(const ValueContext&);
 };

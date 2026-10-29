@@ -720,6 +720,7 @@ struct DeadCodeEliminator {
     Vector<ValueLocation> parameterLocations { };
     Vector<Vector<ValueID, 2>> storesInto { };
     BitVector isActive { };
+    ObservableOperations observable { analyses.effectContext(), function };
     bool tookProofsFromEdges { false };
     bool madeEdgesAlikeOrBlocksEmpty { false };
     bool tookArgumentsFromEmptyBlocks { false };
@@ -787,7 +788,8 @@ struct DeadCodeEliminator {
         case UnusedValueRule::IsRemoved:
             return false;
         case UnusedValueRule::Stays:
-            return true;
+            // All that the look at a heritage does is throw, or run a getter. The type of the heritage may rule out both.
+            return value.opcode != Opcode::ResolveHeritage || !observable.neitherThrowsNorRunsCode(id);
         case UnusedValueRule::StaysWithWrittenObject:
             return !waitsForWrittenObject(id, value, position);
         case UnusedValueRule::DependsOnEffects:
@@ -1160,6 +1162,57 @@ struct ConstantFolder {
     KnownValue knownValueOf(ValueID id) const { return Typed::knownValueOf(program, function, id); }
     static bool isPrimitive(KnownValue value) { return value.isKnown() && !value.isObject(); }
 
+    // A text whose characters are known and that the program makes all the same: a literal would be held in another way.
+    struct TextMadeByProgram {
+        ValueID value;
+        StringID characters;
+    };
+    Vector<TextMadeByProgram, 4> textsMadeByProgram { };
+
+    KnownValue charactersOfTextMadeByProgram(ValueID id) const
+    {
+        if (textsMadeByProgram.isEmpty())
+            return { };
+        RootThroughCasts made = sameObjectThroughCasts(function, id);
+        for (const TextMadeByProgram& text : textsMadeByProgram) {
+            if (made == text.value)
+                return KnownValue::string(text.characters);
+        }
+        return { };
+    }
+
+    // For whoever asks for the characters alone.
+    KnownValue knownCharactersOf(ValueID id) const
+    {
+        KnownValue known = knownValueOf(id);
+        return known.isKnown() ? known : charactersOfTextMadeByProgram(id);
+    }
+
+    // Its answer is known, so the call ends without an error, and nobody sees what else it leaves behind.
+    void takeOutCallsNobodyAsks(Vector<ValueID, 16>& foldedValues)
+    {
+        const UseLists& uses = useLists();
+        for (const TextMadeByProgram& text : textsMadeByProgram) {
+            if (function.at(text.value).opcode != Opcode::CallBuiltin || !uses.usesOf(text.value).empty())
+                continue;
+            explainOperationThatGoes(function, text.value, InPlaceOfOperation::NothingByProofOfThePass);
+            becomeUndefined(function, text.value);
+            foldedValues.append(text.value);
+        }
+    }
+
+    bool hasOperandMadeByProgram(const Value& value) const
+    {
+        if (textsMadeByProgram.isEmpty())
+            return false;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            if (operand && !knownValueOf(operand).isKnown() && charactersOfTextMadeByProgram(operand).isKnown())
+                return true;
+        }
+        return false;
+    }
+
     bool becomeConstant(ValueID id, KnownValue constant)
     {
         if (evaluateTypeTest(program, constant, typeOf(id)) != KnownBoolean::True)
@@ -1215,11 +1268,17 @@ struct ConstantFolder {
             if (conditionsWithProofs->get(id.index()))
                 return false;
         }
-        if (rules.contains(FoldingRule::KnownString) && joinsNarrowAndWideParts(value))
+        bool takesTextMadeByProgram = hasOperandMadeByProgram(value);
+        // A conversion of a text hands on its operand.
+        if (rules.contains(FoldingRule::KnownString) && value.opcode != Opcode::ToString && (takesTextMadeByProgram || joinsNarrowAndWideParts(value))) {
+            if (KnownValue joined = joinKnownStrings(id, value); joined.kind() == KnownValue::Kind::String)
+                textsMadeByProgram.append({ id, joined.asString() });
             return false;
+        }
         if (rules.contains(FoldingRule::KnownOperands)) {
-            KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownValueOf(operand); });
-            if (isPrimitive(result) && becomeConstant(id, result))
+            KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+            bool isOperandMadeByProgram = takesTextMadeByProgram && result.kind() == KnownValue::Kind::String;
+            if (isPrimitive(result) && !isOperandMadeByProgram && becomeConstant(id, result))
                 return true;
         }
         if (rules.contains(FoldingRule::SingleValueType)) {
@@ -1229,7 +1288,7 @@ struct ConstantFolder {
                 return true;
         } else if (rules.contains(FoldingRule::SingleValueBehindCasts) && resultRuleOf(value.opcode) != ResultRule::None && becomeConstantIfRemovable(id, knownValueOf(id)))
             return true;
-        if (rules.contains(FoldingRule::KnownString) && foldKnownString(id, value))
+        if (rules.contains(FoldingRule::KnownString) && !takesTextMadeByProgram && foldKnownString(id, value))
             return true;
         if (!rules.contains(FoldingRule::OwnRule))
             return false;
@@ -1342,21 +1401,26 @@ struct ConstantFolder {
         return hasNarrowPart && hasWidePart;
     }
 
-    bool foldKnownString(ValueID id, const Value& value)
+    KnownValue joinKnownStrings(ValueID id, const Value& value)
     {
         if (!opcodesCreatingKnownStrings.contains(value.opcode))
-            return false;
+            return { };
 
         uint64_t bytes = 0;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
-            KnownValue operand = knownValueOf(value.operand(index));
+            KnownValue operand = knownCharactersOf(value.operand(index));
             if (!isPrimitive(operand))
-                return false;
+                return { };
             bytes += operand.kind() == KnownValue::Kind::String ? program.string(operand.asString()).size() : maxPrimitiveTextBytes;
         }
         if (exceedsLimitOfFoldedString(id, bytes))
-            return false;
-        KnownValue result = evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownValueOf(operand); });
+            return { };
+        return evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+    }
+
+    bool foldKnownString(ValueID id, const Value& value)
+    {
+        KnownValue result = joinKnownStrings(id, value);
         return result.kind() == KnownValue::Kind::String && becomeConstant(id, result);
     }
 
@@ -1466,7 +1530,7 @@ struct ConstantFolder {
         if (!callee)
             return false;
         ValueID receiverOperand = value.receiverOperand();
-        KnownValue receiver = receiverOperand ? knownValueOf(receiverOperand) : KnownValue();
+        KnownValue receiver = receiverOperand ? knownCharactersOf(receiverOperand) : KnownValue();
         bool takesNumber = callee == Builtins::NumberPrototypeToLocaleString;
         if (takesNumber ? !receiver.isNumber() : receiver.kind() != KnownValue::Kind::String)
             return false;
@@ -1476,7 +1540,7 @@ struct ConstantFolder {
         Vector<ScratchRealm::Operand, 2> arguments;
         Vector<TypeID, 2> argumentTypes;
         for (ValueID argument : value.argumentsOperands()) {
-            KnownValue primitive = knownValueOf(argument);
+            KnownValue primitive = knownCharactersOf(argument);
             if (isPrimitive(primitive)) {
                 if (primitive.kind() == KnownValue::Kind::String)
                     bytes += program.string(primitive.asString()).size();
@@ -1516,13 +1580,22 @@ struct ConstantFolder {
         }
 
         std::optional<ScratchRealm::Answer> answer = context.build.scratchRealms().ofCurrentThread().call(program, callee, receiver, arguments.span());
-        if (!answer || !answer->isStoredLikeLiteral)
+        if (!answer)
             return false;
+        auto becomeAnswer = [&](KnownValue known) {
+            explainOperationThatGoes(function, id, InPlaceOfOperation::NothingByProofOfThePass);
+            return becomeConstant(id, known);
+        };
         if (answer->text.isNull())
-            return becomeConstant(id, answer->primitive);
+            return becomeAnswer(answer->primitive);
         if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
             return false;
-        return becomeConstant(id, KnownValue::string(context.strings.intern(StringView(answer->text))));
+        StringID characters = context.strings.intern(StringView(answer->text));
+        // How the answer is held follows how the operands are, and the realm was handed literals.
+        if (answer->isStoredLikeLiteral && !hasOperandMadeByProgram(value))
+            return becomeAnswer(KnownValue::string(characters));
+        textsMadeByProgram.append({ id, characters });
+        return false;
     }
 
     PropertyKeyID findNameGivenTo(const Value& operation, ValueID key)
@@ -1605,6 +1678,13 @@ PassOutcome foldConstants(FunctionPassContext& context)
             didChangeCasts |= isCastOrConversion(opcode) || isCastOrConversion(function.at(id).opcode);
         }
     }
+    if (!folder.textsMadeByProgram.isEmpty()) {
+        if (!foldedValues.isEmpty()) {
+            context.analyses.invalidate(FunctionAnalysis::UseLists);
+            folder.useListsOnceAsked = nullptr;
+        }
+        folder.takeOutCallsNobodyAsks(foldedValues);
+    }
     context.foldingAskedForUses = folder.askedForUses;
     if (foldedValues.isEmpty())
         return PassOutcome::Unchanged;
@@ -1657,6 +1737,49 @@ struct TrivialParameterRemover {
     ValueSubstitution candidates { function };
     Vector<uint32_t> positionOfParameter = Vector<uint32_t>(FillWith { }, function.values.size(), noPosition);
 
+    mutable std::optional<BitVector> positionsFoundInBounds;
+
+    bool isNarrowedOnEdge(ValueID parameter) const
+    {
+        uint32_t index = positionOfParameter[parameter.index()];
+        if (index == noPosition)
+            return false;
+        const ParameterPosition& position = parameters[index];
+        return std::ranges::any_of(cfg.incomingEdges(position.block), [&](Edge edge) {
+            return position.index >= targetOf(function, edge).arguments.size();
+        });
+    }
+
+    bool isPositionThatTestFoundInBounds(ValueID parameter) const
+    {
+        if (!positionsFoundInBounds) {
+            positionsFoundInBounds.emplace(function.values.size());
+            for (BlockID block : cfg.reversePostOrder()) {
+                for (ValueID id : function.at(block).values) {
+                    const Value& value = function.at(id);
+                    if (provesOf(value.opcode) == Proof::InBounds && value.positionOperand())
+                        positionsFoundInBounds->quickSet(value.positionOperand().index());
+                }
+            }
+        }
+        return positionsFoundInBounds->quickGet(parameter.index());
+    }
+
+    // `index < length` says nothing of the index while the declared type of the length is only expected. It does behind the test of the length, or where the body stands in a caller that knows the length.
+    bool isLeftByComparisonWithExpectedNumber(const ParameterPosition& position) const
+    {
+        std::optional<Edge> edge = cfg.singleIncomingEdge(position.block);
+        if (!edge || edge->isHandlerEdge() || !function.at(edge->from).terminator.isConditionalBranch())
+            return false;
+        const Value& comparison = function.at(function.at(edge->from).terminator.conditionOperand());
+        uint32_t first = firstEdgeResultParameter(function, edge->from, edge->targetIndex);
+        if (!relationalOperators.contains(comparison.opcode) || position.index < first || !context.program.sourceFunctionOf(function, comparison.origin()).has(FunctionFlags::IsChecked))
+            return false;
+        uint32_t narrowedOperandIndex = targetOf(function, *edge).proofs[position.index - first];
+        const Value& other = function.at(comparison.operand(1 - narrowedOperandIndex));
+        return context.types.at(function.at(position.parameter).type).isNumber() && !context.types.at(other.type).isNumber() && context.types.at(other.expectedOrType().predicted()).isNumber();
+    }
+
     KnownValue onlyValueOf(const Block& block, ValueID parameter) const
     {
         if (block.handler || block.subject == parameter)
@@ -1666,8 +1789,10 @@ struct TrivialParameterRemover {
         case KnownValue::Kind::Undefined:
         case KnownValue::Kind::Null:
         case KnownValue::Kind::Boolean:
-        case KnownValue::Kind::Integer:
             return value;
+        case KnownValue::Kind::Integer:
+            // What a test has found in bounds is the value that was narrowed to the parameter. A constant in its place says nothing of that value.
+            return isNarrowedOnEdge(parameter) && isPositionThatTestFoundInBounds(parameter) ? KnownValue() : value;
         case KnownValue::Kind::Unknown:
         case KnownValue::Kind::Double:
         case KnownValue::Kind::String:
@@ -1698,7 +1823,7 @@ struct TrivialParameterRemover {
                 return valueBehindCasts(position);
             only = leader;
         }
-        if (receivesEdgeResult && only && !canReplaceParameter(function, only, position.parameter))
+        if (receivesEdgeResult && only && (!canReplaceParameter(function, only, position.parameter) || isLeftByComparisonWithExpectedNumber(position)))
             return position.parameter;
         return only;
     }
@@ -2985,7 +3110,7 @@ PassOutcome sinkConstants(FunctionPassContext& context)
 
 using TypePredicate = bool (Type::*)() const;
 
-static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_t parameterIndex, TypePredicate isCheap)
+static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_t parameterIndex, NOESCAPE const Invocable<bool(const Type&)> auto& isCheap)
 {
     if (rewrite.at(mergePoint).isHandlerBlock())
         return false;
@@ -2993,7 +3118,7 @@ static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_
     for (Edge edge : rewrite.cfg().incomingEdges(mergePoint)) {
         if (edge.isHandlerEdge() || edge.from == mergePoint || rewrite.at(edge.from).terminator.kind != TerminatorKind::Jump)
             return false;
-        hasCheapArgument |= (rewrite.typeOf(targetOf(rewrite.function, edge).arguments[parameterIndex]).*isCheap)();
+        hasCheapArgument |= std::invoke(isCheap, rewrite.typeOf(targetOf(rewrite.function, edge).arguments[parameterIndex]));
     }
     return hasCheapArgument && !rewrite.analyses.isEnteredFromUnreachableBlock(mergePoint);
 }
@@ -3072,9 +3197,45 @@ static void hoistOperatorOnParameter(Rewrite& rewrite, BlockID id, const Block& 
     });
 }
 
+// `target.add(round)` behind the choice among what `add` may be: the declared type of the result is expected of what the ways hand on together.
+// A way that proves the type needs no guard, and a test in place of the guard asks the other ways alone.
+static void hoistGuardOnParameter(Rewrite& rewrite, BlockID id, const Block& block)
+{
+    if (id == entryBlock)
+        return;
+    size_t valueIndex = block.values.findIf([&](ValueID value) { return !isRematerializable(rewrite.at(value)); });
+    if (valueIndex == notFound || rewrite.at(block.values[valueIndex]).opcode != Opcode::Expect)
+        return;
+    ValueID guard = block.values[valueIndex];
+    ValueID parameter = rewrite.at(guard).valueOperand();
+    size_t parameterIndex = block.parameters.find(parameter);
+    if (parameterIndex == notFound || rewrite.uses().useCount(parameter) != 1)
+        return;
+    const Type& expected = rewrite.context.types.at(rewrite.at(guard).expectedType().predicted());
+    auto needsNoGuard = [&](const Type& type) { return type.isSubsetOf(expected, rewrite.program); };
+    if (!canHoistIntoPredecessors(rewrite, id, parameterIndex, needsNoGuard))
+        return;
+    rewrite.claim(id);
+    rewrite.later([&rewrite, id, guard, parameter, parameterIndex, edges = rewrite.keep(rewrite.cfg().incomingEdges(id))] {
+        const Type& expected = rewrite.context.types.at(rewrite.at(guard).expectedType().predicted());
+        for (Edge edge : edges) {
+            ValueID argument = targetOf(rewrite.function, edge).arguments[parameterIndex];
+            if (rewrite.typeOf(argument).isSubsetOf(expected, rewrite.program))
+                continue;
+            Value copy(rewrite.at(guard));
+            copy.setValueOperand(argument);
+            editTarget(rewrite.function, edge).arguments[parameterIndex] = rewrite.insertBefore(pointBeforeTerminatorOf(rewrite.function, edge.from), rewrite.at(guard).origin(), WTF::move(copy));
+        }
+        rewrite.replaceUsesOf(guard, parameter);
+        rewrite.erase(id, guard);
+        rewrite.retype(parameter);
+    });
+}
+
 static constexpr Rule hoistedTestRules[] {
     { TerminatorKindSet { TerminatorKind::Branch }, hoistTruthinessTest, BlocksShown::WithParameters },
     { allTerminators, hoistOperatorOnParameter, BlocksShown::WithParameters },
+    { allTerminators, hoistGuardOnParameter, BlocksShown::WithParameters },
 };
 
 PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)

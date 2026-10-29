@@ -1513,19 +1513,41 @@ static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
     return anyUserBehindCasts(context.analyses, read, isCalleeOf);
 }
 
+static bool isGetterAlone(const BuiltinTable& builtins, BuiltinID member)
+{
+    return builtins.at(member).kind == BuiltinKind::Accessor && !std::ranges::contains(builtins.overloadSummariesOf(member), BuiltinCallMode::Set, &BuiltinOverloadSummary::mode);
+}
+
+// By name such a store is a call by value out of a stub. Into a field it is a few instructions, and a test for the layout buys little.
+static bool findsSetterOfProgram(const Program& program, PropertyKeyID key)
+{
+    auto isSetter = [&](const ClassMember& member) {
+        return member.key == key && member.side == ClassSide::Prototype && member.kind == MethodKind::Setter;
+    };
+    return std::ranges::any_of(program.declarersOfName(key), [&](LayoutID declarer) {
+        const ClassFlow& classFlow = program.at(declarer).classFlow;
+        return std::ranges::any_of(classFlow.members, isSetter) || std::ranges::any_of(classFlow.namedMembers, isSetter);
+    });
+}
+
 static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
     if (!isOrdinaryText(context.program, key) || !name || name.isPrivateAlias)
         return false;
+    bool stores = accessOf(context.function.at(access).opcode) == Access::Store && findsSetterOfProgram(context.program, key);
     bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalledInPlace(context, access);
     std::span<const BuiltinClassID> classes = builtins.classesWithInstanceMember(name.name);
     if (asksForMethod && classes.empty())
         return false;
     return std::ranges::all_of(classes, [&](BuiltinClassID builtinClass) {
         BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
-        return found.outcome == BuiltinMemberLookup::Outcome::Found && (builtins.at(builtins.canonicalID(found.member)).kind == BuiltinKind::Method) != asksForMethod;
+        if (found.outcome != BuiltinMemberLookup::Outcome::Found)
+            return false;
+        BuiltinID member = builtins.canonicalID(found.member);
+        // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
+        return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
     });
 }
 
@@ -3044,7 +3066,8 @@ struct TestPlacer {
             BlockID blockOfTest = builder.currentBlock();
 
             // No block is made that only jumps: SimplifyControlFlow would merge it away in the same round, and every pass in between would walk it.
-            bool provesNothingWhenFailed = provesForStretch(provesOf(function.at(test).opcode));
+            LayoutID functionWhoseGuardsBegin = constructorFunctionAskedAbout(context.program, function.at(test));
+            bool provesNothingWhenFailed = provesForStretch(provesOf(function.at(test).opcode)) && !functionWhoseGuardsBegin;
             bool entersPassedTarget = &plannedTest == &plannedTests.back() && isOnlyWayToPassedTarget;
             IRBuilder::ProvenBranchTargets targets;
             if (entersPassedTarget)
@@ -3054,6 +3077,8 @@ struct TestPlacer {
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, everyTestIsUnpredictable ? frequency : frequencyOfGenericCopy(frequency), WTF::move(targets));
             if (!provesNothingWhenFailed) {
                 builder.moveToEndOf(branch.notTaken);
+                if (functionWhoseGuardsBegin)
+                    appendStartOfMemberGuards(builder, context.program, context.types, functionWhoseGuardsBegin);
                 builder.emitJump(failedTarget.block, Arguments(failedTarget.arguments));
             }
             if (!entersPassedTarget)
@@ -3268,6 +3293,12 @@ struct TestPlacer {
             return passed;
         // An intersection names an object as its second type does: as the test did.
         Type both = operandType.intersectWith(passedType, types);
+        // Beside a class that no test tells from others that intersection keeps every class that the second type lists. The operand's own type says which of them are left.
+        bool listsClassThatOperandRulesOut = !operandType.anyObject && !operandType.anyFunction && std::ranges::any_of(passedType.classes, [&](const ClassPart& part) {
+            return !operandType.findClassPart(part.builtinClass);
+        });
+        if (both == passedType && listsClassThatOperandRulesOut)
+            both = passedType.intersectWith(operandType, types);
         if (both.isNever() || both == passedType)
             return passed;
 
@@ -3344,6 +3375,8 @@ struct TestPlacer {
     // Nobody can tell that it ran, so nobody can tell that the copy runs it again.
     bool canRunTwice(BlockID block)
     {
+        if (context.build.isSabotaged(Sabotage::WhatRunsAgainLeavesNoTrace))
+            return true;
         auto canRunTwice = [](const EffectsOnEdges& effects) {
             auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
             return isUnseen(effects.normal) && isUnseen(effects.handler);
@@ -3514,11 +3547,14 @@ struct TestPlacer {
         for (const EmittedTest* emitted : narrowingTests)
             isSubject.set(analyses.identityOf(subjectOf(*emitted)).index());
         Vector<NarrowableUse> uses;
-        const ValueIdentities& identities = analyses.identities();
         const UseLists& useLists = analyses.useLists();
-        for (size_t index = 0; index < function.values.size(); ++index) {
+        const size_t numberOfListedValues = function.values.size();
+        // A build that validates adds a value at each replacement, and the identities do not outlast that.
+        Vector<ValueID> identityOfListedValue(numberOfListedValues);
+        for (size_t index = 0; index < numberOfListedValues; ++index) {
             ValueID alias(index);
-            ValueID identity = identities.identityOf(alias);
+            ValueID identity = analyses.identityOf(alias);
+            identityOfListedValue[index] = identity;
             if (!isSubject.get(identity.index()))
                 continue;
             for (const Use& use : useLists.usesOf(alias)) {
@@ -3614,6 +3650,32 @@ struct TestPlacer {
                 replaceUsesDominatedBy(edgeInto(emitted->failed), subject, emitted->provenWhenFailed);
         }
 
+        // Code that two tests of one value lead to is behind neither of them. What passed either comes there as a parameter.
+        for (size_t index = 0; index < numberOfListedValues; ++index) {
+            ValueID joined(index);
+            ValueID identity = identityOfListedValue[index];
+            if (identity == joined || !isSubject.get(identity.index()))
+                continue;
+            ValueLocation location = useLists.locationOf(joined);
+            if (location.placement != ValuePlacement::Parameter || cfg.singleIncomingEdge(location.block))
+                continue;
+            TypeID joinedTypeID = function.at(joined).type;
+            Type joinedType = types.at(joinedTypeID);
+            for (NarrowableUse& narrowable : std::ranges::equal_range(uses, identity, { }, &NarrowableUse::identity)) {
+                const Use& use = narrowable.use;
+                if (narrowable.getsCast || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand && use.kind != Use::Kind::EdgeArgument))
+                    continue;
+                if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ValidateSameValue)
+                    continue;
+                ValueID current = usedValueOf(function, use);
+                TypeID currentTypeID = function.at(current).type;
+                if (current == joined || currentTypeID == joinedTypeID || !analyses.dominators().dominates(location.block, use.block))
+                    continue;
+                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program))
+                    replace(use, joined);
+            }
+        }
+
         Vector<std::pair<TypeID, ValueID>, 2> castsOfProvenValue;
         ValueID proven;
         for (const PlannedCast& planned : plannedCasts) {
@@ -3670,7 +3732,7 @@ struct TestPlacer {
 static TypeID narrowExpectedTypeByUses(FunctionPassContext& context, std::span<const ValueID> values, TypeID expected)
 {
     const Type& expectedType = context.types.at(expected);
-    if (maxNumberOfUnionParts(expectedType) < 2)
+    if (maxNumberOfUnionPartsWithObjects(expectedType) < 2)
         return expected;
     UnionParts parts = unionPartsOf(expectedType);
     // Only a part that has objects can go, and never the last one. undefined | null stands beside every reference type.
@@ -3803,6 +3865,49 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
     return outcome;
 }
 
+// `x !== x`: only NaN differs from itself. So what is no number has its answer, and the test for a number is no guess that sends other values into a copy.
+static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::StrictEq))
+        return PassOutcome::Unchanged;
+    Vector<ValueID, 4> comparisons;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
+            continue;
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::StrictEq || value.leftOperand() != value.rightOperand())
+                continue;
+            // What a branch hands on of the operands of its test, it hands on of the comparison itself.
+            bool isTestOfBranchWithProofs = std::ranges::any_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+                return use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.targets.containsIf([](const Target& target) { return !target.proofs.isEmpty(); });
+            });
+            const Type& type = context.program.typeOf(function, value.leftOperand());
+            if ((type.primitives & Primitive::Number) && !type.isNumber() && !isTestOfBranchWithProofs)
+                comparisons.append(id);
+        }
+    }
+    if (comparisons.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (ValueID id : comparisons) {
+        ValueLocation location = analyses.useLists().locationOf(id);
+        ValueID compared = function.at(id).leftOperand();
+        Expected<BlockFrequency> frequency = function.at(location.block).frequency;
+        builder.setOrigin(function.at(id).origin());
+        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
+        IRBuilder::ProvenBranch isNumber = builder.emitBranchWithProof(builder.appendTypeTest(compared, TypeTable::number), OperandIndex::TypeTest::value, frequency, frequency);
+        builder.moveToEndOf(isNumber.taken);
+        builder.endExpansion(expansion, builder.append(Opcode::StrictEq, { isNumber.provenOnTaken, isNumber.provenOnTaken }));
+        builder.moveToEndOf(isNumber.notTaken);
+        builder.endExpansion(expansion, builder.appendBoolean(true));
+    }
+    return PassOutcome::Changed;
+}
+
 PassOutcome placeTypeTests(FunctionPassContext& context)
 {
     const Heat& heat = context.inputs.heat;
@@ -3817,6 +3922,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
+    marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

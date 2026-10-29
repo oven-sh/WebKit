@@ -60,7 +60,7 @@ static bool namesEveryCallee(const Type& callee)
     return callee.isObject() && callee.hasOnlyKnownCallees() && !callee.layouts;
 }
 
-static bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
+bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
 {
     if (!namesEveryCallee(callee))
         return true;
@@ -156,7 +156,12 @@ static void describeCreationOfThis(const Program& program, FunctionID callee, co
     if (!takesThisFromConstruction(program.at(callee)))
         return;
     describeReadOfConstructPrototype(program, operands.newTarget ? program.at(operands.newTarget) : Type::forFunction(callee), description);
-    description.addOwn(declaredBoundOf(Opcode::NewObject));
+    // new.target selects the class of the object.
+    LayoutID constructed = program.at(callee).constructedClass;
+    if (operands.newTarget || !constructed)
+        description.addOwn(declaredBoundOf(Opcode::NewObject));
+    else
+        description.addOwn(hasOnePrototypeObject(program, constructed) ? declaredBoundOf(NamedEffectSet::Allocates) : effectsOfAllocatingWithPrototype(program, constructed));
 }
 
 void describeCallees(const Program& program, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description)

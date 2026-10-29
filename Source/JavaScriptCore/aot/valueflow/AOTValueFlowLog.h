@@ -108,6 +108,8 @@ struct ValueFlowNodeKey {
     ValueSetID set;
 };
 
+static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isForCall);
+
 inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
 {
     auto at = [&](unsigned offset) {
@@ -192,7 +194,7 @@ public:
         auto shrinkToNothing = [](auto&... lists) {
             (lists.shrink(0), ...);
         };
-        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty, namesWatched);
+        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, statementsThatAskProxiesByTheirTraps, libraryFunctionsLacked, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty, namesWatched);
         numberOfMadeNodes = 0;
         numberMadeWhereAskedFor = 0;
         m_madeByKey = HashedIndex();
@@ -224,6 +226,8 @@ public:
     Vector<FunctionID> reached;
     Vector<Use> uses;
     Vector<ValueFlowStatementID> statementsWithMembersNotToldApart;
+    Vector<ValueFlowStatementID> statementsThatAskProxiesByTheirTraps;
+    Vector<RuntimeFunctionID> libraryFunctionsLacked;
     Vector<Run> runs;
     Vector<ValueFlowNodeID> nodesRead;
     Vector<FunctionID> functionsAsked;

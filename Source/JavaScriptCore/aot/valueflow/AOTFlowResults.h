@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowIDs.h"
+#include "AOTFlowModuleOrder.h"
 #include "AOTFrameArrayParameters.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
@@ -167,8 +168,11 @@ struct FlowFunctionTables {
     BitVector functionsWhoseClosuresMayBeRenamed;
     BitVector functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees;
     BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
+    BitVector functionsWhoseClosuresMayBeNamedOutOfSight;
     BitVector functionsWhoseClosuresAreGivenDisplayName;
     BitVector functionsWhoseClosuresAreMadeOnce;
+    // By the function as it is written: all its forms together.
+    BitVector writtenFunctionsWithOneFunctionObject;
 };
 
 struct WrittenPositionOfSite {
@@ -219,6 +223,8 @@ struct FlowBuiltinTables {
     // An operation that lists own keys is handed one of these, by canonical ID.
     BitVector holdersWithListedKeys;
     Vector<BuiltinUseRecord> uses;
+    // Ascending. Flow wanted to enter them, and the program does not hold them: what it says of the program leaves out what they do.
+    Vector<RuntimeFunctionID> libraryFunctionsLacked;
     Vector<FeatureUseRecord> featureUses;
     BitVector builtinsThatMayBeTrimmed;
     Vector<FlowLocaleUse> localeUses;
@@ -239,6 +245,7 @@ BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable&, std::span<const Feat
 
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
+    FlowModuleOrder moduleOrder;
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     bool findsFilesOfProgramByName { true };
@@ -298,6 +305,8 @@ public:
     bool hasOneClosure(FunctionID id) const { return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index()); }
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
+    // The function takes another value there from now on.
+    void replaceEntryParameter(FunctionID, uint32_t entryParameter, const OperandSummary&);
     void setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses);
     OperandUses storedValueUses(FieldReference) const;
     OperandSummary framePointerSummary(FunctionID function, uint32_t entryParameter) const { return m_borrowedParameters.summaryOf(function, entryParameter); }
@@ -350,6 +359,8 @@ public:
     bool closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const;
     // No statement is seen to name one, and they go where nobody follows them.
     bool closuresGoOutOfSightUnnamed(FunctionID closureFunction) const;
+    // Of those: a statement of the program defines `name` on an object nobody follows.
+    bool closuresMayBeNamedOutOfSight(FunctionID closureFunction) const;
     // By a statement that is seen to reach the closure and writes that key or a key nobody knows.
     bool closuresAreGivenDisplayName(FunctionID closureFunction) const;
     // By one operation that runs once, or by the first read of the variable that starts with the function.
@@ -379,7 +390,10 @@ public:
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
     bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
+    // The body of the first has run to its end when the body of the second begins.
+    bool completesBefore(ModuleID first, ModuleID second) const { return m_tables.wholeProgram.moduleOrder.completesBefore(first, second); }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
+    std::span<const RuntimeFunctionID> libraryFunctionsLacked() const LIFETIME_BOUND { return m_tables.builtins.libraryFunctionsLacked.span(); }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }
     std::span<const FlowWorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.builtins.workerEntries.span(); }

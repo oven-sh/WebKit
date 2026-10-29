@@ -480,39 +480,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
-#if !HAVE_MUST_TAIL_CALL
-static NEVER_INLINE NOT_TAIL_CALLED ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
-{
-    AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, Entry::operationAOTCopyDataProperties);
-    scope.release();
-    copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
-    OPERATION_RETURN(scope);
-}
-#endif
-
 // The stub in front calls it where a copy that takes no frame is kept at the place of this one.
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
         return { nullptr };
-#if HAVE_MUST_TAIL_CALL
-    MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
-#else
-    return copyDataPropertiesInFrame(AOT_OPERATION_FRAME_RECORD(), instance, target, source, excludedRun, count, excludedKeys);
-#endif
+    AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
 }
 
-static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
+static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
 {
     bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnce(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
-    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr) {
-        if (copy->structureID() == source->structureID() && !source->butterfly()) {
-            ClonedStructure& cloned = instance->allocation.clonedStructures[AllocationWords::placeOfClonedStructure(copy->structureID().bits())];
-            cloned.cellSize = JSFinalObject::allocationSize(copy->structure()->inlineCapacity());
-            cloned.header = *std::bit_cast<const uint64_t*>(copy);
-        }
+    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
         return copy;
-    }
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 
@@ -528,7 +508,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
             OPERATION_RETURN(scope, copy);
     }
     if (!count && source.isObject()) {
-        if (JSObject* copy = tryCopyWithoutNames(instance, vm, globalObject, asObject(source), run))
+        if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
             OPERATION_RETURN(scope, copy);
     }
     JSObject* copy = constructEmptyObject(globalObject);

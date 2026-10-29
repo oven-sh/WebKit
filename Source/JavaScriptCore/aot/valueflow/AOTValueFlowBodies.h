@@ -167,7 +167,10 @@ public:
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
     ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
+    ValueSetID holdersOfLibraryExportsThatRaiseNoEvent() const { return m_holdersOfLibraryExportsThatRaiseNoEvent; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
@@ -179,6 +182,7 @@ public:
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
+    ValueSetID records() const { return m_records; }
     ValueSetID keys() const { return m_keys; }
     // A set that holds every string still lists these keys, so that collectWorkerEntries() can see where they arrive.
     ValueSetID embeddedFilePaths() const { return m_embeddedFilePaths; }
@@ -187,6 +191,10 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    // By what an object was made as, whether or not compiled code has a test for the class.
+    ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
+    ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
+    ValueSetID objectsAllocatedAsIterators() const { return m_objectsAllocatedAsIterators; }
     ValueSetID objectsThatMayBeAnything() const { return m_objectsThatMayBeAnything; }
     ValueSetID unknownObjectAlone() const { return m_unknownObjectAlone; }
     ValueSetID untrackedObjectAlone() const { return m_untrackedObjectAlone; }
@@ -249,6 +257,9 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    Vector<ValueSetID> m_objectsThatMayBeMadeAs;
+    Vector<ValueSetID> m_objectsMadeAs;
+    ValueSetID m_objectsAllocatedAsIterators;
     ValueSetID m_objectsThatMayBeAnything;
     ValueSetID m_objectsWithAnyLayout;
     ValueSetID m_objectsWithLayoutOfProgram;
@@ -291,14 +302,18 @@ private:
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    Vector<ValueSetID> m_holdersOfExportsOfModule;
+    ValueSetID m_holdersOfLibraryExportsThatRaiseNoEvent;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
+    ValueSetID m_instancesBelowLibraryClasses;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;
     ValueSetID m_objects;
     ValueSetID m_callables;
     ValueSetID m_arrays;
+    ValueSetID m_records;
     ValueSetID m_keys;
     ValueSetID m_unknownObjectAlone;
     ValueSetID m_untrackedObjectAlone;
@@ -373,9 +388,22 @@ enum class ValueFlowHostNode : uint8_t {
     LoadersAndEvaluatorsThatProgramNames,
     PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed,
     AllElseIsAtRest,
+    ProxiesWhoseHandlerIsFollowed,
+    ProxiesThatAreOpen,
+    ProxiesThatHandOnWhatComesFromBelow,
+    ProxiesWithTrapsForWhatComesFromBelow,
+    TargetsOfProxiesThatAreListed,
+    LibraryModulesRequestedByProgram,
+    LibraryModulesHandedOut,
+    ObjectsNobodyFollowsThatDefinitionsName,
+    StoredUnderSymbolsNobodyKnows,
+    StoredByLibraryUnderSymbolsNobodyKnows,
+    SymbolsThatHostLooksForMayBeInHand,
+    HoldersOfLibraryExportsThatProgramWrites,
+    HoldersOfClassesThatAppliedRowsName,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 61;
+inline constexpr unsigned numberOfValueFlowHostNodes = 74;
 
 class ValueFlowProgramNodes {
 public:
@@ -444,7 +472,7 @@ private:
 };
 
 struct ValueFlowNodeName {
-    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost };
+    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost, Hub };
 
     Kind kind { Kind::None };
     uint32_t owner { 0 };
@@ -457,13 +485,17 @@ struct ValueFlowNodeName {
     static constexpr ValueFlowNodeName result(FunctionID function, uint32_t index) { return { Kind::Result, function.index(), index }; }
     static constexpr ValueFlowNodeName thrown(FunctionID function) { return { Kind::Thrown, function.index(), 0 }; }
     static constexpr ValueFlowNodeName ofHost(ValueFlowHostNode node) { return { Kind::OfHost, static_cast<uint32_t>(node), 0 }; }
-    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::OfHost, numberOfValueFlowHostNodes + behavior.index(), 0 }; }
+    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::Hub, behavior.index(), 0 }; }
     static constexpr ValueFlowNodeName escaped() { return { Kind::Escaped, 0, 0 }; }
 
     constexpr explicit operator bool() const { return kind != Kind::None; }
     friend constexpr bool operator==(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
     friend constexpr auto operator<=>(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
 };
+
+// The table of built-ins says how many behaviors there are. The host nodes are counted here, and their enumeration has 8 bits.
+static_assert(numberOfValueFlowHostNodes <= std::numeric_limits<std::underlying_type_t<ValueFlowHostNode>>::max());
+static_assert(ValueFlowNodeName::hub(ValueFlowBehaviorID(100000u)).owner == 100000 && ValueFlowNodeName::hub(ValueFlowBehaviorID(0u)) != ValueFlowNodeName::ofHost(static_cast<ValueFlowHostNode>(0)));
 
 enum class ValueFlowBodyNodeKind : uint8_t {
     EntryParameter,
@@ -493,8 +525,11 @@ struct ValueFlowBody {
         Vector<TypeID, 1> outside;
         ValueFlowMaskKind kind { ValueFlowMaskKind::Checked };
         Vector<std::pair<BuiltinID, ModuleID>, 0> outsideBuiltinsOfModules { };
+        // What may be an instance of one of these, and what is not surely an instance of any of those.
+        Vector<BuiltinClassID, 0> insideOneOfClasses { };
+        Vector<BuiltinClassID, 0> outsideClasses { };
 
-        bool admitsEverything() const { return inside.isEmpty() && outside.isEmpty() && outsideBuiltinsOfModules.isEmpty(); }
+        bool admitsEverything() const { return inside.isEmpty() && outside.isEmpty() && outsideBuiltinsOfModules.isEmpty() && insideOneOfClasses.isEmpty() && outsideClasses.isEmpty(); }
         friend bool operator==(const Mask&, const Mask&) = default;
     };
 
@@ -539,6 +574,8 @@ struct ValueFlowBody {
         ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
         uint32_t firstSite { none };
         bool isOnlyCalledOnItsHolder { false };
+        uint8_t guardCount { 0 };
+        uint32_t firstGuard { 0 };
     };
 
     struct ObservedValue {
@@ -577,6 +614,8 @@ struct ValueFlowBody {
     };
     Vector<ComparedValues> comparedValues;
     Vector<ValueID> valuesAliveForComparisonsOnly;
+    // As many. Where such a value has a node of its own.
+    Vector<ValueFlowNodeName> nodesOfValuesAliveForComparisonsOnly;
     BitVector valuesBehindChecks;
     bool knowsValuesBehindChecks { false };
 
@@ -616,6 +655,7 @@ struct ValueFlowComparedValues {
 struct ValueFlowValueOfFunction {
     FunctionID function;
     ValueID value;
+    ValueFlowNodeID node;
 };
 
 struct ValueFlowBodiesTimes {
@@ -693,6 +733,7 @@ public:
     std::span<const ValueFlowEdge> edges() const LIFETIME_BOUND { return m_edges.span(); }
     std::span<const ValueFlowNodeMask> masks() const LIFETIME_BOUND { return m_masks.span(); }
     std::span<const ValueFlowStatement> statements() const LIFETIME_BOUND { return m_statements.span(); }
+    std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_operands.span().subspan(statement.firstGuard, statement.guardCount); }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_operands.span().subspan(statement.firstOperand, statement.operandCount); }
     std::span<const ValueFlowOperand> operands() const LIFETIME_BOUND { return m_operands.span(); }
     std::span<const ValueFlowEdge> edgesOnceReached() const LIFETIME_BOUND { return m_edgesOnceReached.span(); }

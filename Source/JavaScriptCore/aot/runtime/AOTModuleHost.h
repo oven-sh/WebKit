@@ -84,6 +84,10 @@ struct ModuleHost {
     JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
     // The program has registered something with the host that answers to the name of a native module in its place. Null in a host where nothing can be registered.
     bool (*replacesNativeModule)(JSGlobalObject*, const String& path);
+    // The host loads the module as the one import of a module of its own, the main module. Null in a host that has no such module.
+    bool (*isImportOfMainModule)(JSGlobalObject*, ModuleID);
+    // The body of the main module.
+    void (*runMainModule)(JSGlobalObject*, ModuleID entryPoint);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -154,7 +158,8 @@ struct PagesForNewThread {
     bool isRefused { false };
 };
 // Also makes sure that the allocator has room for what the thread takes as it starts, and that there is room for its stack.
-JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForNewThread();
+// Where threads are ending, the caller can wait for their room, so the new thread is refused the last of the room that is left now.
+JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding);
 // The first thread takes its own: askForAddressSpaceToStart() has asked for the rest.
 JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
 JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);

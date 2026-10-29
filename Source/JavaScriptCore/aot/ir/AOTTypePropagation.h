@@ -40,6 +40,8 @@ struct TypePropagationInputs {
     BuildContext& build;
     TypingMemo* memo { nullptr };
     const KnownPositionTypes* knownPositions { nullptr };
+    // Parameters are typed as if no edge came from these blocks.
+    const BitVector* blocksThatPassNothing { nullptr };
 };
 
 struct TypePropagationOutcome {
@@ -140,6 +142,7 @@ private:
         uint32_t index;
     };
 
+    bool passesNothing(BlockID from) const { return m_inputs.blocksThatPassNothing && m_inputs.blocksThatPassNothing->get(from.index()); }
     void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
     void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     void forEachSourceOf(const Instruction&, NOESCAPE const Invocable<void(ValueID)> auto&) const;
@@ -259,6 +262,8 @@ void TypePropagation::forEachSourceOf(const Instruction& user, NOESCAPE const In
 void TypePropagation::forEachSourceOfParameter(BlockID block, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
 {
     for (Edge edge : m_cfg.incomingEdges(block)) {
+        if (passesNothing(edge.from))
+            continue;
         const Target& target = targetOf(m_inputs.function, edge);
         if (index < target.arguments.size())
             functor(target.arguments[index]);

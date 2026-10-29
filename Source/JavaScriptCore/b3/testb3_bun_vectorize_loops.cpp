@@ -52,6 +52,43 @@ Vector<CPUFeatureSet> featureSets()
     return result;
 }
 
+#if CPU(X86_64) && ENABLE(DISASSEMBLER)
+// Each line of the disassembly is an address, a colon and an instruction. Every instruction in a VEX form has a name that begins with v, and no other that a compiler emits does.
+void checkUsesOnlyWhatTargetHas(Compilation& code, CPUFeatureSet features)
+{
+    auto disassembly = code.disassembly();
+    CHECK(disassembly.length());
+    auto uses = [&](const char* text) {
+        return contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
+    };
+    auto checkDoesNotUse = [&](const char* text) {
+        if (!uses(text))
+            return;
+        crashLock.lock();
+        dataLogLn("The target with the features ", features.bits(), " does not have", text);
+        dataLog(disassembly);
+        CRASH();
+    };
+    CHECK(uses(": mov") || uses(": push"));
+    if (!features.contains(CPUFeature::AVX))
+        checkDoesNotUse(": v");
+    if (!features.contains(CPUFeature::SSE4_1)) {
+        for (const char* name : { ": pinsrb", ": pinsrd", ": pinsrq", ": pextr", ": pmulld", ": pmovzx", ": pmovsx", ": pblend", ": blend", ": round", ": ptest", ": pminsb", ": pminsd", ": pmaxsb", ": pmaxsd", ": pminuw", ": pminud", ": pmaxuw", ": pmaxud", ": packusdw", ": insertps", ": extractps" })
+            checkDoesNotUse(name);
+    }
+    if (!features.contains(CPUFeature::SupplementalSSE3)) {
+        for (const char* name : { ": pshufb", ": palignr", ": pabs", ": phadd", ": phsub", ": pmaddubsw", ": pmulhrsw", ": psign" })
+            checkDoesNotUse(name);
+    }
+    if (!features.contains(CPUFeature::SSE3)) {
+        for (const char* name : { ": movddup", ": movshdup", ": movsldup", ": haddp", ": hsubp", ": addsubp", ": lddqu" })
+            checkDoesNotUse(name);
+    }
+}
+#else
+void checkUsesOnlyWhatTargetHas(Compilation&, CPUFeatureSet) { }
+#endif
+
 std::unique_ptr<Compilation> compileForTarget(Procedure& proc)
 {
     prepareForGeneration(proc);
@@ -61,7 +98,9 @@ std::unique_ptr<Compilation> compileForTarget(Procedure& proc)
     jit.setPolicy(policy);
     generate(proc, jit);
     LinkBuffer linkBuffer(jit, nullptr);
-    return makeUnique<Compilation>(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
+    auto code = makeUnique<Compilation>(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
+    checkUsesOnlyWhatTargetHas(*code, proc.policy().targetFeatures);
+    return code;
 }
 
 // for (index = first; index REL bound; index += step) { .. }. The second and third arguments are the addresses of two arrays. The counter behind the loop is returned.
@@ -185,6 +224,27 @@ static void testVectorizeLoopsCopiesElementsOfEveryKind()
             }
         }
     }
+}
+
+static void testVectorizeLoopsLeavesLoopThatOnlyMovesTwoElementsToVectorInShortArrays()
+{
+    const ElementKind& numbers = elementKinds[6];
+    const ElementKind& words = elementKinds[4];
+    auto vectorizes = [&](const ElementKind& kind, bool arraysAreShort, bool computes) {
+        Policy policy = vectorPolicy();
+        policy.holdsMostlyShortArrays = createSharedTask<bool(Procedure&, const HeapRange&)>([=](Procedure&, const HeapRange& range) {
+            return arraysAreShort && range == firstHeap;
+        });
+        LoopOverElements loop { policy };
+        Value* element = loop.element(loop.from(), kind, loop.index());
+        loop.setElement(loop.to(), kind, loop.index(), computes ? loop.graph.make(loop.loop.body, Add, element, element) : element);
+        loop.finish();
+        return vectorizeLoopsAndValidate(loop.proc);
+    };
+    CHECK(!vectorizes(numbers, true, false));
+    CHECK(vectorizes(numbers, false, false));
+    CHECK(vectorizes(numbers, true, true));
+    CHECK(vectorizes(words, true, false));
 }
 
 static void testVectorizeLoopsFillsElements()
@@ -424,6 +484,97 @@ static void testVectorizeLoopsTestsNoDistanceOfArraysThatAreKnownToLieApart()
     CHECK_EQ(numberOfBranchesInFront(firstHeap), numberOfBranchesInFront(secondHeap) + 1);
 }
 
+// What the phase takes untested is checked in front of the vector loop where moved loads are logged: that accesses of heaps that do not overlap lie apart, and, where the phase is broken on purpose, that all do.
+static void testVectorizeLoopsReportsAccessesThatAreTakenToLieApartAndDoNot()
+{
+    constexpr int64_t reported = -77;
+    for (const ElementKind& kind : elementKinds) {
+        for (bool isBroken : { false, true }) {
+            for (bool logsMovedLoads : { false, true }) {
+                Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
+                policy.validation.logsMovedLoads = logsMovedLoads;
+                policy.validation.takesAccessesOfVectorTurnsToLieApart = isBroken;
+                policy.reportsMovedLoad = createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+                    jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+                    jit.emitFunctionEpilogue();
+                    jit.ret();
+                });
+                LoopOverElements loop { policy };
+                loop.setElement(loop.to(), kind, loop.index(), loop.element(loop.from(), kind, loop.index(), 0, isBroken ? firstHeap : secondHeap));
+                loop.finish();
+                CHECK(vectorizeLoopsAndValidate(loop.proc));
+                CHECK_EQ(numberOfValues(loop.proc, Patchpoint), logsMovedLoads ? 1u : 0u);
+                CHECK(!findPatchpointWhereVectorIsAlive(loop.proc));
+                if (!logsMovedLoads)
+                    continue;
+                auto code = compileForTarget(loop.proc);
+                int64_t lanes = 16 / kind.bytes;
+                for (int64_t distance = -20; distance <= 20; ++distance) {
+                    for (int64_t bound = 0; bound <= 40; ++bound) {
+                        alignas(16) uint8_t bytes[bytesOfBuffer];
+                        fillWithBytes(bytes, bound);
+                        int64_t result = invoke<int64_t>(*code, bound, bytes + (40 + distance) * kind.bytes, bytes + 40 * kind.bytes);
+                        bool meets = bound >= lanes && distance > 0 && distance < lanes;
+                        CHECK_EQ(result, meets ? reported : bound);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A turn that polls. The vector loop polls once between two stretches of Limits::maxTurnsWithoutPoll turns, and at no poll is a vector alive.
+static void testVectorizeLoopsPollsBetweenStretches()
+{
+    const ElementKind& kind = elementKinds[0];
+    constexpr int64_t bytesPerStretch = Limits::maxTurnsWithoutPoll * 16;
+    for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+        for (bool mayLeavePollOut : { false, true }) {
+            Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
+            policy.loops.pollsBetweenStretches = mayLeavePollOut;
+            LoopOverElements loop { policy };
+            static int64_t numberOfPolls;
+            PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.loop.body);
+            poll->isLoopPoll = true;
+            poll->turnsAreShort = true;
+            poll->effects = Effects::none();
+            poll->effects.writesLocalState = true;
+            poll->effects.exitsSideways = true;
+            poll->effects.reads = HeapRange::top();
+            poll->numGPScratchRegisters = 1;
+            poll->clobber(RegisterSet::macroClobberedGPRs());
+            poll->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                jit.move(CCallHelpers::TrustedImmPtr(&numberOfPolls), params.gpScratch(0));
+                jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params.gpScratch(0)));
+            });
+            loop.setElement(loop.to(), kind, loop.index(), loop.graph.make(loop.loop.body, Add, loop.element(loop.from(), kind, loop.index()), loop.graph.int32(loop.loop.body, 3)));
+            loop.finish(place);
+            CHECK_EQ(vectorizeLoopsAndValidate(loop.proc), mayLeavePollOut);
+            CHECK(!findPatchpointWhereVectorIsAlive(loop.proc));
+            if (!mayLeavePollOut)
+                continue;
+            CHECK_EQ(numberOfValues(loop.proc, Patchpoint), 2u);
+            auto code = compileForTarget(loop.proc);
+            Vector<uint8_t> to(3 * bytesPerStretch);
+            Vector<uint8_t> from(3 * bytesPerStretch);
+            for (size_t position = 0; position < from.size(); ++position)
+                from[position] = position * 7 + (position >> 12);
+            for (int64_t bound : { int64_t { 1 }, int64_t { 15 }, int64_t { 16 }, int64_t { 100 }, bytesPerStretch - 1, bytesPerStretch, bytesPerStretch + 15, bytesPerStretch + 16, bytesPerStretch + 40, 2 * bytesPerStretch + 5, 3 * bytesPerStretch - 2 }) {
+                memset(to.mutableSpan().data(), 0, to.size());
+                numberOfPolls = 0;
+                CHECK_EQ(invoke<int64_t>(*code, bound, to.mutableSpan().data(), from.mutableSpan().data()), bound);
+                for (int64_t position = 0; position < static_cast<int64_t>(to.size()); ++position)
+                    CHECK_EQ(to[position], position < bound ? static_cast<uint8_t>(from[position] + 3) : 0);
+                // One for each turn of the loop itself, which takes what is left of fewer than sixteen elements, and one between two stretches.
+                int64_t turnsOfVectorLoop = bound / 16;
+                int64_t stretches = (turnsOfVectorLoop + Limits::maxTurnsWithoutPoll - 1) / Limits::maxTurnsWithoutPoll;
+                CHECK_EQ(numberOfPolls, bound % 16 + std::max<int64_t>(stretches - 1, 0));
+            }
+        }
+    }
+}
+
 static void testVectorizeLoopsEveryRelationAndStart()
 {
     const ElementKind& kind = elementKinds[2];
@@ -489,7 +640,9 @@ namespace {
 
 // for (low = 0, high = length - 1; low REL high; ++low, --high) { .. }. The second and third arguments are the addresses of two arrays. low + high behind the loop is returned.
 struct LoopOverBothEnds {
-    explicit LoopOverBothEnds(const Policy& policy, B3::Opcode relation = LessThan)
+    enum class Tests : uint8_t { LowerAgainstHigher, HigherAgainstLower };
+
+    explicit LoopOverBothEnds(const Policy& policy, B3::Opcode relation = LessThan, Tests tests = Tests::LowerAgainstHigher)
         : proc(policy)
         , root(proc.addBlock())
         , header(proc.addBlock())
@@ -505,7 +658,8 @@ struct LoopOverBothEnds {
         graph.set(root, low, graph.int64(root, 0));
         graph.set(root, high, graph.make(root, Add, arguments[0], graph.int64(root, -1)));
         graph.jump(root, header);
-        graph.branch(header, graph.make(header, relation, graph.get(header, low), graph.get(header, high)), body, exit);
+        bool testsLower = tests == Tests::LowerAgainstHigher;
+        graph.branch(header, graph.make(header, relation, graph.get(header, testsLower ? low : high), graph.get(header, testsLower ? high : low)), body, exit);
         graph.ret(exit, graph.make(exit, Add, graph.make(exit, Shl, graph.get(exit, low), graph.int32(exit, 16)), graph.get(exit, high)));
     }
 
@@ -640,6 +794,102 @@ static void testVectorizeLoopsCopiesInOppositeOrderBetweenArraysThatLieApart()
     }
 }
 
+// A list of bytes is turned round in place by a turn that polls. The two ends lie more than one stretch apart.
+static void testVectorizeLoopsPollsBetweenStretchesOfCountersThatMeet()
+{
+    const ElementKind& kind = elementKinds[0];
+    Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
+    policy.loops.pollsBetweenStretches = true;
+    LoopOverBothEnds loop { policy };
+    static int64_t numberOfPolls;
+    PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.body);
+    poll->isLoopPoll = true;
+    poll->turnsAreShort = true;
+    poll->effects = Effects::none();
+    poll->effects.writesLocalState = true;
+    poll->effects.exitsSideways = true;
+    poll->effects.reads = HeapRange::top();
+    poll->numGPScratchRegisters = 1;
+    poll->clobber(RegisterSet::macroClobberedGPRs());
+    poll->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.move(CCallHelpers::TrustedImmPtr(&numberOfPolls), params.gpScratch(0));
+        jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params.gpScratch(0)));
+    });
+    Value* kept = loop.element(loop.first, kind, loop.low);
+    loop.setElement(loop.first, kind, loop.low, loop.element(loop.first, kind, loop.high));
+    loop.setElement(loop.first, kind, loop.high, kept);
+    loop.finish(TestPlace::Top);
+    CHECK(vectorizeLoopsAndValidate(loop.proc));
+    CHECK(!findPatchpointWhereVectorIsAlive(loop.proc));
+    auto code = compileForTarget(loop.proc);
+    constexpr int64_t bytesPerStretch = Limits::maxTurnsWithoutPoll * 16;
+    Vector<uint8_t> bytes(5 * bytesPerStretch);
+    for (int64_t length : { int64_t { 40 }, 2 * bytesPerStretch - 3, 2 * bytesPerStretch + 31, 2 * bytesPerStretch + 70, 4 * bytesPerStretch + 37, 5 * bytesPerStretch }) {
+        for (int64_t position = 0; position < length; ++position)
+            bytes[position] = position * 11 + (position >> 13);
+        numberOfPolls = 0;
+        invoke<int64_t>(*code, length, bytes.mutableSpan().data(), 0);
+        for (int64_t position = 0; position < length; ++position) {
+            int64_t source = length - 1 - position;
+            CHECK_EQ(bytes[position], static_cast<uint8_t>(source * 11 + (source >> 13)));
+        }
+        int64_t low = 0;
+        int64_t high = length - 1;
+        int64_t turnsOfVectorLoop = 0;
+        for (; low + 30 < high; low += 16, high -= 16)
+            ++turnsOfVectorLoop;
+        int64_t turnsOfLoopItself = 0;
+        for (; low < high; ++low, --high)
+            ++turnsOfLoopItself;
+        int64_t stretches = (turnsOfVectorLoop + Limits::maxTurnsWithoutPoll - 1) / Limits::maxTurnsWithoutPoll;
+        CHECK_EQ(numberOfPolls, turnsOfLoopItself + std::max<int64_t>(stretches - 1, 0));
+    }
+}
+
+// low < high, low <= high, high > low, high >= low: the vector loop tests one counter against a limit that it computes once.
+static void testVectorizeLoopsEveryRelationOfCountersThatMeet()
+{
+    using Tests = LoopOverBothEnds::Tests;
+    struct Form {
+        B3::Opcode relation;
+        Tests tests;
+        bool includesEqual;
+    };
+    const Form forms[] = {
+        { LessThan, Tests::LowerAgainstHigher, false },
+        { LessEqual, Tests::LowerAgainstHigher, true },
+        { GreaterThan, Tests::HigherAgainstLower, false },
+        { GreaterEqual, Tests::HigherAgainstLower, true },
+    };
+    for (const Form& form : forms) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (const ElementKind& kind : elementKinds) {
+                LoopOverBothEnds loop { vectorPolicy(CPUFeatureSet::buildTarget()), form.relation, form.tests };
+                Value* element = kind.load == Load
+                    ? loop.body->appendNew<MemoryValue>(loop.proc, Load, kind.type, Origin(), loop.addressOf(loop.second, kind, loop.high), 0, secondHeap)
+                    : loop.body->appendNew<MemoryValue>(loop.proc, kind.load, Origin(), loop.addressOf(loop.second, kind, loop.high), 0, secondHeap);
+                loop.setElement(loop.first, kind, loop.low, element);
+                loop.finish(place);
+                CHECK(vectorizeLoopsAndValidate(loop.proc));
+                auto code = compileForTarget(loop.proc);
+                for (int64_t length = 0; length <= 120; ++length) {
+                    alignas(16) uint8_t found[bytesOfBuffer];
+                    alignas(16) uint8_t expected[bytesOfBuffer];
+                    fillWithBytes(found, length);
+                    fillWithBytes(expected, length);
+                    int64_t low = 0;
+                    int64_t high = length - 1;
+                    for (; form.includesEqual ? low <= high : low < high; ++low, --high)
+                        memcpy(expected + (3 + low) * kind.bytes, expected + 1024 + high * kind.bytes, kind.bytes);
+                    CHECK_EQ(invoke<int64_t>(*code, length, found + 3 * kind.bytes, found + 1024), (low << 16) + high);
+                    CHECK(!memcmp(found, expected, bytesOfBuffer));
+                }
+            }
+        }
+    }
+}
+
 static void testVectorizeLoopsCountsBytes()
 {
     // for (at = 0; at < bound; at += 4) *(to + at) = *(from + at)
@@ -675,6 +925,444 @@ static void checkIsNotVectorized(const Functor& fillBody, const Policy& policy =
     CHECK(!vectorizeLoopsAndValidate(loop.proc));
     CHECK(!numberOfVectorAccesses(loop.proc));
     CHECK(!loop.proc.usesSIMD());
+}
+
+// to[index] = the nearest to to[index] * factor + addend that lies between two limits: computed in lanes of twice the width of an element.
+static void testVectorizeLoopsComputesInLanesWiderThanElements()
+{
+    struct Limits {
+        int32_t least;
+        int32_t greatest;
+    };
+    auto lesser = [](LoopOverElements& loop, Value* left, Value* right, bool comparesInOrder) {
+        BasicBlock* body = loop.loop.body;
+        if (comparesInOrder)
+            return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, LessThan, left, right), left, right);
+        return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, GreaterEqual, left, right), right, left);
+    };
+    auto greater = [](LoopOverElements& loop, Value* left, Value* right, bool comparesInOrder) {
+        BasicBlock* body = loop.loop.body;
+        if (comparesInOrder)
+            return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, GreaterThan, left, right), left, right);
+        return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, LessEqual, left, right), right, left);
+    };
+    auto read = [](const ElementKind& kind, const uint8_t* at) -> int32_t {
+        switch (kind.load) {
+        case Load8Z:
+            return *at;
+        case Load8S:
+            return static_cast<int8_t>(*at);
+        case Load16Z: {
+            uint16_t result;
+            memcpy(&result, at, 2);
+            return result;
+        }
+        default: {
+            int16_t result;
+            memcpy(&result, at, 2);
+            return result;
+        }
+        }
+    };
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 4; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            bool hasSign = kind.load == Load8S || kind.load == Load16S;
+            int32_t values = 1 << (kind.bytes * 8);
+            Limits whole = hasSign ? Limits { -values / 2, values / 2 - 1 } : Limits { 0, values - 1 };
+            for (Limits limits : { whole, Limits { whole.least + 3, whole.greatest - 5 }, Limits { 1, 100 } }) {
+                for (int32_t addend : { -values, -300, -9, 0, 9, 300, values }) {
+                    for (int32_t factor : { 1, 3 }) {
+                        for (bool takesGreaterFirst : { false, true }) {
+                            for (bool comparesInOrder : { false, true }) {
+                                LoopOverElements loop { vectorPolicy(features) };
+                                BasicBlock* body = loop.loop.body;
+                                Value* value = loop.element(loop.to(), kind, loop.index());
+                                if (factor != 1)
+                                    value = loop.graph.make(body, Mul, value, loop.graph.int32(body, factor));
+                                value = loop.graph.make(body, Add, value, loop.graph.int32(body, addend));
+                                if (takesGreaterFirst)
+                                    value = lesser(loop, greater(loop, value, loop.graph.int32(body, limits.least), comparesInOrder), loop.graph.int32(body, limits.greatest), comparesInOrder);
+                                else
+                                    value = greater(loop, lesser(loop, value, loop.graph.int32(body, limits.greatest), comparesInOrder), loop.graph.int32(body, limits.least), comparesInOrder);
+                                loop.setElement(loop.to(), kind, loop.index(), value);
+                                loop.finish();
+                                // What is computed on the way must fit a lane.
+                                int64_t farthest = static_cast<int64_t>(whole.greatest + (hasSign ? 1 : 0)) * factor + std::abs(addend);
+                                bool fitsLane = farthest < (int64_t { 1 } << (kind.bytes * 16 - 1));
+                                CHECK_EQ(vectorizeLoopsAndValidate(loop.proc), fitsLane);
+                                if (!fitsLane)
+                                    continue;
+                                auto code = compileForTarget(loop.proc);
+                                for (int64_t bound : { 0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 33, 70 }) {
+                                    checkAgainstTurns(*code, bound + addend, bound, 3 * kind.bytes, 1024, 0, [&](uint8_t* to, uint8_t*, int64_t index) {
+                                        int32_t result = std::clamp(read(kind, to + index * kind.bytes) * factor + addend, limits.least, limits.greatest);
+                                        memcpy(to + index * kind.bytes, &result, kind.bytes);
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// to[index] = the greater of to[index] and from[index].
+static void testVectorizeLoopsTakesGreaterOfTwoElements()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            LoopOverElements loop { vectorPolicy(features) };
+            BasicBlock* body = loop.loop.body;
+            Value* left = loop.element(loop.to(), kind, loop.index());
+            Value* right = loop.element(loop.from(), kind, loop.index());
+            loop.setElement(loop.to(), kind, loop.index(), body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, GreaterThan, left, right), left, right));
+            loop.finish();
+            CHECK(vectorizeLoopsAndValidate(loop.proc));
+            auto code = compileForTarget(loop.proc);
+            for (int64_t bound = 0; bound <= 70; ++bound) {
+                checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, [&](uint8_t* to, uint8_t* from, int64_t index) {
+                    auto read = [&](const uint8_t* at) -> int64_t {
+                        uint32_t bits = 0;
+                        memcpy(&bits, at, kind.bytes);
+                        if (kind.load == Load8S)
+                            return static_cast<int8_t>(bits);
+                        if (kind.load == Load16S)
+                            return static_cast<int16_t>(bits);
+                        if (kind.load == Load)
+                            return static_cast<int32_t>(bits);
+                        return bits;
+                    };
+                    if (read(from + index * kind.bytes) > read(to + index * kind.bytes))
+                        memcpy(to + index * kind.bytes, from + index * kind.bytes, kind.bytes);
+                });
+            }
+        }
+    }
+}
+
+// sum = start; for (index = 0; index < bound; index++) sum += element(index). The third argument holds the bits of the start. The bits of the sum are returned.
+struct LoopThatAddsUp {
+    LoopThatAddsUp(const Policy& policy, Type typeOfSum)
+        : proc(policy)
+        , loop(graph)
+        , typeOfSum(typeOfSum)
+        , total(proc.addVariable(typeOfSum))
+    {
+        Value* jump = loop.root->values().takeLast();
+        graph.set(loop.root, total, typeOfSum == Double ? graph.make(loop.root, BitwiseCast, loop.extra) : typeOfSum == Int32 ? graph.make(loop.root, Trunc, loop.extra) : loop.extra);
+        loop.root->values().append(jump);
+        for (Value* value : *loop.exit)
+            proc.deleteValue(value);
+        loop.exit->values().clear();
+        Value* result = graph.get(loop.exit, total);
+        graph.ret(loop.exit, typeOfSum == Double ? graph.make(loop.exit, BitwiseCast, result) : typeOfSum == Int32 ? graph.make(loop.exit, ZExt32, result) : result);
+    }
+
+    Value* element(const ElementKind& kind)
+    {
+        Value* index = graph.get(loop.body, loop.index);
+        Value* distance = kind.bytes == 1 ? index : graph.make(loop.body, Shl, index, graph.int32(loop.body, WTF::fastLog2(kind.bytes)));
+        Value* address = graph.make(loop.body, Add, loop.pointer, distance);
+        if (kind.load == Load)
+            return loop.body->appendNew<MemoryValue>(proc, Load, kind.type, Origin(), address, 0, firstHeap);
+        return loop.body->appendNew<MemoryValue>(proc, kind.load, Origin(), address, 0, firstHeap);
+    }
+
+    void add(Value* integer, B3::Opcode opcode = Add)
+    {
+        Value* added = typeOfSum == Double ? graph.make(loop.body, IToD, integer) : typeOfSum == Int64 ? graph.make(loop.body, SExt32, integer) : integer;
+        graph.set(loop.body, total, graph.make(loop.body, opcode, graph.get(loop.body, total), added));
+    }
+
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop;
+    Type typeOfSum;
+    Variable* total;
+};
+
+static int64_t readElement(const ElementKind& kind, const uint8_t* at)
+{
+    uint32_t bits = 0;
+    memcpy(&bits, at, kind.bytes);
+    if (kind.load == Load8S)
+        return static_cast<int8_t>(bits);
+    if (kind.load == Load16S)
+        return static_cast<int16_t>(bits);
+    if (kind.load == Load)
+        return static_cast<int32_t>(bits);
+    return bits;
+}
+
+// One element after the other, as the loop is written.
+static uint64_t addUpInTurns(const ElementKind& kind, Type typeOfSum, uint64_t start, const uint8_t* elements, int64_t bound, int64_t addedToEach = 0, bool takesAway = false)
+{
+    if (typeOfSum == Double) {
+        double sum = std::bit_cast<double>(start);
+        for (int64_t index = 0; index < bound; ++index) {
+            double element = static_cast<double>(readElement(kind, elements + index * kind.bytes) + addedToEach);
+            sum = takesAway ? sum - element : sum + element;
+        }
+        return std::bit_cast<uint64_t>(sum);
+    }
+    uint64_t sum = start;
+    for (int64_t index = 0; index < bound; ++index)
+        sum += static_cast<uint64_t>((readElement(kind, elements + index * kind.bytes) + addedToEach) * (takesAway ? -1 : 1));
+    return typeOfSum == Int32 ? static_cast<uint32_t>(sum) : sum;
+}
+
+static void testVectorizeLoopsAddsUpElementsOfEveryKind()
+{
+    const double starts[] = { 0, 1, -7, 0.5, -0.0, 4294967296.0, 2251799813685247.0, 2251799813685248.0, -2251799813685248.0, 4503599627370497.0, 9007199254740992.0, 1e300,
+        std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::denorm_min() };
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            for (Type typeOfSum : { Double, Int32, Int64 }) {
+                for (int32_t addedToEach : { 0, 5, -5 }) {
+                    // The last takes away what the second adds.
+                    bool takesAway = addedToEach < 0;
+                    if (takesAway)
+                        addedToEach = 5;
+                    LoopThatAddsUp loop { vectorPolicy(features), typeOfSum };
+                    Value* element = loop.element(kind);
+                    // Five more than an integer of 32 bits may be too much for 32 bits.
+                    if (addedToEach && kind.bytes == 4)
+                        continue;
+                    loop.add(addedToEach ? loop.graph.make(loop.loop.body, Add, element, loop.graph.int32(loop.loop.body, addedToEach)) : element, takesAway ? Sub : Add);
+                    loop.loop.endBody(loop.loop.body);
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    // The loop itself, the turns of a stretch, and the stretches.
+                    CHECK_EQ(loop.proc.naturalLoops().numLoops(), 3u);
+                    auto code = compileForTarget(loop.proc);
+                    alignas(16) uint8_t elements[bytesOfBuffer];
+                    fillWithBytes(elements, kindIndex + 1);
+                    for (int64_t bound = 0; bound <= 70; ++bound) {
+                        for (double number : starts) {
+                            uint64_t start = typeOfSum == Double ? std::bit_cast<uint64_t>(number) : static_cast<uint64_t>(static_cast<int64_t>(std::isfinite(number) && std::abs(number) < 1e18 ? number : 12345.0) * 0x100000001ll);
+                            if (typeOfSum == Int32)
+                                start = static_cast<uint32_t>(start);
+                            const uint8_t* at = elements + 3 * kind.bytes;
+                            CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, at, start)), addUpInTurns(kind, typeOfSum, start, at, bound, addedToEach, takesAway));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// More elements than the lanes of a sum hold, each as far from zero as it can be. Where a sum of numbers leaves the whole numbers that a number tells apart, every addition rounds, in the order of the turns.
+static void testVectorizeLoopsAddsUpManyElements()
+{
+    constexpr int64_t numberOfElements = 5000000;
+    for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+        const ElementKind& kind = elementKinds[kindIndex];
+        Vector<uint8_t> elements(numberOfElements * kind.bytes + 64);
+        for (Type typeOfSum : { Double, Int32, Int64 }) {
+            LoopThatAddsUp loop { vectorPolicy(), typeOfSum };
+            loop.add(loop.element(kind));
+            loop.loop.endBody(loop.loop.body);
+            CHECK(vectorizeLoopsAndValidate(loop.proc));
+            auto code = compileForTarget(loop.proc);
+            for (unsigned filling = 0; filling < 3; ++filling) {
+                // The greatest, the least, and whatever.
+                if (filling == 2)
+                    fillWithBytes(elements.mutableSpan(), kindIndex);
+                else {
+                    uint32_t bits = kind.load == Load8Z || kind.load == Load16Z ? (filling ? 0 : 0xffffffffu) : (filling ? 1u << (kind.bytes * 8 - 1) : (1u << (kind.bytes * 8 - 1)) - 1);
+                    for (int64_t index = 0; index < numberOfElements; ++index)
+                        memcpy(elements.mutableSpan().data() + index * kind.bytes, &bits, kind.bytes);
+                }
+                for (int64_t bound : { numberOfElements, numberOfElements - 1, static_cast<int64_t>(131072), static_cast<int64_t>(131073), static_cast<int64_t>(2097152 + 3) }) {
+                    uint64_t start = typeOfSum == Double ? std::bit_cast<uint64_t>(3.0) : 3;
+                    CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, elements.span().data(), start)), addUpInTurns(kind, typeOfSum, start, elements.span().data(), bound));
+                }
+            }
+        }
+    }
+}
+
+// Zero has a sign. What is left of it depends on whether all elements are zero or only their sum.
+static void testVectorizeLoopsKeepsSignOfZeroSum()
+{
+    const ElementKind& kind = elementKinds[3];
+    for (bool takesAway : { false, true }) {
+        LoopThatAddsUp loop { vectorPolicy(), Double };
+        loop.add(loop.element(kind), takesAway ? Sub : Add);
+        loop.loop.endBody(loop.loop.body);
+        CHECK(vectorizeLoopsAndValidate(loop.proc));
+        auto code = compileForTarget(loop.proc);
+        for (int16_t first : { 0, 5 }) {
+            for (double number : { 0.0, -0.0, 5.0, -5.0 }) {
+                for (int64_t bound : { 0, 1, 2, 8, 16, 17, 40 }) {
+                    alignas(16) int16_t elements[64] = { };
+                    elements[0] = first;
+                    elements[1] = -first;
+                    elements[9] = number ? (takesAway ? number : -number) : 0;
+                    uint64_t start = std::bit_cast<uint64_t>(number);
+                    const uint8_t* at = reinterpret_cast<const uint8_t*>(elements);
+                    CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, at, start)), addUpInTurns(kind, Double, start, at, bound, 0, takesAway));
+                }
+            }
+        }
+    }
+}
+
+// found = start; for each element: if (element REL found) found = element. Written with a Select and with a branch.
+static void testVectorizeLoopsFindsLeastAndGreatestElement()
+{
+    const int32_t starts[] = { 0, 1, -5, 300, 70000, -70000, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() };
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            for (B3::Opcode relation : { GreaterThan, GreaterEqual, LessThan, LessEqual, Above, AboveEqual, Below, BelowEqual }) {
+                for (bool branches : { false, true }) {
+                    for (bool elementComesFirst : { true, false }) {
+                        LoopThatAddsUp loop { vectorPolicy(features), Int32 };
+                        Graph& graph = loop.graph;
+                        BasicBlock* body = loop.loop.body;
+                        Value* element = loop.element(kind);
+                        Value* found = graph.get(body, loop.total);
+                        // The element is taken where the relation holds for it, whichever side it is written on.
+                        Value* takesElement = elementComesFirst ? graph.make(body, relation, element, found) : graph.make(body, relation, found, element);
+                        BasicBlock* last = body;
+                        if (branches) {
+                            BasicBlock* taken = loop.proc.addBlock();
+                            BasicBlock* kept = loop.proc.addBlock();
+                            last = loop.proc.addBlock();
+                            graph.branch(body, takesElement, taken, kept);
+                            graph.set(taken, loop.total, element);
+                            graph.jump(taken, last);
+                            graph.jump(kept, last);
+                        } else
+                            graph.set(body, loop.total, graph.select(body, takesElement, element, found));
+                        loop.loop.endBody(last);
+                        CHECK(vectorizeLoopsAndValidate(loop.proc));
+                        auto code = compileForTarget(loop.proc);
+                        alignas(16) uint8_t elements[bytesOfBuffer];
+                        fillWithBytes(elements, kindIndex + 7);
+                        auto holds = [&](int32_t left, int32_t right) {
+                            switch (relation) {
+                            case GreaterThan:
+                                return left > right;
+                            case GreaterEqual:
+                                return left >= right;
+                            case LessThan:
+                                return left < right;
+                            case LessEqual:
+                                return left <= right;
+                            case Above:
+                                return static_cast<uint32_t>(left) > static_cast<uint32_t>(right);
+                            case AboveEqual:
+                                return static_cast<uint32_t>(left) >= static_cast<uint32_t>(right);
+                            case Below:
+                                return static_cast<uint32_t>(left) < static_cast<uint32_t>(right);
+                            default:
+                                return static_cast<uint32_t>(left) <= static_cast<uint32_t>(right);
+                            }
+                        };
+                        for (int64_t bound = 0; bound <= 70; ++bound) {
+                            for (int32_t start : starts) {
+                                const uint8_t* at = elements + 3 * kind.bytes;
+                                int32_t expected = start;
+                                for (int64_t index = 0; index < bound; ++index) {
+                                    int32_t value = static_cast<int32_t>(readElement(kind, at + index * kind.bytes));
+                                    if (elementComesFirst ? holds(value, expected) : holds(expected, value))
+                                        expected = value;
+                                }
+                                CHECK_EQ(static_cast<uint32_t>(invoke<int64_t>(*code, bound, at, static_cast<uint64_t>(static_cast<uint32_t>(start)))), static_cast<uint32_t>(expected));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// to[index] = from[index] > limit ? limit : from[index], written with a branch. What a way hands on is read in the turn, wherever the counter is tested.
+static void testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+                const ElementKind& kind = elementKinds[kindIndex];
+                for (int32_t limit : { 0, 100, -100 }) {
+                    LoopOverElements loop { vectorPolicy(features) };
+                    Graph& graph = loop.graph;
+                    BasicBlock* body = loop.loop.body;
+                    Variable* chosen = loop.proc.addVariable(Int32);
+                    Value* element = loop.element(loop.from(), kind, loop.index());
+                    BasicBlock* over = loop.proc.addBlock();
+                    BasicBlock* within = loop.proc.addBlock();
+                    BasicBlock* last = loop.proc.addBlock();
+                    graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, limit)), over, within);
+                    graph.set(over, chosen, graph.int32(over, limit));
+                    graph.jump(over, last);
+                    graph.set(within, chosen, element);
+                    graph.jump(within, last);
+                    Value* index = graph.get(last, loop.loop.index);
+                    Value* distance = kind.bytes == 1 ? index : graph.make(last, Shl, index, graph.int32(last, WTF::fastLog2(kind.bytes)));
+                    last->appendNew<MemoryValue>(loop.proc, kind.store, Origin(), graph.get(last, chosen), graph.make(last, Add, loop.to(), distance), 0, firstHeap);
+                    loop.loop.endBody(last);
+                    if (place == TestPlace::Bottom)
+                        loop.loop.rotate();
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    auto code = compileForTarget(loop.proc);
+                    for (int64_t bound = 0; bound <= 70; ++bound) {
+                        checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, [&](uint8_t* to, uint8_t* from, int64_t index) {
+                            int32_t value = static_cast<int32_t>(std::min<int64_t>(readElement(kind, from + index * kind.bytes), limit));
+                            memcpy(to + index * kind.bytes, &value, kind.bytes);
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A way that does more than choose stays a branch.
+static void testVectorizeLoopsSkipsBranchWhoseWayStores()
+{
+    const ElementKind& words = elementKinds[4];
+    LoopOverElements loop;
+    Graph& graph = loop.graph;
+    BasicBlock* body = loop.loop.body;
+    Value* element = loop.element(loop.from(), words, loop.index());
+    Value* address = loop.addressOf(loop.to(), words, loop.index());
+    BasicBlock* stores = loop.proc.addBlock();
+    BasicBlock* skips = loop.proc.addBlock();
+    BasicBlock* last = loop.proc.addBlock();
+    graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, 0)), stores, skips);
+    stores->appendNew<MemoryValue>(loop.proc, Store, Origin(), element, address, 0, firstHeap);
+    graph.jump(stores, last);
+    graph.jump(skips, last);
+    loop.loop.endBody(last);
+    CHECK(!vectorizeLoopsAndValidate(loop.proc));
+}
+
+static void testVectorizeLoopsSkipsSumThatTurnLooksAt()
+{
+    const ElementKind& words = elementKinds[4];
+    // to[index] = the sum so far.
+    LoopThatAddsUp loop { vectorPolicy(), Int32 };
+    loop.add(loop.element(words));
+    Value* address = loop.graph.make(loop.loop.body, Add, loop.loop.pointer, loop.graph.make(loop.loop.body, Shl, loop.graph.get(loop.loop.body, loop.loop.index), loop.graph.int32(loop.loop.body, 2)));
+    loop.loop.body->appendNew<MemoryValue>(loop.proc, Store, Origin(), loop.graph.get(loop.loop.body, loop.total), address, 0, firstHeap);
+    loop.loop.endBody(loop.loop.body);
+    CHECK(!vectorizeLoopsAndValidate(loop.proc));
+
+    // Numbers that need not be whole are added in the order of the turns.
+    LoopThatAddsUp numbers { vectorPolicy(), Double };
+    Value* number = numbers.element(elementKinds[6]);
+    numbers.graph.set(numbers.loop.body, numbers.total, numbers.graph.make(numbers.loop.body, Add, numbers.graph.get(numbers.loop.body, numbers.total), number));
+    numbers.loop.endBody(numbers.loop.body);
+    CHECK(!vectorizeLoopsAndValidate(numbers.proc));
 }
 
 static void testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike()
@@ -821,23 +1509,32 @@ static void testVectorizeLoopsCountsWithIntegersOf32Bits()
     }
 }
 
-static void testVectorLivesAcrossPatchpointThatKeepsLowerHalves()
+// for (round = 0; round < 3; ++round) { patchpoint; for (index = 0; index < bound; ++index) to[index] += constant; }
+static void testVectorConstantIsNotHeldAcrossPatchpointThatKeepsLowerHalves()
 {
     for (CPUFeatureSet features : featureSets()) {
         Policy policy = optimizingPolicy();
         policy.upstream.allowsSIMD = true;
         policy.targetFeatures = features;
+        policy.loops.vectorizes = true;
         policy.air.registers.patchpointsKeepOnlyLowerHalvesOfVectors = true;
-        Procedure proc { policy, nullptr, true };
+        Procedure proc { policy };
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
+        BasicBlock* outer = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* latch = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* round = proc.addVariable(Int64);
+        Variable* index = proc.addVariable(Int64);
         auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
-        Vector<Value*> vectors;
-        for (unsigned index = 0; index < 4; ++index)
-            vectors.append(graph.load(root, V128, arguments[1], index * 16, firstHeap));
+        graph.set(root, round, graph.int64(root, 0));
+        graph.jump(root, outer);
         // As a stub does that saves and restores the registers it uses as numbers.
-        PatchpointValue* patchpoint = graph.emptyPatchpoint(root);
+        PatchpointValue* patchpoint = graph.emptyPatchpoint(outer);
         patchpoint->effects.writesLocalState = true;
+        patchpoint->effects.writes = secondHeap;
         patchpoint->numGPScratchRegisters = 1;
         patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
             RegisterSet::allFPRs().forEach([&](Reg reg) {
@@ -845,14 +1542,27 @@ static void testVectorLivesAcrossPatchpointThatKeepsLowerHalves()
                 jit.move64ToDouble(params.gpScratch(0), reg.fpr());
             });
         });
-        for (unsigned index = 0; index < 4; ++index)
-            graph.store(root, vectors[index], arguments[1], 64 + index * 16, firstHeap);
-        graph.ret(root, graph.int64(root, 0));
+        graph.set(outer, index, graph.int64(outer, 0));
+        graph.jump(outer, header);
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), arguments[0]), body, latch);
+        Value* address = graph.make(body, Add, arguments[1], graph.make(body, Shl, graph.get(body, index), graph.int32(body, 2)));
+        graph.store(body, graph.make(body, Add, graph.load(body, Int32, address, 0, firstHeap), graph.int32(body, 0x01020304)), address, 0, firstHeap);
+        graph.increase(body, index, 1);
+        graph.jump(body, header);
+        graph.increase(latch, round, 1);
+        graph.branch(latch, graph.make(latch, LessThan, graph.get(latch, round), graph.int64(latch, 3)), outer, exit);
+        graph.ret(exit, graph.int64(exit, 0));
+        proc.resetReachability();
         auto code = compileForTarget(proc);
-        alignas(16) uint8_t bytes[128];
-        fillWithBytes(bytes, 1);
-        invoke<int64_t>(*code, 0, bytes, 0);
-        CHECK(!memcmp(bytes, bytes + 64, 64));
+        CHECK(proc.usesSIMD());
+        for (int64_t bound = 0; bound <= 40; ++bound) {
+            int32_t words[48];
+            for (int32_t& word : words)
+                word = 5;
+            invoke<int64_t>(*code, bound, words, 0);
+            for (int64_t position = 0; position < 48; ++position)
+                CHECK_EQ(words[position], position < bound ? 5 + 3 * 0x01020304 : 5);
+        }
     }
 }
 
@@ -883,6 +1593,244 @@ static void testPipelineVectorizesLoopOverElements()
     }
 }
 
+// vector = load; [in the same block | in a block between | on one of two ways | in a loop between] patchpoint; store vector
+static void testFindsPatchpointWhereVectorIsAlive()
+{
+    enum class Place : uint8_t { SameBlock, BlockBetween, OneOfTwoWays, LoopBetween, BehindLastUse, InFrontOfDefinition };
+    enum class Kind : uint8_t { KeepsAlive, MakesConstant, OnlyTests, TestsAndLeavesSideways, TakesOperand, HasRegisterForNumbers, Polls, Writes };
+    auto find = [&](Place place, Kind kind) {
+        Procedure proc { vectorPolicy(CPUFeatureSet::buildTarget()) };
+        proc.setUsesSIMD();
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* between = proc.addBlock();
+        BasicBlock* other = proc.addBlock();
+        BasicBlock* last = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        auto addPatchpoint = [&](BasicBlock* block) {
+            if (kind == Kind::MakesConstant || kind == Kind::TakesOperand) {
+                PatchpointValue* patchpoint = graph.emptyPatchpoint(block, Int64);
+                patchpoint->effects = Effects::none();
+                if (kind == Kind::TakesOperand)
+                    patchpoint->append(ConstrainedValue(arguments[1], ValueRep::SomeRegister));
+                patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                    jit.move(CCallHelpers::TrustedImm32(5), params[0].gpr());
+                });
+                return patchpoint;
+            }
+            PatchpointValue* patchpoint = graph.emptyPatchpoint(block);
+            patchpoint->effects = Effects::none();
+            patchpoint->effects.writesLocalState = true;
+            patchpoint->effects.reads = HeapRange::top();
+            if (kind != Kind::Polls)
+                patchpoint->append(ConstrainedValue(arguments[1], ValueRep::ColdAny));
+            if (kind == Kind::OnlyTests || kind == Kind::TestsAndLeavesSideways) {
+                patchpoint->append(ConstrainedValue(arguments[0], ValueRep::SomeRegister));
+                patchpoint->numGPScratchRegisters = 2;
+                patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+            }
+            if (kind == Kind::HasRegisterForNumbers)
+                patchpoint->numFPScratchRegisters = 1;
+            if (kind == Kind::TestsAndLeavesSideways || kind == Kind::Polls)
+                patchpoint->effects.exitsSideways = true;
+            if (kind == Kind::Polls)
+                patchpoint->isLoopPoll = true;
+            if (kind == Kind::Writes)
+                patchpoint->effects.writes = HeapRange::top();
+            patchpoint->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+            return patchpoint;
+        };
+        Value* expected = nullptr;
+        if (place == Place::InFrontOfDefinition)
+            addPatchpoint(root);
+        Value* vector = graph.load(root, V128, arguments[1], 0, firstHeap);
+        if (place == Place::SameBlock)
+            expected = addPatchpoint(root);
+        graph.branch(root, arguments[0], between, other);
+        if (place == Place::BlockBetween || place == Place::OneOfTwoWays || place == Place::LoopBetween)
+            expected = addPatchpoint(between);
+        if (place == Place::BlockBetween)
+            addPatchpoint(other);
+        if (place == Place::LoopBetween)
+            graph.branch(between, arguments[2], between, last);
+        else
+            graph.jump(between, last);
+        graph.jump(other, last);
+        graph.store(last, vector, arguments[1], 16, firstHeap);
+        if (place == Place::BehindLastUse)
+            addPatchpoint(last);
+        graph.ret(last, graph.int64(last, 0));
+        proc.resetReachability();
+        validate(proc);
+        Value* found = findPatchpointWhereVectorIsAlive(proc);
+        if (place == Place::BlockBetween)
+            return !!found;
+        CHECK(!found || found == expected);
+        return !!found;
+    };
+    for (Place place : { Place::SameBlock, Place::BlockBetween, Place::OneOfTwoWays, Place::LoopBetween }) {
+        CHECK(find(place, Kind::HasRegisterForNumbers));
+        CHECK(find(place, Kind::Polls));
+        CHECK(find(place, Kind::Writes));
+        CHECK(find(place, Kind::TakesOperand));
+        CHECK(!find(place, Kind::KeepsAlive));
+        CHECK(!find(place, Kind::MakesConstant));
+        CHECK(!find(place, Kind::OnlyTests));
+        CHECK(!find(place, Kind::TestsAndLeavesSideways));
+    }
+    for (Place place : { Place::BehindLastUse, Place::InFrontOfDefinition })
+        CHECK(!find(place, Kind::Writes));
+}
+
+// Each loop is taken by exactly the targets that have what its vector loop is made of, and what is emitted for a target is made of nothing else.
+static void testVectorizeLoopsAsksWhatTargetHas()
+{
+    const ElementKind& bytes = elementKinds[0];
+    const ElementKind& shorts = elementKinds[2];
+    const ElementKind& words = elementKinds[4];
+    CPUFeatureSet nothing;
+    Vector<CPUFeatureSet> targets { CPUFeatureSet::buildTarget(), CPUFeatureSet::host() };
+#if CPU(X86_64)
+    CPUFeatureSet needsSSE4_1 = nothing.with(CPUFeature::SSE4_1);
+    CPUFeatureSet needsBoth = needsSSE4_1.with(CPUFeature::SupplementalSSE3);
+    for (unsigned bits = 0; bits < 8; ++bits) {
+        CPUFeatureSet target;
+        if (bits & 1)
+            target = target.with(CPUFeature::SSE3);
+        if (bits & 2)
+            target = target.with(CPUFeature::SupplementalSSE3);
+        if (bits & 4)
+            target = target.with(CPUFeature::SSE4_1);
+        targets.append(target);
+    }
+#else
+    CPUFeatureSet needsSSE4_1;
+    CPUFeatureSet needsBoth;
+#endif
+    auto isTakenBy = [&](CPUFeatureSet target, CPUFeatureSet needed) {
+#if CPU(X86_64)
+        if (target.contains(CPUFeature::AVX))
+            return true;
+#endif
+        return needed.isSubsetOf(target);
+    };
+
+    auto checkLoop = [&](const ElementKind& kind, CPUFeatureSet needed, const auto& makeStored, const auto& turn) {
+        for (CPUFeatureSet target : targets) {
+            LoopOverElements loop { vectorPolicy(target) };
+            loop.setElement(loop.to(), kind, loop.index(), makeStored(loop));
+            loop.finish();
+            CHECK_EQ(vectorizeLoopsAndValidate(loop.proc), isTakenBy(target, needed));
+            auto code = compileForTarget(loop.proc);
+            for (int64_t bound = 0; bound <= 70; ++bound)
+                checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, turn);
+        }
+    };
+    auto checkOperation = [&]<typename T>(const ElementKind& kind, CPUFeatureSet needed, B3::Opcode opcode, T (*compute)(T, T)) {
+        checkLoop(kind, needed, [&](LoopOverElements& loop) {
+            return loop.graph.make(loop.loop.body, opcode, loop.element(loop.to(), kind, loop.index()), loop.element(loop.from(), kind, loop.index()));
+        }, [&](uint8_t* to, uint8_t* from, int64_t index) {
+            T left;
+            T right;
+            memcpy(&left, to + index * sizeof(T), sizeof(T));
+            memcpy(&right, from + index * sizeof(T), sizeof(T));
+            T result = compute(left, right);
+            memcpy(to + index * sizeof(T), &result, sizeof(T));
+        });
+    };
+    checkOperation.template operator()<uint8_t>(bytes, nothing, Add, [](uint8_t left, uint8_t right) -> uint8_t { return left + right; });
+    checkOperation.template operator()<uint16_t>(shorts, nothing, Mul, [](uint16_t left, uint16_t right) -> uint16_t { return static_cast<uint32_t>(left) * right; });
+    checkOperation.template operator()<uint32_t>(words, nothing, Sub, [](uint32_t left, uint32_t right) -> uint32_t { return left - right; });
+    checkOperation.template operator()<uint32_t>(words, needsSSE4_1, Mul, [](uint32_t left, uint32_t right) -> uint32_t { return left * right; });
+    checkOperation.template operator()<uint32_t>(words, nothing, BitXor, [](uint32_t left, uint32_t right) -> uint32_t { return left ^ right; });
+
+    // Bytes in lanes of sixteen bits.
+    checkLoop(bytes, needsSSE4_1, [&](LoopOverElements& loop) {
+        BasicBlock* body = loop.loop.body;
+        Value* sum = loop.graph.make(body, Add, loop.element(loop.to(), bytes, loop.index()), loop.element(loop.from(), bytes, loop.index()));
+        return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, GreaterThan, sum, loop.graph.int32(body, 255)), loop.graph.int32(body, 255), sum);
+    }, [&](uint8_t* to, uint8_t* from, int64_t index) {
+        to[index] = std::min(to[index] + from[index], 255);
+    });
+    // The greater of two integers of sixteen bits with a sign.
+    checkLoop(elementKinds[3], nothing, [&](LoopOverElements& loop) {
+        BasicBlock* body = loop.loop.body;
+        Value* left = loop.element(loop.to(), elementKinds[3], loop.index());
+        Value* right = loop.element(loop.from(), elementKinds[3], loop.index());
+        return body->appendNew<Value>(loop.proc, Select, Origin(), loop.graph.make(body, GreaterThan, left, right), left, right);
+    }, [&](uint8_t* to, uint8_t* from, int64_t index) {
+        int16_t left;
+        int16_t right;
+        memcpy(&left, to + index * 2, 2);
+        memcpy(&right, from + index * 2, 2);
+        if (right > left)
+            memcpy(to + index * 2, &right, 2);
+    });
+
+    // A value from outside the loop in every lane. Here it is the address of the second array.
+    auto checkFill = [&]<typename T>(const ElementKind& kind, CPUFeatureSet needed) {
+        for (CPUFeatureSet target : targets) {
+            LoopOverElements loop { vectorPolicy(target) };
+            Value* filler = loop.graph.make(loop.loop.body, Trunc, loop.from());
+            loop.setElement(loop.to(), kind, loop.index(), filler);
+            loop.finish();
+            CHECK_EQ(vectorizeLoopsAndValidate(loop.proc), isTakenBy(target, needed));
+            auto code = compileForTarget(loop.proc);
+            for (int64_t bound = 0; bound <= 70; ++bound) {
+                alignas(16) T found[128];
+                memset(found, 0x5a, sizeof(found));
+                CHECK_EQ(invoke<int64_t>(*code, bound, found + 3, static_cast<int64_t>(0x1122334455667788ll)), bound);
+                for (int64_t position = 0; position < 128; ++position) {
+                    T untouched;
+                    memset(&untouched, 0x5a, sizeof(T));
+                    CHECK_EQ(found[position], position >= 3 && position < 3 + bound ? static_cast<T>(0x1122334455667788ll) : untouched);
+                }
+            }
+        }
+    };
+    checkFill.template operator()<uint8_t>(bytes, needsSSE4_1);
+    checkFill.template operator()<uint16_t>(shorts, nothing);
+    checkFill.template operator()<uint32_t>(words, nothing);
+
+#if CPU(X86_64) && ENABLE(DISASSEMBLER)
+    // The form of an instruction follows the target, whatever the machine is that compiles.
+    for (CPUFeatureSet target : targets) {
+        if (!isTakenBy(target, needsSSE4_1))
+            continue;
+        LoopOverElements loop { vectorPolicy(target) };
+        loop.setElement(loop.to(), words, loop.index(), loop.graph.make(loop.loop.body, Mul, loop.element(loop.to(), words, loop.index()), loop.element(loop.from(), words, loop.index())));
+        loop.finish();
+        CHECK(vectorizeLoopsAndValidate(loop.proc));
+        auto code = compileForTarget(loop.proc);
+        bool hasAVX = target.contains(CPUFeature::AVX);
+        checkUsesInstruction(*code, hasAVX ? ": vpmulld" : ": pmulld");
+        checkUsesInstruction(*code, hasAVX ? ": vmovups" : ": movups");
+        checkDoesNotUseInstruction(*code, hasAVX ? ": pmulld" : ": vpmulld");
+    }
+#endif
+
+    // Lanes in the opposite order.
+    for (CPUFeatureSet target : targets) {
+        LoopOverBothEnds loop { vectorPolicy(target) };
+        Value* kept = loop.element(loop.first, words, loop.low);
+        loop.setElement(loop.first, words, loop.low, loop.element(loop.first, words, loop.high));
+        loop.setElement(loop.first, words, loop.high, kept);
+        loop.finish(TestPlace::Top);
+        CHECK_EQ(vectorizeLoopsAndValidate(loop.proc), isTakenBy(target, needsBoth));
+        auto code = compileForTarget(loop.proc);
+        for (int64_t length = 0; length <= 70; ++length) {
+            uint32_t found[80];
+            for (unsigned position = 0; position < 80; ++position)
+                found[position] = position * 2654435761u;
+            invoke<int64_t>(*code, length, found + 3, 0);
+            for (int64_t position = 0; position < 80; ++position) {
+                int64_t source = position >= 3 && position < 3 + length ? 3 + (length - 1 - (position - 3)) : position;
+                CHECK_EQ(found[position], static_cast<uint32_t>(source * 2654435761u));
+            }
+        }
+    }
+}
+
 static void testPipelineVectorizesNothingUnlessAsked()
 {
     const ElementKind& kind = elementKinds[0];
@@ -899,24 +1847,40 @@ static void testPipelineVectorizesNothingUnlessAsked()
 void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testVectorizeLoopsCopiesElementsOfEveryKind());
+    RUN(testVectorizeLoopsLeavesLoopThatOnlyMovesTwoElementsToVectorInShortArrays());
     RUN(testVectorizeLoopsFillsElements());
     RUN(testVectorizeLoopsComputesWithIntegersOfEveryWidth());
     RUN(testVectorizeLoopsComputesWithNumbersBitForBit());
     RUN(testVectorizeLoopsKeepsLoopWhoseTurnReadsWhatTurnShortlyBeforeStored());
     RUN(testVectorizeLoopsTestsNoDistanceOfArraysThatAreKnownToLieApart());
+    RUN(testVectorizeLoopsReportsAccessesThatAreTakenToLieApartAndDoNot());
+    RUN(testVectorizeLoopsPollsBetweenStretches());
     RUN(testVectorizeLoopsEveryRelationAndStart());
     RUN(testVectorizeLoopsWalksDownward());
     RUN(testVectorizeLoopsReversesInPlace());
     RUN(testVectorizeLoopsSkipsEndsThatAreNotKnownToLieApart());
     RUN(testVectorizeLoopsCopiesInOppositeOrderBetweenArraysThatLieApart());
+    RUN(testVectorizeLoopsPollsBetweenStretchesOfCountersThatMeet());
+    RUN(testVectorizeLoopsEveryRelationOfCountersThatMeet());
     RUN(testVectorizeLoopsCountsBytes());
+    RUN(testVectorizeLoopsComputesInLanesWiderThanElements());
+    RUN(testVectorizeLoopsTakesGreaterOfTwoElements());
+    RUN(testVectorizeLoopsAddsUpElementsOfEveryKind());
+    RUN(testVectorizeLoopsAddsUpManyElements());
+    RUN(testVectorizeLoopsKeepsSignOfZeroSum());
+    RUN(testVectorizeLoopsFindsLeastAndGreatestElement());
+    RUN(testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose());
+    RUN(testVectorizeLoopsSkipsBranchWhoseWayStores());
+    RUN(testVectorizeLoopsSkipsSumThatTurnLooksAt());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());
     RUN(testVectorizeLoopsTakesBranchOnConstantForJump());
     RUN(testVectorizeLoopsKeepsWhatHoldsValuesAlive());
     RUN(testVectorizeLoopsCountsWithIntegersOf32Bits());
-    RUN(testVectorLivesAcrossPatchpointThatKeepsLowerHalves());
+    RUN(testVectorConstantIsNotHeldAcrossPatchpointThatKeepsLowerHalves());
     RUN(testPipelineVectorizesLoopOverElements());
+    RUN(testFindsPatchpointWhereVectorIsAlive());
+    RUN(testVectorizeLoopsAsksWhatTargetHas());
     RUN(testPipelineVectorizesNothingUnlessAsked());
 }
 

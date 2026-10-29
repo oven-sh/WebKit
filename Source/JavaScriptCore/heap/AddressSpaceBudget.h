@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <bmalloc/bmalloc.h>
 #include <limits>
 #include <wtf/PageBlock.h>
@@ -72,13 +73,20 @@ inline bool hasAddressSpaceLimit()
 
 // What requests to malloc that may not fail fall back on when all the address space has been taken: bmalloc::api::keepAddressSpaceBallast().
 static constexpr size_t sizeOfAddressSpaceBallast = 8 * MB;
+// A thread that ends with an error asks malloc for blocks of sizes that it has no page for, and so do the threads of its collector. malloc shares no page between threads.
+// All the VMs that run compiled code may end at once, so each adds this much.
+static constexpr size_t sizeOfAddressSpaceBallastOfVM = 512 * KB;
+inline std::atomic<size_t> g_numberOfVMsWithAddressSpaceBallast { 0 };
 
 // Called where address space may have come back: a thread has started or ended, a collection has freed storage.
 inline void keepAddressSpaceBallast()
 {
 #if USE(MIMALLOC)
-    if (hasAddressSpaceLimit() && bmalloc::api::sizeOfAddressSpaceBallastKept() != sizeOfAddressSpaceBallast)
-        bmalloc::api::keepAddressSpaceBallast(sizeOfAddressSpaceBallast, addressSpaceLeft(UncountedAddressSpace::IsTaken), sizeOfAddressSpaceBallast);
+    if (!hasAddressSpaceLimit())
+        return;
+    size_t size = sizeOfAddressSpaceBallast + g_numberOfVMsWithAddressSpaceBallast.load(std::memory_order_relaxed) * sizeOfAddressSpaceBallastOfVM / MB * MB;
+    if (bmalloc::api::sizeOfAddressSpaceBallastKept() != size)
+        bmalloc::api::keepAddressSpaceBallast(size, addressSpaceLeft(UncountedAddressSpace::IsTaken), sizeOfAddressSpaceBallast);
 #endif
 }
 

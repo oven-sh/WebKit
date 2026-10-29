@@ -281,6 +281,30 @@ static void flowResultsFollowRemovedEntryParameters()
     checkHasNoResults(withoutResults);
 }
 
+static void flowResultsFollowReplacedEntryParameters()
+{
+    TestProgram test;
+    addFunctions(test);
+    FlowResultTables tables = createTables(test);
+    tables.functions.parameterSummaries[functionRunOnce.index()] = { inspectedOnly, retainedInFirstOperand, inspectedOnly };
+    FlowResults flow(WTF::move(tables));
+
+    OperandSummary written { { OperandUse::Inspects, OperandUse::WritesContents }, RetainedIn::UnknownMemory, 0 };
+    flow.replaceEntryParameter(functionRunOnce, 0, written);
+    AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 0) == written);
+    AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 1) == (OperandSummary { retainedInFirstOperand.uses, RetainedIn::UnknownMemory, 0 }));
+    AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 2) == inspectedOnly);
+
+    flow.replaceEntryParameter(functionRunOnce, 3, written);
+    flow.replaceEntryParameter(unreachedFunction, 0, written);
+    flow.replaceEntryParameter(functionPastTheProgram, 0, written);
+    AOT_TEST_CHECK(flow.parameterSummary(functionRunOnce, 2) == inspectedOnly && flow.parameterSummary(unreachedFunction, 0) == OperandSummary());
+
+    FlowResults withoutResults;
+    withoutResults.replaceEntryParameter(functionRunOnce, 0, written);
+    checkHasNoResults(withoutResults);
+}
+
 static AllocationClass createClosureClass(FunctionID function, OptionSet<ObjectMutation> impossibleMutations, Vector<PropertyKeyID>&& addedKeys, bool addedKeysAreComplete)
 {
     AllocationClass closures;
@@ -351,7 +375,7 @@ static void flowResultsFindClosuresBelowFunctions()
 
 #define FOR_EACH_AOT_FLOW_RESULTS_TEST(v) \
     v(flowResultsWithoutResultsAnswerUnknown) v(flowResultsAnswerFromTheirTables) v(flowResultsKeepAnswersWhenMoved) \
-    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFindChangedClosures) v(flowResultsFindClosuresBelowFunctions) \
+    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFollowReplacedEntryParameters) v(flowResultsFindChangedClosures) v(flowResultsFindClosuresBelowFunctions) \
     v(startUpLocksTheMembersThatTheRecordNames)
 
 std::span<const NativeTest> flowResultsTests()

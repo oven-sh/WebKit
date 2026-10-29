@@ -33,6 +33,8 @@ public:
     void storeHeader(CellPointer, Integer header);
 
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);
+    // The header is stored, and nothing behind it.
+    CellPointer allocateCellWithHeader(InlineAllocation, LBasicBlock slowPath);
     Pointer allocationSiteRecord(AllocationID);
     // By the stub, in code of every shape: in line it is 130 bytes a site, eleven by the stub, and no faster where the code around it has to be fetched.
     CellPointer allocate(const OperationContext&, AllocationID, ZeroedBy = ZeroedBy::Nobody);

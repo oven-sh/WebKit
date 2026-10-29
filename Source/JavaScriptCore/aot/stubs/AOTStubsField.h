@@ -59,18 +59,19 @@ void emitDispatchOnRepresentation(StubAssembler& jit, GPRReg representation, con
     emitSearchForRepresentation(jit, representation, std::span(representationsInTestOrder).subspan(numberOfCommon), emitBody);
 }
 
-// A read does not tell apart what it reads with the same code: whole words that are encoded values, and narrow references. They come first in the enumeration, so each pair costs one comparison.
+// A read does not tell apart what it reads with the same code: whole words that are encoded values, narrow references, and 32-bit integers. They come first in the enumeration, so each pair costs one comparison.
 inline constexpr std::array representationsReadAsEncodedValues { SlotRepresentation::JSValue, SlotRepresentation::Cell };
 inline constexpr std::array representationsReadAsNarrowReferences { SlotRepresentation::Cell32, SlotRepresentation::OptionalCell32 };
-inline constexpr SlotRepresentation mostCommonNumberRepresentation = SlotRepresentation::OptionalInt32;
+inline constexpr std::array representationsReadAsInt32 { SlotRepresentation::Int32, SlotRepresentation::OptionalInt32 };
 static_assert(static_cast<unsigned>(representationsReadAsEncodedValues[0]) == 0 && static_cast<unsigned>(representationsReadAsEncodedValues[1]) == 1);
 static_assert(static_cast<unsigned>(representationsReadAsNarrowReferences[0]) == 2 && static_cast<unsigned>(representationsReadAsNarrowReferences[1]) == 3);
+static_assert(static_cast<unsigned>(representationsReadAsInt32[0]) == 4 && static_cast<unsigned>(representationsReadAsInt32[1]) == 5);
 
 inline constexpr auto representationsReadOneByOne = [] {
-    std::array<SlotRepresentation, numberOfEnumerators<SlotRepresentation> - 5> rest { };
+    std::array<SlotRepresentation, numberOfEnumerators<SlotRepresentation> - 6> rest { };
     size_t count = 0;
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
-        if (static_cast<unsigned>(representation) > 3 && representation != mostCommonNumberRepresentation)
+        if (representation > representationsReadAsInt32.back())
             rest[count++] = representation;
     }
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(count == rest.size());
@@ -89,9 +90,9 @@ void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representati
     CCallHelpers::Jump isNoNarrowReference = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsNarrowReferences.back()));
     emitBody(SlotRepresentation::OptionalCell32);
     isNoNarrowReference.link(&jit);
-    CCallHelpers::Jump isOther = jit.branch32(CCallHelpers::NotEqual, representation, immediate(mostCommonNumberRepresentation));
-    emitBody(mostCommonNumberRepresentation);
-    isOther.link(&jit);
+    CCallHelpers::Jump isNoInt32 = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsInt32.back()));
+    emitBody(SlotRepresentation::OptionalInt32);
+    isNoInt32.link(&jit);
     emitSearchForRepresentation(jit, representation, std::span(representationsReadOneByOne), emitBody);
 }
 

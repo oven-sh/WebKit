@@ -123,20 +123,20 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 
-# No read by name has the proxy for its receiver. The body of the trap counts in the handler and reads the slot of the target.
+# No read by name has the proxy for its receiver. The body of the trap counts in the handler. Nobody but the proxy and its trap holds the target, so what the trap reads off it is what it was born with.
 # CHECK-LABEL: function f0
 # CHECK: [[target]]: L1 = NewObject
 # CHECK: [[proxy]]: Proxy = CallBuiltin -, {{*}} overload=Proxy/1
 # CHECK-NOT: = PropGet [[proxy]]
 # CHECK: PutSlot {{*}} key="reads"
 # CHECK-NOT: = PropGet [[proxy]]
-# CHECK: = GetSlot {{*}} key="alpha"
+# CHECK-NOT: = GetSlot {{*}} key="alpha"
 # What the trap answers is held against the target only where the target may bind it.
 # CHECK: [[binds]]: boolean = MayBindAnswersOfGetAndSetTraps
 # CHECK-NEXT: TestAndBranch [[binds]] -> taken [[validates]](), notTaken
 # CHECK: [[validates]]() frequency=Rare:
-# CHECK-NEXT: ValidateAnswerOfGetTrap
-# A handler that has lost the trap: the slot of the target where it is filled, else the target is asked for the proxy.
-# CHECK: = SuperGet {{*}}, [[proxy]] key="alpha"
+# CHECK: ValidateAnswerOfGetTrap
+# Nobody but the proxy holds the handler, and the program only reads through the proxy: the handler cannot lose the trap, and no code stands by for that.
+# CHECK-NOT: = SuperGet
 # CHECK-NOT: = PropGet [[proxy]]
 # CHECK-LABEL: function f1

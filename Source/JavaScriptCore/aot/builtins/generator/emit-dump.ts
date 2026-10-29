@@ -249,6 +249,8 @@ function dumpResult(result: ModelResult): DumpedResult {
     iteratedOperand: dumpOptionalOperand(result.iteratedOperand),
     iterationKind: result.iterationKind,
     prototypeSource: dumpOptionalOperand(result.prototypeSource),
+    testedOperand: dumpOptionalOperand(result.testedOperand),
+    testedType: result.testedType === null ? null : dumpType(result.testedType),
     properties: result.properties.map(({ name, type }) => ({ name: spellingOf(name), type: dumpType(type) })),
   };
 }

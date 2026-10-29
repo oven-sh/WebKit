@@ -4,7 +4,7 @@
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # OPTIONS: check=VerifyEachPass heat=NothingIsHottest
-# STATISTIC: StretchesGuarded = 9
+# STATISTIC: StretchesGuarded = 10
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty]}
@@ -232,8 +232,9 @@ function f8 name="ownTestInCoveredLoop" flags=[IsChecked] parameters=[{type=anyt
 # CHECK-NEXT: b5([[joined8]]: L0) handler=b7():
 # CHECK: v6: anything = GetSlot [[joined8]],
 # CHECK: Jump -> next b1([[joined8]])
-# CHECK: v11: anything = PropGet v2 key="y"
 # CHECK: v4: anything = GetSlot [[header8]],
+# The read in the catch clause has a test of its own.
+# CHECK: v11: anything = GetSlot
 # No call ends the proof that the object belongs to this instance, so it is tested once, in front of the loop.
 # CHECK: ([[entered8]]: L0):
 # CHECK-NEXT: = BelongsToInstance [[entered8]]

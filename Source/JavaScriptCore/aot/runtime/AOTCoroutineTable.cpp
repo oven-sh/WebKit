@@ -335,8 +335,8 @@ void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t in
 void SavedFrame::queueResumeJob(JSGlobalObject* globalObject, VM& vm, JSValue resolution, bool isRejected, JSValue asyncContext)
 {
     auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
-    if (vm.m_synchronousModuleQueue && isSuspendedModuleBody(vm, this)) [[unlikely]] {
-        vm.m_synchronousModuleQueue->tasks.append({ InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext });
+    if (auto* queue = vm.synchronousModuleQueue(); queue && isSuspendedModuleBody(vm, this)) [[unlikely]] {
+        queue->tasks.append({ InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext });
         return;
     }
     globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext);

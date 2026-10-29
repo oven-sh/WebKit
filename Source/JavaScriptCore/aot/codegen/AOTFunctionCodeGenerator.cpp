@@ -54,11 +54,23 @@ static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <=
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
+// A loop is seldom reached on every way through its function: the test in front of it alone halves what is estimated for it. So the answer is not rounded up to a whole depth of loops.
 static double leastFrequencyOfWarmCode(const CodeGenerationInputs& inputs, FunctionID id)
 {
-    for (double frequency = 1; frequency <= 1000; frequency *= frequencyConstants.iterationsPerLoop) {
-        if (!isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted())
-            return frequency;
+    auto isWarmAt = [&](double frequency) {
+        return !isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted();
+    };
+    for (double warm = 1; warm <= 1000; warm *= frequencyConstants.iterationsPerLoop) {
+        if (!isWarmAt(warm))
+            continue;
+        if (warm == 1)
+            return warm;
+        double cold = warm / frequencyConstants.iterationsPerLoop;
+        for (unsigned step = 0; step < 8; ++step) {
+            double middle = (cold + warm) / 2;
+            (isWarmAt(middle) ? warm : cold) = middle;
+        }
+        return warm;
     }
     return std::numeric_limits<double>::infinity();
 }
@@ -76,6 +88,7 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
+        .smallestFrameTestedAtSetup = smallestFrameTestedAtSetup(inputs.stackChecks.of(id)),
         .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
         .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
         .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
@@ -265,8 +278,8 @@ bool FunctionCodeGenerator::generateB3()
         checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
-    if (options.checksMovedLoads) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests);
+    if (options.checksMovedLoads || options.checksDecidedComparisons) {
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons });
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -319,7 +332,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
         overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
     // Checks that a build adds to the generated code read addresses in ways that no product does.
-    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads;
+    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads && !options.checksDecidedComparisons;
     if (options.validatesReferences && isX86_64() && isCodeOfProduct)
         findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
 

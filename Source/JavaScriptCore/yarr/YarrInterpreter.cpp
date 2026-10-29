@@ -3451,10 +3451,12 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     // This has to come first: the bytecode compiler takes m_userCharacterClasses out of the pattern.
     auto flatProgram = compileFlatProgram(pattern);
     if (!flatProgram) {
-        dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
+        dataLogLnIf(Options::dumpCompiledRegExpPatterns() || Options::verboseRegExpCompilation(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
         auto bytecode = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(allocator, lock, errorCode);
         if (bytecode) {
             bytecode->m_flatProgramDecline = flatProgram.error();
+            if (!requiredTexts.isEmpty())
+                dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", requiredTexts.size(), " texts that every match holds");
             bytecode->m_requiredTexts = WTF::move(requiredTexts);
         }
         return bytecode;
@@ -3465,10 +3467,12 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
             return !required.isAllThatMatchesAtEndHold && (hasSelectiveStartScan || (*flatProgram)->startScanCovers(required));
         });
     }
-    if (!requiredTexts.isEmpty())
+    if (!requiredTexts.isEmpty()) {
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", requiredTexts.size(), " texts that every match holds");
         (*flatProgram)->setRequiredTexts(requiredTexts);
+    }
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns() || Options::verboseRegExpCompilation(), "Runs on a flat program");
     if (Options::validateRegExpFlatProgram()) [[unlikely]] {
         ErrorCode ignoredErrorCode { ErrorCode::NoError };
         if (auto bytecode = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(allocator, lock, ignoredErrorCode)) {
@@ -3525,8 +3529,10 @@ static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecod
         if (hasError(errorCode))
             return std::nullopt;
         // It makes an attempt at every place, as the JIT does, which may run out of turns at a place that holds no match.
-        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns))
+        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns)) {
+            dataLogLnIf(Options::verboseRegExpCompilation(), "Counts turns on a second flat program");
             bytecode->m_flatProgramThatCountsTurns = WTF::move(*program);
+        }
     }
     FlatProgram* program = bytecode->m_flatProgramThatCountsTurns.get();
     if (!program)

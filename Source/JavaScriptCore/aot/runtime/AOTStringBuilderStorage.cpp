@@ -551,6 +551,16 @@ void StringBuilderStorage::commit(const Latin1Character* cursor)
     m_position = static_cast<uint32_t>(cursor - m_characters);
 }
 
+bool StringBuilderStorage::checkLength(JSGlobalObject* globalObject)
+{
+    if (!canGrowBy(0)) {
+        throwOutOfMemory(globalObject);
+        return false;
+    }
+    updateLimit();
+    return true;
+}
+
 void StringBuilderStorage::rollBack(uint32_t length)
 {
     ASSERT(length <= this->length());
@@ -1417,6 +1427,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Inst
     if (checkpoint > storage->length()) [[unlikely]]
         crashOnWrongOperand(entry);
     storage->rollBack(checkpoint);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderCheckLength, void, (Instance* instance, JSCell* builder))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTStringBuilderCheckLength);
+    cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderCheckLength)->checkLength(globalObject);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderToString, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))

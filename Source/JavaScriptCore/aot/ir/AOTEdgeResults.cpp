@@ -510,7 +510,8 @@ ExpectedType expectedTypeOnEdge(const Program& program, const Function& function
 {
     const Type& type = arena.at(provenType);
     Type met = type.intersectWith(computeTypeOnEdge({ program, function, arena, TypeLevel::Expected }, position), arena);
-    if (met.isNever() || met == type)
+    // What two types share is never put too small, so it may hold more than either: a function of the program beside a class that holds callables of another kind.
+    if (met.isNever() || met == type || !met.isSubsetOf(type, program))
         return { };
     return ExpectedType(arena.intern(met));
 }

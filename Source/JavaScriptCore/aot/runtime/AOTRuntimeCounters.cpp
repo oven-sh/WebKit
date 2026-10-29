@@ -406,6 +406,8 @@ void AllocationCounts::willAllocateSet(Instance& instance)
 
 void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
 {
+    if (RuntimeTable* table = vm.aotState().runtimeTable.get())
+        table->willRefillAllocator();
     CountedCells list = listOf(&allocator);
     AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
     if (counts)
@@ -470,6 +472,10 @@ static void dumpOperationCalls(VM& vm, PrintStream& out)
     });
     for (Entry entry : calledOperations)
         out.println(table->callCount(entry), "\toperation:", nameOf(entry));
+    for (Entry entry : calledOperations) {
+        if (uint64_t calls = table->numberOfCallsThatRefilled(entry))
+            out.println(calls, "\trefilled:", nameOf(entry));
+    }
 }
 
 void dumpCounts(VM& vm, PrintStream& out)

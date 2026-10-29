@@ -2133,10 +2133,12 @@ bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& dat
     auto& names = *m_vm.propertyNames;
     for (auto* name : { names.toJSON.impl(), names.toISOString.impl(), names.valueOf.impl(), names.toPrimitiveSymbol.impl() })
         result &= datePrototype.structure()->isImmutablePropertyForReader(name);
-    // The prototype adds a member where it is first read. Until it has the three that the general way reads on a date, that way is taken, and reads them.
+    // The prototype adds a member where it is first read. The general way reads these three on a date, in this order.
     if (result && m_vm.aotState().realmWhoseDatesAreWrittenInPlace != &m_globalObject) {
-        for (auto* name : { names.toJSON.impl(), names.valueOf.impl(), names.toISOString.impl() })
-            result &= isValidOffset(datePrototype.getDirectOffset(m_vm, PropertyName(name)));
+        for (auto* name : { names.toJSON.impl(), names.valueOf.impl(), names.toISOString.impl() }) {
+            PropertySlot slot(&datePrototype, PropertySlot::InternalMethodType::GetOwnProperty);
+            result &= JSObject::getOwnPropertySlot(&datePrototype, &m_globalObject, PropertyName(name), slot);
+        }
         if (result)
             m_vm.aotState().realmWhoseDatesAreWrittenInPlace = &m_globalObject;
     }
@@ -3065,9 +3067,12 @@ static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, 
             continue;
         if (value.asCell()->type() != StringType || !asString(value.asCell())->is8Bit())
             return std::nullopt;
-        asString(value.asCell())->value(&globalObject);
+        // A piece of a string resolves to the width that the storage of that string has now.
+        auto text = asString(value.asCell())->value(&globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        room += 1 + asString(value.asCell())->length() + 1;
+        if (!text->is8Bit())
+            return std::nullopt;
+        room += 1 + text->length() + 1;
     }
     return room;
 }

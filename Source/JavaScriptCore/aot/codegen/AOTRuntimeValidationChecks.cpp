@@ -12,6 +12,7 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
+#include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -36,6 +37,7 @@
 #include "B3StackmapGenerationParams.h"
 #include "VM.h"
 #include <algorithm>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -49,6 +51,12 @@ static bool everyReceiverHasInlineSlot(const FieldAccess& field)
 {
     bool everyReceiverHasSlot = field.coverage == FieldAccess::Coverage::EveryMember || field.coverage == FieldAccess::Coverage::EveryMemberHasSlot;
     return everyReceiverHasSlot && field.slot.hasStorage() && !field.slot.isOutOfLine();
+}
+
+Condition RuntimeValidationEmitter::hasType(Operand operand, const TypeTestPlan& plan)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    return OperationEmitter::hasType(operand, plan);
 }
 
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)

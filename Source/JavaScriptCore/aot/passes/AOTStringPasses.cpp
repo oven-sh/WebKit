@@ -69,7 +69,12 @@ static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
-    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
+    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::StringBuilderCheckLength,
+    Opcode::CallDirect,
+};
+// Any other operation may write into room that it reserved and leave the text longer than a string can be.
+static constexpr OpcodeSet operationsThatKeepLengthOfString = closingOperations | OpcodeSet {
+    Opcode::StringBuilderAppend, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::StringBuilderCheckLength,
 };
 static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
 
@@ -1555,6 +1560,8 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
 
         ProgramPoint start = useLists.pointOf(begin);
         builder.setOrigin(function.at(begin).origin());
+        bool outerGoesOn = !!outer;
+        bool mayBecomeTooLong = false;
         if (!outer)
             outer = builder.insertBefore(start, IRBuilder::make(Opcode::StringBuilderBegin));
         for (ValueID& part : earlierParts) {
@@ -1564,13 +1571,16 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
         if (!earlierParts.isEmpty())
             builder.insertBefore(start, makeAppend(outer, earlierParts.span()));
 
+        ValueID nestedFinish;
         for (const Use& use : useLists.usesOf(begin)) {
             Value& user = function.edit(use.user);
+            mayBecomeTooLong |= !operationsThatKeepLengthOfString.contains(user.opcode);
             if (!closingOperations.contains(user.opcode)) {
                 user.setOperand(use.operandIndex, outer);
                 continue;
             }
             if (user.opcode == Opcode::StringBuilderFinish) {
+                nestedFinish = use.user;
                 user.become(Opcode::String);
                 user.setString(program.strings.emptyString());
             } else {
@@ -1581,6 +1591,11 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
             retype(user);
         }
         retype(becomeBuilderOperation(begin, Opcode::StringBuilderCheckpoint, outer));
+        // Finishing the nested builder throws for a text that is too long. The outer builder stays open, so it checks in its place.
+        if (outerGoesOn && mayBecomeTooLong) {
+            builder.setOrigin(function.at(concatenation).origin());
+            builder.insertBefore(useLists.pointOf(nestedFinish), IRBuilder::make(Opcode::StringBuilderCheckLength, { outer }));
+        }
 
         if (function.at(concatenation).opcode == Opcode::StringBuilderAppend) {
             function.edit(concatenation, ValueEdit::Definition).setPartsOperands(laterParts.span());

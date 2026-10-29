@@ -225,8 +225,6 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     return layouts;
 }
 
-AOT_THRESHOLD(double, maxCreationsOfLayoutMadeSeldom, 1e9);
-
 static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const SlotUses& uses)
 {
     const Program& program = context.program;
@@ -237,14 +235,10 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
         LayoutID id(index);
         if (!context.isCompiledObject(id))
             continue;
-        SiteHeat creations = uses.layouts[index].creationHeat;
         Expected<bool> isMadeInLoop = uses.layouts[index].isMadeInLoop;
-        for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field) {
-            const SlotRowUse& row = uses.rows[context.rows.rowOf(id, field)];
-            creations = greaterOf(creations, row.holderHeat);
-            isMadeInLoop |= row.hasHoldersMadeInLoop;
-        }
-        if ((creations < maxCreationsOfLayoutMadeSeldom).predicted() && !isMadeInLoop.predicted())
+        for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field)
+            isMadeInLoop |= uses.rows[context.rows.rowOf(id, field)].hasHoldersMadeInLoop;
+        if (!isMadeInLoop.predicted())
             layouts.quickSet(index);
     }
     for (const TaggedFamily& family : program.taggedFamilies) {
@@ -253,6 +247,21 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
             layouts.quickClear(member.layout.index());
     }
     return layouts;
+}
+
+static BitVector findKeysDefinedByDescriptor(const Program& program, const SlotUses& uses)
+{
+    BitVector keys(program.types.numberOfPropertyKeys());
+    uses.keysDefinedByDescriptor.forEachSetBit([&](size_t index) {
+        keys.quickSet(index);
+    });
+    for (const Layout& layout : program.layouts) {
+        for (const ClassMember& member : layout.classFlow.members) {
+            if (member.key && member.kind != MethodKind::Method)
+                keys.quickSet(member.key.index());
+        }
+    }
+    return keys;
 }
 
 SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildContext& build)
@@ -290,6 +299,7 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
         [&] { plan.m_closureForms = timed("chooseClosureForms"_s, [&] { return chooseClosureForms(context, uses); }); },
         [&] { plan.m_classCreation = timed("planClassCreation"_s, [&] { return planClassCreation(context); }); },
         [&] { plan.m_keysWithColumn = timed("chooseKeysWithColumn"_s, [&] { return chooseKeysWithColumn(context, uses); }); },
+        [&] { plan.m_keysDefinedByDescriptor = findKeysDefinedByDescriptor(program, uses); },
     });
     if (build.diagnostics().hasErrors())
         return { };

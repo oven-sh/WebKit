@@ -179,6 +179,7 @@ UsesOfObjects::UsesOfObjects(const ValueFlowResultInputs& inputs, const ValueFlo
         if (behavior.protocols.containsAny(protocolsListingKeys) || readsEveryMember)
             m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
     }
+    m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::TargetsOfProxiesThatAreListed)));
     UnionOfSets exportedByCommonJSModules;
     for (const Module& module : inputs.program.modules) {
         if (module.kind == ModuleKind::CommonJs && module.exportsVariable && module.body && inputs.isReached(module.body))

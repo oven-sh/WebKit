@@ -215,6 +215,9 @@ static bool canJoinPropertyRun(SelectionContext& context, ValueID id, const Valu
     PropertyKeyID key = value.key();
     if (!isOrdinaryKey(program, key))
         return false;
+    // A run is refused whole where one of its names meets a setter. Such a store stands alone, and the stores on either side of it are runs of their own.
+    if (!isDefinition && context.slots().isDefinedByDescriptor(key))
+        return false;
 
     CodeShape shape = context.shapeOf(block);
     const Type& receiver = context.typeOf(value.objectOperand());

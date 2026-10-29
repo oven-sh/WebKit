@@ -329,7 +329,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTViewByteLength, uint64_t, (JSCell*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* instance, JSCell* cell, uint64_t index, double number))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTypedArrayPut);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTTypedArrayPut);
     DeferTerminationForAWhile deferTermination(vm);
     auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTTypedArrayPut);
     JSType type = view->type();
@@ -349,8 +349,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* in
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTypedArrayIsDetached);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowIfTypedArrayIsDetached);
     auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTThrowIfTypedArrayIsDetached);
     if (view->isDetached() || view->isOutOfBounds())
         throwTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);

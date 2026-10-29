@@ -194,6 +194,9 @@ public:
 
         RELEASE_ASSERT(m_procedure.variables().isEmpty());
 
+        if (m_procedure.policy().selection.extendsInstructionSelection)
+            findPhisKeptZeroExtended();
+
         // Figure out which blocks are not rare.
         m_fastWorklist.push(m_procedure[0]);
         while (B3::BasicBlock* block = m_fastWorklist.pop()) {
@@ -796,6 +799,8 @@ private:
         // across. But, it's not clear how useful this would be.
         if (value->owner != m_value->owner)
             return true;
+        if (m_procedure.policy().validation.overlooksWritesBetweenLoadsAndTheirUsers) [[unlikely]]
+            return false;
 
         if (m_blockWithNextInterference == m_block) {
             bool result = m_nextInterference[value] < m_index;
@@ -1326,6 +1331,79 @@ private:
         const auto& tmps = tmpsForTuple(value);
         for (unsigned i = 0; i < tuple.size(); ++i)
             func(tmps[i], tuple[i], i);
+    }
+
+    // Whether the upper half of the Tmp may hold something. What an instruction of 32 bits computes has zeros there.
+    bool mayHaveUpperHalf(Value* value) const
+    {
+        switch (value->opcode()) {
+        case Phi:
+            return !m_phisKeptZeroExtended.contains(value);
+        case Identity:
+        case Opaque:
+            return mayHaveUpperHalf(value->child(0));
+        case Trunc:
+        case ArgumentReg:
+        case Patchpoint:
+        case B3::CCall:
+        case Extract:
+        case Select:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // The counter of a loop is widened for every address that it is part of. That is a copy on every turn unless every value that the Phi is handed is known to have zeros in its
+    // upper half: then the register allocator gives both one register. So such a Phi is handed its values by moves of 32 bits. A move from a value that has zeros there anyway is no
+    // instruction in the end. One from a value that was cut off 64 bits is, and there is one on each way in, so the Phi must be widened more than twice as often as it is handed such values.
+    void findPhisKeptZeroExtended()
+    {
+        struct Candidate {
+            Value* phi { nullptr };
+            double frequencyOfExtensions { 0 };
+        };
+        Vector<Candidate, 8> candidates;
+        Vector<std::pair<UpsilonValue*, double>, 16> upsilons;
+        IndexMap<Value*, unsigned> candidateOfPhi(m_procedure.values().size());
+        for (B3::BasicBlock* block : m_procedure) {
+            for (Value* value : *block) {
+                if (value->opcode() != ZExt32 || value->child(0)->opcode() != Phi)
+                    continue;
+                unsigned& index = candidateOfPhi[value->child(0)];
+                if (!index) {
+                    candidates.append({ value->child(0), 0 });
+                    index = candidates.size();
+                }
+                candidates[index - 1].frequencyOfExtensions += block->frequency();
+            }
+        }
+        if (candidates.isEmpty())
+            return;
+        for (B3::BasicBlock* block : m_procedure) {
+            for (Value* value : *block) {
+                auto* upsilon = value->as<UpsilonValue>();
+                if (upsilon && candidateOfPhi[upsilon->phi()])
+                    upsilons.append({ upsilon, block->frequency() });
+            }
+        }
+        // A Phi that is kept so hands zeros on to the next.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const Candidate& candidate : candidates) {
+                if (m_phisKeptZeroExtended.contains(candidate.phi))
+                    continue;
+                double frequencyOfMoves = 0;
+                for (auto [upsilon, frequency] : upsilons) {
+                    if (upsilon->phi() == candidate.phi && upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
+                        frequencyOfMoves += frequency;
+                }
+                if (candidate.frequencyOfExtensions > 2 * frequencyOfMoves) {
+                    m_phisKeptZeroExtended.add(candidate.phi);
+                    changed = true;
+                }
+            }
+        }
     }
 
     void moveToTmp(Air::Opcode opcode, Air::Arg source, Air::Tmp dest)
@@ -7157,7 +7235,12 @@ private:
             Value* value = m_value->child(0);
             Value* phi = m_value->as<UpsilonValue>()->phi();
             if (value->type().isNumeric()) {
-                moveToTmp(relaxedMoveForType(value->type()), immOrTmpOrZeroReg(value), m_phiToTmp[phi]);
+                Arg source = immOrTmpOrZeroReg(value);
+                if (source.isTmp() && m_phisKeptZeroExtended.contains(phi) && mayHaveUpperHalf(value)) {
+                    append(Move32, source, m_phiToTmp[phi]);
+                    return;
+                }
+                moveToTmp(relaxedMoveForType(value->type()), source, m_phiToTmp[phi]);
                 return;
             }
 
@@ -7512,6 +7595,7 @@ private:
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
+    IndexSet<Value*> m_phisKeptZeroExtended;
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;

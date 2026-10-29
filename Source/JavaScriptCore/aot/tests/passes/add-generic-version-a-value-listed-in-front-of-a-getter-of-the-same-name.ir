@@ -1,0 +1,41 @@
+# const flag: boolean = new (1 as any)();   const holder = { size: flag, run() {}, get size() {} }
+# What is constructed is no function, so flow holds nothing for `flag`. The literal lists it all the same, and an allocation fills the slots that it lists.
+# So the field holds values, and the getter that is defined under its name behind the allocation gets no slot.
+# The body runs once: its checks become expectations. `run` is a method, which only the allocation stores, so `size` in front of it stays in the allocation too.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline AddGenericVersion
+# CHECK: layout L0 {{*}}key="size" declared={type=anything} flags=[IsRequired, IsEnforced] flow={{*}}] declaredOrder={{*}}cause=PropertyRedefined
+# CHECK-NOT: IsAccessor
+# CHECK: function f0
+# CHECK: [[made]]: anything ~ object = Construct {{*}} callees=[]
+# CHECK-NEXT: [[flag]]: anything ~ boolean = Expect [[made]] expectedType=boolean
+# CHECK-NEXT: [[run]]: f1 = NewClosure function=f1
+# CHECK-NEXT: [[holder]]: L0 = NewObject -, [[flag]], [[run]] layout=L0 fields=[1, 0]
+# CHECK-NEXT: [[size]]: f2 = NewClosure function=f2
+# CHECK-NEXT: DefineGetter [[holder]], [[size]] key="size"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="run" declared={type=undefined|null|function|f1 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="size" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0]
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Construct v0
+    v2 = Convert v1 declared={type=boolean} illTypedCause=FromLooseType
+    v3 = NewClosure function=f1
+    v4 = Convert v3 declared={type=undefined|null|function|f1 flags=[OmitsNull, OmitsUndefined]}
+    v5 = NewObject -, v2, v4 layout=L0 fields=[1, 0]
+    v6 = NewClosure function=f2
+    DefineGetter v5, v6 key="size"
+    v8 = FinishObject v5
+    v9 = TypeOf v8
+    Return v9
+}
+function f1 name="run" kind=Method flags=[IsChecked] results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="size" kind=Getter flags=[IsChecked] results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

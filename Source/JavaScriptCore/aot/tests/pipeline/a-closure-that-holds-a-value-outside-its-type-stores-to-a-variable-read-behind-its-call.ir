@@ -1,10 +1,10 @@
 # function f(): number { const list: string[] = []; const s = list[0]; list[0] = s + 0; let n = 1; (() => { n = 2; s })(); return n }  for (let i = 0; i < 1; i++) print(f())
-# The sum that goes back into the list is no string, so the rest of f runs in the copy without types. The arrow function holds s, which rests on a check: its call in the copy names
-# the function that flow has seen beside whatever else may come, so what that function stores is stored by the call, and n is read again behind it
+# The sum that goes back into the list is no string, so s holds a value outside its type. The arrow function holds s, of which the type is only expected: its call names
+# the function that flow has seen, so what that function stores is stored by the call, and n is read again behind it
 # FORM: AsRead
 # RUN(IR): pipeline CheckPlacement
 # RUN: run-in-shell
-# IR: = CallDirect {{*}}[isNeverInlined]
+# IR: : undefined = CallDirect {{*}} function=f5
 # IR-NEXT: = GetEnvironmentField
 # CHECK: 2
 # CHECK-NEXT: exited with 0

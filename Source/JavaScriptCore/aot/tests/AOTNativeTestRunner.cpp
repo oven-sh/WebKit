@@ -48,12 +48,34 @@ static std::span<const NativeTestProvider> nativeTestProviders()
     return providers;
 }
 
+// They take seconds, the others milliseconds. They come first, the longest at the front, so whoever deals the tests out over processes that run side by side
+// begins with them.
+static constexpr ASCIILiteral longNativeTests[] = {
+    "slow/compact-table/compiled-code-probes-index-wider-than-the-hash"_s,
+    "valueSetsOfBothFormsAgreeWithPlainSets"_s,
+    "slow/compact-table/index-wider-than-the-hash"_s,
+    "reader/survives-every-changed-word"_s,
+    "regexp-image/long-subject-allows-match-limit-turns"_s,
+};
+
 static void forEachNativeTest(NOESCAPE const Invocable<void(const NativeTest&)> auto& functor)
 {
-    for (auto provider : nativeTestProviders()) {
-        for (const NativeTest& test : provider())
-            functor(test);
+    auto forEachInWrittenOrder = [](NOESCAPE const Invocable<void(const NativeTest&)> auto& visit) {
+        for (auto provider : nativeTestProviders()) {
+            for (const NativeTest& test : provider())
+                visit(test);
+        }
+    };
+    for (ASCIILiteral name : longNativeTests) {
+        forEachInWrittenOrder([&](const NativeTest& test) {
+            if (StringView(test.name) == StringView(name))
+                functor(test);
+        });
     }
+    forEachInWrittenOrder([&](const NativeTest& test) {
+        if (!std::ranges::contains(longNativeTests, StringView(test.name), [](ASCIILiteral name) { return StringView(name); }))
+            functor(test);
+    });
 }
 
 static void checkNativeTests()

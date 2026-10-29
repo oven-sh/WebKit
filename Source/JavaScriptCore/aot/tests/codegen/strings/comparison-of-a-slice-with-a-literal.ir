@@ -78,6 +78,6 @@ function f1 name="isHttp" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CALLS-NEXT: f4: size=
 # That call follows the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="isHttp" role=Source
-# X64-NEXT: instructions: 37, patchpoints: 4
+# X64-NEXT: instructions: 35, patchpoints: 4
 # ARM64-LABEL: name="isHttp" role=Source
-# ARM64-NEXT: instructions: 38, patchpoints: 4
+# ARM64-NEXT: instructions: 34, patchpoints: 4

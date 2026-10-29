@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
+#include "AOTKnownClosures.h"
+#include "AOTValueFlowRules.h"
 
 #if ENABLE(AOT)
 
@@ -954,46 +956,104 @@ private:
         }
     }
 
-    void appendHoldersOfLibraryExports(Vector<ValueFlowObjectID>& holders)
+    void appendHoldersOfExports(Vector<ValueFlowObjectID>& holders, ModuleID moduleID)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
-        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-            const Module& module = m_program.modules[index];
-            if (module.kind != ModuleKind::RuntimeSource)
-                continue;
-            holders.append(universe.namespaceOf(ModuleID(index)));
-            if (!module.body)
-                continue;
+        const Module& module = m_program.at(moduleID);
+        holders.append(universe.namespaceOf(moduleID));
+        if (!module.body)
+            return;
 
-            const Function& body = m_program.at(module.body);
-            BitVector isVisited(body.values.size());
-            Vector<ValueID, 8> worklist;
-            auto visit = [&](ValueID value) {
-                if (value && !isVisited.set(value.index()))
-                    worklist.append(value);
-            };
-            for (const Block& block : body.blocks) {
-                if (block.terminator.kind == TerminatorKind::Return)
-                    visit(block.terminator.valueOperand());
-            }
-            while (!worklist.isEmpty()) {
-                ValueID id = worklist.takeLast();
-                const Value& value = body.at(id);
-                if (ValueFlowObjectID object = universe.siteObject(module.body, id))
-                    holders.append(object);
-                if (value.opcode == Opcode::GetModuleVariable) {
-                    for (const Value& store : body.values) {
-                        if (store.opcode == Opcode::PutModuleVariable && store.variable() == value.variable())
-                            visit(store.valueOperand());
-                    }
-                    continue;
+        const Function& body = m_program.at(module.body);
+        BitVector isVisited(body.values.size());
+        Vector<ValueID, 8> worklist;
+        auto visit = [&](ValueID value) {
+            if (value && !isVisited.set(value.index()))
+                worklist.append(value);
+        };
+        for (const Block& block : body.blocks) {
+            if (block.terminator.kind == TerminatorKind::Return)
+                visit(block.terminator.valueOperand());
+        }
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            const Value& value = body.at(id);
+            if (ValueFlowObjectID object = universe.siteObject(module.body, id))
+                holders.append(object);
+            if (value.opcode == Opcode::GetModuleVariable) {
+                for (const Value& store : body.values) {
+                    if (store.opcode == Opcode::PutModuleVariable && store.variable() == value.variable())
+                        visit(store.valueOperand());
                 }
-                for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
-                    if (operandUsesOf(value.opcode, operandIndex).contains(OperandUse::Returns))
-                        visit(value.operand(operandIndex));
+                continue;
+            }
+            for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+                if (operandUsesOf(value.opcode, operandIndex).contains(OperandUse::Returns))
+                    visit(value.operand(operandIndex));
+            }
+        }
+    }
+
+    // The modules of the library whose code names a function of the host that evaluates text or loads code the build has not seen, or calls such a function of the language, and the modules that ask for one of those.
+    BitVector libraryModulesThatMayRaiseEvents()
+    {
+        const BuiltinTable& builtins = m_program.builtins();
+        uint32_t numberOfModules = m_program.modules.size();
+        BitVector mayRaiseEvents(numberOfModules);
+        Vector<Vector<uint32_t, 4>> askedForBy(numberOfModules);
+        Vector<uint32_t, 32> worklist;
+        auto isOfLibrary = [&](ModuleID module) {
+            return module && m_program.at(module).kind == ModuleKind::RuntimeSource;
+        };
+        auto raise = [&](uint32_t module) {
+            if (!mayRaiseEvents.set(module))
+                worklist.append(module);
+        };
+        auto entryNamedBy = [&](const Function& function, ValueID id) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::Builtin || value.opcode == Opcode::NativeBinding)
+                return builtins.canonicalID(value.builtin());
+            BuiltinID named = value.opcode == Opcode::PropGet ? entryNamedByOperations(m_program, function, id) : BuiltinID();
+            return named ? builtins.canonicalID(named) : BuiltinID();
+        };
+        auto ask = [&](ModuleID asking, ModuleID asked) {
+            if (isOfLibrary(asked))
+                askedForBy[asked.index()].append(asking.index());
+        };
+        for (uint32_t index = 0; index < numberOfModules; ++index) {
+            if (!isOfLibrary(ModuleID(index)))
+                continue;
+            for (const ModuleRequest& request : m_program.modules[index].requests)
+                ask(ModuleID(index), request.target);
+        }
+        for (const Function& function : m_program.functions) {
+            if (!isOfLibrary(function.module))
+                continue;
+            for (uint32_t index = 0; index < function.values.size(); ++index) {
+                const Value& value = function.values[index];
+                BuiltinID named = entryNamedBy(function, ValueID(index));
+                if (named && builtins.at(named).origin == BuiltinOrigin::Host && raisesEventWhenCalled(builtins, named))
+                    raise(function.module.index());
+                if (flowRuleOf(value.opcode) == FlowRule::Call && value.numberOfOperands() && value.operand(0)) {
+                    BuiltinID callee = entryNamedBy(function, definitionThroughSameValues(function, value.operand(0)));
+                    if (callee && raisesEventWhenCalled(builtins, callee))
+                        raise(function.module.index());
+                }
+                if (value.opcode == Opcode::RequireModule || value.opcode == Opcode::ImportModule || value.opcode == Opcode::ModuleNamespace || value.opcode == Opcode::EvaluateModule)
+                    ask(function.module, value.module());
+                if (value.opcode != Opcode::RequireBuiltinModule)
+                    continue;
+                for (uint32_t asked = 0; asked < numberOfModules; ++asked) {
+                    if (m_program.modules[asked].runtimeModule == value.runtimeModule())
+                        ask(function.module, ModuleID(asked));
                 }
             }
         }
+        while (!worklist.isEmpty()) {
+            for (uint32_t asking : askedForBy[worklist.takeLast()])
+                raise(asking);
+        }
+        return mayRaiseEvents;
     }
 
     void makeMasksOfUniverse()
@@ -1130,8 +1190,19 @@ private:
                 list.append(universe.prototypeOf(LayoutID(index)));
         }
         universe.m_prototypeObjectsOfLibraryClasses = take();
-        appendHoldersOfLibraryExports(list);
-        universe.m_holdersOfLibraryExports = take();
+        universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
+        universe.m_holdersOfLibraryExports = ValueSets::nothing;
+        universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
+        BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
+        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+            if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
+                continue;
+            appendHoldersOfExports(list, ModuleID(index));
+            universe.m_holdersOfExportsOfModule[index] = take();
+            universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+            if (!mayRaiseEvents.get(index))
+                universe.m_holdersOfLibraryExportsThatRaiseNoEvent = maker.unite(universe.m_holdersOfLibraryExportsThatRaiseNoEvent, universe.m_holdersOfExportsOfModule[index]);
+        }
         universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
@@ -1163,6 +1234,16 @@ private:
         }
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            if (m_program.layouts[index].kind == LayoutKind::Record)
+                list.append(universe.instanceOf(LayoutID(index)));
+        }
+        for (uint32_t position = 0; position < universe.m_siteOfObject.size(); ++position) {
+            LayoutID layout = universe.m_sites[universe.m_siteOfObject[position]].layout;
+            if (layout && m_program.at(layout).kind == LayoutKind::Record)
+                list.append(ValueFlowObjectID(universe.m_firstSite + position));
+        }
+        universe.m_records = take();
         for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
             if (m_bodies[index].answersOnlyWhatItConstructs)
                 list.append(universe.closureOf(FunctionID(index)));
@@ -1188,6 +1269,23 @@ private:
         forEachIndexInParallel(m_loops, ofLayout.size(), [&](unsigned index, unsigned worker) {
             allocatedWithLayout[index] = makerOf(worker).of(ofLayout[index].span());
         });
+        auto standsBelowLibraryClass = [&](LayoutID layout) {
+            for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
+                const Layout& above = m_program.at(layout);
+                if (layoutIsDefinedByClass(above) && above.module && m_program.at(above.module).kind == ModuleKind::RuntimeSource)
+                    return true;
+                if (!above.has(LayoutFlags::HasHeritage))
+                    return false;
+                layout = predictedHeritageOf(above);
+            }
+            return false;
+        };
+        Vector<ValueSetID> belowLibraryClasses;
+        for (uint32_t index = 0; index < ofLayout.size(); ++index) {
+            if (standsBelowLibraryClass(LayoutID(index)))
+                belowLibraryClasses.append(allocatedWithLayout[index]);
+        }
+        universe.m_instancesBelowLibraryClasses = maker.uniteAll(belowLibraryClasses.span());
         Vector<ValueSetID> inheritingLayouts;
         universe.m_objectsOfLayout = Vector<ValueSetID>(ofLayout.size(), [&](size_t index) {
             ValueSetID objects = allocatedWithLayout[index];
@@ -1237,12 +1335,10 @@ private:
             bool hasCallableInstances = Type::builtinClass(tested).overlaps(Type::function(), m_program);
             if (hasCallableInstances)
                 callableInstances.append(allocatedAs[index]);
-            if (builtins.at(tested).instanceTest == BuiltinInstanceTest::None)
-                return universe.m_objects;
 
             parts.shrink(0);
             parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
-            if (hasCallableInstances)
+            if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
                 parts.append(universe.m_closures);
             for (uint32_t other = 0; other < builtins.classCount(); ++other) {
                 if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(BuiltinClassID(other), tested))
@@ -1250,10 +1346,13 @@ private:
             }
             return maker.uniteAll(parts.span());
         });
+        universe.m_objectsThatMayBeMadeAs = universe.m_objectsOfClass;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                universe.m_objectsOfClass[index] = universe.m_objects;
+        }
         universe.m_sureInstancesOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
             BuiltinClassID tested(static_cast<uint32_t>(index));
-            if (builtins.at(tested).instanceTest == BuiltinInstanceTest::None)
-                return ValueSets::nothing;
             parts.shrink(0);
             for (uint32_t other = 0; other < builtins.classCount(); ++other) {
                 if (allocatedAs[other] != ValueSets::nothing && builtins.isSameOrSubclassOf(BuiltinClassID(other), tested))
@@ -1261,6 +1360,17 @@ private:
             }
             return maker.uniteAll(parts.span());
         });
+        universe.m_objectsMadeAs = universe.m_sureInstancesOfClass;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                universe.m_sureInstancesOfClass[index] = ValueSets::nothing;
+        }
+        parts.shrink(0);
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::Iterator) || builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::AsyncIterator))
+                parts.append(allocatedAs[index]);
+        }
+        universe.m_objectsAllocatedAsIterators = maker.uniteAll(parts.span());
         universe.m_arrays = universe.m_objectsOfClass[BuiltinClasses::Array.index()];
 
         ValueSetID knownObjectsThatMayBeAnything = maker.intersect(universe.m_objectsThatMayBeAnything, universe.m_knownObjects);
@@ -1379,7 +1489,10 @@ private:
         case Kind::Thrown:
             return nodes.thrown(FunctionID(name.owner));
         case Kind::OfHost:
+            RELEASE_ASSERT(name.owner < numberOfValueFlowHostNodes);
             return nodes.ofHost(static_cast<ValueFlowHostNode>(name.owner));
+        case Kind::Hub:
+            return nodes.hub(ValueFlowBehaviorID(name.owner));
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -1405,6 +1518,14 @@ private:
             if (ValueFlowObjectID object = universe.objectOf(builtin, module))
                 linked.set = maker.intersect(linked.set, ValueSets::complement(maker.of(object)));
         }
+        if (!mask.insideOneOfClasses.isEmpty()) {
+            ValueSetID instances = ValueSets::nothing;
+            for (BuiltinClassID builtinClass : mask.insideOneOfClasses)
+                instances = maker.unite(instances, universe.instancesOf(builtinClass));
+            linked.set = maker.intersect(linked.set, instances);
+        }
+        for (BuiltinClassID builtinClass : mask.outsideClasses)
+            linked.set = maker.intersect(linked.set, ValueSets::complement(universe.sureInstancesOf(builtinClass)));
         if (linked.familyObjects)
             linked.familyObjects = maker.intersect(linked.familyObjects, linked.set);
         return linked;
@@ -1473,13 +1594,15 @@ private:
                 nodeNamed(index, statement.thrown),
                 statement.firstSite == Body::none ? UINT32_MAX : universe.m_firstSiteOfFunction[index] + statement.firstSite,
                 statement.isOnlyCalledOnItsHolder,
+                statement.guardCount,
+                first.operand + statement.firstGuard,
             };
         });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {
             return ValueFlowObservedValue { body.function, observed.test, link(observed.operand) };
         });
-        std::ranges::transform(body.valuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(first.valueAliveForComparisonsOnly).begin(), [&](ValueID value) {
-            return ValueFlowValueOfFunction { body.function, value };
+        std::ranges::transform(body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(first.valueAliveForComparisonsOnly).begin(), [&](ValueID value, const ValueFlowNodeName& node) {
+            return ValueFlowValueOfFunction { body.function, value, nodeNamed(index, node) };
         });
         std::ranges::transform(body.comparedValues, m_result.m_comparedValues.mutableSpan().subspan(first.comparedValues).begin(), [&](const Body::ComparedValues& compared) {
             return ValueFlowComparedValues { body.function, link(compared.left), link(compared.right) };

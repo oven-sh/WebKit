@@ -85,6 +85,8 @@ void describeOperandCode(const Program&, TypeID operand, const OperandBehavior&,
 
 CalleeList calleesOfCall(const Program&, const Value& call);
 CalleeList calleesThatBoundEffectsOf(const Program&, const Value& call);
+// A call of what is no function throws, and so does a call of a class and `new` of what is no constructor. A list of callees says what is entered, not that anything is.
+bool mayThrowBeforeEntry(const Program&, const Type& callee, BuiltinCallMode);
 
 } } } // namespace JSC::AOT::Typed
 

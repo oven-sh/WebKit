@@ -34,6 +34,7 @@ StubSignature signatureOfCallWithArray(StubKey) { return callConventionSignature
 StubSignature signatureOfCallWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfTailCallWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2) }); }
 StubSignature signatureOfSuperConstructWithList(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2) }); }
+StubSignature signatureOfSuperConstructWithArray(StubKey) { return StubSignature::withGPRResult({ calleeGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfReturnFromArgumentListFrame(StubKey) { return { }; }
 
 StubSignature signatureOfCallFromArgumentListFrame(StubKey)
@@ -172,6 +173,67 @@ void generateSuperConstructWithList(StubAssembler& jit)
     exceedsArgumentRegisters.link(&jit);
     jit.move(calleeGPR, registers.word);
     jit.callOperationAndReturn(Entry::operationAOTSuperConstruct, { .secondArgumentIn = registers.word, .thirdArgumentIn = newTarget, .fourthArgumentIn = list.count, .fifthArgumentIn = list.words });
+}
+
+// super(...list). The elements of a short list that has every element go into the registers behind new.target.
+void generateSuperConstructWithArray(StubAssembler& jit)
+{
+    const CallRegisters registers = CallRegisters::allocate(jit);
+    const GPRReg newTarget = jit.operand(1);
+    const GPRReg list = jit.clobberOperand(2);
+    const GPRReg preservedList = registers.word;
+    const GPRReg storage = registers.scratch;
+    const GPRReg mode = jit.allocateScratch(StubRegister::A2);
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    jit.clobberRegister(countGPR);
+    ASSERT(newTarget == argumentGPR(0) && list == argumentGPR(1));
+    ASSERT(noOverlap(calleeGPR, countGPR, newTarget, list, preservedList, storage, mode));
+    JumpList genericPath;
+
+    jit.move(list, preservedList);
+    jit.load8(Address(list, JSCell::indexingTypeAndMiscOffset()), mode);
+    genericPath.append(branchIfNotPristine(jit, list));
+    jit.loadPtr(Address(list, JSObject::butterflyOffset()), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), countGPR);
+    genericPath.append(jit.branch32(CCallHelpers::AboveOrEqual, countGPR, TrustedImm32(numberOfArgumentGPRs)));
+    jit.and32(TrustedImm32(IndexingShapeMask), mode);
+    Jump hasDoubleShape = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(DoubleShape));
+    Jump isContiguous = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(ContiguousShape));
+    Jump hasInt32Shape = jit.branch32(CCallHelpers::Equal, mode, TrustedImm32(Int32Shape));
+    genericPath.append(jit.branch32(CCallHelpers::NotEqual, mode, TrustedImm32(UndecidedShape)));
+    genericPath.append(jit.branchTest32(CCallHelpers::NonZero, countGPR));
+    hasInt32Shape.link(&jit);
+    isContiguous.link(&jit);
+
+    JumpList didLoadRegisters;
+    std::array<JumpList, numberOfArgumentGPRs> isPastLength;
+    for (unsigned i = 1; i < numberOfArgumentGPRs; ++i) {
+        isPastLength[i].append(jit.branch32(CCallHelpers::Below, countGPR, TrustedImm32(i)));
+        jit.load64(Address(storage, (i - 1) * sizeof(EncodedJSValue)), argumentGPR(i));
+        genericPath.append(jit.branchTest64(CCallHelpers::Zero, argumentGPR(i)));
+    }
+    didLoadRegisters.append(jit.jump());
+
+    hasDoubleShape.link(&jit);
+    for (unsigned i = 1; i < numberOfArgumentGPRs; ++i) {
+        isPastLength[i].append(jit.branch32(CCallHelpers::Below, countGPR, TrustedImm32(i)));
+        jit.loadDouble(Address(storage, (i - 1) * sizeof(double)), number);
+        boxDouble(jit, PureDouble::branchIfNaN(jit, number, genericPath), argumentGPR(i));
+    }
+    didLoadRegisters.append(jit.jump());
+
+    for (unsigned i = 1; i < numberOfArgumentGPRs; ++i) {
+        isPastLength[i].link(&jit);
+        jit.move(TrustedImm64(JSValue::ValueUndefined), argumentGPR(i));
+    }
+    didLoadRegisters.link(&jit);
+    jit.add32(TrustedImm32(1), countGPR);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.clobberRegister(thisGPR));
+    jit.jumpToStub(constructValue(ConstructSyntax::SuperCall));
+
+    genericPath.link(&jit);
+    jit.move(calleeGPR, storage);
+    jit.callOperationAndReturn(Entry::operationAOTSuperConstructList, { .secondArgumentIn = storage, .thirdArgumentIn = newTarget, .fourthArgumentIn = preservedList });
 }
 
 static void emitCopyListBelowFrame(StubAssembler& jit, GPRReg count, GPRReg source, GPRReg destination, GPRReg index, GPRReg word)

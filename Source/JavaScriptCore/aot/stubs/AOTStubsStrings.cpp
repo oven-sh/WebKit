@@ -123,13 +123,14 @@ struct CharacterCopy {
             jit.returnToCaller();
     }
 
-    // The source holds the first word of the rope. The target ends behind the last piece. Whoever meets a piece that is itself a rope leaves by the slow path.
+    // The source holds the first word of the rope. The target ends behind the last piece. Whoever meets a piece that is itself a rope, or whose storage is 16-bit by now, leaves by the slow path.
     NEVER_INLINE void copyPiecesOfRope(GPRReg rope, JumpList& slowPath) const
     {
         auto copyPiece = [&] {
             JumpList isCopied;
             jit.loadPtr(Address(source, JSString::offsetOfValue()), source);
             slowPath.append(jit.branchIfRopeStringImpl(source));
+            slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
             jit.load32(Address(source, StringImpl::lengthMemoryOffset()), length);
             jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
             copy(&isCopied);
@@ -195,7 +196,6 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     // A short rope of flat 8-bit strings, as `first + " " + last` kept in a field is: its pieces are copied one after the other.
     isRope.link(&jit);
     slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, source, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::is8BitInPointer)));
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, Storage::offsetOfMinLengthAppendedByReference())));
     jit.load32(Address(builder, Storage::offsetOfPosition()), target);
@@ -260,7 +260,6 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     CharacterCopy { jit, source, cursor, length, first, second, offset }.copy(nullptr);
 
     isRope.link(&jit);
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::is8BitInPointer)));
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, TrustedImm32(StackStringBuilder::minLengthAppendedByReference)));
     jit.add64(length, cursor, end);
@@ -268,6 +267,7 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::isSubstringInPointer));
     loadSubstringBaseAndOffset(jit, string, source, offset);
     jit.loadPtr(Address(source, JSString::offsetOfValue()), source);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
     jit.addPtr(offset, source);
     jit.jump().linkTo(copy, &jit);

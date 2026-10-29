@@ -12,6 +12,7 @@
 #include "AOTClaimsOfFields.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
+#include "AOTValueFlowTypedResults.h"
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -273,6 +274,7 @@ struct FieldResults {
     mutable Lock lockOfChainsBuiltByProgram { };
     // For the layouts of literals that are born with copies: the keys that every object holds once its birth is over, sorted.
     KeysByLayout keysHeldSinceBirth { };
+    Vector<std::pair<FunctionID, ValueID>> allocationsBornWithCopies { };
     BitVector isBornWithCopies { };
     mutable SharedMemo<KindsOfMembers> kindsOfMembers { };
     struct AnswersAboutObject {
@@ -555,13 +557,46 @@ struct FieldResults {
         }
     }
 
+    // What a literal without a copy lists. A copy that is born under its layout brings what its own sources hold.
+    std::optional<Vector<PropertyKeyID>> keysListedByLiteral(ValueFlowObjectID object, LayoutID id) const
+    {
+        const ValueFlowUniverse& universe = inputs.universe();
+        const ValueFlowSite* site = universe.siteOf(object);
+        if (!site || site->layout != id)
+            return std::nullopt;
+        FunctionID function = universe.functionOf(object);
+        const Value& operation = program.at(function).at(site->value);
+        bool isFirstOfOperation = !site->ordinal;
+        if (isFirstOfOperation && std::ranges::binary_search(allocationsBornWithCopies, std::pair { function, site->value }))
+            return std::nullopt;
+        Vector<PropertyKeyID> keys;
+        auto list = [&](std::span<const uint32_t> fields) {
+            for (uint32_t field : fields) {
+                if (PropertyKeyID key = program.at(id).fields[field].key)
+                    keys.append(key);
+            }
+        };
+        if (site->origin == ValueFlowSiteOrigin::Operation && isFirstOfOperation && operation.opcode == Opcode::NewObject) {
+            list(operation.fields());
+            return keys;
+        }
+        if (site->origin != ValueFlowSiteOrigin::DataNode)
+            return std::nullopt;
+        forEachDataNodeInPreorder(program.at(operation.data()).root, [&](uint32_t ordinal, const DataNode& node) {
+            if (ordinal == site->ordinal)
+                list(fieldsFilledBy(program, program.at(id), node.as<DataNode::Object>()).span());
+        });
+        return keys;
+    }
+
     // The own enumerable data properties that the object is never without, once it is born. What happens to another object of its layout takes none from it.
     Vector<PropertyKeyID> keysKeptBy(ValueSetMaker& maker, const BitVector& hasOtherSites, ValueFlowObjectID object, LayoutID id) const
     {
         Vector<PropertyKeyID> keys;
         LayoutKind kind = program.at(id).kind;
         ObjectsOfLayout reached = inputs.hasEscaped(object) || inputs.isLost(object) ? ObjectsOfLayout::All : ObjectsOfLayout::Followed;
-        if ((kind != LayoutKind::Record && kind != LayoutKind::Instance) || !hasObjects(id) || stores.getsCopiedProperties(id, reached) || stores.hasObjectOfCodeWithoutSolve(id))
+        bool getsCopiedProperties = stores.getsCopiedProperties(id, reached) && (reached == ObjectsOfLayout::All || heap.writtenUnder(maker, maker.of(object), copiedFromName) != ValueSets::nothing);
+        if ((kind != LayoutKind::Record && kind != LayoutKind::Instance) || !hasObjects(id) || getsCopiedProperties || stores.hasObjectOfCodeWithoutSolve(id))
             return keys;
         OptionSet<ObjectMutation> possible = reached == ObjectsOfLayout::All ? possibleMutationsOf(id) : markedMutationsOf(inputs, object);
         if (possible.containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript }))
@@ -570,8 +605,10 @@ struct FieldResults {
             return keys;
 
         bool isBornHere = isBornWithCopies.get(id.index());
-        if (isBornHere)
-            keys = keysHeldSinceBirth[id.index()];
+        if (isBornHere) {
+            std::optional<Vector<PropertyKeyID>> listed = reached == ObjectsOfLayout::Followed ? keysListedByLiteral(object, id) : std::nullopt;
+            keys = listed ? WTF::move(*listed) : keysHeldSinceBirth[id.index()];
+        }
         Vector<PropertyKeyID> keysOfOtherForms;
         forEachFieldOfObjectsWith(program, application, id, [&](FieldReference declaration, const Field& field) {
             if (!field.key)
@@ -695,6 +732,9 @@ struct FieldResults {
             return found != births.end() && found->function == function && found->allocation == allocation;
         };
         AOT::sort(births, { }, [](const BirthWithCopies& birth) {
+            return std::pair { birth.function, birth.allocation };
+        });
+        allocationsBornWithCopies = births.map([](const BirthWithCopies& birth) {
             return std::pair { birth.function, birth.allocation };
         });
         struct OtherBirth {
@@ -839,13 +879,24 @@ struct FieldResults {
             });
         }));
         BitVector layoutsOfOtherObjects(numberOfLayouts);
+        BitVector layoutsOfParsedObjects(numberOfLayouts);
         for (LayoutID layout : layoutsOfOtherSites([&](ValueFlowObjectID object, const ValueFlowSite& site) {
-            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && (site.origin == ValueFlowSiteOrigin::TypedResult || isCompiled(inputs.universe().functionOf(object)));
+            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && site.origin != ValueFlowSiteOrigin::TypedResult && isCompiled(inputs.universe().functionOf(object));
         }))
             layoutsOfOtherObjects.quickSet(layout.index());
+        for (LayoutID layout : layoutsOfOtherSites([&](ValueFlowObjectID, const ValueFlowSite& site) {
+            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && site.origin == ValueFlowSiteOrigin::TypedResult;
+        }))
+            layoutsOfParsedObjects.quickSet(layout.index());
         for (size_t layout : layoutsOfOtherObjects) {
             forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference declaration, const Field&) {
                 missing.append(declaration);
+            });
+        }
+        for (size_t layout : layoutsOfParsedObjects) {
+            forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference declaration, const Field& field) {
+                if (mayBeMissingInParsedText(program, field))
+                    missing.append(declaration);
             });
         }
         return missing;
@@ -1646,6 +1697,17 @@ struct FieldResults {
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);
+                // Each evaluation of a class makes its own private names, and a field holds the name of one evaluation. Only a class with a parent defines its names on an object that it did not make.
+                Vector<PropertyKeyID> privateNamesMadeAgain;
+                for (const Field& field : program.layouts[index].fields) {
+                    if (!field.key || program.at(field.key).kind != PropertyKeyKind::PrivateName)
+                        continue;
+                    LayoutID owner = program.at(field.key).owner;
+                    if (program.at(owner).has(LayoutFlags::HasHeritage) && application.layouts[owner.index()].classFlow.evaluations != ExecutionCount::AtMostOnce)
+                        privateNamesMadeAgain.append(field.key);
+                }
+                AOT::sort(privateNamesMadeAgain);
+                uniteSortedKeys(addedKeys, privateNamesMadeAgain);
                 mayGainSharedKey = stores.isReachedThroughPlaceholders(id) && !std::ranges::all_of(sharedKeys, isField);
             }
             bool mayAddProperty = !listsEveryName || !addedKeys.isEmpty() || mayGainSharedKey;

@@ -100,6 +100,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsUnreachedFunctions = false;
     bool printsUnseenCode = false;
     bool printsUsedBuiltins = false;
+    bool printsLibraryFunctionsLacked = false;
     bool printsProtocols = false;
     bool printsNodesGivenMore = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
@@ -114,6 +115,8 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsUnseenCode = true;
         else if (word == "used"_s)
             printsUsedBuiltins = true;
+        else if (word == "lacked"_s)
+            printsLibraryFunctionsLacked = true;
         else if (word == "protocols"_s)
             printsProtocols = true;
         else if (word == "given-more"_s)
@@ -209,6 +212,10 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             context.out.println(solution.sets().contains(run, object) ? "run " : "used ", program.builtins().tokenOf(universe.builtinOf(object)));
         });
     }
+    if (printsLibraryFunctionsLacked) {
+        for (size_t function : solver.libraryFunctionsLacked())
+            context.out.println("lacked ", function);
+    }
     if (printsProtocols)
         printProtocols(context.out, solution);
     if (printsNodesGivenMore) {
@@ -232,7 +239,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             }
         }
     }
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsProtocols || printsNodesGivenMore)
+    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);

@@ -75,8 +75,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Instance* instance, JSCell* classObject))
 {
     constexpr Entry entry = Entry::operationAOTGetClassPrototype;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     validateFunctionIsNotInFrame(vm, classObject);
     JSValue prototype = cellArgument<Closure>(classObject, entry)->prototypeProperty(vm);
     if (!prototype || !prototype.isObject()) [[unlikely]]
@@ -87,8 +86,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBeginMemberGuards, void, (Instance* instance, uint32_t classIndex))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBeginMemberGuards);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBeginMemberGuards);
     ClassTable& classes = instance->state->objects->classes;
     classes.classPrototypeOfInstances(vm, classLayoutAt(classes, classIndex));
 }
@@ -525,9 +523,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClassToken, JSCell*, (Instance*
 JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* instance, EncodedJSValue object, JSCell* token, uint32_t field))
 {
     constexpr Entry entry = Entry::operationAOTPrivateGet;
-    AOT_OPERATION_BEGIN(instance, entry);
     // A lookup may make the property table of a Structure, which ends in a place where the collector may stop this thread. Compiled code counts on no collection here.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -547,8 +544,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* inst
 JSC_DEFINE_JIT_OPERATION(operationAOTPrivateHas, EncodedJSValue, (Instance* instance, EncodedJSValue object, JSCell* token, uint32_t field))
 {
     constexpr Entry entry = Entry::operationAOTPrivateHas;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
     JSValue base = JSValue::decode(object);
     if (!base.isObject()) {

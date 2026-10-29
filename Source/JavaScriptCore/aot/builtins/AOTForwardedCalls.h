@@ -17,8 +17,11 @@ struct ForwardedCallPlan {
     ValueID thisValue;
     ValueID newTarget;
     ValueID list;
+    std::optional<BuiltinOperand> operandOfList;
     uint32_t firstForwardedArgument { 0 };
     bool constructs { false };
+    // A callee that cannot refuse needs no name, and what it calls in its turn has none at the place.
+    bool calleeMayRefuse { true };
 };
 
 bool forwardsCall(const BuiltinOverload&);

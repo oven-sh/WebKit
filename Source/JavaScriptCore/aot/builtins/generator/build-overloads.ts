@@ -70,6 +70,7 @@ const entryFlagsByRole: Readonly<Record<OperandRole, BuiltinFlag | null>> = {
   CopiesHolesToResult: null,
   WorkerEntryPath: null,
   DescribedWhenRefused: null,
+  ContentsOfContentsAreOnlyStored: null,
 };
 
 const engineEnumerators: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
@@ -397,6 +398,11 @@ function buildResult(context: OverloadContext): ModelResult {
     iteratedOperand: operandOf(iterates?.operand),
     iterationKind: iterates?.kind ?? null,
     prototypeSource: operandOf(prototypeSource),
+    testedOperand: operandOf(context.signature.answersWhetherInstance?.operand),
+    testedType:
+      context.signature.answersWhetherInstance === undefined
+        ? null
+        : context.types.intern(context.signature.answersWhetherInstance.type, context, context.source),
     properties: (context.signature.resultProperties ?? []).map(({ name, type }) => ({
       name: context.builder.internComponent(name),
       type: context.types.intern(type, context, context.source),

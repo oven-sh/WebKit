@@ -114,6 +114,8 @@ struct TypeInterningPhase::Merge {
     template<typename Record, typename IDType>
     void allocateFinalIDs(TypeRemap::FinalIDs<IDType>& finalIDs)
     {
+        if (phase.m_storages.isEmpty())
+            return;
         finalIDs.byStorage = Vector<Vector<IDType>>(TypeTable::maxStorages, [&](size_t number) {
             const Storage* storage = phase.m_storages.at(number);
             size_t size = storage ? storage->recordsOf<Record>().records.size() : 0;

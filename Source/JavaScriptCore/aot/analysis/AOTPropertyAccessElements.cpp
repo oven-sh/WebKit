@@ -129,6 +129,13 @@ bool isSymbolCreatedByLibrary(const Program& program, PropertyKeyID key)
     return creator.kind == ModuleKind::RuntimeSource || creator.flags.contains(ModuleFlags::IsLibrary);
 }
 
+bool hasFieldUnderSymbolCreatedByLibrary(const Program& program, const Layout& layout)
+{
+    return std::ranges::any_of(layout.fields, [&](const Field& field) {
+        return field.key && isSymbolCreatedByLibrary(program, field.key);
+    });
+}
+
 ConstantKey constantNameOf(const Program& program, const Function& writtenIn, const Type& key)
 {
     ConstantKey constantKey = constantKeyOf(program, key);

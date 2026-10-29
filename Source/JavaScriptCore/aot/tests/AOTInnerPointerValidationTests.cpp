@@ -666,6 +666,27 @@ static void testLoadFoldedIntoUserBehindSafepoint()
     }
 }
 
+// (words[0] + other[8]) + words[8]: the sum takes in the load that stands next to it. The load of the same offset further down reads something else and has an instruction of its own.
+static void testLoadFoldedIntoUserAboveOtherLoadOfSameOffset()
+{
+    for (B3::HeapRange rangeOfLastWord : { contentsWithoutCells, contents }) {
+        InnerPointerFindings findings = check(4, [&](Graph& graph) {
+            B3::Origin origin = Graph::originOf(otherOrigin);
+            B3::BasicBlock* root = graph.proc.addBlock();
+            B3::Value* pointer = graph.loadPointer(root, graph.argument(root, 0), fieldOfPointerTheScanKnows);
+            B3::Value* other = graph.argument(root, 1);
+            graph.safepoint(root);
+            B3::Value* first = graph.load(root, B3::Load, B3::Int32, pointer, 0, contentsWithoutCells);
+            B3::Value* elsewhere = graph.load(root, B3::Load, B3::Int32, other, 8, contents);
+            B3::Value* sum = root->appendNew<B3::Value>(graph.proc, B3::Add, origin, first, elsewhere);
+            B3::Value* last = graph.load(root, B3::Load, B3::Int32, pointer, 8, rangeOfLastWord);
+            root->appendNew<B3::Value>(graph.proc, B3::Return, origin, root->appendNew<B3::Value>(graph.proc, B3::Add, origin, sum, last));
+        });
+        AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+        AOT_TEST_CHECK(findings.violations.isEmpty() == (rangeOfLastWord == contentsWithoutCells));
+    }
+}
+
 static uint64_t registersAtSafepoint[MacroAssembler::numberOfRegisters()];
 
 static void testDeadValuesAreOverwritten()
@@ -736,6 +757,7 @@ std::span<const NativeTest> innerPointerValidationTests()
         { "inner-pointer-gives-cells-in-one-loop"_s, testPointerThatGivesCellsInOneLoop },
         { "inner-pointer-cells-read-between-safepoints"_s, testCellsReadBetweenSafepoints },
         { "inner-pointer-load-folded-into-user-behind-safepoint"_s, testLoadFoldedIntoUserBehindSafepoint },
+        { "inner-pointer-load-folded-into-user-above-other-load-of-same-offset"_s, testLoadFoldedIntoUserAboveOtherLoadOfSameOffset },
         { "inner-pointer-dead-values-are-overwritten"_s, testDeadValuesAreOverwritten },
     };
     return tests;

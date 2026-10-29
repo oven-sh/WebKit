@@ -119,7 +119,7 @@ void CastEmitter::testAtLandingOfMisfit(const ValueContext& test, ValueID call, 
     LBasicBlock here = m_out.m_block;
 
     m_out.appendTo(landing.landing);
-    Boxed misfit(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(scratch.misfit))));
+    Boxed misfit(m_out.load64(instanceField(m_heaps.AOTInstance_misfit, AOT_INSTANCE_OFFSET(scratch.misfit))));
     m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), misfit.value(), landing.result);
     bool failedSameTest = inputs().promisedResults.of(callee) == test->testedType() && inputs().promisedResults.misfitsAreNeverOfType(callee);
     LValue hasTestedType = failedSameTest ? m_out.constInt32(0) : hasType(misfit, plan, test.shape()).value();

@@ -23,7 +23,9 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
+#include "AOTFlowRecords.h"
 #include "AOTFlowResults.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
@@ -34,7 +36,6 @@
 #include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTWholeLiterals.h"
@@ -211,6 +212,142 @@ ConstantLists collectConstantLists(const Program& program, const FlowResults& fl
     return collectListsStoredAlone(program, collectConstantStores(program, flow, build));
 }
 
+static bool isWrittenByAllocationsAlone(const Field& field)
+{
+    constexpr OptionSet<FieldFlags> flagsOfOtherFields { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsInherited, FieldFlags::IsAddedLate };
+    const LocationFlow& location = field.flow.location;
+    return field.key && !field.flags.containsAny(flagsOfOtherFields) && !field.form.contains(FieldForm::IsAccessor) && !field.declared.isExpected()
+        && location.writers == WriterState::AllKnown && location.stores == StoreCount::AtMostOnce && location.initialization == InitializationState::SetAtCreation
+        && field.flow.occupancy == Occupancy::AlwaysFilled && field.flow.stability == everyFlagOf<FieldStability>();
+}
+
+static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
+{
+    const Program& program = editor.program();
+    const ParallelLoops& loops = build.parallelLoops();
+    constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    BitVector hasCandidates(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& layout = program.layouts[index];
+        bool isLiteral = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Container) && !layout.flags.containsAny(flagsOfOtherLayouts);
+        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        if (isLiteral && !isFilledByNativeCode && layout.flow.baseState == BaseState::None && program.layoutsBelow(LayoutID(index)).empty() && std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
+            hasCandidates.quickSet(index);
+    }
+    if (hasCandidates.isEmpty())
+        return;
+
+    // The value is unknown where no primitive constant is listed for the field.
+    using Listing = std::pair<FieldReference, KnownValue>;
+    auto listFields = [&](LayoutID id, Vector<Listing>& found, NOESCAPE const Invocable<KnownValue(uint32_t field)> auto& findValue) {
+        if (!hasCandidates.quickGet(id.index()))
+            return;
+        const Layout& layout = program.at(id);
+        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (!isWrittenByAllocationsAlone(layout.fields[field]))
+                continue;
+            KnownValue value = findValue(field);
+            found.append({ { id, field }, value.isObject() ? KnownValue() : value });
+        }
+    };
+    Vector<Listing> listings = collectInParallel<Listing>(loops, program.functions.size(), [&](unsigned index, Vector<Listing>& found) {
+        forEachListedValue(program, FunctionID(index), { Opcode::NewObject }, [&](BlockID, uint32_t, ValueID, const Value& allocation) {
+            std::span<const uint32_t> listed = allocation.fields();
+            listFields(allocation.layout(), found, [&](uint32_t field) {
+                size_t position = std::ranges::find(listed, field) - listed.begin();
+                // The slot of a constant is as narrow as the constant, and what a function makes again and again is filled with fewer stores where its slots are alike.
+                if (!program.functions[index].isModuleBody() || listed.size() != allocation.numberOfVariadicOperands() || position == listed.size())
+                    return KnownValue();
+                return knownValueOfType(program.typeOf(program.functions[index], allocation.variadicOperands()[position]));
+            });
+        });
+    });
+    listings.appendVector(collectInParallel<Listing>(loops, program.data.size(), [&](unsigned index, Vector<Listing>& found) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
+            const DataNode::Object* object = node.tryAs<DataNode::Object>();
+            if (!object || !object->layout)
+                return;
+            listFields(object->layout, found, [&](uint32_t field) {
+                auto member = std::ranges::find(object->members, program.at(object->layout).fields[field].key, &DataMember::key);
+                return member == object->members.end() ? KnownValue() : knownValueOf(member->value);
+            });
+        });
+    }));
+    AOT::stableSort(listings, { }, &Listing::first);
+    Vector<std::pair<FieldReference, TypeID>> constants;
+    BitVector keysOfConstants;
+    BitVector layoutsWithConstants(program.layouts.size());
+    for (size_t first = 0; first < listings.size();) {
+        size_t end = first;
+        bool isOneConstant = true;
+        for (; end < listings.size() && listings[end].first == listings[first].first; ++end)
+            isOneConstant &= listings[end].second.isKnown() && listings[end].second == listings[first].second;
+        auto [reference, value] = listings[first];
+        first = end;
+        if (!isOneConstant)
+            continue;
+        const Field& field = fieldAt(program, reference);
+        Type constant = typeOfKnownPrimitive(value);
+        if (!constant.isSubsetOf(program.at(field.declared.written()), program))
+            continue;
+        TypeID narrowed = editor.types().intern(constant);
+        if (narrowed == field.declared.written())
+            continue;
+        constants.append({ reference, narrowed });
+        keysOfConstants.set(field.key.index());
+        layoutsWithConstants.quickSet(reference.layout.index());
+    }
+    if (constants.isEmpty())
+        return;
+
+    // The type of a field is described to the run time. A constant that no access of the program may find is worth no description.
+    auto forEachConstantFoundBy = [&](const Function& function, const Value& access, NOESCAPE const Invocable<void(size_t position)> auto& functor) {
+        if (!Value::opcodesWithKey.contains(access.opcode) || !access.key() || !keysOfConstants.get(access.key().index()) || !access.numberOfOperands() || !access.operand(0))
+            return;
+        const Value& receiver = function.at(access.operand(0));
+        for (TypeID type : { receiver.type, receiver.expected().predicted() }) {
+            if (!type)
+                continue;
+            for (LayoutID id : membersOf(program, program.at(type))) {
+                std::optional<uint32_t> field = layoutsWithConstants.quickGet(id.index()) ? program.at(id).findField(access.key()) : std::nullopt;
+                if (!field)
+                    continue;
+                auto found = std::ranges::lower_bound(constants, FieldReference { id, *field }, { }, &std::pair<FieldReference, TypeID>::first);
+                if (found != constants.end() && found->first == FieldReference { id, *field })
+                    functor(found - constants.begin());
+            }
+        }
+    };
+    using Reader = std::pair<FunctionID, size_t>;
+    Vector<Reader> readers = collectInParallel<Reader>(loops, program.functions.size(), [&](unsigned index, Vector<Reader>& found) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            return;
+        forEachListedValue(program, FunctionID(index), Value::opcodesWithKey, [&](BlockID, uint32_t, ValueID, const Value& access) {
+            forEachConstantFoundBy(function, access, [&](size_t position) { found.append({ FunctionID(index), position }); });
+        });
+    });
+    BitVector isFound(constants.size());
+    Vector<FunctionID> functions;
+    for (auto [function, position] : readers) {
+        if (!isFound.quickSet(position))
+            editor.at(constants[position].first).declared.changeType(Proven::byPosition(constants[position].second));
+        if (functions.isEmpty() || functions.last() != function)
+            functions.append(function);
+    }
+    // A function enters its next schedule with the types that it has, but for what is typed from variables and signatures. An access that may find a narrowed field counts as edited, so its function is typed anew.
+    editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                bool findsConstant = false;
+                forEachConstantFoundBy(function, function.at(id), [&](size_t) { findsConstant = true; });
+                if (findsConstant)
+                    function.edit(id, ValueEdit::Definition);
+            }
+        }
+    });
+}
+
 ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
 {
     struct Contents {
@@ -241,6 +378,7 @@ ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& 
         if (narrowed != variable.declared.written())
             editor.at(VariableID(index)).declared.changeType(Proven::byPosition(narrowed));
     }
+    narrowConstantFields(editor, build);
     return collectListsStoredAlone(program, stores);
 }
 
@@ -582,6 +720,8 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
                 variable.flow.stores = StoreCount::Never;
+                if (id == deferral.variableReadInBody && variable.flow.reads == ReadState::NeverRead)
+                    variable.flow.reads = ReadState::OnlyWhereDefined;
                 break;
             case Deferral::Kind::RegExp:
                 variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));
@@ -758,30 +898,10 @@ struct VariableFacts {
 struct InitializerScanContext {
     AnalysisContext analysisContextOf(FunctionID id) const { return { runner.build(), program, &inputs.flow, &inputs.effects, id }; }
 
-    // Whether the body of the one module has run to its end when the body of the other begins: the other imports it, directly or not, and no circle of imports holds both.
-    bool hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const
-    {
-        if (circlesOfImports.componentOf[finished.index()] == circlesOfImports.componentOf[beginning.index()])
-            return false;
-        if (importedByBeginning.isEmpty()) {
-            importedByBeginning.ensureSize(program.modules.size());
-            Vector<ModuleID, 32> worklist { beginning };
-            importedByBeginning.quickSet(beginning.index());
-            while (!worklist.isEmpty()) {
-                for (const ModuleRequest& request : program.at(worklist.takeLast()).requests) {
-                    if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && !importedByBeginning.quickSet(request.target.index()))
-                        worklist.append(request.target);
-                }
-            }
-        }
-        return importedByBeginning.quickGet(finished.index());
-    }
-
     const Program& program;
     const OptimizationInputs& inputs;
     const PassRunner& runner;
     const VariableFacts& variables;
-    const StronglyConnectedComponents& circlesOfImports;
     // By function: the module that has it as its body. One file may hold the bodies of several modules, and all that is written in a file names the record of the file.
     const Vector<ModuleID>& moduleWithBody;
 };
@@ -1086,6 +1206,8 @@ struct MovableCode {
     InitializerCalleeAnswer answerForCall(const Function& caller, const Knowledge& known, const Value& call)
     {
         if (call.opcode != Opcode::Call && call.opcode != Opcode::Construct && call.opcode != Opcode::CallDirect)
+            return { };
+        if (call.opcode != Opcode::CallDirect && mayThrowBeforeEntry(program, typeOf(caller, call.calleeOperand()), call.opcode == Opcode::Construct ? BuiltinCallMode::Construct : BuiltinCallMode::Call))
             return { };
         CalleeList callees = calleesOfCall(program, call);
         // What the call of this run hands on says more than what all calls hand on.
@@ -1617,8 +1739,8 @@ struct MovableCode {
         case Opcode::NewClass:
             return known.made.get(value.constructorOperand().index());
         case Opcode::DefineMethod:
-            // The prototype property of a class cannot be redefined.
-            if (!value.key() && value.side() == ClassSide::Static && (typeOf(function, value.computedKeyOperand()).primitives & Primitive::AnyString))
+            // The prototype property of a class cannot be redefined. A key in brackets may spell it.
+            if (value.side() == ClassSide::Static && (value.key() ? isText(value.key(), "prototype"_s) : !!(typeOf(function, value.computedKeyOperand()).primitives & Primitive::AnyString)))
                 return false;
             return known.made.get(value.classObjectOperand().index()) && (value.key() || isPrimitiveKey(function, value.computedKeyOperand()));
         case Opcode::CallBuiltin:
@@ -1781,7 +1903,6 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     // Items that take what a variable holds without looking into it: they read the variable.
     Vector<std::pair<uint32_t, ValueID>> readings;
     Vector<uint32_t> itemsUsedByCodeThatStays;
-    BitVector modulesImported;
     auto find = [&](uint32_t item) {
         while (parents[item] != item) {
             parents[item] = parents[parents[item]];
@@ -1884,7 +2005,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         bool areSetInFrontOfItem = std::ranges::all_of(code.variablesTakenToBeSet, [&](VariableID variable) {
             ModuleID module = program.at(variable).module;
             if (module != (evaluated ? evaluated : function.module))
-                return evaluated && context.hasRunBefore(module, evaluated, modulesImported);
+                return evaluated && context.inputs.flow.completesBefore(module, evaluated);
             // The store of this body stands in front of the item.
             auto store = firstStoreTo.find(variable.index());
             return store != firstStoreTo.end() && store->value < index;
@@ -2296,23 +2417,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     times.didFinish("collectVariableFacts"_s);
     if (std::ranges::all_of(variables.emptiness, [](Emptiness emptiness) { return emptiness == Emptiness::None; }))
         return;
-    // A module that requires its importer while its own body runs closes a circle too.
-    using ModulePair = std::pair<ModuleID, ModuleID>;
-    Vector<ModulePair> requiredModules = collectInParallel<ModulePair>(loops, program.functions.size(), [&](unsigned index, Vector<ModulePair>& found) {
-        forEachValueListedOrNot(program, FunctionID(index), { Opcode::RequireModule, Opcode::EvaluateModule }, [&](ValueID, const Value& value) {
-            if (value.opcode == Opcode::RequireModule && program.functions[index].module)
-                found.append({ program.functions[index].module, value.module() });
-            if (value.opcode == Opcode::EvaluateModule)
-                found.append({ value.referrer(), value.module() });
-        });
-    });
-    Vector<Vector<ModuleID>> modulesReachedFrom(program.modules.size(), [&](size_t index) {
-        return program.modules[index].requests.map([](const ModuleRequest& request) { return request.target; });
-    });
-    for (auto [from, to] : requiredModules)
-        modulesReachedFrom[from.index()].append(to);
-    StronglyConnectedComponents circlesOfImports = computeStronglyConnectedComponents(program.modules.size(), [&](unsigned index) -> const Vector<ModuleID>& { return modulesReachedFrom[index]; });
-    InitializerScanContext context { program, inputs, runner, variables, circlesOfImports, moduleWithBody };
+    InitializerScanContext context { program, inputs, runner, variables, moduleWithBody };
 
     InitializerPlan plan { variables.emptiness };
     Vector<uint32_t> bodies = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {

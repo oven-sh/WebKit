@@ -137,6 +137,11 @@ public:
     void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= m_firstModuleRequestedByHost == module; }
     // Ahead of that step bun:main waits for one promise and whoever else asks for the entry point for another. Says so once.
     bool takeLoadPromiseBelowMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
+    // The body of bun:main runs where the body of any importer does: behind the last statement of the entry point, or in the job that ends its evaluation.
+    JSPromise* evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation);
+    bool mainModuleWaitsForItsImport() const { return !!m_capabilityOfMainModule; }
+    void runMainModuleThatWaited();
+    void failMainModuleThatWaited();
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
     // The text of a data: URL that the program imports under a constant name is part of the program.
     bool isTextNamedByProgram(StringView url) const;
@@ -197,7 +202,8 @@ public:
     bool hasNotBegunAsFile(ModuleID) const;
     void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
-    ModuleRecord* recordOfCommonJSFile(ModuleID);
+    enum class LoadOfFile : bool { IsAskedFor, HasComeToFile };
+    ModuleRecord* recordOfCommonJSFile(ModuleID, LoadOfFile = LoadOfFile::HasComeToFile);
     void noteLoadOfFile(ModuleID fileOrFace);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;
@@ -459,6 +465,8 @@ private:
         size_t numberOfJobsInFrontOfFile { 0 };
         // The loader has gone through the graph as far as the step in which this file runs.
         std::optional<ModuleID> fileHandedToLoader { };
+        // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
+        Vector<uint32_t> distanceOfFiles { };
     };
     void handGraphToLoader(FilesBeingRun&);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
@@ -468,13 +476,17 @@ private:
     FilesBeingRun* m_innermostFilesBeingRun { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
-    bool hasReachedLevelOf(const FilesBeingRun&, ModuleID file);
+    bool hasReachedLevelOf(FilesBeingRun&, ModuleID file);
+    void findDistanceOfFiles(FilesBeingRun&);
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };
+    ModuleID m_importOfMainModule;
+    Strong<JSPromise> m_evaluationOfImportOfMainModule;
+    Strong<JSPromise> m_capabilityOfMainModule;
     bool m_admitsCodeOutsideImage;
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;

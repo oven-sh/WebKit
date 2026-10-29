@@ -1,4 +1,4 @@
-# A test that is decided against what was expected: the arm that was to run seldom, and what only that arm leads to, runs as often as the test. What is rarer still inside it stays so, and so does what other ways lead to
+# A test that is decided against what was expected: the arm that was to run seldom, and what only that arm leads to, runs as often as the test. What is rarer still inside it stays so, and so does what other ways lead to, unless all of them are rare.
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
 
@@ -40,4 +40,22 @@ function f2 name="armThatAnotherWayLeadsTo" parameters=[{type=string}, {type=boo
     Return v3
 # CHECK: b{{*}}() frequency=Unlikely:
 # CHECK: = CallDirect v0 function=f0
+}
+
+function f3 name="armThatOnlyARareWayLeadsToAsWell" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3() frequency=Unlikely:
+    v3 = CallDirect v0 function=f0
+    Return v3
+  b4() frequency=Rare:
+    v4 = CallDirect v1 function=f0
+    Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: = CallDirect v0 function=f0
+# CHECK: b4() frequency=Rare:
 }

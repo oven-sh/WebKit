@@ -169,6 +169,7 @@ static Mutex s_ballastLock;
 static void* s_ballastPieces[maxNumberOfBallastPieces];
 static std::atomic<size_t> s_numberOfBallastPieces { 0 };
 static std::atomic<size_t> s_numberOfBallastPiecesWanted { 0 };
+static std::atomic<uint8_t> s_timesLetGoOfBallastPiece { 0 };
 #endif
 static std::atomic<bool> s_lacksPiecesOfBallast { false };
 static std::atomic<AddressSpaceBallastHandler> s_ballastHandler { nullptr };
@@ -180,6 +181,8 @@ struct BallastStateOfThread {
     bool hasUsedBallast;
     bool hasUsedWholeBallast;
     bool isExempt;
+    // s_timesLetGoOfBallastPiece before the request last looked for room.
+    uint8_t timesLetGoOfPieceBeforeLook;
 };
 
 #if BUSE(EXTERNAL_MIMALLOC)
@@ -298,23 +301,33 @@ static bool tryReleasePieceOfAddressSpaceBallast(RoomFor roomFor)
     for (--numberOfPieces; index < numberOfPieces; ++index)
         s_ballastPieces[index] = s_ballastPieces[index + 1];
     s_numberOfBallastPieces.store(numberOfPieces, std::memory_order_relaxed);
+    s_timesLetGoOfBallastPiece.fetch_add(1, std::memory_order_release);
     return true;
 }
 
 static bool makeRoomWithBallast(size_t size, size_t attempt)
 {
-    if (!ballastStateOfThisThread().numberOfRequests)
+    BallastStateOfThread& state = ballastStateOfThisThread();
+    if (!state.numberOfRequests)
         return false;
+    auto willLook = [&](uint8_t timesLetGoOfPiece) {
+        state.timesLetGoOfPieceBeforeLook = timesLetGoOfPiece;
+        return true;
+    };
+    // Some of what the last piece left may still be free, and was refused to a request that did not say that it may not fail.
+    if (!attempt && s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
+        return willLook(s_timesLetGoOfBallastPiece.load(std::memory_order_acquire));
     // Nothing is let go of for a request that all the pieces together could not hold.
     if (size > (attempt + s_numberOfBallastPieces.load(std::memory_order_relaxed)) * sizeOfBallastPiece)
         return false;
-    // Some of what the last piece left may still be free, and was refused to a request that did not say that it may not fail.
-    if (!attempt && s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
-        return true;
-    if (!tryReleasePieceOfAddressSpaceBallast(RoomFor::Malloc))
-        return false;
-    ballastStateOfThisThread().hasUsedBallast = true;
-    return true;
+    bool hasLetGoOfPiece = tryReleasePieceOfAddressSpaceBallast(RoomFor::Malloc);
+    // Read behind the lock: another thread may have let go of the last piece since this request looked, or while it waited.
+    uint8_t timesLetGoOfPiece = s_timesLetGoOfBallastPiece.load(std::memory_order_acquire);
+    if (hasLetGoOfPiece) {
+        state.hasUsedBallast = true;
+        return willLook(timesLetGoOfPiece);
+    }
+    return (!attempt || timesLetGoOfPiece != state.timesLetGoOfPieceBeforeLook) && willLook(timesLetGoOfPiece);
 }
 
 static bool mayTakeAddressSpace(size_t size)
@@ -404,6 +417,14 @@ void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addres
 #endif
     s_numberOfBallastPiecesWanted.store(wanted, std::memory_order_relaxed);
     size_t numberOfPieces = s_numberOfBallastPieces.load(std::memory_order_relaxed);
+    while (numberOfPieces > wanted) {
+        if (void* piece = s_ballastPieces[--numberOfPieces])
+            munmap(piece, sizeOfBallastPiece);
+#if BUSE(EXTERNAL_MIMALLOC)
+        else
+            mi_release_piece_kept_aside();
+#endif
+    }
     while (numberOfPieces < wanted) {
         if (addressSpaceLeft < addressSpaceToLeaveFree + sizeOfBallastPiece)
             break;

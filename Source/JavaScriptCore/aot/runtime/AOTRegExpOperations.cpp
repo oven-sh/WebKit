@@ -365,9 +365,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* insta
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSharedRegExpLiteral, JSCell*, (Instance* instance, uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSharedRegExpLiteral);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTSharedRegExpLiteral);
     DeferTerminationForAWhile deferTermination(vm);
-    DeferGCForAWhile deferGC(vm);
     RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
     ASSERT(regExp->isValid());
     RegExpObject* object = RegExpObject::create(vm, globalObject->regExpStructure(), regExp);

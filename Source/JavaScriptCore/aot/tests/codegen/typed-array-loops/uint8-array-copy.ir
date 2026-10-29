@@ -113,25 +113,30 @@ function f1 name="turn" module=m0 position=66 flags=[IsChecked, HasExplicitName]
 # LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[index]], [[read]]:GetTypedArrayElement)
 # LOWERED-NEXT: Int32 b@[[element]] = Load8Z(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
-# The loop has no bounds check and no poll. It is not unrolled.
-# BODY-LABEL: steps by 1
-# BODY-COUNT-1: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
-# BODY-NOT: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
+# A turn copies sixteen bytes, and eight such turns are written out. The loop has no bounds check and no poll.
+# BODY-LABEL: steps by 128
+# BODY-COUNT-8: V128 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-NOT: Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# STORES-LABEL: steps by 1
-# STORES-COUNT-1: = Store8(b@{{*}}Writes:TypedArrayElements
-# STORES-NOT: = Store8(b@{{*}}Writes:TypedArrayElements
+# STORES-LABEL: steps by 128
+# STORES-COUNT-8: = Store(b@{{*}}Writes:TypedArrayElements
+# STORES-NOT: Writes:TypedArrayElements
 # STORES-LABEL: end of loop
-# BRANCHES-LABEL: steps by 1
+# BRANCHES-LABEL: steps by 128
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# HOT-LABEL: steps by 1
+# HOT-LABEL: steps by 128
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
+# Three loops, in the order in which they are emitted: one for fewer than sixteen bytes (6 | 7 instructions), one for fewer than eight times sixteen (4), and the one above.
 # X64-NOT: loop #
+# X64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
 # X64: loop #{{*}}, instructions: 6, patchpoints: 2
+# X64: loop #{{*}}, instructions: 18, patchpoints: 16, {{*}} steps by 128
 # ARM64-NOT: loop #
 # ARM64: loop #{{*}}, instructions: 7, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
+# ARM64: loop #{{*}}, instructions: 20, patchpoints: 16, {{*}} steps by 128

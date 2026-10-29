@@ -10,13 +10,13 @@
 # Base.total has room in a Base. An Heir holds it beside two integers of its own: four bytes.
 # FORM: AsRead
 # RUN: pass TypeValues NarrowFieldTypes VerifyProgram
-# CHECK: layout L0 name="Sum" module=m0 fields=[{key="total" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced]}]
-# CHECK: layout L1 name="Steps" module=m0 fields=[{key="count" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced]}]
-# CHECK: layout L2 name="Full" module=m0 fields=[{key="total" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]},
-# CHECK: layout L3 name="Pair" module=m0 fields=[{key="first" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced]}, {key="second" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]}]
-# CHECK: layout L4 name="Cursor" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]}]
-# CHECK: layout L5 name="Ring" module=m0 fields=[{key="next" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]}]
-# CHECK: layout L6 name="Span" module=m0 fields=[{key="end" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]}]
+# CHECK: layout L0 name="Sum" module=m0 fields=[{key="total" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L1 name="Steps" module=m0 fields=[{key="count" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L2 name="Full" module=m0 fields=[{key="total" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L3 name="Pair" module=m0 fields=[{key="first" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}, {key="second" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L4 name="Cursor" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L5 name="Ring" module=m0 fields=[{key="next" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L6 name="Span" module=m0 fields=[{key="end" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] typeBeforeNarrowing=number}]
 # CHECK: layout L7 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="total" declared={type=int[-2147483643, 2147483647]}
 
 module m0 path="main.ts" displayPath="main.ts" body=f0

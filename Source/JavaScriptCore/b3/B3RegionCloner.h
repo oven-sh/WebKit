@@ -52,6 +52,8 @@ public:
     JS_EXPORT_PRIVATE void substitutePhisFedBy(BasicBlock* predecessor, BasicBlock* block, ValueMap&);
     JS_EXPORT_PRIVATE BlockMap cloneBlocks(std::span<BasicBlock* const>);
 
+    // No other block names a value of a block that was declared: what leaves such a block goes through a variable.
+    JS_EXPORT_PRIVATE bool valuesStayInDeclaredBlocks() const;
     JS_EXPORT_PRIVATE bool finish();
 
 private:

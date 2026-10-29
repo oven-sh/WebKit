@@ -49,7 +49,8 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
         return;
     }
 
-    call.callee = callStub(value, getByIdAtSite(), { receiver.value(), siteCacheAddress(siteCache).value() }, { .immediate = *number, .origin = value->readOrigin() }).first;
+    StubKey stub = emitter<AccessEmitter>().stubThatReadsAtSite(*number, value->receiverOperand());
+    call.callee = callStub(value, stub, { receiver.value(), siteCacheAddress(siteCache).value() }, { .immediate = *number, .origin = value->readOrigin() }).first;
     call.stub = callValue(count);
     define(value, calls.callByConvention(value, call, { .throwSite = siteThatNamesCallee }));
 }

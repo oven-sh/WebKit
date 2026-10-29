@@ -161,6 +161,10 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
         return 0;
     if (isRematerializable(value))
         return CodeSize::cellConstant;
+    if (provesOf(opcode) == Proof::TestedType && knownValueOfType(program.at(value.type)).isKnown())
+        return 0;
+    if (opcode == Opcode::RequireObjectCoercible && !program.typeOf(function, value.valueOperand()).mayBeUndefinedOrNull())
+        return 0;
     if (isCast(opcode) || provesForStretch(provesOf(opcode)) || provesOf(opcode) == Proof::TestedType)
         return CodeSize::typeCheck;
     if (opcode == Opcode::ToBoolean)
@@ -234,6 +238,35 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     return bytes;
 }
 
+static std::optional<uint32_t> targetDecidedByTypeOfCondition(const Program& program, const Function& function, const Terminator& terminator)
+{
+    if (terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    return decidedTargetOf(terminator, knownValueOfType(program.typeOf(function, terminator.conditionOperand())));
+}
+
+static void takeOffWhatDecidedBranchesCutOff(const Program& program, const Function& function, const CFG& cfg, Vector<uint32_t>& blockBytes)
+{
+    BitVector isCutOff(function.blocks.size());
+    for (BlockID id : cfg.reversePostOrder()) {
+        std::span<const Edge> incoming = cfg.incomingEdges(id);
+        bool isReachedByNoEdge = !incoming.empty() && std::ranges::all_of(incoming, [&](Edge edge) {
+            if (isCutOff.get(edge.from.index()))
+                return true;
+            std::optional<uint32_t> decided = edge.isHandlerEdge() ? std::nullopt : targetDecidedByTypeOfCondition(program, function, function.at(edge.from).terminator);
+            return decided && *decided != edge.targetIndex;
+        });
+        if (isReachedByNoEdge) {
+            isCutOff.set(id.index());
+            blockBytes[id.index()] = 0;
+            continue;
+        }
+        const Terminator& terminator = function.at(id).terminator;
+        if (targetDecidedByTypeOfCondition(program, function, terminator))
+            blockBytes[id.index()] -= std::min(blockBytes[id.index()], estimatedCodeBytes(terminator));
+    }
+}
+
 namespace {
 
 struct IntegerComparison {
@@ -264,7 +297,7 @@ static std::optional<IntegerComparison> findIntegerComparison(FunctionAnalyses& 
 
 static unsigned estimateSwitchBytes(Vector<std::pair<int64_t, BlockID>, 8>& cases)
 {
-    std::ranges::sort(cases, { }, [](const auto& entry) { return entry.first; });
+    AOT::sort(cases, { }, [](const auto& entry) { return entry.first; });
     unsigned bytes = CodeSize::branch;
     for (size_t begin = 0; begin < cases.size();) {
         size_t end = begin;
@@ -523,6 +556,37 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         return InlineBarrier::None;
     };
 
+    auto isLikely = [&](BlockID id) {
+        return function.at(id).frequency.predicted() == BlockFrequency::Normal;
+    };
+
+    // A declared type has its test in the body already. Without a declared type the same test is placed after the body is copied.
+    auto bytesOfDeclaredTypeTest = [&](const Block& block) -> uint32_t {
+        const Terminator& terminator = block.terminator;
+        if (!terminator.isConditionalBranch() || block.values.isEmpty() || terminator.conditionOperand() != block.values.last())
+            return 0;
+        const Value& test = function.at(block.values.last());
+        if (test.opcode != Opcode::TypeTest || !isLikely(terminator.taken().block) || isLikely(terminator.notTaken().block) || targetDecidedByTypeOfCondition(program, function, terminator))
+            return 0;
+        return estimatedCodeBytes(program, function, test) + estimatedCodeBytes(terminator);
+    };
+
+    auto computeLikelyBytes = [&]() -> uint32_t {
+        if (!isLikely(entryBlock) || !function.has(FunctionFlags::IsChecked))
+            return std::numeric_limits<uint32_t>::max();
+        uint32_t likelyBytes = 0;
+        uint32_t otherBytes = 0;
+        for (BlockID id : analyses.cfg().reversePostOrder()) {
+            uint32_t bytes = blockBytes[id.index()];
+            if (isLikely(id))
+                likelyBytes = saturatingSum<uint32_t>(likelyBytes, bytes - std::min(bytes, bytesOfDeclaredTypeTest(function.at(id))));
+            else
+                otherBytes = saturatingSum<uint32_t>(otherBytes, bytes);
+        }
+        // The copy for values that fail a test is about as large as the function without its types.
+        return std::max(likelyBytes, otherBytes);
+    };
+
     auto entryParameterBehind = [&](ValueID value) -> std::optional<uint32_t> {
         size_t index = function.at(entryBlock).parameters.find(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
         if (index == notFound)
@@ -551,7 +615,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 return false;
             bool leavesNoTrace = std::ranges::all_of(block.values, [&](ValueID value) {
                 const Effects& effects = analyses.effectsOf(value).normal;
-                return !effects.mayRunOtherCode() && effects.writes.containsOnly(bookkeepingHeaps);
+                return (!effects.mayRunOtherCode() && effects.writes.containsOnly(bookkeepingHeaps)) || build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace);
             });
             if (!leavesNoTrace || build.exceeds(LimitID::MaxInlineHeadBytes, uint64_t { admittedBytes } + blockBytes[id.index()], analyses.subject()))
                 return false;
@@ -595,7 +659,8 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 continue;
             // Resolving a rope changes no result: `kind === "error"` is decided by the parameter as `kind === 1` is.
             const Effects& effects = analyses.effectsOf(id).normal;
-            bool isDecidedByOperands = effects.isRemovableWhenUnused() && effects.reads.containsOnly(heapsWhoseWritesNobodySees);
+            constexpr AbstractHeapSet heapsThatChangeNoResult = heapsWhoseWritesNobodySees - AbstractHeapSet { AbstractHeap::MemberGuards };
+            bool isDecidedByOperands = effects.isRemovableWhenUnused() && effects.reads.containsOnly(heapsThatChangeNoResult);
             if (!isDecidedByOperands || build.exceeds(LimitID::MaxConditionChainLength, ++chainLength, analyses.subject(condition)))
                 return std::nullopt;
             value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -684,7 +749,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                     summary.switches.last().onlyInCase.append({ isOnStrings ? int64_t { terminator.strings()[position].index() } : terminator.cases()[position], BytesInRange { } });
                 continue;
             }
-            if (terminator.kind != TerminatorKind::Branch)
+            if (terminator.kind != TerminatorKind::Branch || targetDecidedByTypeOfCondition(program, function, terminator))
                 continue;
             if (std::optional<uint32_t> entryParameter = findDecidingParameter(terminator.conditionOperand()))
                 summary.conditions.append(ParameterCondition { block, terminator.conditionOperand(), *entryParameter });
@@ -873,6 +938,17 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 continue;
             for (ValueID id : function.at(block).values) {
                 const Value& access = function.at(id);
+                if (access.opcode == Opcode::ElemGet) {
+                    if (std::optional<uint32_t> key = entryParameterBehind(analyses.identityOf(access.propertyOperand()))) {
+                        size_t position = summary.keyParameters.findIf([&](const KeyParameter& other) { return other.entryParameter == *key; });
+                        if (position == notFound) {
+                            position = summary.keyParameters.size();
+                            summary.keyParameters.append({ *key, 0 });
+                        }
+                        ++summary.keyParameters[position].accesses;
+                    }
+                    continue;
+                }
                 bool isStore = isStoreByKey(access.opcode);
                 if (!isNamedAccess(access.opcode) && !isStore)
                     continue;
@@ -918,9 +994,11 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
             continue;
         blockBytes[id.index()] = estimatedCodeBytes(program, function, function.at(id));
     }
+    takeOffWhatDecidedBranchesCutOff(program, function, cfg, blockBytes);
     estimateComparisonChainsAsSwitches(analyses, blockBytes);
     for (uint32_t bytes : blockBytes)
         summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);
+    summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
@@ -1066,6 +1144,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
             out.print(" spread(p", spread.entryParameter, " bytes=", spread.code.bytes, ")");
         for (const ReceiverParameter& receiver : summary.receiverParameters)
             out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, " stores=", receiver.stores, ")");
+        for (const KeyParameter& key : summary.keyParameters)
+            out.print(" key(p", key.entryParameter, " accesses=", key.accesses, ")");
         out.print("\n");
     }
 }
@@ -1671,7 +1751,9 @@ static bool namesOneFunction(const Program& program, const Type& type)
     return type.singleFunction() || singleBuiltinFunction(program, type);
 }
 
-static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call)
+enum class ArgumentTypes : uint8_t { Proven, Expected };
+
+static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call, ArgumentTypes argumentTypes = ArgumentTypes::Proven)
 {
     const Function& checks = program.at(call.function());
     auto& parameters = checks.at(entryBlock).parameters;
@@ -1682,7 +1764,10 @@ static bool passesEveryEntryCheck(const Program& program, const Function& caller
                 return true;
             size_t index = parameters.find(test.valueOperand());
             ValueID argument = index == notFound ? ValueID() : argumentAt(call, index);
-            return argument && program.typeOf(caller, argument).isSubsetOf(program.at(test.testedType()), program);
+            if (!argument)
+                return false;
+            const Type& type = argumentTypes == ArgumentTypes::Proven ? program.typeOf(caller, argument) : program.expectedOrTypeOf(caller, argument).predicted();
+            return type.isSubsetOf(program.at(test.testedType()), program);
         });
     });
 }
@@ -1898,6 +1983,19 @@ static uint64_t computeKnownReceiverBenefit(const FunctionPassContext& context, 
             bytes += bytesOfAccess * receiver.accessesByName;
         if (receiver.stores && definition.opcode == Opcode::NewObject && allocatesOwnLayout(program, definition))
             bytes += computeOwnAllocationBenefit(program, program.at(call.function()), receiver);
+    }
+    return bytes;
+}
+
+// A read under a name that is written at the call remembers where it found the name. A read under a key that arrives looks it up each time.
+static uint64_t computeKnownKeyBenefit(const FunctionPassContext& context, const Value& call, const InliningSummary& summary, Bets bets)
+{
+    uint64_t bytesOfAccess = bets == Bets::OnSpeed ? InlineModel::knownReceiverAccessBytes : InlineModel::slotInPlaceOfNameBytes;
+    uint64_t bytes = 0;
+    for (const KeyParameter& key : summary.keyParameters) {
+        ValueID argument = argumentAt(call, key.entryParameter);
+        if (argument && context.program.typeOf(context.function, argument).singleStringLiteral())
+            bytes += bytesOfAccess * key.accesses;
     }
     return bytes;
 }
@@ -2165,8 +2263,13 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isRepeatedByCaller = isHot(heat).predicted() && context.analyses.isInCycle(block);
     bool runsInLoopAroundCaller = heat.predicted() == HeatClass::Warm && context.inputs.heat.isCalledInLoop(program, context.id).predicted() && context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfNearlyCertainCall;
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
-    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
+    uint32_t callBytes = estimatedCodeBytes(program, caller, value);
+    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, callBytes);
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
+    // In a loop of the caller, what counts is the code that the loop runs. What folds may be code that is not expected to run, so it is not taken off a second time.
+    // A loop of the callee takes its heat from the function that holds it, and a caller that runs once has none to give.
+    bool countsLikelyCode = isRepeatedByCaller && (!summary.hasCycle || context.inputs.heat.of(program, context.id).predicted() != HeatClass::RunsOnce);
+    uint32_t likelyCost = !countsLikelyCode ? std::numeric_limits<uint32_t>::max() : summary.likelyCodeBytes > callBytes ? summary.likelyCodeBytes - callBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
@@ -2178,14 +2281,18 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         verdict.benefits.add(benefit);
         verdict.benefitBytes = clampTo<uint32_t>(verdict.benefitBytes + bytes);
     };
+    // The bets are sized for whole bodies: beside the likely code they count for no more than the budget.
     auto isWithinBudget = [&] {
-        return cost <= uint64_t { verdict.budgetBytes } + verdict.benefitBytes;
+        uint64_t allowance = uint64_t { verdict.budgetBytes } + verdict.benefitBytes;
+        return cost <= allowance || (cost <= 2 * allowance && likelyCost <= uint64_t { verdict.budgetBytes } + std::min(verdict.benefitBytes, verdict.budgetBytes));
     };
 
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
     bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
-    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
+    // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
+    bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
+    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
     bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
@@ -2200,6 +2307,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         const auto& record = callee.creator.as<CreatorRecord::EntryChecks>();
         const InliningSummaries& inlining = context.inputs.inlining;
         cost = saturatingSum<uint32_t>(cost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
+        likelyCost = std::numeric_limits<uint32_t>::max();
         verdict.costBytes = cost;
     }
 
@@ -2217,6 +2325,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         addBenefit(InlineBenefit::KnownCalleeArgument, bytes);
     if (uint64_t bytes = computeKnownReceiverBenefit(context, value, summary, bets))
         addBenefit(InlineBenefit::KnownReceiver, bytes);
+    if (uint64_t bytes = computeKnownKeyBenefit(context, value, summary, bets))
+        addBenefit(InlineBenefit::KnownKey, bytes);
 
     bool isTooDeep = false;
     if (canInlineWholeBody) {
@@ -2308,6 +2418,8 @@ static StatisticID statisticFor(InlineBenefit benefit)
         return StatisticID::InlineBenefitKnownCalleeArgument;
     case InlineBenefit::KnownReceiver:
         return StatisticID::InlineBenefitKnownReceiver;
+    case InlineBenefit::KnownKey:
+        return StatisticID::InlineBenefitKnownKey;
     case InlineBenefit::SunkAllocation:
         return StatisticID::InlineBenefitSunkAllocation;
     case InlineBenefit::Wrapper:
@@ -2697,9 +2809,9 @@ static std::optional<Head> findHead(const AnalysisContext& context)
     uint64_t numberOfBlocks = 0;
     uint64_t operations = 0;
     // What throws in the copy throws what the function would have thrown at that place.
-    auto onlyReads = [](const EffectsOnEdges& effects) {
+    auto onlyReads = [&](const EffectsOnEdges& effects) {
         const Effects& normal = effects.normal;
-        return !normal.mayCollect && !normal.mayRunOtherCode() && !normal.mayBeTerminated && normal.writes.containsOnly(bookkeepingHeaps);
+        return !normal.mayCollect && !normal.mayRunOtherCode() && !normal.mayBeTerminated && (normal.writes.containsOnly(bookkeepingHeaps) || context.build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace));
     };
     BitVector blocks = findHeadBlocks(function, analyses, [&](BlockID id) {
         const Block& block = function.at(id);

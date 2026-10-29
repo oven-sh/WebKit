@@ -15,6 +15,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTJSONEmission.h"
+#include "AOTResolveBuiltinsInternal.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTSelectTypedResultsNodes.h"
@@ -57,8 +58,8 @@ struct TypedResultChoice {
 
 static TypedResultForm matchedFormOf(const Program& program, const Value& call)
 {
-    bool isWholeCall = call.opcode == Opcode::CallBuiltin && call.builtinCallForm() == BuiltinCallForm::Whole;
-    return isWholeCall ? typedResultFormOf(program, call) : TypedResultForm::None;
+    bool isPartOfCall = call.opcode == Opcode::CallBuiltin && call.builtinCallForm() != BuiltinCallForm::Whole;
+    return isPartOfCall ? TypedResultForm::None : typedResultFormOf(program, call);
 }
 
 static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, BuiltinID callee, ValueID argument)
@@ -484,6 +485,8 @@ struct TypedResultExpander final : Emission {
 
     void expandRows(const TypedResultSite& site)
     {
+        if (tailCallRequirementOf(function(), site.block, site.call))
+            demoteTailCall(pass, builder(), site.block);
         Value& call = builder().function().edit(site.call);
         call.setExpectedResult({ });
         builder().setOrigin(call.origin());

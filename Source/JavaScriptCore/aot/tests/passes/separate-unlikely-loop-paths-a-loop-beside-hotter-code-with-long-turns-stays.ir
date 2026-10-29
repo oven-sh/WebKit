@@ -1,7 +1,0 @@
-# A loop that is expected to run, beside code that runs more often, keeps its unlikely paths where its likely paths are over an eighth of what a hot loop may hold: the program would hold them twice, and little of a long turn waits for one number
-# FORM: Prepared
-# OPTIONS: limit=MaxBytesOfSeparatedLoop:256
-# RUN: pass SeparateUnlikelyLoopPaths
-# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 0
-# CHECK: outcome: Unchanged
-# PROGRAM-OF: separate-unlikely-loop-paths-a-loop-beside-hotter-code.ir

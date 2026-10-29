@@ -22,6 +22,7 @@
 #include <limits>
 #include <utility>
 #include <wtf/DataLog.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -83,21 +84,26 @@ static EffectInputs inputsOfRule(Opcode opcode)
     return EffectInputs::Operands;
 }
 
-static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
+enum class OptionalOperands : uint8_t { MayBeGiven, AreOmitted };
+
+static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode, OptionalOperands operands = OptionalOperands::MayBeGiven)
 {
     OpcodeEffectFacts facts { .inputs = inputsOfRule(opcode) };
     if (effectRuleOf(opcode) != EffectRule::Declared)
         return facts;
 
     Effects bound = declaredBoundOf(opcode);
+    AbstractHeapSet heapsLeftAlone = operands == OptionalOperands::AreOmitted ? heapsWrittenForOptionalOperands(opcode) : AbstractHeapSet();
+    bound.writes.remove(heapsLeftAlone);
     bool runsNoOperandCode = !mayRunOperandCode(opcode);
     facts.staysWithinDeclaredBound = runsNoOperandCode && !bound.mayCallUnknownCode;
     if (facts.staysWithinDeclaredBound)
         facts.traits.atMost = EffectTraits(bound);
-    if (isRefinedByValue(opcode, bound))
+    if (isRefinedByValue(opcode, bound) && heapsLeftAlone.isEmpty())
         return facts;
 
     DeclaredRowScan scan = scanDeclaredRow(opcode);
+    scan.writtenHeaps.remove(heapsLeftAlone);
     if (!bound.mayCallUnknownCode) {
         Effects least = bound;
         least.reads = LocationMasks(scan.readHeaps);
@@ -115,13 +121,21 @@ static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
 
 const OpcodeEffectFacts& effectFactsOf(Opcode opcode)
 {
-    static const std::array<OpcodeEffectFacts, numberOfOpcodes> factsOfOpcodes = [] {
-        std::array<OpcodeEffectFacts, numberOfOpcodes> result { };
+    static const std::array<OpcodeEffectFacts, numberOfOpcodes>& factsOfOpcodes = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<OpcodeEffectFacts, numberOfOpcodes>>();
         for (Opcode member : allMembersOf<Opcode>)
-            result[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
-        return result;
+            (*result)[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
+        return result.release();
     }();
     return factsOfOpcodes[static_cast<unsigned>(opcode)];
+}
+
+const OpcodeEffectFacts& effectFactsOf(const Value& value)
+{
+    static const OpcodeEffectFacts factsOfObjectWithPrototypeOfLayout = computeEffectFactsOf(Opcode::NewObject, OptionalOperands::AreOmitted);
+    if (value.opcode == Opcode::NewObject && !value.prototypeOperand())
+        return factsOfObjectWithPrototypeOfLayout;
+    return effectFactsOf(value.opcode);
 }
 
 static EffectInputs effectInputsOf(TerminatorKind kind)
@@ -137,7 +151,7 @@ static EffectInputs effectInputsOf(TerminatorKind kind)
     return inputsOfKinds[static_cast<unsigned>(kind)];
 }
 
-static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value.opcode).inputs; }
+static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value).inputs; }
 static EffectInputs effectInputsOf(const Terminator& terminator) { return effectInputsOf(terminator.kind); }
 
 static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction)

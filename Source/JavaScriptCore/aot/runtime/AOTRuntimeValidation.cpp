@@ -29,6 +29,7 @@
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
+#include "AOTThreshold.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
@@ -38,6 +39,7 @@
 #include "PreciseAllocation.h"
 #include "Reg.h"
 #include "SubspaceInlines.h"
+#include <array>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
@@ -53,6 +55,7 @@ void willReadLegacyRegExpStatics(VM& vm)
 }
 
 static constexpr unsigned maxNumberOfTestedElements = 64;
+AOT_THRESHOLD(unsigned, maxNumberOfElementsTestedAgain, 8);
 
 static void dumpClassOf(PrintStream& out, JSValue found)
 {
@@ -161,6 +164,31 @@ static bool hasPristineNames(VM& vm, JSValue value)
     return !shadowsLockedPrototypeChain(vm, structure);
 }
 
+// The pointers are only compared.
+struct SampledArray {
+    const JSCell* array;
+    const RuntimeType* type;
+    uint64_t numberOfSamples;
+};
+
+struct SampledArrays {
+    std::array<SampledArray, 4> arrays { };
+    unsigned numberOfReplacements { 0 };
+};
+
+static SampledArrays& sampledArraysOfThread();
+
+static uint64_t numberOfEarlierSamples(const JSCell* array, const RuntimeType& type)
+{
+    SampledArrays& earlier = sampledArraysOfThread();
+    for (SampledArray& sampled : earlier.arrays) {
+        if (sampled.array == array && sampled.type == &type)
+            return ++sampled.numberOfSamples;
+    }
+    earlier.arrays[earlier.numberOfReplacements++ % earlier.arrays.size()] = { array, &type, 0 };
+    return 0;
+}
+
 static bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
 {
     if (auto* map = dynamicDowncast<JSMap>(container))
@@ -172,9 +200,11 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
     if (!array || slot != Typed::ContentsSlot::Element)
         return true;
 
+    // A loop checks the same long array on every iteration. Samples after the first are small, and each starts one element later, so together they cover the array.
     uint64_t length = array->length();
-    uint64_t stride = std::max<uint64_t>(1, length / maxNumberOfTestedElements);
-    for (uint64_t position = 0; position < length; position += stride) {
+    uint64_t numberOfEarlier = length > maxNumberOfTestedElements ? numberOfEarlierSamples(array, type) : 0;
+    uint64_t stride = std::max<uint64_t>(1, length / (numberOfEarlier ? maxNumberOfElementsTestedAgain : maxNumberOfTestedElements));
+    for (uint64_t position = numberOfEarlier % stride; position < length; position += stride) {
         unsigned index = static_cast<unsigned>(position);
         JSValue element = array->tryGetIndexQuickly(index);
         if (element && !holdsType(instance, type, element, index))
@@ -221,6 +251,47 @@ static void dumpCalledCode(PrintStream& out, JSValue found)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<uint32_t> readWordOfMark(const uint8_t*& cursor)
+{
+    uint64_t word = 0;
+#if CPU(X86_64)
+    // movabs into r11.
+    if (cursor[0] != 0x49 || cursor[1] != 0xbb)
+        return std::nullopt;
+    memcpySpan(asMutableByteSpan(word), unsafeMakeSpan(cursor + 2, sizeof(word)));
+    cursor += 2 + sizeof(word);
+#elif CPU(ARM64)
+    // movz and two movk into the zero register.
+    constexpr std::array<uint32_t, 3> opcodes { 0xd280001f, 0xf2a0001f, 0xf2c0001f };
+    for (unsigned i = 0; i < opcodes.size(); ++i) {
+        uint32_t instruction = 0;
+        memcpySpan(asMutableByteSpan(instruction), unsafeMakeSpan(cursor, sizeof(instruction)));
+        if ((instruction & 0xffe0001f) != opcodes[i])
+            return std::nullopt;
+        word |= static_cast<uint64_t>(instruction >> 5 & 0xffff) << 16 * i;
+        cursor += sizeof(instruction);
+    }
+#else
+    UNUSED_PARAM(cursor);
+    return std::nullopt;
+#endif
+    if (word >> MarkOfCallWithoutSite::tagShift != MarkOfCallWithoutSite::tag)
+        return std::nullopt;
+    return static_cast<uint32_t>(word);
+}
+
+std::optional<MarkOfCallWithoutSite> MarkOfCallWithoutSite::read(const void* returnAddress)
+{
+    const uint8_t* cursor = static_cast<const uint8_t*>(returnAddress);
+    std::optional<uint32_t> value = readWordOfMark(cursor);
+    if (!value)
+        return std::nullopt;
+    std::optional<uint32_t> callee = readWordOfMark(cursor);
+    if (!callee)
+        return std::nullopt;
+    return MarkOfCallWithoutSite { Typed::ValueID(*value), static_cast<int32_t>(*callee) };
+}
+
 void crashOnValidationFailure(VM&, const ValidationFailure& failure)
 {
     // Never released: another thread that fails waits here until this one has crashed.
@@ -234,7 +305,7 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     dataLog("AOT validation: ", nameOf(failure.kind), " f", numberOrDash(failure.function), " v", numberOrDash(failure.value), " ");
     if (failure.kind == ValidationFailureKind::CallChangedKeptRegister || failure.kind == ValidationFailureKind::UnwindingChangedKeptRegister)
         dumpChangedRegister(WTF::dataFile(), failure.found);
-    else if (failure.kind == ValidationFailureKind::CallCollected)
+    else if (failure.kind == ValidationFailureKind::CallCollected || failure.kind == ValidationFailureKind::CallThrew)
         dumpCalledCode(WTF::dataFile(), failure.found);
     else
         dumpClassOf(WTF::dataFile(), failure.found);
@@ -251,11 +322,26 @@ struct Photograph {
     OperandSnapshot before;
 };
 
+struct ValidationOfThread {
+    std::array<Photograph, PhotographedCall::maxOperands> photographs;
+    SampledArrays sampledArrays;
+};
+
+static ValidationOfThread& validationOfThread()
+{
+    static thread_local auto* validation = new ValidationOfThread;
+    return *validation;
+}
+
 // One call of a thread is photographed at a time: it runs no other compiled code. A call that throws leaves its photographs behind, and the next one takes their places.
 static std::span<Photograph, PhotographedCall::maxOperands> photographsOfThread()
 {
-    static thread_local auto* photographs = new std::array<Photograph, PhotographedCall::maxOperands>;
-    return *photographs;
+    return validationOfThread().photographs;
+}
+
+static SampledArrays& sampledArraysOfThread()
+{
+    return validationOfThread().sampledArrays;
 }
 
 void photographOperand(VM& vm, JSValue operand, AbstractHeaps written, unsigned position)
@@ -303,11 +389,13 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPhotographOperand, void, (Instance* instance, EncodedJSValue operand, uint64_t writtenHeaps, uint32_t position))
 {
+    LeafOperationScope leaf(*instance->vm);
     photographOperand(*instance->vm, JSValue::decode(operand), AbstractHeaps::fromRaw(writtenHeaps), position);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCompareOperandWithPhotograph, void, (Instance* instance, EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex))
 {
+    LeafOperationScope leaf(*instance->vm);
     compareOperandWithPhotograph(*instance->vm, JSValue::decode(operand), positionAndCallee, FunctionID(function), Typed::ValueID(valueIndex));
 }
 
@@ -639,15 +727,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instanc
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven))
 {
-    static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s };
-    static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::ValueIsInRange) + 1);
+    static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s };
+    static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::ComparisonIsDecided) + 1);
     uint32_t number = claimAndOffset & 0xff;
     RELEASE_ASSERT(number < std::size(names));
     auto claim = static_cast<BrokenClaim>(number);
     static Lock lock;
     lock.lock();
     dataLog("AOT claim check: ", names[number], " f", function, " v", static_cast<int32_t>(valueIndex));
-    if (claim != BrokenClaim::ValueIsInRange)
+    if (claim == BrokenClaim::ComparisonIsDecided)
+        dataLog(" of 0x", hex(foundAndGiven[0], Lowercase), " and 0x", hex(foundAndGiven[1], Lowercase));
+    else if (claim != BrokenClaim::ValueIsInRange)
         dataLog(" at +", static_cast<int32_t>(claimAndOffset) >> 8);
     if (claim == BrokenClaim::WordNeverChanges || claim == BrokenClaim::LoadMayMove)
         dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));

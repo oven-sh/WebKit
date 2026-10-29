@@ -11,7 +11,9 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTKnownClosures.h"
+#include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
+#include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
@@ -79,6 +81,23 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
         context.add(parameter, context.maker().intersect(unknown, universe.objects()));
 }
 
+static bool isLibraryRole(FunctionRole role)
+{
+    return role == FunctionRole::Library || role == FunctionRole::Model;
+}
+
+// A module that a function of the library answers with stays found by name alone.
+static void handOutOfFunction(ValueFlowRuleContext& context, const Function& callee, ValueFlowNodeID values)
+{
+    if (!isLibraryRole(callee.role)) {
+        carryOut(context, values);
+        return;
+    }
+    ValueSetID modules = context.universe().holdersOfLibraryExports();
+    carryOut(context, context.masked(values, ValueSets::complement(modules)));
+    context.connect(context.masked(values, modules), ValueFlowProgramNodes::escaped());
+}
+
 void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, NativeCaller caller)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -95,16 +114,22 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
     if (const auto* summary = nodes.resultSummaryOf(function))
-        carryOut(context, summary->ownResult);
+        handOutOfFunction(context, callee, summary->ownResult);
     else {
         for (unsigned index = 0; index < callee.results.size(); ++index)
-            carryOut(context, nodes.result(function, index));
+            handOutOfFunction(context, callee, nodes.result(function, index));
     }
-    context.connect(nodes.thrown(function), escaped);
+    if (isLibraryRole(callee.role))
+        context.connect(nodes.thrown(function), escaped);
+    else
+        carryOut(context, nodes.thrown(function));
     if (!callee.isUnsplitCoroutine() || !callee.has(FunctionFlags::IsGenerator))
         return;
     context.add(escaped, only(context, universe.coroutineResultOf(function)));
-    context.connect(nodes.yielded(function), escaped);
+    if (isLibraryRole(callee.role))
+        context.connect(nodes.yielded(function), escaped);
+    else
+        carryOut(context, nodes.yielded(function));
     context.add(nodes.sent(function), unknown);
 }
 
@@ -184,14 +209,14 @@ void letModulesBeLoadedByName(ValueFlowRuleContext& context, ValueFlowHostNode a
 
 static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionID id, NativeCaller caller)
 {
-    if (const RuntimeFunctionEntry* entry = findRuntimeFunction(context.program(), id); entry && entry->function)
-        enterFromNativeCode(context, entry->function, caller);
+    if (FunctionID function = context.libraryFunctionToEnter(id))
+        enterFromNativeCode(context, function, caller);
 }
 
-static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
+static ValueFlowSources memberOf(ValueFlowRuleContext& context, const ValueFlowSources& object, StringID name)
 {
     std::optional<PropertyKeyID> key = context.program().types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
+    return { { context.lookup(valueOf(context, object), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
 }
 
 static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& context, ModuleID id, StringID name)
@@ -208,17 +233,21 @@ static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& conte
         bool isDefault = name == program.stringOf(BuiltinNames::defaultKeyword);
         ValueFlowSources value = isDefault ? requiredValueOf(context, id) : ValueFlowSources();
         if (!isDefault || module.exportRule != SyntheticExportRule::CommonJsIgnoringAnnotation)
-            value.nodes.appendVector(memberOfRequiredValue(context, id, name).nodes);
+            value.nodes.appendVector(memberOf(context, requiredValueOf(context, id), name).nodes);
         return value;
     }
 
-    bool listsEveryExport = module.kind == ModuleKind::SourceText && !module.requests.containsIf([](const ModuleRequest& request) {
+    if (module.kind != ModuleKind::SourceText) {
+        connect(context, namespaceOf(context, id), ValueFlowProgramNodes::escaped());
+        return unknown;
+    }
+    bool listsEveryExport = !module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
     });
-    if (listsEveryExport)
+    // A star passes on every name but `default`.
+    if (listsEveryExport || name == program.stringOf(BuiltinNames::defaultKeyword))
         return std::nullopt;
-    connect(context, namespaceOf(context, id), ValueFlowProgramNodes::escaped());
-    return unknown;
+    return memberOf(context, namespaceOf(context, id), name);
 }
 
 static void handToBuiltin(ValueFlowRuleContext& context, const HostRead& read, const ValueFlowSources& value)
@@ -298,6 +327,19 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
     return !condition->hasProperty || holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
 }
 
+bool usesFeatureAmong(ValueFlowRuleContext& context, ClimbingSet entries, const BitVector& features)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    bool uses = false;
+    context.forEachMember(context.valueWithin(entries, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), [&](ValueFlowObjectID entry) {
+        BuiltinID builtin = builtins.canonicalID(context.universe().builtinOf(entry));
+        uses = uses || std::ranges::any_of(builtins.featureUsesOf(builtin), [&](const BuiltinFeatureUse& line) {
+            return features.get(static_cast<size_t>(line.feature)) && mayHold(context, builtin, line.condition);
+        });
+    });
+    return uses;
+}
+
 static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModuleLoad& load)
 {
     const Program& program = context.program();
@@ -336,7 +378,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
         auto found = std::ranges::find(module.exports, program.stringOf(name), &ModuleExport::name);
         bool isListed = found != module.exports.end() && (found->kind != ModuleExportKind::Variable || found->variable);
         if (!isListed) {
-            use(memberOfRequiredValue(context, id, program.stringOf(name)), index);
+            use(memberOf(context, requiredValueOf(context, id), program.stringOf(name)), index);
             continue;
         }
         switch (found->kind) {
@@ -443,6 +485,8 @@ struct Attachments {
 
     void addCode(RuntimeFunctionID function)
     {
+        if (isEnteredByCallsAlone(context.program(), function))
+            return;
         add(function);
         functionsBehindBuiltins.set(function.index());
     }
@@ -457,11 +501,11 @@ struct Attachments {
         }
         bool textFindsFunctions = isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
         for (const BuiltinCalledFunction* row : rowsListingUses) {
-            const RuntimeFunctionEntry* entry = findRuntimeFunction(context.program(), row->function);
-            if (!entry || !entry->function)
+            FunctionID function = context.libraryFunctionToEnter(row->function);
+            if (!function)
                 continue;
-            ClimbingSet closure = only(context, context.universe().closureOf(entry->function));
-            applyHostUses(row->builtin ? row->builtin : Builtins::UndeclaredNativeCode, { { }, context.maker().of(context.universe().closureOf(entry->function)), ValueSets::anything }, row->uses, context);
+            ClimbingSet closure = only(context, context.universe().closureOf(function));
+            applyHostUses(row->builtin ? row->builtin : Builtins::UndeclaredNativeCode, { { }, context.maker().of(context.universe().closureOf(function)), ValueSets::anything }, row->uses, context);
             if (textFindsFunctions)
                 context.add(ValueFlowProgramNodes::escaped(), closure);
         }
@@ -484,11 +528,6 @@ struct Attachments {
     Vector<const BuiltinCalledFunction*, 16> rowsListingUses { };
     bool hostMethodsMayRun { false };
 };
-
-static bool isLibraryRole(FunctionRole role)
-{
-    return role == FunctionRole::Library || role == FunctionRole::Model;
-}
 
 static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
 {
@@ -628,10 +667,21 @@ bool isInSeenCode(ValueFlowRuleContext& context, FunctionID id)
         && context.holdsAnyOf(only(context, context.universe().namespaceOf(function.module)), context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode));
 }
 
+// No node lists what has escaped beside a value nobody knows. Where such a value is called, it may be a function that the program has taken off a module of the library.
+void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext& context, ValueFlowNodeID exportsThatProgramHasTaken)
+{
+    if (!mayCallWhateverHasEscaped(context))
+        return;
+    ClimbingSet functions = context.valueWithin(ClimbingSet(context.universe().closures()), exportsThatProgramHasTaken);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), context.valueWithin(functions, ValueFlowProgramNodes::escaped()));
+}
+
 void noteRequest(ValueFlowRuleContext& context, FunctionID requester, ModuleID module)
 {
     if (isInSeenCode(context, requester))
         context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(module)));
+    if (!isLibraryRole(context.program().at(requester).role))
+        context.add(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesRequestedByProgram), context.universe().holdersOfExportsOf(module));
 }
 
 static bool isWrittenByProgram(const Program& program, const Module& module)
@@ -660,7 +710,7 @@ bool mayAnswerToName(const Program& program, ModuleID id)
     return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || std::ranges::contains(program.entries, id, &Entry::module);
 }
 
-static bool isAskedOfHostByName(const Module& module)
+bool isAskedOfHostByName(const Module& module)
 {
     return module.kind == ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLoadedByImportOnly);
 }
@@ -668,9 +718,10 @@ static bool isAskedOfHostByName(const Module& module)
 static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
 {
     const Program& program = context.program();
+    const ValueFlowHeapTables& tables = context.universe().builtinTables().heap();
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!mayAnswerToName(program, ModuleID(index)))
+        if (!tables.mayAnswerToName(ModuleID(index)))
             continue;
         bool isOfProgram = isWrittenByProgram(program, module);
         if (module.body ? !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
@@ -724,20 +775,6 @@ static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenC
     }
 }
 
-static bool isNameOfLibraryModule(const Program& program, std::span<const uint8_t> name)
-{
-    static constexpr std::array<uint8_t, 5> prefix { 'n', 'o', 'd', 'e', ':' };
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& module = program.modules[index];
-        if (!module.runtimeModule || !mayAnswerToName(program, ModuleID(index)) || (module.body && !isAskedOfHostByName(module)))
-            continue;
-        std::span<const uint8_t> path = program.string(module.path);
-        if (equalSpans(path, name) || (path.size() == prefix.size() + name.size() && spanHasPrefix(path, std::span(prefix)) && equalSpans(path.subspan(prefix.size()), name)))
-            return true;
-    }
-    return false;
-}
-
 // "left-pad/lib" and "@scope/left-pad/lib" name the packages "left-pad" and "@scope/left-pad". A path, a URL and a name that a package maps for itself name none.
 static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
 {
@@ -752,31 +789,11 @@ static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
     return name.first(length);
 }
 
-static bool liesInPackage(std::span<const uint8_t> path, std::span<const uint8_t> package)
-{
-    static constexpr std::array<uint8_t, 12> folder { 'n', 'o', 'd', 'e', '_', 'm', 'o', 'd', 'u', 'l', 'e', 's' };
-    for (size_t start = 0; start + folder.size() + 1 + package.size() <= path.size(); ++start) {
-        std::span<const uint8_t> rest = path.subspan(start);
-        uint8_t separator = rest[folder.size()];
-        if (spanHasPrefix(rest, std::span(folder)) && (separator == '/' || separator == '\\') && spanHasPrefix(rest.subspan(folder.size() + 1), package))
-            return true;
-    }
-    return false;
-}
-
 // Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
 static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
 {
     std::span<const uint8_t> package = packageNamedBy(name);
-    if (package.empty() || !context.refusedCode().codeOutsideImage)
-        return false;
-    const Program& program = context.program();
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        std::span<const uint8_t> path = program.string(program.modules[index].path);
-        if (mayAnswerToName(program, ModuleID(index)) && (spanHasPrefix(path, package) || liesInPackage(path, package)))
-            return false;
-    }
-    return true;
+    return !package.empty() && context.refusedCode().codeOutsideImage && !context.universe().builtinTables().heap().holdsModuleOfPackage(package);
 }
 
 static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
@@ -787,7 +804,7 @@ static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     auto isSuchName = [&](StringID text) {
-        return isNameOfLibraryModule(program, program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
+        return universe.builtinTables().heap().isNameOfLibraryModule(program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
     };
     // A text that is no key of the program is any string to the values.
     const Function& function = program.at(call.function);
@@ -904,6 +921,7 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
             continue;
         if (!isObjectKind(builtins.at(member).kind)) {
             context.use(member, { BuiltinUse::Read, BuiltinUse::Written });
+            openProxiesThatMemberAnswers(context, member);
             continue;
         }
         context.use(member, BuiltinUse::Read);
@@ -924,6 +942,12 @@ static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID h
         bool isCallable = kind == BuiltinKind::Constructor || kind == BuiltinKind::Function || kind == BuiltinKind::Method;
         context.useAsAnswerOfUnknownObject(member, isCallable ? OptionSet<BuiltinUse> { BuiltinUse::Read, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Read });
     }
+}
+
+bool isCalledWithoutStartupLoads(const BuiltinTable& builtins, BuiltinID holder, BuiltinName name)
+{
+    BuiltinID method = holder ? builtins.findOwnMember(builtins.canonicalID(holder), name) : BuiltinID();
+    return method && builtins.has(BuiltinMark::IsCalledWithoutStartupLoads, builtins.canonicalID(method));
 }
 
 bool isFoundByNameAlone(BuiltinID member)

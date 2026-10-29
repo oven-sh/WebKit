@@ -8,6 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
+#include "AOTBuildContext.h"
+#include "AOTCompileOptionWords.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTIRParser.h"
 #include "AOTIRTestSupport.h"
 #include "AOTPredictedValues.h"
 #include "AOTProvisionalFunctions.h"
@@ -15,6 +19,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -736,6 +741,81 @@ static void valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck()
     AOT_TEST_CHECK(nothingPredicted.isBehindCheck(addValue(withoutChecks, BlockID(0u), Opcode::Check, { ValueID(0u) })));
 }
 
+// The types that a typing writes are entries of the log too. Where the log runs full under them it forgets what the typing has cut, and every value is typed again the next time.
+static void typingThatFillsLogLeavesEveryValuePending()
+{
+    static constexpr ASCIILiteral text = R"IR(
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneOfTwoNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = AssumeType v0 provenType=undefined|string
+    v2 = AssumeType v0 provenType=string
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Integer integer=16
+    Jump -> next b3(v5)
+  b2(v6):
+    v7 = Integer integer=32
+    Jump -> next b3(v7)
+  b3(v8):
+    Return v8
+}
+)IR"_s;
+    Wire::CompileOptions options = makeDefaultCompileOptions();
+    AOT_TEST_CHECK(!applyOptionWord(options, "check=VerifyEachPass"_s));
+    BuildContext build(options);
+    std::unique_ptr<Program> program = parseProgram(text, IRForm::Prepared, build);
+    AOT_TEST_CHECK(program);
+    FunctionID id(0u);
+    Function& function = program->functions[0];
+    ValueID string(2u), test(3u), sixteen(5u), thirtyTwo(7u), number(8u);
+
+    ChangeLog log;
+    log.setMaxNumberOfEntries(0);
+    function.attach(log);
+    {
+        TypeArena types(program->types);
+        FunctionAnalyses analyses(AnalysisContext { build, *program, nullptr, nullptr, id }, function);
+        PendingTyping pending;
+        TypingMemo memo { &pending };
+        TypePropagationInputs inputs { *program, id, function, analyses, types, build, &memo };
+        typeChangedValues(inputs);
+        log.forget();
+        pending.didTypeEverything(log);
+        TypeID eitherNumber = function.at(number).type;
+        AOT_TEST_CHECK(eitherNumber != function.at(sixteen).type && eitherNumber != function.at(thirtyTwo).type);
+
+        // The log makes room for the ninth entry, and there is none.
+        ChangeLog::Cursor start = log.end();
+        function.edit(test, ValueEdit::Definition).setOperand(0, string);
+        for (unsigned i = 0; i < 7; ++i)
+            function.edit(i % 2 ? sixteen : thirtyTwo, ValueEdit::Type);
+        AOT_TEST_CHECK(log.numberOfEntriesSince(start) == 8);
+        analyses.didChangeValues();
+
+        AOT_TEST_CHECK(typeChangedValues(inputs).cutBlocks == 1);
+        AOT_TEST_CHECK(pending.isEverythingPending(log));
+        AOT_TEST_CHECK(!build.diagnostics().hasErrors());
+
+        typeChangedValues(inputs);
+        AOT_TEST_CHECK(pending.isEmpty(log));
+        AOT_TEST_CHECK(!build.diagnostics().hasErrors());
+        TypeID typeOfConstant;
+        TypeID typeOfResult;
+        for (const Block& block : function.blocks) {
+            for (ValueID value : block.values) {
+                if (function.at(value).opcode == Opcode::Integer)
+                    typeOfConstant = function.at(value).type;
+            }
+            if (block.terminator.kind == TerminatorKind::Return)
+                typeOfResult = function.at(block.terminator.operand(0)).type;
+        }
+        AOT_TEST_CHECK(typeOfConstant && typeOfConstant == typeOfResult);
+    }
+    function.detach(log);
+}
+
 #define FOR_EACH_AOT_IR_FUNCTION_TEST(v) \
     v(constructorFormOfEachKind) v(coroutinesAreNotConstructors) v(moduleBodiesByKind) \
     v(entryParameterIndexesOfEveryFlagCombination) v(implicitEntryParametersHaveNoDeclaredPosition) \
@@ -746,7 +826,7 @@ static void valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck()
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
     v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
     v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(countedContentsFollowLog) v(editOfWhatWasAddedTakesItsPromiseBack) \
-    v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck)
+    v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck) v(typingThatFillsLogLeavesEveryValuePending)
 
 std::span<const NativeTest> irFunctionTests()
 {

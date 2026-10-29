@@ -47,9 +47,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNativeBinding, EncodedJSValue, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, JSCell*, (Instance* instance, uint32_t constant))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTLinkTimeConstant);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLinkTimeConstant);
     DeferTerminationForAWhile deferTermination(vm);
-    DeferGCForAWhile deferGC(vm);
     JSCell* cell = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
     instance->realm.linkTimeConstants[constant] = JSValue::encode(cell);
     OPERATION_RETURN(scope, cell);

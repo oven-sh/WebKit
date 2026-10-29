@@ -108,6 +108,46 @@ static std::span<const Record> findRecords(std::span<const Record> records, Buil
     return records.subspan(found.begin() - records.begin(), found.size());
 }
 
+// Where the records of each built-in begin in a list that is in the order of the built-ins. The compiler asks every built-in for its records, several times a program.
+template<typename Record>
+class RecordsByBuiltin {
+public:
+    std::span<const Record> find(std::span<const Record> records, size_t builtinCount, BuiltinID builtin)
+    {
+        const Starts* starts = m_starts.load(std::memory_order_acquire);
+        if (!starts) [[unlikely]]
+            starts = &create(records, builtinCount);
+        if (starts->records != records.data() || starts->recordCount != records.size() || starts->list.size() != builtinCount + 1 || builtin.index() >= builtinCount) [[unlikely]]
+            return findRecords(records, builtin);
+        uint32_t start = starts->list[builtin.index()];
+        return records.subspan(start, starts->list[builtin.index() + 1] - start);
+    }
+
+private:
+    struct Starts {
+        const Record* records;
+        size_t recordCount;
+        Vector<uint32_t> list;
+    };
+
+    NEVER_INLINE const Starts& create(std::span<const Record> records, size_t builtinCount)
+    {
+        Locker locker { m_lock };
+        if (const Starts* starts = m_starts.load(std::memory_order_relaxed))
+            return *starts;
+        auto* starts = new Starts { records.data(), records.size(), Vector<uint32_t>(FillWith { }, builtinCount + 1, 0) };
+        for (const Record& record : records)
+            ++starts->list[record.builtin.index() + 1];
+        for (size_t index = 1; index <= builtinCount; ++index)
+            starts->list[index] += starts->list[index - 1];
+        m_starts.store(starts, std::memory_order_release);
+        return *starts;
+    }
+
+    std::atomic<const Starts*> m_starts { nullptr };
+    Lock m_lock;
+};
+
 bool BuiltinTable::contains(RuntimeFunctionID id) const
 {
     return !!findRecord(m_data.runtime.functions, &RuntimeFunctionData::id, id);
@@ -232,13 +272,10 @@ const BuiltinOverloadSummary& BuiltinTable::summaryOf(BuiltinOverloadID id) cons
 
 std::optional<BuiltinDispatchTarget> BuiltinTable::dispatchOf(BuiltinID id, BuiltinCallMode mode) const
 {
-    auto keyOf = [](const BuiltinDispatch& dispatch) {
-        return std::pair { dispatch.builtin, dispatch.mode };
-    };
-    std::pair key { id, mode };
-    std::span<const BuiltinDispatch> dispatches = keptByThisReader(m_data.dispatches, builtinTableDispatches);
-    auto found = std::ranges::lower_bound(dispatches, key, { }, keyOf);
-    if (found == dispatches.end() || keyOf(*found) != key)
+    static constinit RecordsByBuiltin<BuiltinDispatch> dispatchesByBuiltin;
+    std::span<const BuiltinDispatch> dispatches = dispatchesByBuiltin.find(keptByThisReader(m_data.dispatches, builtinTableDispatches), m_data.builtins.size(), id);
+    auto found = std::ranges::find(dispatches, mode, &BuiltinDispatch::mode);
+    if (found == dispatches.end())
         return std::nullopt;
     return found->root;
 }
@@ -578,17 +615,20 @@ const BuiltinNamesReadByNativeCode* BuiltinTable::namesReadByNativeCode(BuiltinI
 
 std::span<const BuiltinFeatureUse> BuiltinTable::featureUsesOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), id);
+    static constinit RecordsByBuiltin<BuiltinFeatureUse> featureUsesByBuiltin;
+    return featureUsesByBuiltin.find(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinModuleLoad> BuiltinTable::moduleLoadsOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), id);
+    static constinit RecordsByBuiltin<BuiltinModuleLoad> moduleLoadsByBuiltin;
+    return moduleLoadsByBuiltin.find(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::calledFunctionsOf(BuiltinID id) const
 {
-    return findRecords(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), id);
+    static constinit RecordsByBuiltin<BuiltinCalledFunction> calledFunctionsByBuiltin;
+    return calledFunctionsByBuiltin.find(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::startupCalledFunctions() const

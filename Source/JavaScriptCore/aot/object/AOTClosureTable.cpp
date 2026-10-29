@@ -301,17 +301,6 @@ void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
     didCreateClosureFor(function, closure);
 }
 
-void ClosureTable::forgetClosure(FunctionID function)
-{
-    uint32_t number = cellNumberOf(m_tables, function);
-    if (m_state.instance.options().useWideReferences()) {
-        static_cast<JSCell**>(m_state.instance.closureCells)[number] = nullptr;
-        return;
-    }
-    Locker locker { m_state.caches->lock() };
-    narrowClosureCells(m_state.instance)[number].clear();
-}
-
 JSCell* ClosureTable::closure(VM& vm, FunctionID function)
 {
     if (JSCell* cell = closureIfCreated(function))

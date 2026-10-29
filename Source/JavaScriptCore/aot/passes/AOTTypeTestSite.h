@@ -261,7 +261,7 @@ public:
         const CFG& cfg = m_context.analyses.cfg();
         const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
         for (BlockID block : cfg.reversePostOrder()) {
-            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
+            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare && !isWrittenInCatchClause(block))
                 continue;
             const BlockValues& values = m_context.function.at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
@@ -281,6 +281,7 @@ public:
 private:
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;
+    bool isWrittenInCatchClause(BlockID);
 
     FunctionPassContext& m_context;
     TestSiteRuleID m_rule { TestSiteRuleID::Operator };
@@ -296,6 +297,7 @@ private:
     Vector<uint32_t> m_plannedAccessOfValue;
     BlockID m_blockOfHeatClass;
     bool m_blockIsCold { false };
+    std::optional<BitVector> m_blocksOfCatchClauses;
 };
 
 class TestSiteRewriter {

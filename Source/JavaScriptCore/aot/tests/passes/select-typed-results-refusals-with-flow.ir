@@ -40,7 +40,7 @@ function f1 name="conversionBehindBlockParameterAsRead" parameters=[{type=string
 # CHECK-NOT: JSONSourceOpen
 # CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
 # CHECK-NOT: JSONSourceOpen
-# CHECK: = TypeTest {{*}} testedType=undefined|null|L0
+# CHECK: = Expect {{*}} expectedType=undefined|null|L0
 # CHECK-NOT: JSONSourceOpen
 }
 

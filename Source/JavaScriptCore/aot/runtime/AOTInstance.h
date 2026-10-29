@@ -177,9 +177,9 @@ struct LazyStringWords {
 };
 
 // Behind DefaultFinalObject: the same object with room in its cell for two more properties, for four more and so on.
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, DefaultFinalObject };
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, DefaultFinalObject };
 static constexpr unsigned numberOfRoomierFinalObjects = 13;
-static constexpr unsigned numberOfInlineAllocations = 9 + numberOfRoomierFinalObjects;
+static constexpr unsigned numberOfInlineAllocations = 10 + numberOfRoomierFinalObjects;
 static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
 
 struct InlineAllocationData {
@@ -194,18 +194,10 @@ struct TypedArrayAllocation {
     uint64_t unused;
 };
 
-struct ClonedStructure {
-    uint64_t header;
-    uint64_t cellSize;
-};
-
 struct MappedCopy;
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    static constexpr unsigned numberOfClonedStructures = 16;
-    static constexpr unsigned clonedStructureShift = 4;
-    static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
     static constexpr unsigned numberOfCopiesWithoutFrame = 64;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
@@ -217,6 +209,9 @@ struct AllocationWords {
     void* cellSpace;
     void* primitiveAuxiliarySpace;
     InlineAllocationData inlineAllocations[numberOfInlineAllocations];
+    // What a GetterSetter holds in place of a getter and of a setter that it lacks. Null until InlineAllocation::GetterSetter has its allocator.
+    JSCell* getterOfAccessorWithoutGetter;
+    JSCell* setterOfAccessorWithoutSetter;
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
     // Of an array of values that lies in a frame. Zero unless the Structure of such arrays is pristine in every aspect.
@@ -224,7 +219,6 @@ struct AllocationWords {
     uint64_t compactTableHeader;
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    ClonedStructure clonedStructures[numberOfClonedStructures];
     const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
 };
 

@@ -35,6 +35,7 @@ enum class BrokenClaim : uint32_t {
     WordNeverChanges,
     LoadMayMove,
     ValueIsInRange,
+    ComparisonIsDecided,
 };
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -71,7 +72,8 @@ enum class BrokenClaim : uint32_t {
     v(GeneratorClassInfo) \
     v(WebAssemblyFunctionClassInfo) \
     v(CallNativeFunctionUnderValidation) \
-    v(ConstructNativeFunctionUnderValidation)
+    v(ConstructNativeFunctionUnderValidation) \
+    v(CheckThatThrowingCallHasSite)
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_SCHEMA_ENTRY(name) operationAOT##name,
@@ -225,7 +227,21 @@ public:
 
     bool countsCalls() const { return m_countsCalls; }
     uint64_t callCount(Entry entry) const { return m_callCounts[static_cast<unsigned>(entry)]; }
-    void didCall(Entry entry) { ++m_callCounts[static_cast<unsigned>(entry)]; }
+    void didCall(Entry entry)
+    {
+        ++m_callCounts[static_cast<unsigned>(entry)];
+        m_lastCalled = entry;
+    }
+    // Compiled code leaves its work to an operation where an allocator has no cell at hand. Such a call refills the allocator. Only the first refill behind a call is counted.
+    void willRefillAllocator()
+    {
+        if (m_lastCalled == Entry::NumberOfEntries)
+            return;
+        if (m_callsThatRefilled.isEmpty())
+            m_callsThatRefilled.fill(0, numberOfEntries);
+        ++m_callsThatRefilled[static_cast<unsigned>(std::exchange(m_lastCalled, Entry::NumberOfEntries))];
+    }
+    uint64_t numberOfCallsThatRefilled(Entry entry) const { return m_callsThatRefilled.isEmpty() ? 0 : m_callsThatRefilled[static_cast<unsigned>(entry)]; }
 
     Structure* compactTableStructure() const { return m_compactTableStructure; }
     uint32_t compactTableIterationEntry() const { return m_compactTableIterationEntry; }
@@ -240,6 +256,8 @@ private:
     void* m_entries[numberOfEntries] { };
 #endif
     uint64_t m_callCounts[numberOfEntries] { };
+    WTF::Vector<uint64_t> m_callsThatRefilled;
+    Entry m_lastCalled { Entry::NumberOfEntries };
     DataOnlyCallLinkInfo m_callLinkInfoForCall;
     Structure* m_compactTableStructure { nullptr };
     uint32_t m_compactTableIterationEntry { 0 };

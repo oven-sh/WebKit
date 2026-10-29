@@ -68,11 +68,18 @@ Boxed CallEmitter::thisOrUndefined(ValueID id)
     return id ? in<Boxed>(id) : undefined();
 }
 
+static bool readsCalleeFromReceiver(const ValueContext& call)
+{
+    if (PayloadWord::calleeKey(call->opcode))
+        return !!call->calleeKey();
+    return call->opcode == Opcode::CallMethod;
+}
+
 std::optional<ThrowSite> CallEmitter::siteThatNamesCallee(const ValueContext& value)
 {
     if (!value->calleeName())
         return std::nullopt;
-    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt, readsCalleeFromReceiver(value) };
 }
 
 Vector<Boxed, 8> CallEmitter::boxedOperands(std::span<const ValueID> ids)
@@ -236,8 +243,11 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         RELEASE_ASSERT_NOT_REACHED();
     });
     calls.finishCallPatchpoint(context, patchpoint, site, request);
-    if (options.hasLandingOfMisfit)
+    if (options.hasLandingOfMisfit) {
         m_landingOfLastCall = emitter<ExceptionEmitter>().attachLandingOfMisfit(patchpoint, site);
+        // Whoever comes to the landing has left there what it would have returned. No summary of a callee says so: only the landing reads it.
+        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_misfit, patchpoint);
+    }
     if (stopsBeforeCall) {
         RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
         switch (target.kind) {

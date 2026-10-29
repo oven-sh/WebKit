@@ -32,6 +32,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 | `place/` | slots, numbering, shape tests, site caches, program tables |
 | `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
+| `runtime/` | programs that run in the shell and count their calls into the run time: the caches, tables and Structures that fill while a program runs |
 | `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 
@@ -275,7 +276,7 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
   family: the layouts below it. `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
-  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
+  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-in functions converted into it (`builtinMembers=[MathAbs]` on the function type). `builtin(..)` names no constant: `Symbol.iterator` is a `symbol` and `Math.PI` a `number`. The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
   symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
 - A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
   `Check`. With the flag `IsExpected` nothing checks what enters: a read of it proves nothing and expects `T`.
@@ -386,8 +387,9 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
   `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
-- `run-in-shell { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The words are statements of
-  JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
+- `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words
+  that begin with `--` are options of the shell: with `--aotCountsPath=/dev/null` the statements can ask `aotOperationCount`. The other words are
+  statements of JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
   `exited with <code>` or `crashed with <signal>`. A failure of a validating build is the line `AOT validation: <Kind> f<n> v<n> ..` in
   front of `crashed with`.
 - `lower-to-b3 [ optimized | after=<step>[:<n>] ] [ loops ] [ entry-modules ] { f<n> }` generates code for the functions it prints, and prints their B3 procedures: IR in, B3 out. It starts
@@ -551,7 +553,7 @@ testaot compile main.bin --output=main.image validate
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-The shell has eleven functions for compiled code:
+The shell has twelve functions for compiled code:
 
 - `runCompiledEntryPoint(id)` takes an id that `testaot compile` printed, runs that entry point and returns its promise. A
   rejection prints `Exception: ..` and exits with 3.
@@ -559,6 +561,8 @@ The shell has eleven functions for compiled code:
   tells it for `delete require.cache[path]`, `require.cache[path] = entry` and `Module.prototype.require = f`.
 - `aotOperationCount(name)` returns how often a run-time operation ran. It needs `--aotCountsPath=<path>`.
 - `aotRuntimeCounters()` returns the run-time counters as text.
+- `aotInstructionCount()` returns how many instructions the thread has retired in user mode since the first call, by the counter of the hardware,
+  and null where that cannot be read. The difference of two calls around many turns of a loop, by the number of turns, is what a turn takes: no clock, the same at any load.
 - `aotBuiltinEntries()` returns the built-ins table as Bun's `test/aot/builtins` reads it.
 - `storeInSlotWithoutTest(object, name, value)` writes the value into the slot of that field of a compiled object and tests no type: the
   writer that nobody listed, for the tests in `validation/`. It throws where the object has no such slot or the form of the slot cannot
@@ -569,6 +573,11 @@ The shell has eleven functions for compiled code:
   that lock again and again. It returns what the function returns.
 
 The shell has no host: a program that calls a built-in of Bun's compiles, and the call throws when it runs.
+
+A count that only a run can tell (a cache, a table or a Structure that fills while the program runs) is an `.ir` file too: `run-in-shell --aotCountsPath=/dev/null`.
+The program reads free names (`rounds`, `report`), the statements define them, and `report` prints the answer and what was counted since the start or since a mark.
+Print a class (`seldom`, `nothing`), with a bound that follows from the program's own numbers, and no reading: where things lie in the tables follows from addresses.
+`runtime/property-caches/stores-that-replace-a-property-of-a-class-object.ir` is a model, and Bun's `test/aot/engine-tests/runtime` has the others.
 
 The run time refuses what the flow analysis did not see, in the shell too. With an image that admits no unknown JavaScript, `eval`,
 `Function` and the other function constructors throw an EvalError in every realm, also when the script of the shell calls them

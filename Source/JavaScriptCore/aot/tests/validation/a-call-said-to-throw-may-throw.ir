@@ -1,0 +1,22 @@
+# function joins(value) { return value + "" }  register(joins)
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = joins => { try { joins(Symbol()); } catch (error) { print("caught " + error.name); } };
+# OPTIONS: validate
+# CHECK-NOT: AOT validation
+# CHECK: caught TypeError
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="joins" parameters=[{type=string|symbol}] results=[{type=anything}] {
+    v1 = String string=""
+    v2 = Add v0, v1
+    Return v2
+}

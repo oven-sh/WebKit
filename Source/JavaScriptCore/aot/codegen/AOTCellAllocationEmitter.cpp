@@ -142,13 +142,20 @@ void CellAllocationEmitter::storeHeader(CellPointer cell, Integer header)
     m_out.store64(header.value(), cell.value(), m_heaps.JSCell_header);
 }
 
-CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicBlock slowPath)
+CellPointer CellAllocationEmitter::allocateCellWithHeader(InlineAllocation kind, LBasicBlock slowPath)
 {
     const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::AllocatorState);
     ptrdiff_t offsetOfData = AOT_INSTANCE_OFFSET(allocation.inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData);
     CellPointer result = allocateHeapCell(Pointer(m_out.loadPtr(instanceField(heap, offsetOfData + OBJECT_OFFSETOF(InlineAllocationData, allocator)))), slowPath);
     CodeGenerator::InitializationScope scope(generator());
     storeHeader(result, Integer(m_out.load64(instanceField(heap, offsetOfData + OBJECT_OFFSETOF(InlineAllocationData, header)))));
+    return result;
+}
+
+CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicBlock slowPath)
+{
+    CellPointer result = allocateCellWithHeader(kind, slowPath);
+    CodeGenerator::InitializationScope scope(generator());
     m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
     return result;
 }

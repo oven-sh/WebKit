@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLayoutData.h"
 #include "AOTRuntimeRecords.h"
 #include <array>
 #include <type_traits>
@@ -239,6 +240,7 @@ struct PropertyCacheWords {
     const void* lookupOfArrays;
     const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
+    const FieldExit* fieldExits;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;
 #endif

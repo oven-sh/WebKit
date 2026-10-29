@@ -86,12 +86,20 @@ struct ReceiverParameter {
     uint32_t stores { 0 };
 };
 
+// A parameter under which objects are read: `events[type]`.
+struct KeyParameter {
+    uint32_t entryParameter { 0 };
+    uint32_t accesses { 0 };
+};
+
 struct InliningSummary {
     bool canInlineWholeBody() const { return barrier == InlineBarrier::None && blocksBoundToFrame.isEmpty(); }
     bool canInlineHead() const { return barrier == InlineBarrier::None && !headBlocks.isEmpty(); }
 
     InlineBarrier barrier { InlineBarrier::Unknown };
     uint32_t codeBytes { 0 };
+    // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
+    uint32_t likelyCodeBytes { 0 };
     uint32_t headBytes { 0 };
     // The generic version of a function is entered where one of several tests of the parameters fails, so no single test owns its bytes. They go where every one of the tests is decided.
     uint32_t bytesOnlyIfSomeTestFails { 0 };
@@ -106,6 +114,7 @@ struct InliningSummary {
     Vector<BytesInRange, 0> partsOfBytesOnlyIfSomeTestFails;
     Vector<SpreadOfParameter, 0> spreadsOfParameters;
     Vector<ReceiverParameter, 1> receiverParameters;
+    Vector<KeyParameter, 1> keyParameters;
     bool neverReturns { false };
     bool hasCycle { false };
     bool hasBareReturn { false };

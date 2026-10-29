@@ -256,7 +256,7 @@ def declaration_of(tokens, start, end, has_body, scope, is_in_unnamed_namespace)
             is_static = True
         elif text == "extern":
             is_extern = True
-        elif text in ("constexpr", "const", "constinit"):
+        elif text in ("constexpr", "const"):
             is_constant = True
         elif text == "operator":
             return None
@@ -298,7 +298,7 @@ def main():
     parser.add_argument("--generated")
     arguments = parser.parse_args()
 
-    sources = [line.split()[0] for name in ("Sources.txt", "SourcesCompiledForSize.txt") for line in read(os.path.join(JAVASCRIPTCORE, "aot", name)).splitlines() if line.strip()]
+    sources = [line.split()[0] for name in ("Sources.txt", "SourcesCompiledForSize.txt", "SourcesCompiledForMinimumSize.txt") for line in read(os.path.join(JAVASCRIPTCORE, "aot", name)).splitlines() if line.strip()]
     headers = []
     for folder, folders, names in os.walk(os.path.join(JAVASCRIPTCORE, "aot")):
         folders[:] = sorted(name for name in folders if name not in ("tests", "generator", "node_modules"))
@@ -312,7 +312,7 @@ def main():
     own = collections.defaultdict(list)
     shared = collections.defaultdict(list)
     macros = collections.defaultdict(list)
-    problems = [f"{path}: listed twice in aot/Sources.txt and aot/SourcesCompiledForSize.txt" for path in twice]
+    problems = [f"{path}: listed twice in the lists of sources of aot/" for path in twice]
     for path in sources + headers:
         declarations, left_defined = declarations_in(read(os.path.join(JAVASCRIPTCORE, path)))
         is_source = path.endswith(".cpp")

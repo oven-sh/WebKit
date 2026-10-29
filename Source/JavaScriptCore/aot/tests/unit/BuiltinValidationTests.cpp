@@ -189,17 +189,17 @@ static void testEntryThatIsAnInstanceOfAnotherClassIsReported()
 
 static void runWithOptionalGlobals(ASCIILiteral testName, void (*body)())
 {
-    if (Options::useSharedArrayBuffer() && Options::useShadowRealm()) {
+    if (Options::useSharedArrayBuffer()) {
         body();
         return;
     }
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s, "--useShadowRealm=1"_s };
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), "--useSharedArrayBuffer=1"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (result.exitedWith(0))
         return;
     dataLogLn(result.output);
-    dataLogLn("The process whose realms have SharedArrayBuffer and ShadowRealm ", result.description());
+    dataLogLn("The process whose realms have SharedArrayBuffer ", result.description());
     failNativeTest(__FILE__, __LINE__, testName.characters());
 }
 

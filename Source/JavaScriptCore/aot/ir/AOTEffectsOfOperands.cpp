@@ -166,7 +166,8 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload& overload, BuiltinOpera
     bool functionsAreConvertedUnderNamesOnly = parameter->roles.contains(BuiltinOperandRole::FunctionsAreConvertedUnderNamesOnly);
     bool isDescribedWhenRefused = parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused);
     bool onlyBoxedPrimitivesAreConverted = parameter->roles.contains(BuiltinOperandRole::OnlyBoxedPrimitivesAreConverted);
-    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted, onlyBoxedPrimitivesAreConverted };
+    bool contentsOfContentsAreOnlyStored = parameter->roles.contains(BuiltinOperandRole::ContentsOfContentsAreOnlyStored);
+    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted, onlyBoxedPrimitivesAreConverted, contentsOfContentsAreOnlyStored };
 }
 
 const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable& table)
@@ -547,6 +548,7 @@ public:
 
 private:
     void reach(const Type&);
+    bool onlyStoresWhatVisitedObjectsHold() const { return m_behavior.contentsOfContentsAreOnlyStored && !m_visitsStart; }
     void visit(const UnionPart&);
     void visitLayouts(const Type& layouts);
     void visitInstances(const Type& instances);
@@ -561,7 +563,10 @@ private:
     MembersBeingDescribed& m_membersBeingDescribed;
     EffectDescription& m_description;
     Vector<const Type*, 8> m_reached;
+    Vector<bool, 8> m_isStart;
     size_t m_numberOfVisitedTypes { 0 };
+    bool m_visitsStart { true };
+    bool m_isAtStart { false };
 };
 
 void ReachableValueWalk::run(const Type& start)
@@ -581,8 +586,11 @@ void ReachableValueWalk::run(const Type& start)
         return;
     }
 
+    m_isAtStart = true;
     reach(start);
+    m_isAtStart = false;
     while (m_numberOfVisitedTypes < m_reached.size()) {
+        m_visitsStart = m_isStart[m_numberOfVisitedTypes];
         for (const UnionPart& part : unionPartsOf(*m_reached[m_numberOfVisitedTypes++]))
             visit(part);
     }
@@ -597,6 +605,7 @@ void ReachableValueWalk::reach(const Type& type)
         return;
     }
     m_reached.append(&type);
+    m_isStart.append(m_isAtStart);
 }
 
 void ReachableValueWalk::visit(const UnionPart& part)
@@ -644,6 +653,8 @@ void ReachableValueWalk::visitLayouts(const Type& layouts)
         m_description.addUnknownCode();
         return;
     }
+    if (onlyStoresWhatVisitedObjectsHold())
+        return;
     m_description.followsFieldsOfOperands = true;
     for (const Field* field : *fields)
         reach(m_program.at(*field->declared.established()));
@@ -659,6 +670,8 @@ void ReachableValueWalk::visitInstances(const Type& instances)
         return;
     }
     runProtocolsOn(instances, m_behavior.protocols - stepsOnProperties);
+    if (onlyStoresWhatVisitedObjectsHold())
+        return;
 
     bool isProven = forEachProvenContents(m_program, instances, [&](const Type& contents) {
         reach(contents);
@@ -791,6 +804,17 @@ Effects effectsOfCreatingPrototypeProperty(const Program& program, const Type& f
     return effects;
 }
 
+// The guards of a class speak of every instance, so the first instance with another prototype ends them.
+Effects effectsOfAllocatingWithPrototype(const Program& program, LayoutID allocated)
+{
+    Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
+    if (program.prototypeMaySelectOtherClass(allocated))
+        effects.writes.add(AbstractHeap::MemberGuards);
+    else
+        effects.writes.add(program, MemoryLocation::memberGuards(declaredLayoutOf(program, allocated)));
+    return effects;
+}
+
 void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, EffectDescription& description)
 {
     MembersBeingDescribed membersBeingDescribed;
@@ -808,12 +832,13 @@ bool OperandBehavior::saysTheSameFromTheSameLists(const OperandBehavior& other) 
         && retainedIn == other.retainedIn && retainingOperand == other.retainingOperand && declarer == other.declarer && namedMemberUse == other.namedMemberUse
         && resultOfCallEscapes == other.resultOfCallEscapes && membersAreOfObjectsOnly == other.membersAreOfObjectsOnly
         && functionsAreConvertedUnderNamesOnly == other.functionsAreConvertedUnderNamesOnly && isSameList(convertedMembers, other.convertedMembers)
-        && isDescribedWhenRefused == other.isDescribedWhenRefused && accepted == other.accepted && onlyBoxedPrimitivesAreConverted == other.onlyBoxedPrimitivesAreConverted;
+        && isDescribedWhenRefused == other.isDescribedWhenRefused && accepted == other.accepted && onlyBoxedPrimitivesAreConverted == other.onlyBoxedPrimitivesAreConverted
+        && contentsOfContentsAreOnlyStored == other.contentsOfContentsAreOnlyStored;
 }
 
 static uint32_t hashOf(TypeID operand, const OperandBehavior& behavior, const EffectDescription& description)
 {
-    uint64_t flags = static_cast<uint64_t>(behavior.retainedIn) << 16 | static_cast<uint64_t>(behavior.declarer) << 8 | static_cast<uint64_t>(behavior.namedMemberUse) << 7
+    uint64_t flags = static_cast<uint64_t>(behavior.retainedIn) << 16 | static_cast<uint64_t>(behavior.contentsOfContentsAreOnlyStored) << 9 | static_cast<uint64_t>(behavior.declarer) << 8 | static_cast<uint64_t>(behavior.namedMemberUse) << 7
         | static_cast<uint64_t>(behavior.resultOfCallEscapes) << 6 | static_cast<uint64_t>(behavior.membersAreOfObjectsOnly) << 5 | static_cast<uint64_t>(behavior.functionsAreConvertedUnderNamesOnly) << 4
         | static_cast<uint64_t>(behavior.isDescribedWhenRefused) << 3 | static_cast<uint64_t>(behavior.onlyBoxedPrimitivesAreConverted) << 2
         | static_cast<uint64_t>(description.callsUnknownCode) << 1 | static_cast<uint64_t>(description.leavesOutOwnEffects);
@@ -1441,8 +1466,10 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
     if (value.opcode == Opcode::TypedArrayRange)
         return ResultFreshness::Fresh;
 
+    // A guard holds no value.
+    constexpr AbstractHeapSet heapsThatCannotHoldResult = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
     Effects effects = effectsOfValue().onAnyEdge();
-    if (!effects.writes.containsOnly(bookkeepingHeaps) || effects.mayCallUnknownCode)
+    if (!effects.writes.containsOnly(heapsThatCannotHoldResult) || effects.mayCallUnknownCode)
         return ResultFreshness::Unknown;
     return ResultFreshness::Fresh;
 }

@@ -4,8 +4,8 @@
 # function run(turns) { let seen = ""; for (let at = 0; at < turns; at++) { seen += "," + held; seen += proxy.any; seen += "/" + held; } return seen; }
 # globalThis.answer = run(+input);
 #
-# The read of `any` is written out once: a test of the receiver for a proxy, the trap behind it, and on the side where the test fails the read as it is written. That read has the same receiver and the same place in the
-# program, and the rounds come by it again and again: it stays as it is. The loop stands in the function twice, so there are two tests.
+# The receiver is that proxy for sure. The read of `any` is written out once: tests of what the proxy holds, the trap behind them, and on the side where a test fails the read as it is written. That read has the same receiver and the same place in the
+# program, and the rounds come by it again and again: it stays as it is.
 # FORM: AsRead
 # RUN: pipeline FinishBirths
 
@@ -47,8 +47,9 @@ function f1 name="poke" module=m0 position=16 flags=[HasExplicitName] length=1 t
     Return v4
 }
 # CHECK-LABEL: function f2 name="run"
-# CHECK-COUNT-2: testedType=Proxy
 # CHECK-NOT: testedType=Proxy
+# CHECK: = PropGet {{*}} key="any"
+# CHECK-NOT: key="any"
 # CHECK-LABEL: function f3 name="get"
 function f2 name="run" module=m0 position=121 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

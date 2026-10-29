@@ -61,6 +61,11 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
             }
         }
     }
+    // The place of a comparison that was decided is a user of what it compared.
+    m_proc.movedLoadLog().forEachOperandOfDecidedComparison([&](Value* value) {
+        if (m_declaredBlocks.contains(value->owner))
+            valuesToDemote.add(value);
+    });
     if (!valuesToDemote.isEmpty()) {
         demoteValues(m_proc, valuesToDemote);
         m_didChange = true;
@@ -135,6 +140,19 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     return copies;
 }
 
+bool RegionCloner::valuesStayInDeclaredBlocks() const
+{
+    for (BasicBlock* block : m_proc) {
+        for (Value* value : *block) {
+            for (Value* child : value->children()) {
+                if (child->owner != block && m_declaredBlocks.contains(child->owner))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool RegionCloner::finish()
 {
     RELEASE_ASSERT(m_step != Step::Finished);
@@ -143,6 +161,7 @@ bool RegionCloner::finish()
     if (!m_didChange)
         return false;
 
+    RELEASE_ASSERT(valuesStayInDeclaredBlocks());
     m_proc.resetReachability();
     m_proc.invalidateCFG();
     return true;

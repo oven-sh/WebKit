@@ -13,6 +13,7 @@
 #include "AOTImageLoading.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTPhaseTimes.h"
 #include "AOTVector.h"
 #include "AbstractModuleRecord.h"
 #include "ConsoleClient.h"
@@ -63,6 +64,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionRunCompiledEntryPoint);
 static JSC_DECLARE_HOST_FUNCTION(functionReportRejectedEntryPoint);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTRuntimeCounters);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTInstructionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTBuiltinEntries);
 static JSC_DECLARE_HOST_FUNCTION(functionRequire);
 static JSC_DECLARE_HOST_FUNCTION(functionSetRequireCacheEntry);
@@ -80,12 +82,13 @@ static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 14> functionNames {
+static constexpr std::array<ASCIILiteral, 15> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
     "aotOperationCount"_s,
     "aotRuntimeCounters"_s,
+    "aotInstructionCount"_s,
     "aotBuiltinEntries"_s,
     "storeInSlotWithoutTest"_s,
     "lockCell"_s,
@@ -137,7 +140,6 @@ void enableGlobalsOfBuiltinTable()
     if (!Options::aotImagePath())
         return;
     Options::useSharedArrayBuffer() = true;
-    Options::useShadowRealm() = true;
     Options::useTemporal() = true;
     Options::useExplicitResourceManagement() = true;
 }
@@ -252,6 +254,12 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRuntimeCounters, (JSGlobalObject* globalObje
     StringPrintStream out;
     dumpCounts(vm, out);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, out.toString())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTInstructionCount, (JSGlobalObject*, CallFrame*))
+{
+    std::optional<uint64_t> count = InstructionCounts::ofCurrentThread();
+    return JSValue::encode(count ? jsNumber(static_cast<double>(*count)) : jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionAOTBuiltinEntries, (JSGlobalObject* globalObject, CallFrame*))
@@ -432,6 +440,7 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionOverrideRequire, 1 },
         { functionAOTOperationCount, 1 },
         { functionAOTRuntimeCounters, 0 },
+        { functionAOTInstructionCount, 0 },
         { functionAOTBuiltinEntries, 0 },
         { functionStoreInSlotWithoutTest, 3 },
         { functionLockCell, 1 },

@@ -98,12 +98,13 @@ class DependencyPool {
   readonly #numbers = new Map<string, number>();
   readonly #elements: string[] = [];
 
-  add(loads: string, calls: string, callsForTexts: string, implementedBy: string): number {
+  add(loads: string, calls: string, callsForTexts: string, implementedBy: string, guessed: string): number {
     const element = formatStruct("Dependencies", [
       `loads: ${loads}`,
       `calls: ${calls}`,
       `calls_for_texts: ${callsForTexts}`,
       `implemented_by: ${implementedBy}`,
+      `guessed: ${guessed}`,
     ]);
     let number = this.#numbers.get(element);
     if (number === undefined) {
@@ -196,7 +197,7 @@ function formatCallsForTexts(listed: ReadonlyMap<string, CallsForTexts>, context
 }
 
 function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
-  const { loads, calls, callsForTexts, implementedBy } = context.closure.dependenciesOf(builtin);
+  const { loads, calls, callsForTexts, implementedBy, certain } = context.closure.dependenciesOf(builtin);
   return formatStruct("BuiltinEntry", [
     `kind: BuiltinKind::${builtin.kind}`,
     `origin: Origin::${builtin.origin}`,
@@ -204,6 +205,7 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
     `mutability: Mutability::${builtin.mutability}`,
     `platforms: ${formatPlatforms(builtin.platforms)}`,
     `flags: ${formatBits("BuiltinFlags", builtinFlags, builtin.flags)}`,
+    `is_added_at_first_read: ${builtin.isAddedAtFirstRead}`,
     `holder: ${formatOption(builtin.holder, formatBuiltinId)}`,
     `name: ${formatBuiltinName(builtin.name.number)}`,
     `prototype: ${formatPrototype(builtin.prototype)}`,
@@ -214,9 +216,10 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
     `member_count: ${builtin.members.length}`,
     `dependencies: ${context.dependencies.add(
       context.moduleLoadLists.add(formatModuleLoads(loads)),
-      context.functionLists.add(formatFunctions(calls)),
+      context.functionLists.add(formatFunctions(calls.intersection(certain))),
       context.callsForTextsLists.add(formatCallsForTexts(callsForTexts, context)),
-      context.functionLists.add(formatFunctions(implementedBy)),
+      context.functionLists.add(formatFunctions(implementedBy.intersection(certain))),
+      context.functionLists.add(formatFunctions(calls.union(implementedBy).difference(certain))),
     )}`,
   ]);
 }
@@ -394,13 +397,23 @@ function formatStartupLoad({ module, exports }: ModelStartup["loads"][number]): 
   ]);
 }
 
-function emitStartup({ modules, loads, functionsCalledWithLoads, moduleLoaderFunctions }: ModelStartup): string {
+function emitStartup({
+  modules,
+  loads,
+  functionsCalledWithLoads,
+  namesOfMethodsCallingLoads,
+  moduleLoaderFunctions,
+}: ModelStartup): string {
   return [
     emitSlice("pub static STARTUP_MODULES: &[RuntimeModule]", sortModules(modules).map(formatModule)),
     emitSlice("pub static STARTUP_LOADS: &[StartupLoad]", loads.map(formatStartupLoad)),
     emitSlice(
       "pub static STARTUP_FUNCTIONS: &[RuntimeFunction]",
       formatFunctions(functionsCalledWithLoads.map(called => called.function)),
+    ),
+    emitSlice(
+      "pub static NAMES_OF_METHODS_CALLING_STARTUP_LOADS: &[BuiltinName]",
+      namesOfMethodsCallingLoads.map(name => formatBuiltinName(name.number)),
     ),
     emitSlice("pub static MODULE_LOADER_FUNCTIONS: &[RuntimeFunction]", formatFunctions(moduleLoaderFunctions)),
   ].join("");
@@ -453,6 +466,14 @@ function emitRemovableCalls(model: TableModel): string {
   ].join("");
 }
 
+function emitFunctionsForAnyHostObject(model: TableModel): string {
+  const { calls, implementedBy } = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  return emitSlice(
+    "pub static FUNCTIONS_FOR_ANY_HOST_OBJECT: &[RuntimeFunction]",
+    formatFunctions(calls.union(implementedBy)),
+  );
+}
+
 export function emitRustTable(model: TableModel): string {
   return [
     fileHeader,
@@ -469,6 +490,7 @@ export function emitRustTable(model: TableModel): string {
         model.functions.filter(({ implements: implemented }) => implemented.some(({ kind }) => kind === "Accessor")),
       ),
     ),
+    emitFunctionsForAnyHostObject(model),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
     emitRemovableCalls(model),
   ].join("");

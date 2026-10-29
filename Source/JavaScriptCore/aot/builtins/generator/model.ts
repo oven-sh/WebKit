@@ -310,6 +310,8 @@ export interface ModelResult {
   iteratedOperand: ModelOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: ModelOperand | null;
+  testedOperand: ModelOperand | null;
+  testedType: ModelType | null;
   properties: readonly ModelResultProperty[];
 }
 
@@ -599,6 +601,7 @@ export interface ModelClass {
   namesDefinedOnNewInstances: readonly ModelName[] | null;
   typesOfNamesDefinedOnNewInstances: readonly ModelResultProperty[];
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
+  namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;

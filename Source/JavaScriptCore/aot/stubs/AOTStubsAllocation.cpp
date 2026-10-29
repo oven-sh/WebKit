@@ -235,14 +235,20 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     const GPRReg instance = record;
     const GPRReg cellAtBirth = allocator;
     const GPRReg offset = scratch;
+    JumpList isNotAtFirstPlace;
     JumpList isNotRemembered;
     JumpList hasNoRoom;
     static_assert(sizeof(InstanceOfClassBelow) == 1 << shiftOfPrototypeForInstanceOfClassBelow);
+    constexpr int32_t bitsOfPlace = (numberOfInstancesOfClassesBelow - 1) << shiftOfPrototypeForInstanceOfClassBelow;
+    auto branchIfNotAtPlace = [&](JumpList& isElsewhere) {
+        jit.and32(TrustedImm32(bitsOfPlace), instance);
+        jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesOfClassesBelow)), instance);
+        isElsewhere.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, prototype)), prototype));
+        isElsewhere.append(jit.branch32(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, allocation)), allocation));
+    };
     jit.move(prototype, instance);
-    jit.and32(TrustedImm32((numberOfInstancesOfClassesBelow - 1) << shiftOfPrototypeForInstanceOfClassBelow), instance);
-    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesOfClassesBelow)), instance);
-    isNotRemembered.append(jit.branchPtr(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, prototype)), prototype));
-    isNotRemembered.append(jit.branch32(CCallHelpers::NotEqual, Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, allocation)), allocation));
+    branchIfNotAtPlace(isNotAtFirstPlace);
+    Label isRemembered = jit.label();
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(Allocator) && MarkedSpace::sizeStep == copyChunkBytes);
     jit.load32(Address(instance, OBJECT_OFFSETOF(InstanceOfClassBelow, offsetOfAllocator)), offset);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
@@ -272,6 +278,15 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     jit.move(TrustedImm32(0), record);
     jit.returnToCaller();
 
+    // secondPlaceOfInstanceOfClassBelow(), in bytes.
+    isNotAtFirstPlace.link(&jit);
+    jit.move(prototype, instance);
+    jit.urshift32(TrustedImm32(shiftOfPrototypeForInstanceOfClassBelow), instance);
+    jit.or32(TrustedImm32(1 << shiftOfPrototypeForInstanceOfClassBelow), instance);
+    jit.xor32(prototype, instance);
+    branchIfNotAtPlace(isNotRemembered);
+    jit.jump().linkTo(isRemembered, &jit);
+
     // What is saved around the operation comes back, the second result with it.
     // On ARM64 the first result and the first argument are one register: what is read while the arguments are laid out is in neither.
     const GPRReg setsPrototype = scratch;
@@ -279,9 +294,10 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     RELEASE_ASSERT(allocation == gprOf(StubRegister::T9) && setsPrototype == gprOf(StubRegister::T13));
     emitLateRefill(jit, refill, hasNoRoom);
     hasNoRoom.link(&jit);
-    jit.move(prototype, allocation);
-    jit.urshift64(TrustedImm32(shiftOfPrototypeForInstanceOfClassBelow), allocation);
-    jit.and32(TrustedImm32(numberOfInstancesOfClassesBelow - 1), allocation);
+    jit.move(instance, allocation);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesOfClassesBelow)), scratch);
+    jit.subPtr(scratch, allocation);
+    jit.urshift32(TrustedImm32(shiftOfPrototypeForInstanceOfClassBelow), allocation);
     jit.or32(TrustedImm32(static_cast<int32_t>(allocatesInstanceOfClassBelow)), allocation);
     jit.move(TrustedImm32(0), record);
     allocatesSlowly.link(&jit);

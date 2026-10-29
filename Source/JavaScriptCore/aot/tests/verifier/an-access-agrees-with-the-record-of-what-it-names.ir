@@ -1,0 +1,56 @@
+# The records say of a variable, and of a field of an environment, that nothing reads it or that nothing stores to it, and of a layout that nothing allocates it. Later passes take them at their word:
+# the stores of what nothing reads go, and what nothing stores to gets no room. So a pass that adds a read, a store or an allocation changes the record with it.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidVariable 2
+# DIAGNOSTIC: InvalidEnvironmentUse 2
+# DIAGNOSTIC: InvalidLayout 1
+
+module m0 path="main" displayPath="main" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{declared={type=number} flow={location={writers=AllKnown stores=AtMostOnce}}}, {declared={type=number} flow={location={writers=AllKnown stores=AtMostOnce reads=NeverRead}}}, {declared={type=number|absent} flow={location={writers=AllKnown stores=Never}}}]
+layout L1 kind=Record fields=[]
+layout L2 kind=Record fields=[] flow={allocation=NeverAllocated}
+variable g0 name="readAndStored" module=m0 declared={type=number} flow={writers=AllKnown stores=AtMostOnce}
+variable g1 name="saidToBeReadByNobody" module=m0 declared={type=number} flow={writers=AllKnown stores=AtMostOnce reads=NeverRead}
+variable g2 name="saidToBeStoredByNobody" module=m0 declared={type=number|absent} flow={writers=AllKnown stores=Never}
+variable g3 name="storedByWhoeverIsNotKnown" module=m0 declared={type=number|absent} flow={stores=Never}
+function f0 name="main" kind=Module results=[{type=number}] {
+    v0 = Double number=1.5
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g3
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g2
+    v6 = NewObject layout=L1 fields=[]
+    Return v4
+}
+function f1 name="readsWhatNobodyReads" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}
+function f2 name="storesToWhatNobodyStoresTo" results=[{type=undefined}] {
+    v0 = Double number=2.5
+    PutModuleVariable v0 variable=g2
+    v2 = Undefined
+    Return v2
+}
+function f3 name="readsTheFieldThatNobodyReads" parameters=[{type=env L0}] results=[{type=number}] {
+  b0(v0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    Return v2
+}
+function f4 name="storesToTheFieldThatNobodyStoresTo" parameters=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0):
+    v1 = Double number=3.5
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    PutEnvironmentField v0, v1 layout=L0 field=2
+    v4 = Undefined
+    Return v4
+}
+function f5 name="allocatesWhatNobodyAllocates" results=[{type=undefined}] {
+    v0 = NewObject layout=L2 fields=[]
+    v1 = Undefined
+    Return v1
+}

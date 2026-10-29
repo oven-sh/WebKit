@@ -73,6 +73,7 @@ public:
             m_identifiers[i].number = i;
             m_identifierOffsets[i] = i * sizeof(LazyStringHeader);
         }
+        instance.image.stringRecords = m_stringRecords.data();
         instance.image.lazyStringHeaderOffsets = m_identifierOffsets.data();
         instance.lazyStrings.headers = reinterpret_cast<uint8_t*>(m_identifiers.data());
         instance.lazyStrings.capacity = sizeof(m_identifiers);
@@ -81,6 +82,20 @@ public:
     }
 
     UniquedStringImpl* uid() { return reinterpret_cast<UniquedStringImpl*>(&m_identifiers[name]); }
+
+    // The next header that is made takes the place that the name had.
+    void forgetHeader(uint16_t number, ImageStringRecord record, const uint8_t* text)
+    {
+        m_identifiers[number] = { };
+        m_identifierOffsets[number] = 0;
+        m_stringRecords[number] = record;
+        arena().end = number * sizeof(LazyStringHeader);
+        runner.instance().image.text = text;
+    }
+
+    LazyStringHeaderArena& arena() { return reinterpret_cast<LazyStringHeaderArena&>(m_identifiers[0]); }
+    LazyStringHeader& header(uint16_t number) { return m_identifiers[number]; }
+    uint32_t offsetOfHeader(uint16_t number) const { return m_identifierOffsets[number]; }
 #else
         for (unsigned i = 1; i < numberOfNames; ++i)
             m_identifiers[i].length = i != nameMadeAtRunTime;
@@ -151,6 +166,7 @@ private:
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::array<LazyStringHeader, numberOfNames> m_identifiers { };
     std::array<uint32_t, numberOfNames> m_identifierOffsets { };
+    std::array<ImageStringRecord, numberOfNames> m_stringRecords { };
 #else
     std::array<ImageStringHeader, numberOfNames> m_identifiers { };
 #endif
@@ -698,6 +714,36 @@ static void testNamesMadeAtRunTime()
     reads.setSymbols({ { otherNameWithSamePlace, otherUID }, { name, uid } });
     AOT_TEST_CHECK(isRead());
 }
+
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+static void testNamesFirstUsedByStub()
+{
+    constexpr uint16_t name = 5;
+    constexpr uint32_t offsetInText = 2;
+    constexpr uint32_t length = 4;
+    constexpr uint32_t hash = 0x123456;
+    static constexpr std::array<uint8_t, 8> text { '.', '.', 'l', 'a', 't', 'e', '.', '.' };
+    const ImageStringRecord record = ImageStringRecord::create(offsetInText << ImageString::lengthBits | length, hash, false, true);
+    PropertyReads reads;
+    FakeTypedObject object;
+    object.field() = bitsOf(jsNumber(7));
+    reads.file(createFieldSlot(SlotRepresentation::JSValue), reinterpret_cast<UniquedStringImpl*>(&reads.header(name)));
+
+    reads.forgetHeader(name, record, text.data());
+    StubRun run = reads.read(object.address(), name);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
+    ImageStringHeader expected = ImageStringHeader::create(std::bit_cast<uint64_t>(text.data() + offsetInText), length, hash, false, StringImpl::StringAtom);
+    AOT_TEST_CHECK(!memcmp(&reads.header(name).header, &expected, sizeof(expected)) && reads.header(name).number == name);
+    AOT_TEST_CHECK(reads.offsetOfHeader(name) == name * sizeof(LazyStringHeader));
+    AOT_TEST_CHECK(reads.arena().end == (name + 1) * sizeof(LazyStringHeader) && !reads.arena().isLocked.load());
+
+    // Another thread is making a header.
+    reads.forgetHeader(name, record, text.data());
+    reads.arena().isLocked.store(1);
+    AOT_TEST_CHECK(reads.read(object.address(), name).calledOperation);
+    AOT_TEST_CHECK(!reads.offsetOfHeader(name) && reads.arena().end == name * sizeof(LazyStringHeader) && reads.arena().isLocked.load() == 1);
+}
+#endif
 
 static void testDeferredClosures()
 {
@@ -1417,7 +1463,7 @@ static void testReadsAtSites()
     const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
     const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
     std::array<SiteCacheState, SiteCacheState::numberOfStates> states;
-    states.fill(SiteCacheState { 0, UINT8_MAX });
+    states.fill(SiteCacheState { UINT8_MAX });
     instance.propertyCaches.siteCacheStates = states.data();
 
     FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
@@ -1444,6 +1490,134 @@ static void testReadsAtSites()
     // The front table has another name in the cell: the hashed table answers.
     reads.file(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset));
     AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+}
+
+struct ObjectWithTwoValues : FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> {
+    static constexpr PropertyOffset inlineOffset = 1;
+    static constexpr PropertyOffset outOfLineOffset = firstOutOfLineOffset + 1;
+
+    ObjectWithTwoValues(uint32_t structureID, int32_t valueInCell, int32_t valueOutOfLine)
+    {
+        setHeader(structureID, FinalObjectType);
+        at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(valueInCell));
+        at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() + storage.size());
+        storage[storage.size() + Slot::wordIndexFor(outOfLineOffset)] = bitsOf(jsNumber(valueOutOfLine));
+    }
+
+    std::array<uint64_t, 4> storage { };
+};
+
+// A hit at a site, by what the slot says. A number here may fall.
+static void testHitsAtSites()
+{
+    PropertyReads reads;
+    constexpr PropertyOffset inlineOffset = ObjectWithTwoValues::inlineOffset;
+    constexpr PropertyOffset outOfLineOffset = ObjectWithTwoValues::outOfLineOffset;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    ObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    ObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
+    JSCell* holderCell = std::bit_cast<JSCell*>(holder.address());
+    auto value = [&](uint8_t flags, JSCell* holderOrNull, PropertyOffset offset) { return Slot::createInStorage(structureID, Slot::Kind::Value, flags, holderOrNull, offset); };
+
+    struct Hit {
+        ASCIILiteral what;
+        Slot slot;
+        JSValue expected;
+        uint32_t budget;
+    };
+    const Hit hits[] = {
+        { "an own value in the cell"_s, value(Slot::isOwn, nullptr, inlineOffset), jsNumber(1), 10 },
+        { "an own value in the cell that depends on other objects"_s, value(Slot::isOwn | Slot::dependsOnChain, nullptr, inlineOffset), jsNumber(1), 13 },
+        { "an own value out of line"_s, value(Slot::isOwn, nullptr, outOfLineOffset), jsNumber(2), 14 },
+        { "an own value out of line that depends on other objects"_s, value(Slot::isOwn | Slot::dependsOnChain, nullptr, outOfLineOffset), jsNumber(2), 14 },
+        { "an inherited value in the cell"_s, value(0, holderCell, inlineOffset), jsNumber(3), 14 },
+        { "an inherited value in the cell that depends on other objects"_s, value(Slot::dependsOnChain, holderCell, inlineOffset), jsNumber(3), 14 },
+        { "an inherited value out of line"_s, value(0, holderCell, outOfLineOffset), jsNumber(4), 14 },
+        { "an inherited value out of line that depends on other objects"_s, value(Slot::dependsOnChain, holderCell, outOfLineOffset), jsNumber(4), 14 },
+        { "no property"_s, Slot::createWithoutPayload(structureID, Slot::Kind::Absent, 0), jsUndefined(), 12 },
+        { "no property as long as other objects stay as they are"_s, Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain), jsUndefined(), 12 },
+        { "a constant"_s, Slot::createConstant(structureID, Slot::isOwn, jsNumber(5)), jsNumber(5), 14 },
+        { "a constant of an object above"_s, Slot::createConstant(structureID, Slot::dependsOnChain, jsNumber(5)), jsNumber(5), 14 },
+    };
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    reads.runner.setCountsInstructions(true);
+#endif
+    bool isWithinBudget = true;
+    constexpr uint32_t instructionsOfTestForCell = 2;
+    for (const Hit& hit : hits) {
+        for (StubKey stub : { getByIdAtSite(), getByIdOfObjectAtSite() }) {
+            Slot site = hit.slot;
+            StubRun run = reads.runner.run(stub, { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(hit.expected));
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+            uint32_t budget = stub == getByIdAtSite() ? hit.budget : hit.budget - instructionsOfTestForCell;
+            AOT_TEST_CHECK(run.instructionsInStubs);
+            if (*run.instructionsInStubs != budget)
+                dataLogLn("a read at a site that holds ", hit.what, ": ", *run.instructionsInStubs, " instructions, the budget is ", budget);
+            isWithinBudget &= *run.instructionsInStubs <= budget || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
+#endif
+        }
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+}
+
+// A read at a site that holds the slot of another Structure, by what the front table holds for the Structure of the receiver. A number here may fall.
+static void testSitesOfOtherStructures()
+{
+    PropertyReads reads;
+    constexpr PropertyOffset inlineOffset = ObjectWithTwoValues::inlineOffset;
+    constexpr PropertyOffset outOfLineOffset = ObjectWithTwoValues::outOfLineOffset;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<SiteCacheState, SiteCacheState::numberOfStates> states;
+    states.fill(SiteCacheState { UINT8_MAX });
+    reads.runner.instance().propertyCaches.siteCacheStates = states.data();
+    ObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
+    auto ownValue = [&](StructureID id, PropertyOffset offset) { return Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, offset); };
+
+    struct Read {
+        ASCIILiteral what;
+        Slot site;
+        Slot inFront;
+        JSValue expected;
+        bool countsMiss;
+        uint32_t budget;
+    };
+    const Read readsByFrontCell[] = {
+        { "an own value at the place that the site names"_s, ownValue(otherStructureID, inlineOffset), ownValue(structureID, inlineOffset), jsNumber(1), false, 22 },
+        { "an own value in the cell at another place"_s, ownValue(otherStructureID, inlineOffset - 1), ownValue(structureID, inlineOffset), jsNumber(1), true, 28 },
+        { "an own value in the cell, and the site one out of line"_s, ownValue(otherStructureID, outOfLineOffset), ownValue(structureID, inlineOffset), jsNumber(1), true, 28 },
+        { "an own value out of line"_s, ownValue(otherStructureID, outOfLineOffset), ownValue(structureID, outOfLineOffset), jsNumber(2), true, 39 },
+        { "no property"_s, ownValue(otherStructureID, inlineOffset), Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain), jsUndefined(), true, 26 },
+    };
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    reads.runner.setCountsInstructions(true);
+#endif
+    bool isWithinBudget = true;
+    for (const Read& read : readsByFrontCell) {
+        Slot site = read.site;
+        reads.clear();
+        reads.fileInFrontBesideOthers(read.inFront);
+        states.fill(SiteCacheState { UINT8_MAX });
+        StubRun run = reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.expected));
+        AOT_TEST_CHECK(std::ranges::count_if(states, [](const SiteCacheState& state) { return state.missesLeft != UINT8_MAX; }) == read.countsMiss);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+        AOT_TEST_CHECK(run.instructionsInStubs);
+        if (*run.instructionsInStubs != read.budget)
+            dataLogLn("a read at a site of another Structure, the front table holds ", read.what, ": ", *run.instructionsInStubs, " instructions, the budget is ", read.budget);
+        isWithinBudget &= *run.instructionsInStubs <= read.budget || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
+#endif
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+
+    // A name without a column: the site answers alike, and behind it the hashed table.
+    for (StructureID idAtSite : { structureID, otherStructureID }) {
+        Slot site = ownValue(idAtSite, inlineOffset);
+        reads.file(ownValue(structureID, outOfLineOffset));
+        StubRun run = reads.runner.run(getByIdAtSiteHashed(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(idAtSite == structureID ? 1 : 2)));
+    }
 }
 
 static void testCallsOfClosuresNotCreated()
@@ -1583,6 +1757,9 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/fields-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsOrInheritedFields> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedFields> },
         { "stubs/get-by-id/names-made-at-run-time"_s, ImageTests::whenExecutable<testNamesMadeAtRunTime> },
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        { "stubs/get-by-id/names-first-used-by-a-stub"_s, ImageTests::whenExecutable<testNamesFirstUsedByStub> },
+#endif
         { "stubs/get-by-id/deferred-closures"_s, ImageTests::whenExecutable<testDeferredClosures> },
         { "stubs/get-by-id/typed-array-lengths"_s, ImageTests::whenExecutable<testTypedArrayLengths> },
         { "stubs/get-by-id/fields-found-in-field-table"_s, ImageTests::whenExecutable<testFieldsFoundInFieldTable> },
@@ -1594,6 +1771,8 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/lookups-left-to-the-caches"_s, ImageTests::whenExecutable<testLookupsLeftToTheCaches> },
         { "stubs/get-by-id/names-outside-layout-are-absent"_s, ImageTests::whenExecutable<testNamesOutsideLayoutAreAbsent> },
         { "stubs/get-by-id/reads-at-sites"_s, ImageTests::whenExecutable<testReadsAtSites> },
+        { "stubs/get-by-id/hits-at-sites"_s, ImageTests::whenExecutable<testHitsAtSites> },
+        { "stubs/get-by-id/sites-of-other-structures"_s, ImageTests::whenExecutable<testSitesOfOtherStructures> },
         { "stubs/call-method-by-id/closures-not-created"_s, ImageTests::whenExecutable<testCallsOfClosuresNotCreated> },
         { "stubs/in-by-val/presence-from-leaf-lookup"_s, ImageTests::whenExecutable<testPresenceFromLeafLookup> },
     };

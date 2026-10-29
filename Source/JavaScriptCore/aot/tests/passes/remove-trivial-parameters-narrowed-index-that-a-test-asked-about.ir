@@ -1,0 +1,29 @@
+# An index is narrowed to one number on one edge, and a test there proves that the number lies inside the view. The read behind the join takes the index itself, and relies on the tests of both edges.
+# The parameter stays: a constant in its place would say nothing of the index
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readBehindTwoTests" parameters=[{type=Uint8Array}, {type=int[0, 2147483648]}] results=[{type=anything}] {
+    v2 = TypeTest v1 testedType=i32
+    Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v3):
+    v4 = IsInsideView v0, v3 typedArrayType=2 [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b6()
+  b2(v5):
+    Jump -> next b5(v5)
+  b3(v6):
+    v7 = IsInsideView v0, v6 typedArrayType=2 [keyIsIntegral]
+    Branch v7 -> taken b4(| 0), notTaken b6()
+  b4(v8):
+    Jump -> next b5(v8)
+  b5(v9):
+    v10 = GetTypedArrayElement v0, v1, v9 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v10
+  b6():
+    v11 = Undefined
+    Return v11
+# CHECK: b3(v6: 2147483648):
+# CHECK-NEXT: = IsInsideView v0, v6 typedArrayType=2
+}

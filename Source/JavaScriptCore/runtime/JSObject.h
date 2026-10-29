@@ -187,6 +187,10 @@ public:
 
     JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
     bool getOwnPropertySlotInline(JSGlobalObject*, PropertyName, PropertySlot&);
+    // OrdinaryGetOwnProperty on an object of any class: no override is asked, so no code of the program runs.
+    bool ordinaryGetOwnPropertySlot(JSGlobalObject*, PropertyName, PropertySlot&);
+    // Whether getDirectOffset() finds the property, or the object keeps it where its Structure does not list it.
+    bool hasDirectProperty(JSGlobalObject*, PropertyName);
 
     // The key difference between this and getOwnPropertySlot is that getOwnPropertySlot
     // currently returns incorrect results for the DOM window (with non-own properties)

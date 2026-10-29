@@ -329,14 +329,18 @@ private:
 
 } // anonymous namespace
 
-FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes)
+FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes, const JudgeOfUsesOfLibraryCode* goesOn)
 {
     RELEASE_ASSERT(&types == &program.types);
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
 
     PhaseTimes times(build, PassID::AnalyzeFlow);
-    if (build.options().admitsUnseenCode())
-        return FlowResults(createUnknownResultTables(program, build));
+    if (build.options().admitsUnseenCode()) {
+        FlowResults results(createUnknownResultTables(program, build));
+        if (goesOn)
+            (*goesOn)(reportUsesOfLibraryCode(results));
+        return results;
+    }
 
     bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
     ReportSet reports = build.options().reports;
@@ -350,6 +354,12 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
+    ValueFlowUsesOfLibraryCode usesOfLibraryCode = findUsesOfLibraryCode(inputs);
+    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span()))) {
+        build.destroyLater(WTF::move(solution));
+        return FlowResults(createUnknownResultTables(program, build));
+    }
+    times.didFinish("uses of library code"_s);
     ValueFlowLayoutsOfSites layoutsOfSites;
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
@@ -473,7 +483,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         computeOrderResults(inputs, calls, tables);
     }, TaskPriority::Background);
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
-        writesUnderNewNames = computeBuiltinResults(inputs, tables, ledgerOfBuiltinObjects);
+        writesUnderNewNames = computeBuiltinResults(inputs, WTF::move(usesOfLibraryCode), tables, ledgerOfBuiltinObjects);
         ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);
     }, TaskPriority::Background);
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {

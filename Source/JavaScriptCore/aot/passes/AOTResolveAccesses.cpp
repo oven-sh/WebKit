@@ -285,8 +285,10 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         if (!getters)
             return Effects::unknownCode();
         Effects effects = effectsOfAccessForm(program, plan.operation, stamp.key, stamp.receivers);
-        for (FunctionID getter : *getters)
-            effects.merge(effectsOfCalling({ program, context.inputs.effects }, getter).normal);
+        for (FunctionID getter : *getters) {
+            if (!context.build.isSabotaged(Sabotage::GettersInSlotsHaveNoEffects))
+                effects.merge(effectsOfCalling({ program, context.inputs.effects }, getter).normal);
+        }
         return effects;
     }
     case AccessForm::SetterInSlot:
@@ -1199,12 +1201,12 @@ static ValueID emitTestsOfObject(IRBuilder& builder, std::span<Value> tests, Val
 {
     ValueID proven = object;
     for (Value& test : tests) {
-        bool provesType = !provesForStretch(provesOf(test.opcode));
+        // A test of members of other objects has no operand.
+        bool asksObject = test.numberOfOperands() && test.operand(testedOperandIndex) == object;
+        bool provesType = asksObject && !provesForStretch(provesOf(test.opcode));
         bool provesFilledSlot = provesOf(test.opcode) == Proof::SlotFilled;
-        if (test.operand(testedOperandIndex) == object)
+        if (asksObject)
             test.setOperand(testedOperandIndex, proven);
-        else
-            provesType = false;
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(WTF::move(test)), testedOperandIndex, frequency, frequencyOfFailure);
         builder.moveToEndOf(branch.notTaken);
         builder.emitJump(whenFailed);
@@ -3952,6 +3954,33 @@ bool testsCoverConditions(std::span<const Value> tests, std::span<const MemberCo
             return test.opcode == Opcode::AreMembersUnchanged && std::ranges::contains(test.conditions(), record);
         });
     });
+}
+
+LayoutID constructorFunctionAskedAbout(const Program& program, const Value& conditionsTest)
+{
+    if (conditionsTest.opcode != Opcode::AreMembersUnchanged)
+        return { };
+    // Whoever asks for the prototype property alone is about to make an object, or looks for one that was made.
+    PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+    for (const MemberConditionRecord& condition : conditionsTest.conditions()) {
+        if (condition.kind == MemberConditionKind::MemberUnchanged && condition.side == ClassSide::Static && condition.key != prototype && program.at(condition.layout).has(LayoutFlags::IsConstructorFunction))
+            return condition.layout;
+    }
+    return { };
+}
+
+void appendStartOfMemberGuards(IRBuilder& builder, const Program& program, TypeArena& types, LayoutID constructorFunction)
+{
+    // Guards that have begun say so: the one of the property holds until the program puts another object there.
+    MemberCondition property { MemberCondition::Kind::MemberUnchanged, constructorFunction, ClassSide::Static, program.keyOf(BuiltinNames::prototype) };
+    ValueID haveBegun = builder.append(makeConditionsTest(types, { &property, 1 }));
+    IRBuilder::BranchBlocks begun = builder.emitBranch(haveBegun, builder.function().at(builder.currentBlock()).frequency, BlockFrequency::Rare);
+    builder.moveToEndOf(begun.notTaken);
+    Value begin = IRBuilder::make(Opcode::BeginMemberGuards);
+    begin.setLayout(constructorFunction);
+    builder.append(WTF::move(begin));
+    builder.emitJump(begun.taken);
+    builder.moveToEndOf(begun.taken);
 }
 
 static Type testableTypeOf(const PropertyAccessContext& context, const Type& stored, const UnionPart& part)

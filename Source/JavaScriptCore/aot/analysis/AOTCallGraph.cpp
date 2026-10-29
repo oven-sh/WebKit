@@ -305,7 +305,7 @@ static void markRecordReferences(const Program& program, Vector<uint8_t>& hasOth
     });
     forEachIndexInParallel(loops, program.variables.size(), [&](unsigned index) {
         const Variable& variable = program.variables[index];
-        if (variable.flow.reads != ReadState::NeverRead)
+        if (variable.flow.reads != ReadState::NeverRead && variable.flow.reads != ReadState::OnlyWhereDefined)
             forEachFunctionReference(variable, markReference);
     });
     forEachIndexInParallel(loops, program.modules.size(), [&](unsigned index) {

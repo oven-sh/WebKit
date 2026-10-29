@@ -1,0 +1,196 @@
+# A loop goes without its poll where few enough turns lie in front of it. Where it starts at zero or above, that it ends within so many turns of zero says so without a subtraction.
+# A window of a few elements far into a long text, list or view ends farther out than that: there, on a rare path, the two ends are held against each other, and the few turns run in
+# the same loop as they do near zero. Only a loop with many turns in front of it runs in the copy that polls, or in more than one stretch.
+#
+# function mix(offset: number, width: number): number {
+#   const from = offset & 0xffffff;
+#   const to = from + (width & 0xffffff);
+#   let hash = 17;
+#   for (let i = from; i < to; i++) hash = (Math.imul(hash, 31) + i) | 0;
+#   return hash;
+# }
+# function find(bytes: Uint8Array, offset: number, width: number): number {
+#   const from = offset & 0xffffff;
+#   const to = from + (width & 0xffffff);
+#   for (let i = from; i < to; i++) if (bytes[i] === 10) return i;
+#   return -1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = mix(input, input) + find(input, input, input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# RUN(WRITTEN): lower-to-b3 optimized f2
+
+typesite w0 module=m0 position=13 kind=Parameter
+typesite w1 module=m0 position=29 kind=Parameter
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=248 kind=Parameter
+typesite w4 module=m0 position=267 kind=Parameter
+typesite w5 module=m0 position=283 kind=Parameter
+typesite w6 module=m0 position=234 kind=Result
+typesite w7 module=m0 position=517 kind=CallResult
+typesite w8 module=m0 position=537 kind=CallResult
+typesite w9 module=m0 position=62 kind=Variable
+typesite w10 module=m0 position=96 kind=Variable
+typesite w11 module=m0 position=134 kind=Variable
+typesite w12 module=m0 position=156 kind=Variable
+typesite w13 module=m0 position=187 kind=CallResult
+typesite w14 module=m0 position=316 kind=Variable
+typesite w15 module=m0 position=350 kind=Variable
+typesite w16 module=m0 position=393 kind=Variable
+layout L0 fields=[{key="answer" declared={type=anything}}] flags=[IsNeverAllocated]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="globalThis" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Call v1, -, v10, v13 calleeName="mix"
+    v15 = Convert v14 declared={type=number site=w7}
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Convert v17 declared={type=undefined|null|Uint8Array flags=[IsExpected]}
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="input" [isFreeName]
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="input" [isFreeName]
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = Call v3, -, v18, v21, v24 calleeName="find"
+    v26 = Convert v25 declared={type=number site=w8}
+    v27 = Add v15, v26
+    PropSet v7, v27 key="answer"
+    v29 = Undefined
+    Return v29
+}
+function f1 name="mix" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer integer=16777215
+    v3 = BitAnd v0, v2
+    v4 = Convert v3 declared={type=number site=w9}
+    v5 = Integer integer=16777215
+    v6 = BitAnd v1, v5
+    v7 = Add v4, v6
+    v8 = Convert v7 declared={type=number site=w10}
+    v9 = Integer integer=17
+    v10 = Convert v9 declared={type=number site=w11}
+    Jump -> next b2(v10, v4)
+  b2(v11: number, v12: number):
+    LoopHint
+    v14 = Less v12, v8
+    Branch v14 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v15, v16):
+    Jump -> next b4()
+  b4():
+    v17 = Builtin builtin=Math
+    v18 = Builtin builtin=MathImul
+    v19 = Integer integer=31
+    v20 = Call v18, v17, v11, v19 calleeName="Math.imul"
+    v21 = Convert v20 declared={type=number site=w13} illTypedCause=DeclarationWithoutBody
+    v22 = Add v21, v15
+    v23 = Integer
+    v24 = BitOr v22, v23
+    v25 = Convert v24 declared={type=number site=w11}
+    Jump -> next b5()
+  b5():
+    v26 = Increment v15
+    v27 = Convert v26 declared={type=number site=w12}
+    Jump -> next b2(v25, v27)
+  b6(v28, v29):
+    Jump -> next b7()
+  b7():
+    v30 = Convert v11 declared={type=number site=w2}
+    Return v30
+}
+function f2 name="find" module=m0 position=234 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w4}, {type=number site=w5}] results=[{type=number site=w6}] {
+  b0(v0: undefined|null|Uint8Array, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer integer=16777215
+    v4 = BitAnd v1, v3
+    v5 = Convert v4 declared={type=number site=w14}
+    v6 = Integer integer=16777215
+    v7 = BitAnd v2, v6
+    v8 = Add v5, v7
+    v9 = Convert v8 declared={type=number site=w15}
+    Jump -> next b2(v5)
+  b2(v10: number):
+    LoopHint
+    v12 = Less v10, v9
+    Branch v12 -> taken b3(| 0, 1), notTaken b8(| 0, 1)
+  b3(v13, v14):
+    Jump -> next b4()
+  b4():
+    v15 = ElemGet v0, v13
+    v16 = Integer integer=10
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b5(), notTaken b6()
+  b5():
+    v18 = Convert v13 declared={type=number site=w6}
+    Return v18
+  b6():
+    Jump -> next b7()
+  b7():
+    v19 = Increment v13
+    v20 = Convert v19 declared={type=number site=w16}
+    Jump -> next b2(v20)
+  b8(v21, v22):
+    Jump -> next b9()
+  b9():
+    v23 = Integer integer=-1
+    v24 = Convert v23 declared={type=number site=w6}
+    Return v24
+}
+entry module=m0
+
+# `mix` walks nothing, so its turns are not written out: there is the loop, and a copy of it that polls.
+# CHECK-LABEL: name="mix" role=Source
+# CHECK: Int32 b@[[endsNear]] = BelowEqual(b@{{*}}, $1048576(
+# CHECK: Branch(b@[[endsNear]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[near]], Else:Rare:#[[far]]
+# CHECK: BB#[[near]]:
+# CHECK: Successors: #[[loop]]
+# CHECK-NOT: isLoopPoll
+# CHECK: BB#[[far]]:
+# CHECK: Int32 b@[[isShort]] = BelowEqual(b@{{*}}, $1048576(
+# CHECK: Branch(b@[[isShort]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[short]], Else:Rare:#[[long]]
+# CHECK: BB#[[short]]:
+# CHECK: Successors: #[[loop]]
+# CHECK: BB#[[long]]:
+# CHECK: isLoopPoll
+# CHECK-LABEL: end of function
+
+# The turns of `find` are written out eight times and run in stretches. A stretch that holds all the turns ends at the far bound, seven short of the bound.
+# WRITTEN-LABEL: name="find" role=Source
+# WRITTEN: Int32 b@[[farBound]] = Add(b@{{*}}, $-7(
+# WRITTEN: Int32 b@[[endsFar]] = Above(b@[[farBound]], $1048576(
+# WRITTEN: Branch(b@[[endsFar]], Terminal,
+# WRITTEN-NEXT: Successors: Then:Rare:#[[far]], Else:#[[near]]
+# WRITTEN: BB#[[near]]:
+# WRITTEN: Upsilon(b@[[farBound]],
+# WRITTEN: Successors: #[[begins]]
+# WRITTEN: BB#[[far]]:
+# WRITTEN: Int32 b@[[isLong]] = Above(b@{{*}}, $1048583(
+# WRITTEN: Branch(b@[[isLong]], Terminal,
+# WRITTEN-NEXT: Successors: Then:Rare:#[[long]], Else:#[[short]]
+# WRITTEN: BB#[[short]]:
+# WRITTEN: Upsilon(b@[[farBound]],
+# WRITTEN: Successors: #[[begins]]
+# WRITTEN-LABEL: end of function

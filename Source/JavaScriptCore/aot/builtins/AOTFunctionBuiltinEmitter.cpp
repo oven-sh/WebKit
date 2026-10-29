@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTClosureWord.h"
 #include "AOTElementAccessEmitter.h"
@@ -139,6 +140,9 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     Boxed function = boxedOperand(call.context(), call.receiver());
     Boxed thisValue = argumentOrUndefined(0);
     Boxed list = argumentOrUndefined(1);
+    // The operation has no name for what it refuses.
+    if (!typeOf(call.receiver()).isSubsetOf(m_program.at(TypeTable::function), m_program))
+        emitter<CallEmitter>().requireCallableBeforeTailCall(call.context(), function, CallEmitter::siteThatNamesCallee(*call.value()));
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { function, thisValue, list }));
 }
 

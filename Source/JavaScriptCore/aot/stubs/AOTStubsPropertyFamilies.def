@@ -23,8 +23,11 @@ v(SlotCannot, InternalEntry, (ReadField, CallGetter, StoreField, CreateField, Ca
 
 // AOTStubsPropertySiteCaches.cpp
 v(GetByIdAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAtSite)
+v(GetByIdOfObjectAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAtSite)
+v(GetByIdAtSiteHashed, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAtSiteHashed)
 v(GetLengthAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetLengthAtSite)
 v(PutByIdAtSite, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutByIdAtSite)
+v(PutByIdAtSiteBehindFieldTable, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutByIdAtSite)
 
 // AOTStubsFieldReads.cpp
 v(PrivateGet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PrivateGet)
@@ -36,6 +39,7 @@ v(CreateKnownField, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, All
 
 // AOTStubsPropertyProbes.cpp
 v(PutBooleanOrDoubleField, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutBooleanOrDoubleField)
+v(PutValueThatSlotRefuses, InternalEntry, (Strict, Sloppy, Define, StrictAtSite, SloppyAtSite, DefineAtSite), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutValueThatSlotRefuses)
 
 // AOTStubsPropertyReadPairs.cpp
 v(GetByIdChain, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdChain)

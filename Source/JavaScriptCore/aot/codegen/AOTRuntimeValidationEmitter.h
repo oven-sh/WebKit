@@ -67,12 +67,15 @@ public:
 
 private:
     template<typename User> void validateOperandsOf(const OperationContext&, const User&, ValueID ownedValue);
+    void inheritCheckedClassProofs(BlockID);
     void validateSlotAccess(const OperationContext&, const Value&);
     void checkRetainedOperand(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
     void checkRetainedOperand(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
     void checkIsNoFrameArray(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
     void checkIsNoFrameArray(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
 
+    // A test of the program may refuse a changed closure. What is validated is asked what it is.
+    Condition hasType(Operand, const TypeTestPlan&);
     void failUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
@@ -102,6 +105,9 @@ private:
     Pointer stackPointer();
 
     FramePointers m_framePointers;
+    BlockID m_blockOfCheckedClassProofs;
+    Vector<ValueID, 4> m_checkedClassProofs;
+    Vector<Vector<ValueID, 4>> m_checkedClassProofsAtEnd;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -332,7 +332,7 @@ static void testLengthOfTypedArrays(LoadedProgram& program)
         PropertyAnswer answer = readAndClassify(program, view, length);
         AOT_TEST_CHECK_FOR_SOURCE(answer.kind == PropertyAnswerKind::TypedArrayLength && !answer.isOwn && !answer.dependsOnChain(), source);
         Slot slot = slotFor(answer, view->structure());
-        AOT_TEST_CHECK_FOR_SOURCE(slot.kind == Slot::Kind::TypedArrayLength && !slot.flags && !slot.payloadBits(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(slot.kind == Slot::Kind::TypedArrayLength && slot.flags == Slot::needsHandler && !slot.payloadBits(), source);
     }
 
     JSObject* instanceOfSubclass = realms.object(program.realm(), "new (class extends Uint8Array { })(4)"_s);
@@ -1391,6 +1391,44 @@ static void testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns(LoadedP
         AOT_TEST_CHECK(additions.shouldMakeStructure(structure, name.impl()));
 }
 
+// A collection that is owed starts where somebody stops putting collections off. A leaf operation comes back to code that has recorded no frame.
+static void testLeafOperationsPutCollectionsOff(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Instance* instance = &program.instance();
+    Identifier added = Identifier::fromString(vm, "added"_s);
+    Identifier absent = Identifier::fromString(vm, "absent"_s);
+    auto keyFor = [&](const Identifier& name) {
+        return jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
+    };
+    enum class Asked : uint8_t { Presence, Value };
+    for (Asked asked : { Asked::Presence, Asked::Value }) {
+        // The structural look gives up at the array. The object in between keeps its names in a table of its own since it was given one while another inherited from it.
+        JSObject* between = constructEmptyObject(realm);
+        between->setPrototypeDirect(vm, constructEmptyArray(realm, nullptr));
+        JSObject* below = constructEmptyObject(realm);
+        below->setPrototypeDirect(vm, between);
+        between->putDirect(vm, added, jsNumber(1));
+        AOT_TEST_CHECK(between->structure()->isDictionary() && !between->structure()->isUncacheableDictionary());
+        JSString* key = keyFor(absent);
+        {
+            DeferGCForAWhile deferGC(vm);
+            vm.heap.deprecatedReportExtraMemory(size_t { 1 } << 32);
+        }
+        uint64_t stops = vm.heap.mutatorExecutionVersion();
+        if (asked == Asked::Presence) {
+            operationAOTInByValGeneric(instance, below, key);
+            AOT_TEST_CHECK(!between->structure()->isDictionary());
+        } else
+            operationAOTGetByValGeneric(instance, below, key);
+        AOT_TEST_CHECK(vm.heap.mutatorExecutionVersion() == stops);
+        vm.heap.collectSync(CollectionScope::Full);
+        ensureStillAliveHere(below);
+        ensureStillAliveHere(key);
+    }
+}
+
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1505,6 +1543,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },
+        { "property-lookup/leaf-operations-put-collections-off"_s, withProgram<testLeafOperationsPutCollectionsOff> },
         { "property-lookup/leaf-store-makes-a-structure-only-out-of-the-block-at-hand"_s, withProgram<testLeafStoreMakesStructureOnlyOutOfBlockAtHand> },
         { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
         { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },

@@ -1,6 +1,6 @@
 # A loop tests its counter against a number of the program, and the side where the test fails is rare. The test leaves the fast version of the loop, which ends below that number.
-# The number is not the length of an array, a view or a string: the program may choose it as large as it likes, so the fast version of f0 polls like the other one.
-# The number of f1 is small, whatever the program does: its fast version does not poll.
+# The program may choose the number as large as it likes. A fast version keeps the poll of its loop whatever ends it: where a poll may leave the turns is decided where the turns are counted,
+# behind this phase. A turn of these loops may leave by a rare edge and come back, so both versions of both loops poll on every turn.
 # FORM: Placed
 # OPTIONS: heat=EverythingIsHot disable=b3:UnrollLoops
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
@@ -10,13 +10,13 @@
 # REQUIRES(ARM64): arm64
 # STATISTIC: LoopsVersioned = 2
 # STATISTIC: RangeChecksRemoved = 2
-# STATISTIC: LoopPollsRemoved = 1
+# STATISTIC: LoopPollsRemoved = 0
 # X64: f0: size={{*}} polls=2
-# X64: f1: size={{*}} polls=1
+# X64: f1: size={{*}} polls=2
 # ARM64-LABEL: f0: size=
 # ARM64: operation operationAOTPollSlow x2
 # ARM64-LABEL: f1: size=
-# ARM64: operation operationAOTPollSlow x1
+# ARM64: operation operationAOTPollSlow x2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="belowANumberOfTheProgram" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}, {type=number}] results=[{type=number}] {

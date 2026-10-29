@@ -842,9 +842,11 @@ struct AccessesThroughHolders {
             bool hasExportUnderIndex = std::ranges::any_of(module.exports, [&](const ModuleExport& entry) {
                 return mayBeElementKey(program.strings.nameClass(entry.name));
             });
+            // A namespace object is frozen or sealed export by export.
+            constexpr OptionSet<ObjectMutation> marksOfBuiltinsThatAskEveryExport { ObjectMutation::ReachNativeCode, ObjectMutation::ChangeIntegrity };
             if (inputs.hasEscaped(namespaceObject))
                 entry.readerUnderNamesNobodyLists = Actor::ReceiversNobodyKnows;
-            else if (markedMutationsOf(inputs, namespaceObject).contains(ObjectMutation::ReachNativeCode))
+            else if (markedMutationsOf(inputs, namespaceObject).containsAny(marksOfBuiltinsThatAskEveryExport))
                 entry.readerUnderNamesNobodyLists = Actor::Table;
             else if (hasExportUnderIndex)
                 entry.readerUnderNamesNobodyLists = Actor::KeysNobodyKnows;

@@ -271,9 +271,11 @@ static bool saysWhatCountsOfGuardByte(const GuardTests& tests, B3::MovedLoad& mo
     return true;
 }
 
-void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure, const GuardTests& guardTests)
+void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure, const GuardTests& guardTests, WhatIsLogged logged)
 {
-    policy.validation.logsMovedLoads = true;
+    policy.validation.logsMovedLoads = logged.loads;
+    policy.validation.logsDecidedComparisons = logged.decidedComparisons;
+    policy.reportsMovedLoad = reportOf(BrokenClaim::LoadMayMove, function);
     policy.saysWhatCountsOfMovedLoad = createSharedTask<bool(const B3::MemoryValue&, B3::MovedLoad&)>([&procedure, &guardTests](const B3::MemoryValue& load, B3::MovedLoad& moved) {
         AOTHeaps& heaps = AOTHeaps::of(*procedure);
         auto isIn = [&](const B3::AbstractHeap& heap) {
@@ -287,6 +289,11 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
             moved.bitsThatMayGetSet = std::numeric_limits<uint64_t>::max();
             return true;
         }
+        // Whoever finds the word that a getter of the host keeps its answer in empty calls the getter, which fills the word and is said to write nothing. A read from before says "empty", and the code calls again.
+        if (load.range() == heaps.rangeOf(heaps.hostObjectCachedValues)) {
+            moved.mayGetFilled = true;
+            return true;
+        }
         if (isIn(heaps.entire(Typed::AbstractHeap::MemberGuards)))
             return saysWhatCountsOfGuardByte(guardTests, moved);
         return saysWhatCountsOfUnchangingWord(heaps, load, moved);
@@ -295,7 +302,7 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
         B3::ClientPhase::Point::AfterSinking,
         "checkMovedLoadsAtRunTime"_s,
         createSharedTask<bool(B3::Procedure&)>([function](B3::Procedure& proc) {
-            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function));
+            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function), reportOf(BrokenClaim::ComparisonIsDecided, function));
         })
     });
 }

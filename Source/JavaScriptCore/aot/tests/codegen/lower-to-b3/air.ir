@@ -26,7 +26,7 @@ function f0 name="countUp" parameters=[{type=int[0, 1000]}] results=[{type=int[0
 # CHECK: Ret64
 # CHECK: Add32 $1,
 
-# LOOPS-NEXT: loop #[[header]], instructions: 2, patchpoints: 1, %[[counter]] steps by 1
+# LOOPS-NEXT: loop #[[header]], instructions: 2, patchpoints: 1, polls: 1, %[[counter]] steps by 1
 # LOOPS-NEXT: BB#[[header]]:
 # LOOPS: Add32 $1, %[[counter]]
 # LOOPS: end of loop #[[header]]
@@ -36,6 +36,6 @@ function f0 name="countUp" parameters=[{type=int[0, 1000]}] results=[{type=int[0
 # SIZE-NEXT: end of function f0
 
 # BOTH-NEXT: instructions: {{*}}, patchpoints: 1
-# BOTH-NEXT: loop #{{*}}, instructions: 2, patchpoints: 1, %{{*}} steps by 1
+# BOTH-NEXT: loop #{{*}}, instructions: 2, patchpoints: 1, polls: 1, %{{*}} steps by 1
 # BOTH-NEXT: end of function f0
 }

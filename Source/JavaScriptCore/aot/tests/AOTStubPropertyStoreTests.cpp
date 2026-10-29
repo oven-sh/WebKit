@@ -1016,6 +1016,26 @@ static void testKeyedStoresToObjectsWithIntegrityLevels()
     }
 }
 
+static void testKeyedStoresUnderSymbolsWhoseHoldersArePrepared()
+{
+    PropertyStores stores;
+    const uint64_t number = bitsOf(jsNumber(42));
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = TypeInfoPerCellBit;
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = stores.uidOf(PropertyStores::unboundName);
+
+    for (PutMode mode : allPutModes) {
+        StubKey stub = mode == PutMode::Define ? defineByValCached() : putByValCached(mode);
+        Entry cachingOperation = mode == PutMode::Define ? Entry::operationAOTDefineField : mode == PutMode::Strict ? Entry::operationAOTPutByValAndCache : Entry::operationAOTPutByValAndCacheSloppy;
+        for (Slot::Kind kind : { Slot::Kind::Field, Slot::Kind::FieldCreation }) {
+            stores.file({ mode, FiledIn::HashedTable, false }, createFieldSlot(kind, SlotRepresentation::JSValue, PropertyStores::typeOfAnything));
+            FakeTypedObject object(JSValue::ValueUndefined);
+            checkKeyedStoreLeftTo(stores, stub, cachingOperation, object, key.address(), number);
+        }
+    }
+}
+
 namespace {
 
 struct CreatedFieldOrders {
@@ -1886,6 +1906,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/fields-that-take-any-value-stored-by-their-records"_s, ImageTests::whenExecutable<testFieldsThatTakeAnyValueStoredByTheirRecords> },
         { "stubs/put-by-id/fields-created-outside-the-cell-by-their-records"_s, ImageTests::whenExecutable<testFieldsCreatedOutsideTheCellByTheirRecords> },
         { "stubs/put-by-val/integrity-levels"_s, ImageTests::whenExecutable<testKeyedStoresToObjectsWithIntegrityLevels> },
+        { "stubs/put-by-val/symbols-whose-holders-are-prepared"_s, ImageTests::whenExecutable<testKeyedStoresUnderSymbolsWhoseHoldersArePrepared> },
     };
     return tests;
 }

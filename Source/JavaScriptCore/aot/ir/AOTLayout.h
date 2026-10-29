@@ -118,6 +118,7 @@ BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);
+bool hasOnePrototypeObject(const Program&, LayoutID allocatedClass);
 bool prototypePropertyMayEndGuards(const Program&, FunctionID);
 bool hasSingletonClosure(const Program&, FunctionID);
 bool namesClosureOfTable(const Program&, const Value& closure);

@@ -40,7 +40,7 @@ constexpr HeapsOfCollection heapsOfCollection {
     .collectorState = B3::HeapRange(1, 2),
     .weakTableStorage = B3::HeapRange(2, 3),
     .frameSlots = B3::HeapRange(3, 4),
-    .permanentCells = B3::HeapRange(4, 6),
+    .permanentCells = { B3::HeapRange(4, 6), B3::HeapRange(7, 8) },
 };
 
 // What is taken away from a graph in which every reference has its pointer.
@@ -750,13 +750,30 @@ static void testWhatNeedsNoPointer()
         graph.finish();
         checkFindsNothing(graph);
     }
-    {
+    for (B3::HeapRange range : { B3::HeapRange(4, 5), B3::HeapRange(7, 8) }) {
         Graph graph;
-        B3::Value* reference = graph.loadReference(referenceOrigin, 16, B3::HeapRange(4, 5));
+        B3::Value* reference = graph.loadReference(referenceOrigin, 16, range);
         graph.safepoint();
         graph.store(graph.loadThrough(graph.decode(reference)));
         graph.finish();
         checkFindsNothing(graph);
+    }
+    for (B3::HeapRange range : { B3::HeapRange(5, 6), B3::HeapRange(7, 8) }) {
+        Graph graph;
+        B3::Value* entry = graph.loadReference(referenceOrigin, 16, range);
+        graph.safepoint();
+        graph.store(graph.loadThrough(graph.decode(graph.binary(B3::Add, entry, graph.int32(1)))));
+        graph.keepAlive(entry);
+        graph.finish();
+        checkFindsNothing(graph);
+    }
+    {
+        Graph graph;
+        B3::Value* entry = graph.loadReference(referenceOrigin, 16, B3::HeapRange(6, 7));
+        graph.safepoint();
+        graph.store(graph.loadThrough(graph.decode(graph.binary(B3::Add, entry, graph.int32(1)))));
+        graph.finish();
+        checkFindsOne(graph, NarrowReferenceViolationKind::IsDisplaced);
     }
 }
 
