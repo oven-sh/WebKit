@@ -114,15 +114,15 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
-### A10. The lanes' ICU is 79.1, with CLDR 49's text
+### A10. The bundled ICU is 79.1 (CLDR 49)
 
-- `icu/source.json`. The macOS lanes run with the system's ICU, so each of these keeps upstream's expectation for an ICU
-  before 79 (`$vm.icuVersion()`), or lists CLDR 49's text beside it where the test already takes a list.
-- `stress/intl-date-pattern-includes-literal-text.js`: fr has no `HH 'h'`: `23 h` → `23`.
-- `stress/intl-datetimeformat-resolved-options-am-pm.js`: th's short time is `HH:mm น.`, which ICU takes for a 2-digit hour;
-  a numeric hour has `HH:mm`. A format made again from `resolvedOptions()`, where the hour is 2-digit, prints `10:05 น.`
-  for the first one's `10:05`.
-- `stress/intl-extended-timezone-names.js`: zh-Hant has no short names for America/Los_Angeles: `PDT` → `GMT-7`,
+- `icu/source.json`. The macOS lanes use the system's ICU, so each test keeps upstream's expectation for ICU older than 79
+  (`$vm.icuVersion()`), or adds CLDR 49's text to the list where the test already accepts a list.
+- `stress/intl-date-pattern-includes-literal-text.js`: CLDR 49 removed fr's `HH 'h'` pattern: `23 h` → `23`.
+- `stress/intl-datetimeformat-resolved-options-am-pm.js`: th's short time pattern is now `HH:mm น.`, and ICU uses it for a
+  2-digit hour but not for a numeric one. `resolvedOptions()` reports a 2-digit hour, so the recreated formatter prints
+  `10:05 น.` where the original prints `10:05`.
+- `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
 ---
@@ -197,9 +197,9 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |
 | `stress/switch-string-substring-of-base-widened-by-atomization.js` | a `switch` over strings that reads the characters of a substring in place, in its base, goes by the width that the base has now: atomizing the base may have put an equal 16-bit string in its place since the substring was made (DFG and FTL) |
 | `stress/bun-weak-map-and-set-shrunk-before-eden-collection.js` | the buffer of a `WeakMap` or `WeakSet` counts in the heap's size as it is behind a collection (`WeakMapImpl::reconcileWeakReferencesAtGCEnd`; upstream counts it as the last visit found it), but an eden collection never leaves that size below what the collection before it left: a buffer that shrank stops counting at the next full collection |
-| `stress/intl-time-zone-links-with-posix-style-names.js` | `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` are the links that the IANA Time Zone Database has, whether or not the ICU at hand has them as zones of their own (CLDR up to 45, and from 49 on): accepted and kept as written, not listed by `supportedValuesOf`, with the local times and names of their primary zones, and as the host's zone they resolve to it |
-| `stress/temporal-gregory-earliest-dates.js` | the `gregory` calendar has the ISO calendar's months and days in the first years of Temporal's range too, read as fields, made from fields and formatted (`prolepticGregorianChange`, `runtime/JSDateMath.h`) |
-| the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | what the file holds the engine to with fr, whose pattern has no literal text in CLDR 49: an `h` in a pattern's literal text is not taken for the hour |
+| `stress/intl-timezone-posix-style.js` | `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` behave as links to their `America/*` zones on every ICU, including those where CLDR treats them as canonical zones (45 and earlier, 49 and later): accepted, kept as written, not in `supportedValuesOf`, same offsets and names as the primary zone, and resolved to it when they are the host's zone |
+| `stress/temporal-calendar-gregory-near-min-date.js` | the `gregory` calendar agrees with the ISO calendar in the first years of Temporal's range: reading fields, building from fields and formatting (`prolepticGregorianChangeDate`, `runtime/JSDateMath.h`) |
+| the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so

@@ -5,7 +5,7 @@ function shouldBe(actual, expected) {
         throw new Error("expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual));
 }
 
-// Links in the IANA Time Zone Database. CLDR has them as zones of their own up to 45 and from 49 on.
+// These are links in the IANA time zone database, but some CLDR versions (45 and earlier, 49 and later) treat them as canonical zones.
 const links = [
     ["EST5EDT", "America/New_York", 240],
     ["CST6CDT", "America/Chicago", 300],
@@ -22,7 +22,7 @@ for (const [link, primary] of links) {
     shouldBe(supported.includes(link), false);
     shouldBe(supported.includes(primary), true);
 
-    // The local time and the names are the primary's, also where the United States' rules were not the city's.
+    // Offsets and display names should match the primary zone's, including for old dates.
     for (const time of times) {
         for (const timeZoneName of ["short", "long", "longGeneric", "longOffset"]) {
             const options = { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", timeZoneName };

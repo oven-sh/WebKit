@@ -1989,8 +1989,10 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
     return std::make_optional(WTF::move(timeZoneName));
 }
 
-// Links in the IANA Time Zone Database (its `backward` file) that CLDR 49, like CLDR 45 and older, has as zones of their own.
-static std::optional<ASCIILiteral> primaryOfLinkThatICUMayNotResolve(StringView timeZone)
+// These are links in the IANA time zone database, but CLDR 49 (like CLDR 45 and earlier) treats them as canonical zones,
+// so ICU does not resolve them.
+// https://github.com/eggert/tz/blob/main/backward
+static std::optional<ASCIILiteral> mapPOSIXStyleTimeZoneToPrimary(StringView timeZone)
 {
     if (timeZone == "EST5EDT"_s)
         return "America/New_York"_s;
@@ -2010,7 +2012,7 @@ static std::optional<ASCIILiteral> primaryOfLinkThatICUMayNotResolve(StringView 
 // form. UTC-equivalent zones are normalized to "UTC" per ECMA-402.
 String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
 {
-    if (auto primary = primaryOfLinkThatICUMayNotResolve(StringView(timeZone)))
+    if (auto primary = mapPOSIXStyleTimeZoneToPrimary(StringView(timeZone)))
         return *primary;
 
     Vector<char16_t, 32> buffer;
@@ -2239,8 +2241,9 @@ String TimeZone::toString() const
 String TimeZone::toICUString() const
 {
     if (!isUTCOffset()) {
-        const String& identifier = intlTimeZoneIDToString(m_id);
-        if (auto primary = primaryOfLinkThatICUMayNotResolve(identifier))
+        auto& identifier = intlTimeZoneIDToString(m_id);
+        // Where ICU treats these as canonical zones, they have their own rules and no display names.
+        if (auto primary = mapPOSIXStyleTimeZoneToPrimary(identifier))
             return *primary;
         return identifier;
     }

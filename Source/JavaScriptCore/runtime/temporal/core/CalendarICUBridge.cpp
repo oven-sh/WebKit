@@ -82,7 +82,7 @@ static std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> buildCalendarTemplate(
     // calendars cannot be configured this way, so Gregorian-arithmetic accessors route through
     // the base Gregorian calendar below.
     if (calendarId == gregoryCalendarID() || calendarIsISO(calendarId)) {
-        ucal_setGregorianChange(cal.get(), prolepticGregorianChange, &status);
+        ucal_setGregorianChange(cal.get(), prolepticGregorianChangeDate, &status);
         if (U_FAILURE(status)) [[unlikely]]
             return nullptr;
     }

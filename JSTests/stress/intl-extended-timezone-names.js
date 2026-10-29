@@ -48,11 +48,11 @@ timeZoneTest(date, "en", {
 }, "Asia/Calcutta");
 
 timeZoneTest(date, "zh-Hant", {
-    short: ["2021/7/10 PDT 上午10:48:02", "2021/7/10 上午10:48:02 [PDT]", "2021/7/10 上午10:48:02 [GMT-7]"], // Bun: the last is CLDR 49's (ICU 79), which has no short names for this zone in zh-Hant.
+    short: ["2021/7/10 PDT 上午10:48:02", "2021/7/10 上午10:48:02 [PDT]", "2021/7/10 上午10:48:02 [GMT-7]"], // Bun: added the last one. CLDR 49 (ICU 79) removed zh-Hant's short names for this zone.
     long: ["2021/7/10 太平洋夏令時間 上午10:48:02", "2021/7/10 上午10:48:02 [太平洋夏令時間]"],
     shortOffset: ["2021/7/10 GMT-7 上午10:48:02", "2021/7/10 上午10:48:02 [GMT-7]"],
     longOffset: ["2021/7/10 GMT-07:00 上午10:48:02", "2021/7/10 上午10:48:02 [GMT-07:00]"],
-    shortGeneric: ["2021/7/10 PT 上午10:48:02", "2021/7/10 上午10:48:02 [PT]", "2021/7/10 上午10:48:02 [洛杉磯時間]"], // Bun: the last is CLDR 49's (ICU 79).
+    shortGeneric: ["2021/7/10 PT 上午10:48:02", "2021/7/10 上午10:48:02 [PT]", "2021/7/10 上午10:48:02 [洛杉磯時間]"], // Bun: added the last one, same reason.
     longGeneric: ["2021/7/10 太平洋時間 上午10:48:02", "2021/7/10 上午10:48:02 [太平洋時間]"],
 });
 

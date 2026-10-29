@@ -5,8 +5,8 @@ function shouldBe(actual, expected) {
         throw new Error("expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual));
 }
 
-// The gregory calendar is proleptic: it has the ISO calendar's months and days from the first date on,
-// which is the day before the first time value of Date.
+// The gregory calendar is proleptic, so it should agree with the ISO calendar all the way down to the earliest PlainDate,
+// which is one day before the earliest Date.
 function check(iso, eraYear, month, day) {
     const date = Temporal.PlainDate.from(iso).withCalendar("gregory");
     shouldBe(date.era, "bce");

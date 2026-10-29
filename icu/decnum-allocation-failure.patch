@@ -1,6 +1,5 @@
-DecNum::_setTo and DecNum::setTo(bcd) drop what MaybeStackHeaderAndArray::resize() returns. When the allocation fails
-they go on with the array they had and the new number of digits. They report U_MEMORY_ALLOCATION_ERROR instead, as
-DecNum's copy constructor does.
+Checks the result of fData.resize() in DecNum::_setTo and DecNum::setTo(bcd), and sets
+U_MEMORY_ALLOCATION_ERROR when it fails, like DecNum's copy constructor already does.
 
 --- a/source/i18n/number_utils.cpp
 +++ b/source/i18n/number_utils.cpp
