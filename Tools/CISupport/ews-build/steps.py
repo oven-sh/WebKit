@@ -48,7 +48,7 @@ import socket
 import sys
 import time
 
-from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, cmake_tools_path, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
+from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, cmake_tools_path, FAILED_RESULTS_UPLOAD_MESSAGE, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -4191,10 +4191,14 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
             ('failures', re.compile(r'Regressions: Unexpected.+\((\d+)\)')),
         ]
         testFailures = {}
+        failed_results_upload = False
 
         for line in logText.splitlines():
             if line.find('Exiting early') >= 0 or line.find('leaks found') >= 0:
                 incorrectLayoutLines.append(self._strip_python_logging_prefix(line))
+                continue
+            if line.find(FAILED_RESULTS_UPLOAD_MESSAGE) >= 0:
+                failed_results_upload = True
                 continue
             for name, expression in expressions:
                 match = expression.search(line)
@@ -4207,6 +4211,8 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
 
         for name in testFailures:
             incorrectLayoutLines.append(str(testFailures[name]) + ' ' + name)
+        if failed_results_upload:
+            incorrectLayoutLines.append('results upload failed')
 
         self.incorrectLayoutLines = incorrectLayoutLines
 
@@ -5947,9 +5953,12 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
             message = 'Passed API tests'
             if self.name == ReRunAPITests.name:
                 first_results_failing_tests = self.getProperty('api_first_run_failures', [])
-                flaky_failures_string = ', '.join(first_results_failing_tests)
-                pluralSuffix = 's' if len(first_results_failing_tests) > 1 else ''
-                message = f'Found flaky test{pluralSuffix}: {flaky_failures_string}'
+                if first_results_failing_tests:
+                    flaky_failures_string = ', '.join(first_results_failing_tests)
+                    pluralSuffix = 's' if len(first_results_failing_tests) > 1 else ''
+                    message = f'Found flaky test{pluralSuffix}: {flaky_failures_string}'
+                else:
+                    message = 'Passed API tests on re-run, the first run produced no results'
 
             self.descriptionDone = message
             if self.name != RunAPITestsWithoutChange.name:
@@ -6099,21 +6108,47 @@ class ReRunAPITests(RunAPITests):
             yield self.report_to_results_db(results, flaky_type='BetweenStepsDirtyTree')
         defer.returnValue(failures)
 
+    def failures_with_change(self, run: str) -> set[str]:
+        failures = self.getProperty(f'api_{run}_run_failures_filtered', None)
+        if failures is None:
+            failures = self.getProperty(f'api_{run}_run_failures', [])
+        return set(failures)
+
     def failures_in_both_dirty_runs(self) -> set[str]:
         """
         The failures AnalyzeAPITestsResults would attribute to the change, before the clean-tree run
         subtracts its own from them.
         """
-        first_run_failures = self.getProperty('api_first_run_failures_filtered', None)
-        if first_run_failures is None:
-            first_run_failures = self.getProperty('api_first_run_failures', [])
-        second_run_failures = self.getProperty('api_second_run_failures_filtered', None)
-        if second_run_failures is None:
-            second_run_failures = self.getProperty('api_second_run_failures', [])
-        return set(first_run_failures) & set(second_run_failures)
+        return self.failures_with_change('first') & self.failures_with_change('second')
+
+    def no_failure_repeated_across_runs(self) -> bool:
+        if not self.getProperty('api_first_run_failures') or not self.getProperty('api_second_run_failures'):
+            return False
+        if self.getProperty('api_first_run_exceeded_failure_limit', False) or self.getProperty('api_second_run_exceeded_failure_limit', False):
+            return False
+        return not self.failures_in_both_dirty_runs()
 
     @defer.inlineCallbacks
     def doOnFailure(self) -> Generator[Any, Any, None]:
+        if not self.getProperty('api_first_run_failures') or not self.getProperty('api_second_run_failures'):
+            message = 'Unable to parse API test results'
+            yield self._addToLog('stderr', message)
+            self.descriptionDone = message
+            self.build.buildFinished([message], RETRY)
+            return
+
+        if self.no_failure_repeated_across_runs():
+            flaky_failures = sorted(self.failures_with_change('first') | self.failures_with_change('second'))
+            pluralSuffix = 's' if len(flaky_failures) > 1 else ''
+            message = f"Found flaky test{pluralSuffix}: {', '.join(flaky_failures[:self.NUM_FAILURES_TO_DISPLAY])}"
+            if len(flaky_failures) > self.NUM_FAILURES_TO_DISPLAY:
+                message += ' ...'
+            self.descriptionDone = message
+            self.build.results = SUCCESS
+            self.setProperty('force_build_success', True)
+            self.setProperty('build_summary', message)
+            return
+
         is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
         if is_main and (candidates := self.failures_in_both_dirty_runs()):
             # parse_and_set_failures has already reported this build's BetweenStepsDirtyTree
@@ -7706,6 +7741,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         super().__init__(logEnviron=False, timeout=300, **kwargs)
         self.rebase_enabled = rebase_enabled
         self.contributors = {}
+        self.verify_commit_count_command = None
+        self.summary = ''
 
     def number_commits_to_canonicalize(self):
         commit_count = self.getProperty('commit_count', 1)
@@ -7727,6 +7764,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         commands = [self.shell_command('rm .git/identifiers.json || {}'.format(self.shell_exit_0()))]
         if self.rebase_enabled:
             commands += [['git', 'pull', remote, base_ref, '--rebase']]
+            self.verify_commit_count_command = self.shell_command(f'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq {self.getProperty("commit_count", 1)}')
+            commands.append(self.verify_commit_count_command)
             if head_ref:
                 commands += [['git', 'branch', '-f', base_ref, head_ref]]
             commands += [['git', 'checkout', '--progress', base_ref]]
@@ -7756,9 +7795,19 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         for command in commands:
             self.commands.append(util.ShellArg(command=command, logname='stdio', haltOnFailure=True))
         rc = yield super().run()
+
+        if rc == FAILURE and self.verify_commit_count_command and self.last_command == self.verify_commit_count_command:
+            pr_number = self.getProperty('github.number')
+            self.summary = f'Changes already landed on {base_ref}'
+            self.setProperty('build_finish_summary', self.summary)
+            self.setProperty('comment_text', f'Commits in PR #{pr_number} were dropped when rebasing onto {base_ref} because their changes have already landed, blocking PR #{pr_number}. Update the pull request to contain only unlanded changes, or close it.')
+            self.haltOnFailure = False
+            self.build.addStepsAfterCurrentStep([LeaveComment(), BlockPullRequest()])
         defer.returnValue(rc)
 
     def getResultSummary(self):
+        if self.summary:
+            return {'step': self.summary}
         commit_pluralized = "commit" if self.number_commits_to_canonicalize() == 1 else "commits"
         if self.results == SUCCESS:
             return {'step': f'Canonicalized {commit_pluralized}'}
@@ -8215,7 +8264,7 @@ class ParseStaticAnalyzerResultsWithoutChange(ParseStaticAnalyzerResults):
 class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
     name = 'find-modified-safer-cpp-expectations'
     RE_FILE = r'^(\+|-)(?P<file>[^/+/-].+(?:\.cpp|\.mm|\.h|\.m|\.c))$'
-    RE_EXPECTATIONS = r'^(\+\+\+).+(Source/(?P<project>.+)/SaferCPPExpectations/(?P<checker>.+)Expectations)$'
+    RE_EXPECTATIONS = r'^(\+\+\+|---).+(Source/(?P<project>.+)/SaferCPPExpectations/(?P<checker>.+)Expectations)$'
     command = ['git', 'diff', 'HEAD~1', '--', '*Expectations']
 
     def __init__(self, **kwargs):
@@ -8239,6 +8288,7 @@ class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
         yield self._addToLog('stdio', '\nLooking for changes to Safer CPP expectations...\n')
         removed_tests = []
         added_tests = []
+        project = checker = None
         for line in logText.splitlines():
             expectation_match = re.search(self.RE_EXPECTATIONS, line, re.IGNORECASE)
             if expectation_match:
@@ -8246,7 +8296,7 @@ class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
                 checker = expectation_match.group('checker')
                 yield self._addToLog('stdio', f'Changes for {project}/{checker}...\n')
             file_match = re.search(self.RE_FILE, line, re.IGNORECASE)
-            if file_match:
+            if file_match and project and checker:
                 test_name = f"{project}/{file_match.group('file')}/{checker}"
                 if file_match.group(1) == '+':
                     added_tests.append(test_name)

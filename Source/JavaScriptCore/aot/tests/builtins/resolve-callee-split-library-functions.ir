@@ -29,9 +29,9 @@ function f1 name="noneIsCompiled" parameters=[{type=anything}] results=[{type=an
 # CHECK-NEXT: Return v2
 }
 
-function f2 name="returnOfIteratorHelper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}]
-function f3 name="returnOfWrapper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] {
+function f2 name="returnOfIteratorHelper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=86 thisType={type=anything} results=[{type=anything}]
+function f3 name="returnOfWrapper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] {
     Return v0
 }
-runtimefunction id=87 function=f2
-runtimefunction id=88 function=f3
+runtimefunction id=86 function=f2
+runtimefunction id=87 function=f3

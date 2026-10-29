@@ -1,5 +1,5 @@
-# [[1]].flatMap(same), where the library's flatMap hands the callback to flatIntoArrayWithCallback (runtimefunction 41), a function that the files of the engine link by name
-# The code behind Array.prototype.flatMap (runtimefunction 42) is entered with operands nobody knows and calls the linked function directly with them. No realm holds that function, no row says that
+# [[1]].flatMap(same), where the library's flatMap hands the callback to flatIntoArrayWithCallback (runtimefunction 40), a function that the files of the engine link by name
+# The code behind Array.prototype.flatMap (runtimefunction 41) is entered with operands nobody knows and calls the linked function directly with them. No realm holds that function, no row says that
 # native code calls it and no other statement names it: the callback that it calls is an operand of a call whose records say what it is called with.
 # No code that nobody compiles writes anything, no value nobody knows is called, and `same` is in nobody's hands.
 # Named by another function too: linked-function-that-other-code-calls-too-calls-unknown-code.ir
@@ -17,8 +17,8 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="ArrayPrototype.ts" displayPath="ArrayPrototype.ts" flags=[IsLibrary]
 entry module=m0
-runtimefunction id=41 function=f3 visibility=Private
-runtimefunction id=42 function=f1
+runtimefunction id=40 function=f3 visibility=Private
+runtimefunction id=41 function=f1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
@@ -28,14 +28,14 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v5 = Call v4, v2, v3 calleeKey="flatMap"
     Return
 }
-function f1 name="flatMap" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=42 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="flatMap" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=41 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = CallDirect v0, v1, v2 function=f3
     Return v3
 }
 function f2 name="same" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-function f3 name="flatIntoArrayWithCallback" module=m1 role=Library enclosingRuntimeFunction=41 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="flatIntoArrayWithCallback" module=m1 role=Library enclosingRuntimeFunction=40 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, v2, v4, v3, v0

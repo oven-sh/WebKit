@@ -54,6 +54,7 @@
 #include "StyleFilter.h"
 #include "Timer.h"
 #include "TypedArrayPixelBuffer.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -65,6 +66,7 @@ namespace WebCore {
 
 class CanvasLayerContextSwitcher;
 class CanvasGradient;
+class ConcreteObjectSize;
 class DOMMatrix;
 class FloatRect;
 class GraphicsContext;
@@ -150,6 +152,9 @@ public:
 
     String wordSpacing() const { return state().wordSpacing; }
     void setWordSpacing(const String&);
+
+    String lang() const { return state().lang; }
+    void setLang(const String&);
 
     CanvasFontKerning fontKerning() const { return state().canvasFontKerning(); }
     void setFontKerning(CanvasFontKerning);
@@ -265,6 +270,7 @@ public:
     void setTextBaseline(CanvasTextBaseline);
 
     using Direction = CanvasDirection;
+    Direction direction() const { return state().direction; }
     void setDirection(Direction);
 
     class FontProxy final : public FontSelectorClient {
@@ -293,7 +299,7 @@ public:
         float wordSpacing() const { return m_font.wordSpacing(); }
         void setWordSpacing(float wordSpacing) { m_font.setWordSpacing(wordSpacing); }
 
-        void update(NOESCAPE const Invocable<void(FontCascadeDescription&)> auto&);
+        void update(NOESCAPE const ScopedLambda<void(FontCascadeDescription&)>&);
 
     private:
         void update(FontSelector&);
@@ -334,6 +340,7 @@ public:
 
         String letterSpacing;
         String wordSpacing;
+        String lang;
 
         String unparsedFont;
         FontProxy font;
@@ -366,6 +373,7 @@ protected:
     State& modifiableState() LIFETIME_BOUND { ASSERT(!m_unrealizedSaveCount || m_stateStack.size() >= MaxSaveCount); return m_stateStack.last(); }
 
     void carryOverKerningAndTextRendering(FontCascadeDescription&) const;
+    AtomString effectiveLanguage() const;
 
     GraphicsContext* drawingContext() const;
     GraphicsContext* effectiveDrawingContext() const;
@@ -411,7 +419,6 @@ protected:
     void drawTextUnchecked(const TextRun&, double x, double y, bool fill, std::optional<double> maxWidth = std::nullopt);
 
     Ref<TextMetrics> measureTextInternal(const TextRun&);
-    Ref<TextMetrics> measureTextInternal(const String& text);
 
     bool usesCSSCompatibilityParseMode() const { return m_usesCSSCompatibilityParseMode; }
 
@@ -527,6 +534,7 @@ private:
     // The relationship between FontCascade and CanvasRenderingContext2D::FontProxy must hold certain invariants.
     // Therefore, all font operations must pass through the proxy.
     virtual const FontProxy* fontProxy() { return nullptr; }
+    virtual AtomString inheritedLanguage() const { return nullAtom(); }
 
     FloatPoint textOffset(float width, TextDirection);
 

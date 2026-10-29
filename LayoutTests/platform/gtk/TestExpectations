@@ -942,6 +942,10 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the
 
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-height-constrained-by-max-width.html [ ImageOnlyFailure ]
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-width-constrained-by-max-height.html [ ImageOnlyFailure ]
+
+# Antialiasing differences in the rounded corners of the focus ring.
+webkit.org/b/328475 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/focus-ring-rendering.html [ ImageOnlyFailure ]
+
 # Ftp code is disabled in gtk port
 
 # text-transform: full-width
@@ -1037,8 +1041,6 @@ webkit.org/b/303884 accessibility/gtk/object-attributes.html [ Failure ]
 webkit.org/b/303884 accessibility/gtk/spans-paragraphs-and-divs.html [ Failure ]
 
 fast/images/async-image-body-background-image.html [ Timeout Pass ]
-
-webkit.org/b/316158 fullscreen/full-screen-enter-while-exiting-fully-mid-completion-handler.html [ Crash Pass ]
 
 webkit.org/b/304278 inspector/worker/debugger-pause-subworker.html [ Skip ]
 
@@ -1216,7 +1218,6 @@ webkit.org/b/323612 imported/w3c/web-platform-tests/css/css-counter-styles/count
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-004-rtl.html [ ImageOnlyFailure Pass ]
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-006-rtl.html [ ImageOnlyFailure Pass ]
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-008-rtl.html [ ImageOnlyFailure Pass ]
-webkit.org/b/323778 [ Debug ] media/media-source/media-source-addsourcebuffer-after-canplaytype.html [ Crash Pass ]
 
 webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/held.https.any.sharedworker.html [ Failure Pass ]
 webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/idlharness.https.any.sharedworker.html [ Failure Pass ]
@@ -1256,8 +1257,6 @@ webkit.org/b/324374 webgl/1.0.x/conformance/textures/misc/texture-size-limit.htm
 webkit.org/b/324374 webgl/2.0.y/conformance/textures/misc/texture-size-limit.html [ Failure ]
 
 webkit.org/b/319065 [ Debug ] imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_relatedtarget.html [ Failure Pass ]
-
-webkit.org/b/325941 [ Debug ] fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Crash Pass Timeout ]
 
 webkit.org/b/326556 inspector/debugger/breakpoint-action-log.html [ Failure ]
 webkit.org/b/326559 [ Release ] inspector/dom-debugger/dom-breakpoint-subtree-modified-add.html [ Crash Pass ]

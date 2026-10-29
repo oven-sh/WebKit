@@ -553,10 +553,10 @@ void PluginView::paint(GraphicsContext& context, const IntRect& dirtyRect, Widge
 
     if (RefPtr transientPaintingSnapshot = m_transientPaintingSnapshot) {
         if (!context.hasPlatformContext()) {
-            RefPtr image = transientPaintingSnapshot->createImage();
+            RefPtr image = BitmapImage::create(*transientPaintingSnapshot);
             if (!image)
                 return;
-            context.drawBitmapImage(*image, frameRect());
+            image->draw(context, frameRect());
         } else {
             auto deviceScaleFactor = 1;
             if (auto* page = m_pluginElement->document().page())
@@ -1172,6 +1172,11 @@ void PluginView::setPDFTextAnnotationValueForTesting(unsigned pageIndex, unsigne
 Vector<String> PluginView::pdfContextMenuItemTitlesForTesting(const WebCore::IntPoint& pointInRootView) const
 {
     return m_plugin->contextMenuItemTitlesForTesting(pointInRootView);
+}
+
+WebCore::IntRect PluginView::pdfBoundsOnScreenForTesting() const
+{
+    return m_plugin->boundsOnScreen();
 }
 
 void PluginView::registerPDFTestCallback(RefPtr<VoidCallback>&& callback)

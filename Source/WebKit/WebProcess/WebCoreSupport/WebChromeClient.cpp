@@ -445,6 +445,7 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         openedMainFrameName,
+        navigationAction.openedByScriptDomain(), /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
@@ -2118,16 +2119,16 @@ bool WebChromeClient::hasRelevantSelectionServices(bool isTextOnly) const
     return (isTextOnly && WebProcess::singleton().hasSelectionServices()) || WebProcess::singleton().hasRichContentServices();
 }
 
-void WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, Image& image, HTMLImageElement& element)
+bool WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLImageElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handleImageServiceClick(frameID, point, image, element);
+    RefPtr page = m_page.get();
+    return page && page->handleImageServiceClick(frameID, point, element);
 }
 
-void WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
+bool WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handlePDFServiceClick(frameID, point, element);
+    RefPtr page = m_page.get();
+    return page && page->handlePDFServiceClick(frameID, point, element);
 }
 
 #endif
