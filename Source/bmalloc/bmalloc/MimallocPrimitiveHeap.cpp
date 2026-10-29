@@ -5,18 +5,15 @@
 
 #include "MimallocPrimitiveHeap.h"
 
-#if BUSE(MIMALLOC)
+#if BUSE(MIMALLOC_PRIMITIVE_HEAP)
 
 #include "BAssert.h"
 #include "Gigacage.h"
 #include "Mutex.h"
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 
 #if BOS(UNIX)
-#include <strings.h>
 #include <sys/resource.h>
 #endif
 
@@ -47,25 +44,9 @@ std::atomic<bool> s_hasNoRanges { false };
 std::atomic<size_t> s_allocationsOutsideRanges { 0 };
 std::chrono::steady_clock::time_point s_timeOfNextAttempt;
 
-#if BCPU(ADDRESS64)
-bool equalIgnoringCase(const char* a, const char* b)
-{
-#if BOS(WINDOWS)
-    return !_stricmp(a, b);
-#else
-    return !strcasecmp(a, b);
-#endif
-}
-#endif
-
 bool shouldHaveRanges()
 {
 #if BCPU(ADDRESS64)
-    // What turns a Gigacage off.
-    if (const char* value = getenv("GIGACAGE_ENABLED")) {
-        if (equalIgnoringCase(value, "no") || equalIgnoringCase(value, "false") || equalIgnoringCase(value, "0"))
-            return false;
-    }
 #if BOS(UNIX) && defined(RLIMIT_AS)
     // A range would come out of what the rest of the process may map.
     struct rlimit limit;
@@ -213,4 +194,4 @@ void ensureGigacage()
 } // namespace Gigacage
 #endif
 
-#endif // BUSE(MIMALLOC)
+#endif // BUSE(MIMALLOC_PRIMITIVE_HEAP)

@@ -36,8 +36,10 @@ static bool hasDedicatedRange()
 TEST(WTF_PrimitiveHeap, EveryWayToAllocateUsesTheRange)
 {
     bool expected = hasDedicatedRange();
-#if USE(MIMALLOC) && CPU(ADDRESS64)
+#if USE(MIMALLOC) && CPU(ADDRESS64) && defined(BUN_HARDENED)
     EXPECT_TRUE(expected);
+#elif USE(MIMALLOC)
+    EXPECT_FALSE(expected);
 #endif
     for (size_t size : sizes) {
         void* blocks[] = {

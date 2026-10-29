@@ -20,6 +20,23 @@
 
 namespace bmalloc {
 
+#if !BUSE(MIMALLOC_PRIMITIVE_HEAP)
+
+// This build has one heap for every HeapKind.
+class MimallocPrimitiveHeap {
+public:
+    BINLINE static void* tryMalloc(size_t size) { return mi_malloc(size); }
+    BINLINE static void* tryZeroedMalloc(size_t size) { return mi_zalloc(size); }
+    BINLINE static void* tryMemalign(size_t alignment, size_t size) { return mi_malloc_aligned(size, alignment); }
+    BINLINE static void* tryZeroedMemalign(size_t alignment, size_t size) { return mi_zalloc_aligned(size, alignment); }
+    BINLINE static void* tryRealloc(void* block, size_t size) { return mi_realloc(block, size); }
+    BINLINE static void collectThisThread(bool) { }
+    BINLINE static bool isInRange(const void*) { return false; }
+    BINLINE static size_t allocationsOutsideRanges() { return 0; }
+};
+
+#else
+
 // Where HeapKind::PrimitiveGigacage allocations come from on mimalloc: heaps of their own, in address ranges that
 // nothing else is allocated from. What is allocated with that kind holds no pointers, and scripts and input choose
 // its content: the bytes of ArrayBuffers and typed arrays, Wasm memories. Unlike in a Gigacage, pointers are not masked.
@@ -74,7 +91,7 @@ public:
         return allocateSlow(size, 0, false, block);
     }
 
-    // Settles whether the process has ranges, from its environment as it is now, and reserves the first one. Otherwise
+    // Settles whether the process has ranges, from its limits as they are now, and reserves the first one. Otherwise
     // the first allocation does.
     BEXPORT static void decideWhetherToHaveRanges();
 
@@ -116,6 +133,8 @@ private:
     // while all ranges are full.
     BEXPORT static std::atomic<mi_heap_t*> s_heap;
 };
+
+#endif // !BUSE(MIMALLOC_PRIMITIVE_HEAP)
 
 } // namespace bmalloc
 
