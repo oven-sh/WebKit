@@ -323,6 +323,7 @@ export default b.declarations(
       returns: b.union(self, b.object),
       receiverUses: [b.movesElements, b.storedByKey(b.indexKeys, b.ownValues("this")), b.deletedByKey(b.indexKeys)],
     },
+    { length: 1, boxedCallStub: "ArraySort", nativeSymbols: ["arrayProtoFuncSort"] },
   ),
   sortMethod(
     "toSorted",

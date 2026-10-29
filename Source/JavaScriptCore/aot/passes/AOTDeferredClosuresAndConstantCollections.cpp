@@ -2198,7 +2198,7 @@ static std::optional<ObjectID> findPrivateLiteral(FunctionAnalyses& analyses, Va
     const Value& literal = analyses.function().at(escape.at(*object).definition);
     if (literal.opcode != Opcode::NewArray || !literal.holes().empty() || literal.capacityOperand())
         return std::nullopt;
-    std::span<const ObjectUse> uses = escape.usesOf(*object);
+    ObjectUses uses = escape.usesOf(*object);
     if (uses.size() != 1 || uses.front().use.kind != Use::Kind::Operand || uses.front().use.user != user)
         return std::nullopt;
     bool canEraseWhenUnused = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) {

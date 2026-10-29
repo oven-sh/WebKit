@@ -312,6 +312,7 @@ private:
     bool m_findsOwnPropertiesListedAbove { false };
     bool m_answersNothingForNameThatIsLacking { false };
     void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
+    bool mayBeFunctionByType(const ValueFlowOperand&);
     void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);

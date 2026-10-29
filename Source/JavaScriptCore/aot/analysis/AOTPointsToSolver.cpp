@@ -668,6 +668,7 @@ void PointsToSolver::forgetAllButObjects()
     m_valuesWithArrivals.clearAll();
     m_applicationWorklist.clear();
     m_results.uses.clear();
+    m_results.objectsOfUses.clear();
     m_results.contents.clear();
     for (size_t index = 0; index < m_results.setOfValue.size(); ++index) {
         if (m_results.setOfValue[index] && !definesObject(ValueID(index)))
@@ -1017,16 +1018,12 @@ void PointsToSolver::record(SolvedUse& solved, const ArrivedObjects& arrived)
     bool onlyCreatesFollowedAlias = solved.flowsTo && !solved.retainedBy && solved.reasons.isEmpty() && solved.uses.containsOnly({ OperandUse::Inspects, OperandUse::Returns });
     if (onlyCreatesFollowedAlias)
         return;
-    // One entry per object per use: a chain of n values, each reached by n objects, costs n x n entries per use.
     if (!takeWork(arrived.objects.size()))
         return;
-    size_t size = m_results.uses.size() + arrived.objects.size();
-    if (size > m_results.uses.capacity())
-        m_results.uses.reserveCapacity(std::max<size_t>({ 16, size, m_results.uses.capacity() * 2 }));
-    for (ObjectID object : arrived.objects) {
-        solved.object = object;
-        m_results.uses.append(solved);
-    }
+    solved.firstObject = m_results.objectsOfUses.size();
+    solved.numberOfObjects = arrived.objects.size();
+    m_results.objectsOfUses.append(arrived.objects);
+    m_results.uses.append(solved);
 }
 
 void PointsToSolver::solveEdgeUse(const ArrivedObjects& arrived, const Use& use)
@@ -1436,12 +1433,23 @@ UseSeenAlone classifyUseAlone(FunctionAnalyses& analyses, const Use& use)
     return UseSeenAlone::IsListed;
 }
 
-static Vector<SolvedUse> sortedByObjectAndUse(const Vector<SolvedUse>& uses)
+struct UseOfObject {
+    ObjectID object;
+    const SolvedUse* solved;
+};
+
+// The two sweeps group the objects of a use differently.
+static Vector<UseOfObject> sortedByObjectAndUse(const PointsToResults& results)
 {
-    Vector<SolvedUse> sorted = uses;
-    AOT::sort(sorted, { }, [](const SolvedUse& solved) {
-        const Use& use = solved.use;
-        return std::tuple { solved.object, use.kind, use.block, use.user, use.operandIndex, use.targetIndex };
+    Vector<UseOfObject> sorted;
+    sorted.reserveInitialCapacity(results.objectsOfUses.size());
+    for (const SolvedUse& solved : results.uses) {
+        for (ObjectID object : results.objectsOf(solved))
+            sorted.append({ object, &solved });
+    }
+    AOT::sort(sorted, { }, [](const UseOfObject& entry) {
+        const Use& use = entry.solved->use;
+        return std::tuple { entry.object, use.kind, use.block, use.user, use.operandIndex, use.targetIndex };
     });
     return sorted;
 }
@@ -1466,13 +1474,13 @@ static void verifySameResults(const PointsToResults& results, const PointsToResu
             RELEASE_ASSERT(set->mayBeUntracked == other->mayBeUntracked && set->objects == other->objects);
     }
 
-    RELEASE_ASSERT(results.uses.size() == repeated.uses.size());
-    Vector<SolvedUse> uses = sortedByObjectAndUse(results.uses);
-    Vector<SolvedUse> otherUses = sortedByObjectAndUse(repeated.uses);
+    RELEASE_ASSERT(results.objectsOfUses.size() == repeated.objectsOfUses.size());
+    Vector<UseOfObject> uses = sortedByObjectAndUse(results);
+    Vector<UseOfObject> otherUses = sortedByObjectAndUse(repeated);
     for (size_t index = 0; index < uses.size(); ++index) {
-        const SolvedUse& solved = uses[index];
-        const SolvedUse& other = otherUses[index];
-        RELEASE_ASSERT(solved.object == other.object && solved.use == other.use && solved.uses == other.uses && solved.reasons == other.reasons);
+        const SolvedUse& solved = *uses[index].solved;
+        const SolvedUse& other = *otherUses[index].solved;
+        RELEASE_ASSERT(uses[index].object == otherUses[index].object && solved.use == other.use && solved.uses == other.uses && solved.reasons == other.reasons);
         RELEASE_ASSERT(solved.flowsTo == other.flowsTo && solved.retainedBy == other.retainedBy);
         RELEASE_ASSERT(solved.isContentsStore == other.isContentsStore && solved.readsContents == other.readsContents);
     }

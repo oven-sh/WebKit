@@ -402,6 +402,7 @@ enum class ValueFlowHostNode : uint8_t {
     LibraryModulesRequestedByProgram,
     LibraryModulesHandedOut,
     ObjectsNobodyFollowsThatDefinitionsName,
+    ObjectsNobodyFollowsThatStatementsGiveDisplayName,
     StoredUnderSymbolsNobodyKnows,
     StoredByLibraryUnderSymbolsNobodyKnows,
     SymbolsThatHostLooksForMayBeInHand,
@@ -409,7 +410,8 @@ enum class ValueFlowHostNode : uint8_t {
     HoldersOfClassesThatAppliedRowsName,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 74;
+inline constexpr unsigned numberOfValueFlowHostNodes = 75;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

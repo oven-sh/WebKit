@@ -452,12 +452,15 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     }
 
     // A displayName that is written through an object nobody follows is filed under that object alone, which stands for every closure that has gone the same way. A copy into such an object writes the names that its sources hold.
+    ValueSetID givenDisplayName = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatStatementsGiveDisplayName));
     auto isDisplayNameWrittenThrough = [&](ValueFlowObjectID placeholder, ValueFlowHostNode sourcesOfCopies) {
+        if (inputs.sets().contains(givenDisplayName, placeholder))
+            return true;
         ValueSetID sources = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(sourcesOfCopies));
         return keys.size() > 1 && std::ranges::any_of(std::array { ValueFlowNameKind::Property, ValueFlowNameKind::Getter, ValueFlowNameKind::Setter }, [&](ValueFlowNameKind kind) {
             const ValueFlowHeapIndex::NodesWrittenUnderName* written = inputs.heapIndex->findNodesWrittenUnder({ kind, keys[1].index() });
             return written && std::ranges::any_of(written->nodes, [&](const ValueFlowHeapIndex::WrittenNode& node) {
-                return inputs.sets().contains(node.objects, placeholder) || inputs.sets().meet(node.objects, sources);
+                return inputs.sets().meet(node.objects, sources);
             });
         });
     };

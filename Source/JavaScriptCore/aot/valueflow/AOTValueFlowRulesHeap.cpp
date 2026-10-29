@@ -761,6 +761,22 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
     return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key)), allButBunUnlessNamed(object))), object.node);
 }
 
+// Code that relies on the type of a value runs behind a test of it. A function that arrives where the type admits none is written to by name, and there the run time sees that it is renamed.
+bool HeapRule::mayBeFunctionByType(const ValueFlowOperand& object)
+{
+    if (m_statement.kind != ValueFlowStatementKind::Operation || !m_statement.function || m_statement.function.index() >= m_program.functions.size())
+        return true;
+    auto operand = std::ranges::find(m_operands, object.node, &ValueFlowOperand::node);
+    if (!object.node || operand == m_operands.end())
+        return true;
+    const Function& function = m_program.at(m_statement.function);
+    ValueID value = operation().operand(static_cast<uint32_t>(operand - m_operands.begin()));
+    if (!value)
+        return true;
+    const Value& definition = function.at(value);
+    return (definition.opcode == Opcode::Expect ? m_program.at(definition.expectedType().predicted()) : m_program.typeOf(function, value)).mayBeFunction();
+}
+
 // A stack frame shows the own property `name` or `displayName` of the function object. A rule reads no closure that has escaped beside the object nobody knows, so the node of the operand hands on its closures.
 void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet receivers)
 {
@@ -768,6 +784,11 @@ void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, cons
         return;
     if (m_namesFunctionWhereItIsMade)
         return;
+    // A closure that is seen to arrive counts whatever the type says.
+    if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.displayNameKey() && mayBeFunctionByType(object)) {
+        if (ClimbingSet placeholders = m_context.restrict(receivers, m_universe.placeholdersAlone()); holdsAnything(placeholders))
+            add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatStatementsGiveDisplayName), placeholders);
+    }
     // The texts that are written as the `name` of a closure that the rule reads say whether they rename it.
     bool writesTextOfName = key.keyClass == HeapKeyClass::Name && key.name == m_tables.nameKey();
     ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures());

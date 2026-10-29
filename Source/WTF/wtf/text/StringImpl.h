@@ -271,6 +271,14 @@ public:
     WTF_EXPORT_PRIVATE static RefPtr<StringImpl> create(std::span<const char8_t>);
 
     static Ref<StringImpl> createSubstringSharingImpl(StringImpl&, unsigned offset, unsigned length);
+    static Ref<StringImpl> createSubstringSharingImpl(StringImpl& rep, unsigned offset, unsigned length, unsigned hash)
+    {
+        Ref string = createSubstringSharingImpl(rep, offset, length);
+        ASSERT(hash == (string->is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(string->span8()) : StringHasher::computeHashAndMaskTop8Bits(string->span16())));
+        if (!string->isStatic() && !string->hasHash())
+            string->setHash(hash);
+        return string;
+    }
 
     ALWAYS_INLINE static Ref<StringImpl> create(ASCIILiteral literal) { return createWithoutCopying(literal.span8()); }
 

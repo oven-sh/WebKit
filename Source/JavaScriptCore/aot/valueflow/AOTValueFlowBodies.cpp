@@ -696,17 +696,6 @@ private:
         }
     }
 
-    // Which built-in a call reaches is known once flow is solved. A construction that names the constructor of proxies itself, for itself, makes a proxy whatever else is found.
-    BuiltinClassID classMadeByConstructorAsWritten(const Value& value) const
-    {
-        if (value.opcode != Opcode::Construct || value.newTargetOperand())
-            return { };
-        const Value& callee = m_function.at(definitionThroughSameValues(m_function, value.calleeOperand()));
-        if (callee.opcode != Opcode::Builtin || m_program.builtins().canonicalID(callee.builtin()) != Builtins::Proxy)
-            return { };
-        return BuiltinClasses::Proxy;
-    }
-
     static bool isStrictlyEqualOnlyToItself(const Type& type) { return (type.isSingleValue() || !type.hasObjects()) && !(type.primitives & Primitive::Number); }
 
     bool isNumberInEveryVersion(ValueID value) const
@@ -1037,7 +1026,7 @@ private:
         }
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             bool namesLayout = value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList;
-            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), classMadeByConstructorAsWritten(value) });
+            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { } });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
         }
         if (!carriesValue(id))
@@ -1882,19 +1871,6 @@ private:
         return form;
     }
 
-    // `if (!isProxy(x)) use(x);`: inside the block, x is what the test lets through.
-    OperandForm narrowedByTypeTests(const GuardsOfBlock& guards, ValueID operand, OperandForm form)
-    {
-        if (!form.node || guards.values.isEmpty())
-            return form;
-        ValueID tested = definitionThroughSameValues(m_function, operand);
-        for (const Guard& guard : guards.values) {
-            if (guard.mask && definitionThroughSameValues(m_function, guard.value) == tested)
-                form = throughMask(form, guard.mask);
-        }
-        return form;
-    }
-
     const UnobservedFieldDefinition* findUnobservedDefinition(ValueID operation, uint32_t operandIndex) const
     {
         Opcode opcode = m_function.at(operation).opcode;
@@ -2001,12 +1977,11 @@ private:
                 findReadsHandedOn();
             statement.isOnlyCalledOnItsHolder = !m_readsHandedOn.quickGet(pending.site.index());
         }
-        GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
         for (uint32_t index = 0; index < pending.operandCount; ++index) {
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
-            ValueID operand = m_statementOperands[pending.firstOperand + index];
-            m_body.operands.append(unobserved ? valueOf(*unobserved) : narrowedByTypeTests(guards, operand, operandFormOf(value, index, operand)));
+            m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         }
+        GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
         if (!guards.areWritten) {
             guards.areWritten = true;
             guards.first = m_body.operands.size();

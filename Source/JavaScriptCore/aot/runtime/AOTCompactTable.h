@@ -506,6 +506,7 @@ private:
     template<SlotKind> uint32_t fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithNumbers(std::span<const EncodedJSValue>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
+    void resolveSubstringKey(JSRopeString*) const;
     bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
     void crashUnlessSameEntriesAs(VM&, JSObject* expectedOwner) const;
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;

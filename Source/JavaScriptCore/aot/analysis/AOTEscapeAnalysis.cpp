@@ -55,7 +55,7 @@ static const ValueSet* createdAliasSetOf(const PointsToResults& results, const S
     return set;
 }
 
-static bool escapesThroughContainer(const EscapeAnalysis& escape, const PointsToResults& results, const SolvedUse& use, std::span<const Containment> leaked)
+static bool escapesThroughContainer(const EscapeAnalysis& escape, const PointsToResults& results, const SolvedUse& use, ObjectID object, std::span<const Containment> leaked)
 {
     if (!use.retainedBy)
         return false;
@@ -64,15 +64,15 @@ static bool escapesThroughContainer(const EscapeAnalysis& escape, const PointsTo
         return false;
     for (size_t index : containers->objects) {
         ObjectID container(index);
-        if (isOpenContainer(escape.at(container)) || std::ranges::binary_search(leaked, Containment { container, use.object }))
+        if (isOpenContainer(escape.at(container)) || std::ranges::binary_search(leaked, Containment { container, object }))
             return true;
     }
     return false;
 }
 
-static bool escapesThroughCall(const PointsToResults& results, const SolvedUse& use)
+static bool escapesThroughCall(const PointsToResults& results, const SolvedUse& use, ObjectID object)
 {
-    return use.uses.containsAny(callingUses) && results.objects[use.object.index()].reasons.containsAny(callReasons);
+    return use.uses.containsAny(callingUses) && results.objects[object.index()].reasons.containsAny(callReasons);
 }
 
 bool ObjectSet::overlaps(ObjectSet other) const
@@ -358,7 +358,8 @@ Vector<EscapeReasons> EscapeAnalysis::computeReasons(const PointsToResults& resu
             if (!containers || containers->mayBeUntracked)
                 reasons.add(EscapeReason::StoredInUnknownMemory);
         }
-        m_objects[use.object.index()].reasons.add(reasons);
+        for (ObjectID object : results.objectsOf(use))
+            m_objects[object.index()].reasons.add(reasons);
         useReasons.append(reasons);
     }
     return useReasons;
@@ -393,27 +394,38 @@ void EscapeAnalysis::computeUses(PointsToResults& results, const UseLists& useLi
     Vector<UseOrder, 16> orderOfFirstEscape(m_objects.size());
     m_firstUse.fill(0, numberOfObjects() + 1);
     m_unlistedUses.reserveInitialCapacity(results.uses.size());
+    m_sharedUses.reserveInitialCapacity(2 * results.uses.size());
+    m_isEscapeOfUnlistedUse.ensureSize(results.objectsOfUses.size());
     for (size_t index = 0; index < results.uses.size(); ++index) {
         const SolvedUse& solved = results.uses[index];
         bool createsFollowedAlias = !!createdAliasSetOf(results, solved);
         if (createsFollowedAlias && solved.uses.containsOnly({ OperandUse::Inspects, OperandUse::Returns }))
             continue;
 
-        bool isEscape = !useReasons[index].isEmpty()
-            || escapesThroughContainer(*this, results, solved, leaked.span())
-            || escapesThroughCall(results, solved);
-        TrackedObject& object = m_objects[solved.object.index()];
-        ++m_firstUse[solved.object.index() + 1];
-        object.uses.add(createsFollowedAlias ? solved.uses - OperandUse::Returns : solved.uses);
-        m_unlistedUses.append(UnlistedUse { solved.object, ObjectUse { solved.use, solved.uses, solved.retainedBy, isEscape, solved.isContentsStore, solved.readsContents } });
-        if (!isEscape)
-            continue;
-        UseOrder order = useLists.orderOf(solved.use);
-        if (!object.firstEscape || order < orderOfFirstEscape[solved.object.index()]) {
-            object.firstEscape = solved.use;
-            orderOfFirstEscape[solved.object.index()] = order;
+        m_unlistedUses.append(UnlistedUse { static_cast<uint32_t>(m_sharedUses.size()), solved.firstObject, solved.numberOfObjects });
+        for (bool isEscape : { false, true })
+            m_sharedUses.append(ObjectUse { solved.use, solved.uses, solved.retainedBy, isEscape, solved.isContentsStore, solved.readsContents });
+        std::optional<UseOrder> order;
+        for (uint32_t position = solved.firstObject; position < solved.firstObject + solved.numberOfObjects; ++position) {
+            ObjectID id = results.objectsOfUses[position];
+            bool isEscape = !useReasons[index].isEmpty()
+                || escapesThroughContainer(*this, results, solved, id, leaked.span())
+                || escapesThroughCall(results, solved, id);
+            TrackedObject& object = m_objects[id.index()];
+            ++m_firstUse[id.index() + 1];
+            object.uses.add(createsFollowedAlias ? solved.uses - OperandUse::Returns : solved.uses);
+            if (!isEscape)
+                continue;
+            m_isEscapeOfUnlistedUse.quickSet(position);
+            if (!order)
+                order = useLists.orderOf(solved.use);
+            if (!object.firstEscape || *order < orderOfFirstEscape[id.index()]) {
+                object.firstEscape = solved.use;
+                orderOfFirstEscape[id.index()] = *order;
+            }
         }
     }
+    m_objectsOfUnlistedUses = WTF::move(results.objectsOfUses);
     for (unsigned object = 0; object < numberOfObjects(); ++object)
         m_firstUse[object + 1] += m_firstUse[object];
 }
@@ -424,23 +436,26 @@ void EscapeAnalysis::listUses() const
     m_hasListedUses = true;
     const UseLists& useLists = m_analyses.useLists();
 
-    struct ListPosition {
+    // Sorting the uses once puts every object's list in order.
+    struct OrderedUse {
         UseOrder order;
         uint32_t unlistedUse { 0 };
     };
-    Vector<ListPosition> positions(m_firstUse.last());
+    Vector<OrderedUse> orderedUses(m_unlistedUses.size(), [&](size_t index) {
+        return OrderedUse { useLists.orderOf(m_sharedUses[m_unlistedUses[index].sharedUse].use), static_cast<uint32_t>(index) };
+    });
+    if (!std::ranges::is_sorted(orderedUses, { }, &OrderedUse::order))
+        AOT::stableSort(orderedUses, { }, &OrderedUse::order);
     Vector<uint32_t, 32> nextPosition(m_firstUse.span().first(m_objects.size()));
-    for (size_t index = 0; index < m_unlistedUses.size(); ++index)
-        positions[nextPosition[m_unlistedUses[index].object.index()]++] = ListPosition { useLists.orderOf(m_unlistedUses[index].use.use), static_cast<uint32_t>(index) };
-    for (unsigned object = 0; object < m_objects.size(); ++object) {
-        auto positionsOfObject = positions.mutableSpan().subspan(m_firstUse[object], m_firstUse[object + 1] - m_firstUse[object]);
-        if (!std::ranges::is_sorted(positionsOfObject, { }, &ListPosition::order))
-            AOT::sort(positionsOfObject, { }, &ListPosition::order);
+    m_uses.grow(m_firstUse.last());
+    for (const OrderedUse& ordered : orderedUses) {
+        const UnlistedUse& unlisted = m_unlistedUses[ordered.unlistedUse];
+        for (uint32_t position = unlisted.firstObject; position < unlisted.firstObject + unlisted.numberOfObjects; ++position)
+            m_uses[nextPosition[m_objectsOfUnlistedUses[position].index()]++] = unlisted.sharedUse + m_isEscapeOfUnlistedUse.quickGet(position);
     }
-    m_uses.reserveInitialCapacity(positions.size());
-    for (const ListPosition& position : positions)
-        m_uses.append(m_unlistedUses[position.unlistedUse].use);
     m_unlistedUses.clear();
+    m_objectsOfUnlistedUses.clear();
+    m_isEscapeOfUnlistedUse = { };
 }
 
 void EscapeAnalysis::computeStates()

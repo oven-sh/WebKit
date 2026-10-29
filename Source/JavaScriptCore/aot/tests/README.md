@@ -173,6 +173,10 @@ Three markers say what Bun's `test/aot/tools/update-ir-tests.ts` writes anew. An
 # -- generated: <function> ..  once. Each name (or `f<n>`, or `*`) is a function of the program and has its -LABEL line below. Only check lines follow
 ```
 
+List the functions the test is about. A library function (`role=Library`) belongs in the list only if the test is about it: `next` listed in a hundred
+files is a hundred files to regenerate when an iterator compiles differently. In a source, print strings: `console.log` of a value of unknown type keeps
+about 500 library functions reachable, which is 1.6 MB of IR text.
+
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
 applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
 the pipeline themselves: a test runs `pass TypeValues` or `verify` itself, and `verify` refuses a program that still has a `Convert` (`RequestAfterTyping`). A command registered with `ProgramAsRead::TypedAndVerified` (the commands of the flow analysis, of the

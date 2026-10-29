@@ -92,7 +92,7 @@ AOT_STUB_FRONT_END(Construct, ConstructFrontEnd)
 AOT_STUB_FRONT_END(SuperConstruct, SuperConstructFrontEnd)
 
 // AOTStubsBoxedCalls.cpp
-v(CallBoxedBuiltin, Handler, (ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, SetAdd, SetDelete, SetHas, SetSize, StringIndexOf, StringSlice, StringStartsWith, StringToLowerCase, StringTrim, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
+v(CallBoxedBuiltin, Handler, (ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ArraySort, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, SetAdd, SetDelete, SetHas, SetSize, StringIndexOf, StringSlice, StringStartsWith, StringToLowerCase, StringTrim, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
 v(WeakMapSet, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, WeakMapSet)
 v(StringStartsWith, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringStartsWith)
 v(StringIndexOf, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringIndexOf)

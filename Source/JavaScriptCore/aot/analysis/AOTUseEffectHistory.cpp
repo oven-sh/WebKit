@@ -49,7 +49,7 @@ static std::optional<uint32_t> actionIndexOf(const Function& function, const Use
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasKnownHistory(const TrackedObject& object, std::span<const ObjectUse> objectUses, OperandUses requestedUses)
+static bool hasKnownHistory(const TrackedObject& object, ObjectUses objectUses, OperandUses requestedUses)
 {
     OperandUses listedUses;
     bool hasEscapingUse = false;

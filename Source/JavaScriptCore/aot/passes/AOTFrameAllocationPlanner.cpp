@@ -557,7 +557,7 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     BlockID blockOfDefinition = useLists.blockOf(definition);
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
-    std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    ObjectUses knownUses = m_escape.usesOf(closure);
     // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
     bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
@@ -1208,7 +1208,7 @@ void FramePlanner::checkMaterialization()
     for (ObjectID environment : candidates()) {
         if (m_decisions[environment.index()].storage != AllocationStorage::FrameUntilMaterialized)
             continue;
-        std::span<const ObjectUse> uses = m_escape.usesOf(environment);
+        ObjectUses uses = m_escape.usesOf(environment);
         auto isCaptureOfFrameClosure = [&](const ObjectUse& entry) {
             return entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index());
         };
