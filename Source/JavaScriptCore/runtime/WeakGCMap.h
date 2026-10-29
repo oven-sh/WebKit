@@ -63,8 +63,8 @@ public:
         return result;
     }
 
-    // Grows while there is still room for an eighth as many keys as there are buckets. Returns false if there is no memory for that: what room there is stays.
-    bool tryGrowAheadOfNeed()
+    // Grows the table once it has room for fewer than capacity / 8 more keys. Returns false if the allocation fails; the remaining room is still usable.
+    bool tryGrowEarly()
     {
         return m_map.tryReserveCapacityForAdd(std::max(m_map.capacity() / 8, 1u));
     }

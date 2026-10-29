@@ -25,6 +25,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrame.h"
 #include "AOTVector.h"
+#include "BuiltinNames.h"
 #include "DeferGC.h"
 #include "ExecutableBaseInlines.h"
 #include "InternalFieldTuple.h"
@@ -88,19 +89,36 @@ static bool isWrittenInJavaScript(BuiltinID builtin)
     });
 }
 
+static JSFunction* findPrivateGlobalFunction(VM& vm, std::span<const Latin1Character> name)
+{
+    const auto& instances = vm.aotState().instances;
+    PrivateSymbolImpl* uid = vm.propertyNames->builtinNames().lookUpPrivateName(name);
+    if (!uid || instances.isEmpty())
+        return nullptr;
+    JSGlobalObject* realm = instances.first()->globalObject;
+    if (JSObject* property = findExistingObject(realm, uid))
+        return dynamicDowncast<JSFunction>(property);
+    PropertySlot slot(realm, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    JSValue variable = symbolTableGet(realm, uid, slot) ? slot.getValue(realm, uid) : JSValue();
+    return variable ? dynamicDowncast<JSFunction>(variable) : nullptr;
+}
+
+// The end of a GC formats the stack of an error that has a dead function in its frames. No atom can be created and no cell allocated there.
 static String nameOfBuiltin(VM& vm, BuiltinID builtin)
 {
     if (auto function = BuiltinBindings::nativeFunctionOf(builtin); function && !function->name.isNull())
         return function->name;
     const BuiltinTable& table = BuiltinTable::singleton();
-    const Builtin& entry = table.at(builtin);
-    // The host names a function that it keeps under a private name as it likes.
-    if (entry.holder == Builtins::PrivateGlobals) {
-        auto found = findInRealm(vm.aotState().instances.first()->globalObject, BuiltinCellKey::object(builtin));
-        if (auto* function = found ? dynamicDowncast<JSFunction>(*found) : nullptr)
+    BuiltinName key = table.at(builtin).name;
+    auto text = byteCast<Latin1Character>(table.textOf(key));
+    // The host chooses the name of a function that it stores under a private name.
+    if (table.at(builtin).holder == Builtins::PrivateGlobals) {
+        if (JSFunction* function = findPrivateGlobalFunction(vm, text))
             return function->nameWithoutGC(vm);
     }
-    return table.identifierOf(vm, entry.name).string();
+    if (!table.isSymbolName(key))
+        return StringImpl::createWithoutCopying(text);
+    return makeString(table.isRegisteredSymbolName(key) ? "["_s : "[Symbol."_s, text, ']');
 }
 
 FunctionDescription::FunctionDescription(FunctionID function)

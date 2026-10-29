@@ -17,6 +17,7 @@
 #include "AOTGenerator.h"
 #include "AOTImageFormat.h"
 #include "AOTInstance.h"
+#include "AOTLoadedObject.h"
 #include "AOTModules.h"
 #include "AOTOperationData.h"
 #include "AOTProgramTables.h"
@@ -33,10 +34,6 @@
 #include <bit>
 #include <utility>
 #include <wtf/TZoneMallocInlines.h>
-
-#if defined(BUN_HARDENED)
-#include <link.h>
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -121,16 +118,12 @@ static bool isInCodeOfEngine(const void* address)
     };
     static const Segments segments = [] {
         Segments result;
-        // The program itself comes first.
-        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) {
-            size_t count = 0;
-            auto& found = static_cast<Segments*>(data)->startAndSize;
-            for (const auto& header : std::span { info->dlpi_phdr, info->dlpi_phnum }) {
-                if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < found.size())
-                    found[count++] = { info->dlpi_addr + header.p_vaddr, header.p_memsz };
-            }
-            return 1;
-        }, &result);
+        size_t count = 0;
+        const LoadedObject& executable = loadedExecutable();
+        for (const ProgramHeader& header : executable.programHeaders) {
+            if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < result.startAndSize.size())
+                result.startAndSize[count++] = { executable.loadBias + header.p_vaddr, header.p_memsz };
+        }
         return result;
     }();
     return std::ranges::any_of(segments.startAndSize, [&](auto segment) {

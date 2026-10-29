@@ -19,7 +19,7 @@ namespace JSC { namespace B3 { namespace Air {
 
 namespace {
 
-bool isCopyIntoRegister(const Inst& inst)
+bool isMoveToRegister(const Inst& inst)
 {
     switch (inst.kind.opcode) {
     case Move:
@@ -32,65 +32,65 @@ bool isCopyIntoRegister(const Inst& inst)
     }
 }
 
-// The block between the test at the bottom of a loop and the top of the loop, where the allocator has left copies in it.
-struct WayBack {
+// A block on the back edge from a loop's bottom test to its header that holds only moves inserted by the register allocator.
+struct BackEdgeBlock {
     BasicBlock* latch;
     BasicBlock* block;
     BasicBlock* exit;
 };
 
-std::optional<WayBack> findWayBack(Code& code, BasicBlock* block)
+std::optional<BackEdgeBlock> findBackEdgeBlock(Code& code, BasicBlock* block)
 {
     if (block->size() < 2 || block->last().kind.opcode != Jump || block->numPredecessors() != 1 || code.isEntrypoint(block))
         return std::nullopt;
     BasicBlock* latch = block->predecessor(0);
     if (latch == block || latch->numSuccessors() != 2 || latch->last().kind.opcode == Patch || latch->successorBlock(0) == latch->successorBlock(1))
         return std::nullopt;
-    unsigned indexOfBlock = latch->successorBlock(0) == block ? 0 : 1;
-    BasicBlock* exit = latch->successorBlock(1 - indexOfBlock);
-    if (!latch->successor(indexOfBlock).isLikely() || 2 * block->frequency() <= latch->frequency())
+    unsigned successorIndex = latch->successorBlock(0) == block ? 0 : 1;
+    BasicBlock* exit = latch->successorBlock(1 - successorIndex);
+    if (!latch->successor(successorIndex).isLikely() || 2 * block->frequency() <= latch->frequency())
         return std::nullopt;
     for (unsigned index = 0; index + 1 < block->size(); ++index) {
-        if (!isCopyIntoRegister(block->at(index)) || (usesFlags(latch->last().kind.opcode) && !preservesFlags(block->at(index).kind.opcode)))
+        if (!isMoveToRegister(block->at(index)) || (usesFlags(latch->last().kind.opcode) && !preservesFlags(block->at(index).kind.opcode)))
             return std::nullopt;
     }
-    return WayBack { latch, block, exit };
+    return BackEdgeBlock { latch, block, exit };
 }
 
-// Whether each block is on the path from the entry on which a depth-first walk has found the block that is asked about.
-BitVector findBlocksThatJumpToAncestor(Code& code, const Vector<WayBack, 4>& candidates)
+// A candidate's jump is a back edge if its target is still on the stack of a depth-first search from the entry.
+BitVector findBlocksEndingInBackEdge(Code& code, const Vector<BackEdgeBlock, 4>& candidates)
 {
     struct Visit {
         BasicBlock* block;
         unsigned nextSuccessor;
     };
     BitVector isCandidate(code.size());
-    for (const WayBack& candidate : candidates)
+    for (const BackEdgeBlock& candidate : candidates)
         isCandidate.quickSet(candidate.block->index());
     BitVector isVisited(code.size());
-    BitVector isOnPath(code.size());
+    BitVector isOnStack(code.size());
     BitVector result(code.size());
-    Vector<Visit, 32> path;
+    Vector<Visit, 32> stack;
     auto enter = [&](BasicBlock* block) {
         if (isVisited.quickSet(block->index()))
             return;
-        isOnPath.quickSet(block->index());
-        path.append({ block, 0 });
+        isOnStack.quickSet(block->index());
+        stack.append({ block, 0 });
     };
     for (BasicBlock* root : code) {
         if (root->numPredecessors() && root != code[0] && !code.isEntrypoint(root))
             continue;
         enter(root);
-        while (!path.isEmpty()) {
-            Visit& visit = path.last();
+        while (!stack.isEmpty()) {
+            Visit& visit = stack.last();
             if (visit.nextSuccessor == visit.block->numSuccessors()) {
-                isOnPath.quickClear(visit.block->index());
-                path.removeLast();
+                isOnStack.quickClear(visit.block->index());
+                stack.removeLast();
                 continue;
             }
             BasicBlock* block = visit.block;
             BasicBlock* successor = block->successorBlock(visit.nextSuccessor++);
-            if (isCandidate.quickGet(block->index()) && isOnPath.quickGet(successor->index()))
+            if (isCandidate.quickGet(block->index()) && isOnStack.quickGet(successor->index()))
                 result.quickSet(block->index());
             enter(successor);
         }
@@ -98,38 +98,38 @@ BitVector findBlocksThatJumpToAncestor(Code& code, const Vector<WayBack, 4>& can
     return result;
 }
 
-// `move; jump` behind the branch becomes `move` ahead of a branch that leads back itself. On the way out the copies are made in vain, so nothing there may read what they overwrite.
-bool hoistCopiesOfWaysBack(Code& code)
+// Hoists the moves above the latch's branch, leaving only the jump in the back edge block. The moves now also run when the loop exits, so they must not clobber anything live at the exit.
+bool hoistMovesFromBackEdgeBlocks(Code& code)
 {
-    Vector<WayBack, 4> candidates;
+    Vector<BackEdgeBlock, 4> candidates;
     for (BasicBlock* block : code) {
-        if (std::optional<WayBack> candidate = findWayBack(code, block))
+        if (std::optional<BackEdgeBlock> candidate = findBackEdgeBlock(code, block))
             candidates.append(*candidate);
     }
     if (candidates.isEmpty())
         return false;
-    BitVector jumpsToAncestor = findBlocksThatJumpToAncestor(code, candidates);
-    if (jumpsToAncestor.isEmpty())
+    BitVector endsInBackEdge = findBlocksEndingInBackEdge(code, candidates);
+    if (endsInBackEdge.isEmpty())
         return false;
 
-    // What is live is asked once. Copies that have gone ahead of a test change it at the head of one block alone, the one they came from, and only the other side of the same test asks about that block.
+    // Liveness is not recomputed. A hoist only invalidates it at the head of the emptied block, which is only consulted when hoisting from the same latch's other successor, so each latch is used once.
     RegLiveness liveness(code);
-    BitVector hasTakenCopies(code.size());
+    BitVector didHoistIntoLatch(code.size());
     bool changed = false;
-    for (const WayBack& candidate : candidates) {
+    for (const BackEdgeBlock& candidate : candidates) {
         auto [latch, block, exit] = candidate;
-        if (!jumpsToAncestor.quickGet(block->index()) || hasTakenCopies.quickGet(latch->index()))
+        if (!endsInBackEdge.quickGet(block->index()) || didHoistIntoLatch.quickGet(latch->index()))
             continue;
-        const RegisterSet& liveOnWayOut = liveness.liveAtHead(exit);
-        bool isOverwrittenValueRead = false;
+        const RegisterSet& liveAtExit = liveness.liveAtHead(exit);
+        bool clobbersLiveValue = false;
         for (unsigned index = 0; index + 1 < block->size(); ++index) {
             Reg destination = block->at(index).args()[1].reg();
-            isOverwrittenValueRead |= liveOnWayOut.contains(destination, IgnoreVectors);
+            clobbersLiveValue |= liveAtExit.contains(destination, IgnoreVectors);
             latch->last().forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-                isOverwrittenValueRead |= tmp.reg() == destination || (Arg::isAnyDef(role) && block->at(index).args()[0].isReg() && tmp.reg() == block->at(index).args()[0].reg());
+                clobbersLiveValue |= tmp.reg() == destination || (Arg::isAnyDef(role) && block->at(index).args()[0].isReg() && tmp.reg() == block->at(index).args()[0].reg());
             });
         }
-        if (isOverwrittenValueRead)
+        if (clobbersLiveValue)
             continue;
         Inst branch = latch->insts().takeLast();
         Inst jump = block->insts().takeLast();
@@ -137,7 +137,7 @@ bool hoistCopiesOfWaysBack(Code& code)
         latch->insts().append(WTF::move(branch));
         block->insts().shrink(0);
         block->insts().append(WTF::move(jump));
-        hasTakenCopies.quickSet(latch->index());
+        didHoistIntoLatch.quickSet(latch->index());
         changed = true;
     }
     return changed;
@@ -160,7 +160,7 @@ bool hoistCommonMoves(Code& code)
         while (taken->size() > 1 && notTaken->size() > 1) {
             Inst move = taken->at(0);
             Inst& other = notTaken->at(0);
-            if (!isCopyIntoRegister(move) || move.kind != other.kind || other.args().size() != 2 || move.args()[0] != other.args()[0] || move.args()[1] != other.args()[1])
+            if (!isMoveToRegister(move) || move.kind != other.kind || other.args().size() != 2 || move.args()[0] != other.args()[0] || move.args()[1] != other.args()[1])
                 break;
             if (usesFlags(block->last().kind.opcode) && !preservesFlags(move.kind.opcode))
                 break;
@@ -176,7 +176,7 @@ bool hoistCommonMoves(Code& code)
             changed = true;
         }
     }
-    changed |= hoistCopiesOfWaysBack(code);
+    changed |= hoistMovesFromBackEdgeBlocks(code);
     return changed;
 }
 

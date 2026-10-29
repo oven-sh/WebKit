@@ -3735,8 +3735,27 @@ static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const Natural
     return true;
 }
 
-// All that a poll throws to a handler is the error that an allocation has left to it. Where the likely turns of a loop allocate nothing, the poll of the loop stands outside the handler.
-static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
+// A store that adds a field throws nothing where it finds no room: a poll under the handler throws for it, and in a loop that may be the poll of the loop.
+static bool addsFields(const Function& function, const NaturalLoop& loop)
+{
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        for (ValueID id : function.at(loop.at(index)).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::PutSlotOrAdd || (value.opcode == Opcode::LoopHint && value.followsStores()))
+                return true;
+            if (value.opcode == Opcode::PutSlots && std::ranges::any_of(value.placedKeys(), &PlacedKey::mayAdd))
+                return true;
+        }
+    }
+    return false;
+}
+
+enum class PollsTakenOut : uint8_t { WhereLikelyTurnsAllocateNothing, WhereNoFieldIsAdded };
+
+// What else allocates and finds no room throws where it returns, under its own handler, so the poll of a loop has nothing to throw to a handler: it stops the thread for the collector or ends it.
+// Outside the handler, the back end takes the loop for what it is outside a try block. Until selection a header under a handler tells that the loop lies in the try block, which is what lets selection
+// prepare in front of the loop what may throw in it. So ahead of selection a poll goes out only where the likely turns allocate nothing, and behind it wherever the loop adds no field.
+static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context, PollsTakenOut pollsTakenOut)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -3753,7 +3772,7 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
     const NaturalLoops& loops = analyses.naturalLoops();
     for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
         const NaturalLoop& loop = loops.loop(loopIndex);
-        std::optional<bool> allocatesNothing;
+        std::optional<bool> goesOut;
         for (unsigned index = 0; index < loop.size(); ++index) {
             BlockID id = loop.at(index);
             const Block& block = function.at(id);
@@ -3762,9 +3781,9 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
             size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
             if (position == notFound || !isPollOfLoop(function, block.values[position]))
                 continue;
-            if (!allocatesNothing)
-                allocatesNothing = likelyTurnsAllocateNothing(analyses, loop);
-            if (!*allocatesNothing)
+            if (!goesOut)
+                goesOut = pollsTakenOut == PollsTakenOut::WhereNoFieldIsAdded ? !addsFields(function, loop) : likelyTurnsAllocateNothing(analyses, loop);
+            if (!*goesOut)
                 break;
             bool restNeedsHandler = needsHandler(analyses.effectsOfTerminator(id)) || std::ranges::any_of(block.values.span().subspan(position + 1), [&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
             polls.append({ { id, static_cast<uint32_t>(position) }, restNeedsHandler });
@@ -3808,16 +3827,32 @@ static bool pollBehindStoresThatMayAddFields(FunctionPassContext& context)
     return hasChanged;
 }
 
+static PassOutcome removeRedundantHandlers(FunctionPassContext& context, bool hasMovedPolls)
+{
+    if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
+        return hasMovedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
+    Rewrite(context).builder().emptyUnreachableBlocks();
+    return PassOutcome::Changed;
+}
+
 PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
     bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
-    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context);
-    if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return hasMovedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
-    Rewrite(context).builder().emptyUnreachableBlocks();
-    return PassOutcome::Changed;
+    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context, PollsTakenOut::WhereLikelyTurnsAllocateNothing);
+    return removeRedundantHandlers(context, hasMovedPolls);
+}
+
+PassOutcome removeRedundantHandlersBehindSelection(FunctionPassContext& context, bool allocatesLessUnderHandler)
+{
+    if (!context.analyses.cfg().hasHandlers())
+        return PassOutcome::Unchanged;
+    bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
+    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context, PollsTakenOut::WhereNoFieldIsAdded);
+    if (!hasMovedPolls && !allocatesLessUnderHandler)
+        return PassOutcome::Unchanged;
+    return removeRedundantHandlers(context, hasMovedPolls);
 }
 
 // TestNarrowerTypesFirst.

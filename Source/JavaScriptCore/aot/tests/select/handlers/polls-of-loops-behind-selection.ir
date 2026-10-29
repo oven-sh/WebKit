@@ -1,0 +1,58 @@
+# What allocates and finds no room throws where it returns, under its own handler, so the poll of a loop has nothing to throw to a handler. Behind selection it has none, whatever the turns of the loop do.
+# A store that adds a field throws nothing: in a loop that holds one, the poll of the loop keeps the handler.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="likelyTurnsAllocate" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Integer integer=1
+    v8 = Add v5, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v9 = CatchValue
+    Return v9
+# CHECK: b1(v2: int[0, 100]):
+# CHECK-NEXT: LoopHint
+# CHECK: b2(v5: int[0, 99]) handler=b4():
+# CHECK-NEXT: = NewObject
+# CHECK-NOT: LoopHint
+# CHECK: role=CatchHandler
+}
+
+function f1 name="turnsAddFields" parameters=[{type=L1}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3) handler=b4():
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6) handler=b4():
+    PutSlotOrAdd v0, -, v6 key="y" receivers=[L1] level=Proven
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+  b4() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+# CHECK: b1(v3: int[0, 100]) handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK: b2(v6: int[0, 99]) handler=b4():
+# CHECK: LoopHint [followsStores]
+# CHECK: role=CatchHandler
+}

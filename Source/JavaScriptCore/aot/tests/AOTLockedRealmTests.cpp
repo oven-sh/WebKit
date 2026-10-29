@@ -596,6 +596,12 @@ static void testPristineArrays()
     checkPristineOnlyInLockedRealm(realms, pristineArrays);
 }
 
+static void testPrototypeGainsNameOfPristineArray()
+{
+    Realms realms;
+    AOT_TEST_CHECK(isPristine(realms.vm(), realms.evaluate(realms.locked(), "(a => (a.late = 1, Array.prototype.late = 2, a))([1, 2])"_s)));
+}
+
 static void testOriginalArrayStructuresArePristine()
 {
     Realms realms;
@@ -1050,6 +1056,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/vm-state-without-image"_s, testVMStateWithoutImage },
         { "locked-realm/validators-pass-fresh-realm"_s, testValidatorsPassFreshRealm },
         { "locked-realm/pristine-arrays"_s, testPristineArrays },
+        { "locked-realm/prototype-gains-name-of-pristine-array"_s, testPrototypeGainsNameOfPristineArray },
         { "locked-realm/original-array-structures-are-pristine"_s, testOriginalArrayStructuresArePristine },
         { "locked-realm/pristine-contiguous-arrays"_s, testPristineContiguousArrays },
         { "locked-realm/pristine-regexp-match-arrays"_s, testPristineRegExpMatchArrays },

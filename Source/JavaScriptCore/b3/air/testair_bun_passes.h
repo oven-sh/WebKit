@@ -7,8 +7,8 @@
 
 #define RUN_BUN_PASS_TESTS() do { \
         RUN(testHoistCommonMoves()); \
-        RUN(testHoistCopiesOfWayBack()); \
-        RUN(testHoistCopiesOfOneWayBackPerLatch()); \
+        RUN(testHoistMovesFromBackEdgeBlock()); \
+        RUN(testHoistMovesFromOneBackEdgeBlockPerLatch()); \
         RUN(testTerminalResultsOnEdge()); \
         RUN(testMovesBeforePatch()); \
         RUN(testForwardRegisterCopies()); \
@@ -350,18 +350,18 @@ void testHoistCommonMoves()
     }
 }
 
-// sum = 0; do { previous = current; current += step; sum += previous; } while (--turns); the allocator is taken to have left `Move next, current` on the way back.
-void testHoistCopiesOfWayBack()
+// sum = 0; do { previous = current; current += step; sum += previous; } while (--count); with `Move next, current` on the back edge, as the register allocator leaves it.
+void testHoistMovesFromBackEdgeBlock()
 {
-    enum class Case : uint8_t { Hoisted, DestinationIsReadOnWayOut, BranchTestsDestination, WayBackIsUnlikely, WayBackAdds, LeadsForward };
-    auto [turns, current, step, next, sum, ret] = PassRegisters { };
-    for (Case testCase : { Case::Hoisted, Case::DestinationIsReadOnWayOut, Case::BranchTestsDestination, Case::WayBackIsUnlikely, Case::WayBackAdds, Case::LeadsForward }) {
+    enum class Case : uint8_t { Hoisted, DestinationIsLiveAtExit, BranchTestsDestination, BackEdgeIsRare, BackEdgeBlockAdds, JumpsForward };
+    auto [count, current, step, next, sum, ret] = PassRegisters { };
+    for (Case testCase : { Case::Hoisted, Case::DestinationIsLiveAtExit, Case::BranchTestsDestination, Case::BackEdgeIsRare, Case::BackEdgeBlockAdds, Case::JumpsForward }) {
         B3::Procedure proc;
         proc.setOptLevel(2);
         Code& code = proc.code();
         BasicBlock* root = code.addBlock();
         BasicBlock* body = code.addBlock(10);
-        BasicBlock* wayBack = code.addBlock(9);
+        BasicBlock* backEdgeBlock = code.addBlock(9);
         BasicBlock* exit = code.addBlock();
         BasicBlock* join = code.addBlock();
 
@@ -369,14 +369,14 @@ void testHoistCopiesOfWayBack()
         appendJump(root, body);
         appendChecked(body, Add64, current, step, next);
         appendChecked(body, Add64, current, sum);
-        appendChecked(body, Add64, Arg::imm(-1), turns);
-        FrequentedBlock back(wayBack, testCase == Case::WayBackIsUnlikely ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal);
-        appendBranchTest(body, testCase == Case::BranchTestsDestination ? current : turns, back, exit);
-        if (testCase == Case::WayBackAdds)
-            appendChecked(wayBack, Add64, Arg::imm(0), next);
-        appendChecked(wayBack, Move, next, current);
-        appendJump(wayBack, testCase == Case::LeadsForward ? join : body);
-        if (testCase == Case::DestinationIsReadOnWayOut)
+        appendChecked(body, Add64, Arg::imm(-1), count);
+        FrequentedBlock backEdge(backEdgeBlock, testCase == Case::BackEdgeIsRare ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal);
+        appendBranchTest(body, testCase == Case::BranchTestsDestination ? current : count, backEdge, exit);
+        if (testCase == Case::BackEdgeBlockAdds)
+            appendChecked(backEdgeBlock, Add64, Arg::imm(0), next);
+        appendChecked(backEdgeBlock, Move, next, current);
+        appendJump(backEdgeBlock, testCase == Case::JumpsForward ? join : body);
+        if (testCase == Case::DestinationIsLiveAtExit)
             appendChecked(exit, Add64, current, sum);
         appendJump(exit, join);
         appendChecked(join, Move, sum, ret);
@@ -388,23 +388,23 @@ void testHoistCopiesOfWayBack()
             CHECK(body->size() == branchIndex + 2);
             CHECK(isInst(body->at(branchIndex), Move, { next, current }));
             CHECK(body->last().isTerminal());
-            CHECK(wayBack->size() == 1);
+            CHECK(backEdgeBlock->size() == 1);
         } else
             checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
-        if (testCase == Case::BranchTestsDestination || testCase == Case::LeadsForward)
+        if (testCase == Case::BranchTestsDestination || testCase == Case::JumpsForward)
             continue;
         auto compilation = compile(proc);
-        CHECK(invokeInt64(*compilation, 3, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 65 : 45));
-        CHECK(invokeInt64(*compilation, 1, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 20 : 10));
+        CHECK(invokeInt64(*compilation, 3, 10, 5) == (testCase == Case::DestinationIsLiveAtExit ? 65 : 45));
+        CHECK(invokeInt64(*compilation, 1, 10, 5) == (testCase == Case::DestinationIsLiveAtExit ? 20 : 10));
     }
 }
 
-// The test at the bottom of an inner loop leads back to the inner loop on one side and to the outer loop on the other, and both ways write one register.
-// sum = 0; while (--turns) { left = 2; do { sum += carried; carried = --left ? step : sum; } while (left); }
-void testHoistCopiesOfOneWayBackPerLatch()
+// The inner loop's bottom test branches to the inner header on one side and to the outer header on the other, and both back edge blocks write the same register.
+// sum = 0; while (--count) { left = 2; do { sum += carried; carried = --left ? step : sum; } while (left); }
+void testHoistMovesFromOneBackEdgeBlockPerLatch()
 {
-    auto [turns, carried, left, step, sum, ret] = PassRegisters { };
-    for (bool secondWayReadsWhatFirstWrites : { false, true }) {
+    auto [count, carried, left, step, sum, ret] = PassRegisters { };
+    for (bool secondMoveReadsFirstDestination : { false, true }) {
         B3::Procedure proc;
         proc.setOptLevel(2);
         Code& code = proc.code();
@@ -417,15 +417,15 @@ void testHoistCopiesOfOneWayBackPerLatch()
 
         appendChecked(root, Move, Arg::imm(0), sum);
         appendJump(root, outer);
-        appendChecked(outer, Add64, Arg::imm(-1), turns);
+        appendChecked(outer, Add64, Arg::imm(-1), count);
         appendChecked(outer, Move, Arg::imm(2), left);
-        appendBranchTest(outer, turns, inner, exit);
+        appendBranchTest(outer, count, inner, exit);
         appendChecked(inner, Add64, carried, sum);
         appendChecked(inner, Add64, Arg::imm(-1), left);
         appendBranchTest(inner, left, backToInner, backToOuter);
         appendChecked(backToInner, Move, step, carried);
         appendJump(backToInner, inner);
-        if (secondWayReadsWhatFirstWrites)
+        if (secondMoveReadsFirstDestination)
             appendChecked(backToOuter, Move, carried, step);
         else
             appendChecked(backToOuter, Move, sum, carried);
@@ -434,7 +434,7 @@ void testHoistCopiesOfOneWayBackPerLatch()
         appendReturn(exit);
 
         unsigned branchIndex = inner->size() - 1;
-        if (secondWayReadsWhatFirstWrites)
+        if (secondMoveReadsFirstDestination)
             checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
         else {
             checkPassChangesCode(code, hoistCommonMoves);
@@ -442,7 +442,7 @@ void testHoistCopiesOfOneWayBackPerLatch()
             CHECK(backToInner->size() + backToOuter->size() == 3);
         }
         auto compilation = compile(proc);
-        CHECK(invokeInt64(*compilation, 3, 10, 0, 5) == (secondWayReadsWhatFirstWrites ? 25 : 35));
+        CHECK(invokeInt64(*compilation, 3, 10, 0, 5) == (secondMoveReadsFirstDestination ? 25 : 35));
     }
 }
 

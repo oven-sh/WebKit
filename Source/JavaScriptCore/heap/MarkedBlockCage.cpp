@@ -203,16 +203,25 @@ static uintptr_t endOfImageBelow4GB()
         uintptr_t& end;
     } bounds { start, end };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) {
-        auto& bounds = *static_cast<Bounds*>(data);
+        // The executable is the object that contains this code. Its position in the iteration order depends on the C library.
+        static constexpr uint8_t byteInExecutable { };
+        bool isExecutable = false;
+        uintptr_t start = std::numeric_limits<uintptr_t>::max();
+        uintptr_t end = 0;
         for (unsigned index = 0; index < info->dlpi_phnum; ++index) {
             const auto& header = info->dlpi_phdr[index];
             if (header.p_type != PT_LOAD)
                 continue;
             uintptr_t address = info->dlpi_addr + header.p_vaddr;
-            bounds.start = std::min(bounds.start, address);
-            bounds.end = std::max<uintptr_t>(bounds.end, address + header.p_memsz);
+            isExecutable |= std::bit_cast<uintptr_t>(&byteInExecutable) - address < header.p_memsz;
+            start = std::min(start, address);
+            end = std::max<uintptr_t>(end, address + header.p_memsz);
         }
-        // The executable comes first.
+        if (!isExecutable)
+            return 0;
+        auto& bounds = *static_cast<Bounds*>(data);
+        bounds.start = start;
+        bounds.end = end;
         return 1;
     }, &bounds);
 #endif
@@ -568,7 +577,7 @@ bool MarkedBlockCage::tryKeepReleasedReservesAgain(VM& vm)
         m_exhaustedHeaps.remove(ExhaustedHeap::Storage);
     }
     if (m_exhaustedHeaps.contains(ExhaustedHeap::Tables)) {
-        if (!vm.symbolImplToSymbolMap.tryGrowAheadOfNeed())
+        if (!vm.symbolImplToSymbolMap.tryGrowEarly())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
     }
@@ -872,7 +881,7 @@ void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
 
 void MarkedBlockCage::willAddSymbol(VM& vm)
 {
-    if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowAheadOfNeed()) [[likely]]
+    if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowEarly()) [[likely]]
         return;
     if (vm.traps().needsOutOfMemoryError())
         return;

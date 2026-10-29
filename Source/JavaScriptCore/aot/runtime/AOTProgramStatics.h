@@ -59,6 +59,8 @@ public:
 
     static JSValue readVariable(Instance&, SlotData);
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
+    // Null if the variable does not hold a string.
+    static String readStringWithoutAllocating(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
 
     template<typename Visitor> void visitRoots(Visitor&);
@@ -66,6 +68,7 @@ public:
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     void initializeProgramStatics();
+    bool isInitialized(uint32_t offset) const;
     uint32_t groupWithWord(uint32_t word) const;
 
     Instance& m_instance;

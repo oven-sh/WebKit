@@ -142,7 +142,7 @@ static void testRotateLoopsSkipsRareBackEdge()
     checkSumsIntegersBelowBound(proc);
 }
 
-static void testRotateLoopsTestsUnlikelyBackEdgeAtTheBottom()
+static void testRotateLoopsSendsUnlikelyBackEdgeToBottomTest()
 {
     Procedure proc;
     Graph graph { proc };
@@ -475,8 +475,8 @@ static void testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody()
 }
 
 // for (index = 0, flag = 1; index < bound; ) { if (!flag) return sum + 1000; sum += ++index; flag = ..; }
-// The block that leads back writes the flag twice. What it writes last is what the next turn reads.
-static void testRotateLoopsReadsWhatLatchWritesLast()
+// The latch has two Upsilons for flag. The next iteration sees the last one.
+static void testRotateLoopsUsesLastUpsilonInLatch()
 {
     enum class Written : uint8_t { OneThenZero, OneThenLowestBitOfIndex, ZeroThenOne };
     for (Written written : { Written::OneThenZero, Written::OneThenLowestBitOfIndex, Written::ZeroThenOne }) {
@@ -486,7 +486,7 @@ static void testRotateLoopsReadsWhatLatchWritesLast()
         BasicBlock* header = proc.addBlock();
         BasicBlock* test = proc.addBlock();
         BasicBlock* body = proc.addBlock();
-        BasicBlock* leave = proc.addBlock();
+        BasicBlock* earlyReturn = proc.addBlock();
         BasicBlock* exit = proc.addBlock();
         Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
         Value* index = graph.phi(header, Int64);
@@ -497,14 +497,14 @@ static void testRotateLoopsReadsWhatLatchWritesLast()
         graph.upsilon(root, graph.int64(root, 1), flag);
         graph.jump(root, header);
         graph.branch(header, graph.make(header, LessThan, index, bound), test, exit);
-        graph.branch(test, flag, body, leave);
+        graph.branch(test, flag, body, earlyReturn);
         Value* next = graph.make(body, Add, index, graph.int64(body, 1));
         graph.upsilon(body, next, index);
         graph.upsilon(body, graph.make(body, Add, sum, next), sum);
         graph.upsilon(body, graph.int64(body, written == Written::ZeroThenOne ? 0 : 1), flag);
         graph.upsilon(body, written == Written::OneThenLowestBitOfIndex ? graph.make(body, BitAnd, next, graph.int64(body, 1)) : graph.int64(body, written == Written::ZeroThenOne ? 1 : 0), flag);
         graph.jump(body, header);
-        graph.ret(leave, graph.make(leave, Add, sum, graph.int64(leave, 1000)));
+        graph.ret(earlyReturn, graph.make(earlyReturn, Add, sum, graph.int64(earlyReturn, 1000)));
         graph.ret(exit, sum);
         resetAndValidate(proc);
 
@@ -713,7 +713,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsSkipsLargeTest());
     RUN(testRotateLoopsSkipsUncloneableTest());
     RUN(testRotateLoopsSkipsRareBackEdge());
-    RUN(testRotateLoopsTestsUnlikelyBackEdgeAtTheBottom());
+    RUN(testRotateLoopsSendsUnlikelyBackEdgeToBottomTest());
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());
@@ -722,7 +722,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsWritesRemark());
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());
-    RUN(testRotateLoopsReadsWhatLatchWritesLast());
+    RUN(testRotateLoopsUsesLastUpsilonInLatch());
     RUN(testSimplifyTerminals());
     RUN(testSimplifyTerminalsKeepsNonConstantBranch());
     RUN(testSimplifyTerminalsLooksThroughIdentity());

@@ -49,7 +49,7 @@ function f1 name="allocatesInFrontOfTheLoop" parameters=[{type=int[0, 100]}, {ty
 # CHECK: handler=b4():
 # CHECK-NEXT: = Call v1
 # CHECK: Jump -> next b1(
-# CHECK-NEXT: b1(v4: {{*}}):
+# CHECK-NEXT: b1(v4: int[0, 100]):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: LoopHint
 # CHECK-NOT: handler=
@@ -101,7 +101,7 @@ function f3 name="rarePathAllocates" parameters=[{type=int[0, 100]}, {type=boole
   b6() role=CatchHandler:
     v10 = CatchValue
     Return v10
-# CHECK: b1(v3: {{*}}):
+# CHECK: b1(v3: int[0, 100]):
 # CHECK-NEXT: LoopHint
 # CHECK: b3() frequency=Rare handler=b6():
 # CHECK-NEXT: = NewObject
@@ -133,7 +133,7 @@ function f4 name="rarePathComesBackToWhatMayThrow" parameters=[{type=int[0, 100]
   b6() role=CatchHandler:
     v12 = CatchValue
     Return v12
-# CHECK: b1(v4: {{*}}):
+# CHECK: b1(v4: int[0, 100]):
 # CHECK-NEXT: LoopHint
 # CHECK: b3() frequency=Rare handler=b6():
 # CHECK-NEXT: = NewObject
@@ -161,7 +161,7 @@ function f5 name="blockOfThePollMayThrow" parameters=[{type=int[0, 100]}, {type=
   b4() role=CatchHandler:
     v10 = CatchValue
     Return v10
-# CHECK: b1(v3: {{*}}):
+# CHECK: b1(v3: int[0, 100]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next [[rest]]()
 # CHECK: [[rest]]() handler=b4():
@@ -196,7 +196,7 @@ function f6 name="innerOfTwoHandlers" parameters=[{type=int[0, 100]}, {type=anyt
 # CHECK: handler=b6():
 # CHECK-NEXT: = Call v1
 # CHECK: Jump -> next b1(
-# CHECK-NEXT: b1(v4: {{*}}):
+# CHECK-NEXT: b1(v4: int[0, 100]):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: handler=b5()
 }

@@ -227,6 +227,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
 
 #define AOT_DECLARE_FUNCTION_PASS(id, function) PassOutcome function(FunctionPassContext&);
 FOR_EACH_AOT_FUNCTION_PASS(AOT_DECLARE_FUNCTION_PASS)
+PassOutcome removeRedundantHandlersBehindSelection(FunctionPassContext&, bool allocatesLessUnderHandler);
 #undef AOT_DECLARE_FUNCTION_PASS
 
 struct PassDescriptor {

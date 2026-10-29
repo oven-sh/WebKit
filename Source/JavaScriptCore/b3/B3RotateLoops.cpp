@@ -44,8 +44,8 @@ public:
 
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
         for (auto& rotation : m_rotations) {
-            m_didJoinWaysBack |= rotation.latches.size() > 1;
-            stepCountersOnce(rotation);
+            m_didMergeBackEdges |= rotation.latches.size() > 1;
+            hoistCommonIncrements(rotation);
         }
         RegionCloner cloner(m_proc);
         for (auto& rotation : m_rotations) {
@@ -59,7 +59,7 @@ public:
         return cloner.finish();
     }
 
-    bool didJoinWaysBack() const { return m_didJoinWaysBack; }
+    bool didMergeBackEdges() const { return m_didMergeBackEdges; }
 
 private:
     struct EdgesBack {
@@ -69,7 +69,7 @@ private:
         bool hasLikelyWithoutPoll { false };
     };
 
-    struct DecidedTest {
+    struct FoldedTest {
         BasicBlock* block;
         unsigned successorIndex;
     };
@@ -77,7 +77,7 @@ private:
     struct Rotation {
         unsigned depth { 0 };
         Vector<BasicBlock*, 4> testBlocks;
-        Vector<DecidedTest, 1> testsDecidedByLatches;
+        Vector<FoldedTest, 1> testsFoldedOnBackEdges;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
         std::optional<InductionRecord> induction;
@@ -128,7 +128,7 @@ private:
         return false;
     }
 
-    static bool hasEdgeThatIsNotRareTo(BasicBlock* from, BasicBlock* to)
+    static bool hasNonRareEdgeTo(BasicBlock* from, BasicBlock* to)
     {
         for (const FrequentedBlock& successor : from->successors()) {
             if (successor.block() == to && !successor.isRare())
@@ -137,7 +137,7 @@ private:
         return false;
     }
 
-    static IndexSet<BasicBlock*> findBlocksNotBehindRareEdges(NaturalLoops& loops, const NaturalLoop& loop)
+    static IndexSet<BasicBlock*> findBlocksReachableWithoutRareEdges(NaturalLoops& loops, const NaturalLoop& loop)
     {
         IndexSet<BasicBlock*> result;
         Vector<BasicBlock*, 16> worklist { loop.header() };
@@ -165,7 +165,7 @@ private:
         return std::nullopt;
     }
 
-    static std::optional<int64_t> valueLeftBy(BasicBlock* latch, BasicBlock* header, Value* value, unsigned depth)
+    static std::optional<int64_t> evaluateOnBackEdge(BasicBlock* latch, BasicBlock* header, Value* value, unsigned depth)
     {
         if (value->hasInt())
             return value->asInt();
@@ -181,8 +181,8 @@ private:
         }
         if (!depth || !value->numChildren() || value->numChildren() > 2 || !value->child(0)->type().isInt())
             return std::nullopt;
-        std::optional<int64_t> left = valueLeftBy(latch, header, value->child(0), depth - 1);
-        std::optional<int64_t> right = value->numChildren() == 2 ? valueLeftBy(latch, header, value->child(1), depth - 1) : std::optional<int64_t>(0);
+        std::optional<int64_t> left = evaluateOnBackEdge(latch, header, value->child(0), depth - 1);
+        std::optional<int64_t> right = value->numChildren() == 2 ? evaluateOnBackEdge(latch, header, value->child(1), depth - 1) : std::optional<int64_t>(0);
         if (!left || !right)
             return std::nullopt;
         bool is32Bit = value->child(0)->type() == Int32;
@@ -220,7 +220,7 @@ private:
         }
     }
 
-    void addTestsDecidedByLatches(NaturalLoops& loops, const NaturalLoop& loop, Rotation& rotation, unsigned numberOfCopiedValues)
+    void addTestsFoldedOnBackEdges(NaturalLoops& loops, const NaturalLoop& loop, Rotation& rotation, unsigned numberOfCopiedValues)
     {
         while (true) {
             BasicBlock* block = rotation.body;
@@ -228,7 +228,7 @@ private:
                 return;
             std::optional<unsigned> successorIndex;
             for (BasicBlock* latch : rotation.latches) {
-                std::optional<int64_t> condition = valueLeftBy(latch, loop.header(), block->last()->child(0), 3);
+                std::optional<int64_t> condition = evaluateOnBackEdge(latch, loop.header(), block->last()->child(0), 3);
                 if (!condition || (successorIndex && *successorIndex != !*condition))
                     return;
                 successorIndex = !*condition;
@@ -247,7 +247,7 @@ private:
             if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop))
                 return;
             rotation.testBlocks.append(block);
-            rotation.testsDecidedByLatches.append({ block, *successorIndex });
+            rotation.testsFoldedOnBackEdges.append({ block, *successorIndex });
             rotation.body = staying.block();
         }
     }
@@ -318,7 +318,7 @@ private:
                     if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
                         return;
                     rotation.body = staying.block();
-                    addTestsDecidedByLatches(loops, loop, rotation, numberOfCopiedValues);
+                    addTestsFoldedOnBackEdges(loops, loop, rotation, numberOfCopiedValues);
                     rotation.induction = findInduction(loop.header());
                     m_rotations.append(WTF::move(rotation));
                     return;
@@ -330,9 +330,9 @@ private:
         }
     }
 
-    // `i++; continue;` and the `i++` at the end of the turn are two sums. Where every way back hands the header the same sum of what the header had and a constant, the sum is made once, at the top of the body:
-    // the one test at the bottom then compares a sum and not a join of sums, which is how a counted loop is known.
-    void stepCountersOnce(const Rotation& rotation)
+    // `i++; continue;` and the `i++` at the end of the body are two Adds. When every latch passes the same phi + constant to the header, compute it once at the top of the body.
+    // The bottom test then compares an Add instead of a Phi of Adds, which is the shape that induction variable analysis recognizes.
+    void hoistCommonIncrements(const Rotation& rotation)
     {
         if (rotation.latches.size() < 2)
             return;
@@ -344,29 +344,29 @@ private:
         for (Value* phi : *header) {
             if (phi->opcode() != Phi || !phi->type().isInt())
                 continue;
-            Vector<Value*, 2> sums;
-            std::optional<int64_t> addend;
-            bool isOneSum = true;
+            Vector<Value*, 2> increments;
+            std::optional<int64_t> step;
+            bool allMatch = true;
             for (BasicBlock* latch : rotation.latches) {
-                Value* handed = nullptr;
+                Value* incoming = nullptr;
                 for (Value* value : *latch) {
                     auto* upsilon = value->as<UpsilonValue>();
                     if (upsilon && upsilon->phi() == phi)
-                        handed = upsilon->child(0)->foldIdentity();
+                        incoming = upsilon->child(0)->foldIdentity();
                 }
-                if (!handed || handed->opcode() != Add || handed->child(0)->foldIdentity() != phi || !handed->child(1)->hasInt() || (addend && *addend != handed->child(1)->asInt())) {
-                    isOneSum = false;
+                if (!incoming || incoming->opcode() != Add || incoming->child(0)->foldIdentity() != phi || !incoming->child(1)->hasInt() || (step && *step != incoming->child(1)->asInt())) {
+                    allMatch = false;
                     break;
                 }
-                addend = handed->child(1)->asInt();
-                if (!sums.contains(handed))
-                    sums.append(handed);
+                step = incoming->child(1)->asInt();
+                if (!increments.contains(incoming))
+                    increments.append(incoming);
             }
-            if (!isOneSum || sums.size() < 2)
+            if (!allMatch || increments.size() < 2)
                 continue;
-            Value* sum = insertionSet.insert<Value>(index, Add, sums[0]->origin(), phi, insertionSet.insertIntConstant(index, sums[0]->origin(), phi->type(), *addend));
-            for (Value* old : sums)
-                old->replaceWithIdentity(sum);
+            Value* increment = insertionSet.insert<Value>(index, Add, increments[0]->origin(), phi, insertionSet.insertIntConstant(index, increments[0]->origin(), phi->type(), *step));
+            for (Value* duplicate : increments)
+                duplicate->replaceWithIdentity(increment);
         }
         insertionSet.execute(rotation.body);
     }
@@ -378,7 +378,7 @@ private:
             transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
-        for (const DecidedTest& test : rotation.testsDecidedByLatches) {
+        for (const FoldedTest& test : rotation.testsFoldedOnBackEdges) {
             BasicBlock* copy = copies.get(test.block);
             copy->last()->replaceWithJump(copy, copy->successor(test.successorIndex));
         }
@@ -424,10 +424,10 @@ private:
             return *result;
         result.emplace();
         result->top = loop.header();
-        // An arm that is merely the less likely one, as the arm of a `continue`, is taken every few turns: it is tested at its end as the likely way is, and stays in the loop. A rare one goes round by the guard.
-        IndexSet<BasicBlock*> blocksOfTurns = findBlocksNotBehindRareEdges(loops, loop);
+        // A path that is only less likely, such as one that ends in `continue`, still runs every few iterations, so its back edge goes to the bottom test too. A rare back edge goes through the guard.
+        IndexSet<BasicBlock*> nonRareBlocks = findBlocksReachableWithoutRareEdges(loops, loop);
         for (BasicBlock* predecessor : loop.header()->predecessors()) {
-            if (blocksOfTurns.contains(predecessor) && hasEdgeThatIsNotRareTo(predecessor, loop.header())) {
+            if (nonRareBlocks.contains(predecessor) && hasNonRareEdgeTo(predecessor, loop.header())) {
                 result->likely.append(predecessor);
                 result->hasLikelyWithoutPoll |= !pollsOnWayTo(loops, loop, predecessor);
             } else if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
@@ -498,7 +498,7 @@ private:
     }
 
     Procedure& m_proc;
-    bool m_didJoinWaysBack { false };
+    bool m_didMergeBackEdges { false };
     const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
     Vector<std::optional<EdgesBack>> m_edgesBack;
@@ -507,13 +507,13 @@ private:
 
 } // anonymous namespace
 
-bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, bool* didJoinWaysBack)
+bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, bool* didMergeBackEdges)
 {
     PhaseScope phaseScope(proc, "rotateLoops"_s);
     RotateLoops rotateLoops(proc, allowedHeaders);
     bool changed = rotateLoops.run();
-    if (didJoinWaysBack)
-        *didJoinWaysBack = rotateLoops.didJoinWaysBack();
+    if (didMergeBackEdges)
+        *didMergeBackEdges = rotateLoops.didMergeBackEdges();
     return changed;
 }
 

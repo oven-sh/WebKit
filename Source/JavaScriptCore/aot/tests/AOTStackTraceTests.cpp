@@ -8,9 +8,14 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTFunctionDescription.h"
 #include "AOTIRParser.h"
+#include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
@@ -21,6 +26,8 @@
 #include "JSCInlines.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -48,6 +55,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v14 key="reads"
     v16 = NewClosure function=f9
     PropSet v1, v16 key="recurseAndRead"
+    v18 = NewClosure function=f10
+    PropSet v1, v18 key="applies"
     Return
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -116,6 +125,10 @@ function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] 
     v7 = Sub v2, v6
     v8 = CallDirect v7, v1 function=f9 @110
     Return v8
+}
+function f10 name="applies" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0 calledBuiltin=FunctionPrototypeApply @120
+    Return v1
 }
 )IR"_s;
 
@@ -315,6 +328,52 @@ reads < thrower < asyncInner < async asyncOuter < async driver
 )"_s);
 }
 
+static void testTraceWithBuiltinFormattedByGC()
+{
+    checkShellOutput(R"js(
+    let errors = [];
+    function makeError() { errors.push(new Error()); }
+    function driver() {
+        for (let i = 0; i < 4; ++i)
+            (function dead() { return [registry.applies(makeError)]; })();
+    }
+    driver();
+    fullGC();
+    for (let error of errors)
+        print(names(error.stack));
+)js"_s, R"(makeError < apply < applies < dead < driver
+makeError < apply < applies < dead < driver
+makeError < apply < applies < dead < driver
+makeError < apply < applies < dead < driver
+)"_s);
+}
+
+static void checkBuiltinNamesNeedNoAtomTable(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto nameOf = [&](BuiltinID builtin) {
+        FunctionDescription description(functionInFramesOf(builtin));
+        String name = description.nameInFrames(vm);
+        AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm, nullptr, false));
+        return name;
+    };
+    // Heap::pruneDeadReferences() runs without one.
+    Thread& thread = Thread::currentSingleton();
+    AtomStringTable* atomStringTable = thread.setCurrentAtomStringTable(nullptr);
+    auto restore = makeScopeExit([&] {
+        thread.setCurrentAtomStringTable(atomStringTable);
+    });
+    for (unsigned index = 0; index < BuiltinTable::singleton().builtinCount(); ++index)
+        nameOf(BuiltinID(index));
+    AOT_TEST_CHECK(nameOf(Builtins::FunctionPrototypeApply) == "apply"_s);
+    AOT_TEST_CHECK(nameOf(Builtins::FunctionPrototypeSymbolHasInstance) == "[Symbol.hasInstance]"_s);
+}
+
+static void testBuiltinNamesNeedNoAtomTable()
+{
+    runWithLoadedProgram("stack-traces/builtin-names-need-no-atom-table"_s, programText, checkBuiltinNamesNeedNoAtomTable, { "admit=Inspector"_s });
+}
+
 static void testSizeOfTrace()
 {
     AOT_TEST_CHECK(ReturnAddressTrace::numberOfFlagWords(0) == 0);
@@ -362,6 +421,8 @@ std::span<const NativeTest> stackTraceTests()
         { "stack-traces/capture-below-interpreted-function-under-compiled-frames"_s, testCaptureBelowInterpretedFunctionUnderCompiledFrames },
         { "stack-traces/trace-that-leaves-and-enters-compiled-code"_s, testTraceThatLeavesAndEntersCompiledCode },
         { "stack-traces/async-frames-below"_s, testAsyncFramesBelow },
+        { "stack-traces/trace-with-builtin-formatted-by-gc"_s, testTraceWithBuiltinFormattedByGC },
+        { "stack-traces/builtin-names-need-no-atom-table"_s, testBuiltinNamesNeedNoAtomTable },
         { "stack-traces/size-of-trace"_s, testSizeOfTrace },
     };
     return tests;

@@ -360,6 +360,12 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         return FlowResults(createUnknownResultTables(program, build));
     }
     times.didFinish("uses of library code"_s);
+    std::unique_ptr<ValueFlowBirthsOfUnknownObject> birthsOfUnknownObject;
+    if (solution->solver().input().remembersWhoLoggedEachEdge) {
+        birthsOfUnknownObject = makeUnique<ValueFlowBirthsOfUnknownObject>(inputs);
+        inputs.birthsOfUnknownObject = birthsOfUnknownObject.get();
+        times.didFinish("where values of unknown type begin"_s);
+    }
     ValueFlowLayoutsOfSites layoutsOfSites;
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;

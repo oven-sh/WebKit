@@ -481,9 +481,9 @@ static void testSumOfIntegersBehindDoublesIsAddedInIntegers()
     }
 }
 
-enum class MadeFrom : uint8_t { IntegerTimesHalf, SumOfProducts, IntegerTimesInfinity, IntegerOverInteger, Argument, ManyLargeFactors };
+enum class DoubleExpression : uint8_t { IntegerTimesHalf, SumOfProducts, IntegerTimesInfinity, IntegerDividedByInteger, Argument, ManyLargeFactors };
 
-static void checkNumberComparedWithItself(MadeFrom madeFrom, bool isNeverNaN, bool reducesWithRanges)
+static void checkDoubleComparedWithItself(DoubleExpression expression, bool isNeverNaN, bool reducesWithRanges)
 {
     for (B3::Opcode comparison : { Equal, NotEqual }) {
         Procedure proc(rangeReductionPolicy(reducesWithRanges));
@@ -494,23 +494,23 @@ static void checkNumberComparedWithItself(MadeFrom madeFrom, bool isNeverNaN, bo
         Value* narrow = graph.make(root, IToD, arguments[0]);
         Value* wide = graph.make(root, IToD, arguments[1]);
         Value* number = nullptr;
-        switch (madeFrom) {
-        case MadeFrom::IntegerTimesHalf:
+        switch (expression) {
+        case DoubleExpression::IntegerTimesHalf:
             number = graph.make(root, Mul, narrow, constant(0.5));
             break;
-        case MadeFrom::SumOfProducts:
+        case DoubleExpression::SumOfProducts:
             number = graph.make(root, Sub, graph.make(root, Add, graph.make(root, Mul, narrow, wide), constant(-1e300)), graph.make(root, Neg, graph.make(root, Abs, wide)));
             break;
-        case MadeFrom::IntegerTimesInfinity:
+        case DoubleExpression::IntegerTimesInfinity:
             number = graph.make(root, Mul, narrow, constant(std::numeric_limits<double>::infinity()));
             break;
-        case MadeFrom::IntegerOverInteger:
+        case DoubleExpression::IntegerDividedByInteger:
             number = graph.make(root, Div, narrow, wide);
             break;
-        case MadeFrom::Argument:
+        case DoubleExpression::Argument:
             number = graph.make(root, Add, arguments[2], narrow);
             break;
-        case MadeFrom::ManyLargeFactors:
+        case DoubleExpression::ManyLargeFactors:
             number = graph.make(root, Mul, graph.make(root, Mul, constant(1e300), constant(1e300)), graph.make(root, Sub, narrow, narrow));
             break;
         }
@@ -526,23 +526,23 @@ static void checkNumberComparedWithItself(MadeFrom madeFrom, bool isNeverNaN, bo
                     double a = first;
                     double b = static_cast<double>(second);
                     double expected = 0;
-                    switch (madeFrom) {
-                    case MadeFrom::IntegerTimesHalf:
+                    switch (expression) {
+                    case DoubleExpression::IntegerTimesHalf:
                         expected = a * 0.5;
                         break;
-                    case MadeFrom::SumOfProducts:
+                    case DoubleExpression::SumOfProducts:
                         expected = a * b + -1e300 - -std::abs(b);
                         break;
-                    case MadeFrom::IntegerTimesInfinity:
+                    case DoubleExpression::IntegerTimesInfinity:
                         expected = a * std::numeric_limits<double>::infinity();
                         break;
-                    case MadeFrom::IntegerOverInteger:
+                    case DoubleExpression::IntegerDividedByInteger:
                         expected = a / b;
                         break;
-                    case MadeFrom::Argument:
+                    case DoubleExpression::Argument:
                         expected = third + a;
                         break;
-                    case MadeFrom::ManyLargeFactors:
+                    case DoubleExpression::ManyLargeFactors:
                         expected = std::numeric_limits<double>::infinity() * (a - a);
                         break;
                     }
@@ -555,15 +555,15 @@ static void checkNumberComparedWithItself(MadeFrom madeFrom, bool isNeverNaN, bo
     }
 }
 
-static void testNumberMadeFromIntegersEqualsItself()
+static void testReduceStrengthFoldsSelfComparisonOfFiniteDouble()
 {
     for (bool reducesWithRanges : { true, false }) {
-        checkNumberComparedWithItself(MadeFrom::IntegerTimesHalf, true, reducesWithRanges);
-        checkNumberComparedWithItself(MadeFrom::SumOfProducts, true, reducesWithRanges);
-        checkNumberComparedWithItself(MadeFrom::IntegerTimesInfinity, false, reducesWithRanges);
-        checkNumberComparedWithItself(MadeFrom::IntegerOverInteger, false, reducesWithRanges);
-        checkNumberComparedWithItself(MadeFrom::Argument, false, reducesWithRanges);
-        checkNumberComparedWithItself(MadeFrom::ManyLargeFactors, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::IntegerTimesHalf, true, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::SumOfProducts, true, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::IntegerTimesInfinity, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::IntegerDividedByInteger, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::Argument, false, reducesWithRanges);
+        checkDoubleComparedWithItself(DoubleExpression::ManyLargeFactors, false, reducesWithRanges);
     }
 }
 
@@ -809,7 +809,7 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testReduceStrengthKnowsNarrowLoadRange());
-    RUN(testNumberMadeFromIntegersEqualsItself());
+    RUN(testReduceStrengthFoldsSelfComparisonOfFiniteDouble());
 }
 
 #endif // ENABLE(B3_JIT)

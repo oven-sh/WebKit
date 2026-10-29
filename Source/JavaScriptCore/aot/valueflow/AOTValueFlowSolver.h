@@ -341,6 +341,8 @@ public:
         }
         return m_graph.valueOf(node);
     }
+    // The escaped objects that the library passes to callbacks, according to its declared function types.
+    ValueSetID declaredCallbackArguments() const { return m_declaredCallbackArguments; }
     // The functions of the engine that came to the node before the unknown object covered them. Which they are hangs on the order of the rules: only the report reads this, for a place to name.
     ValueSetID functionsOfEngineListedAt(ValueFlowNodeID node) const
     {
@@ -407,6 +409,11 @@ public:
         uint32_t round { 0 };
     };
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
+    const LoggedEdge* findLoggedEdge(ValueFlowEdge) const LIFETIME_BOUND;
+    // Of a statement that a rule has made: the statement whose run first asked for it.
+    ValueFlowStatementID statementThatFirstAskedFor(ValueFlowStatementID) const;
+    // At position n: what code outside the program held behind round n + 1.
+    std::span<const ValueSetID> escapedBehindEachRound() const LIFETIME_BOUND { return m_escapedBehindEachRound.span(); }
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
@@ -875,8 +882,10 @@ private:
     bool m_usesGeneralRulesOnly { false };
     AddedByGeneralRules m_addedByGeneralRules;
     Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
-    HashMap<uint64_t, ValueFlowStatementID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_statementOfEdge;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_positionOfLoggedEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
+    Vector<ValueSetID> m_escapedBehindEachRound;
+    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstAskerOfMadeNodes;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
 
@@ -1007,6 +1016,7 @@ private:
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
+    ValueSetID m_declaredCallbackArguments { ValueSets::nothing };
     Vector<Vector<ValueFlowNodeSet>> m_functionsOfEngineListed;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };

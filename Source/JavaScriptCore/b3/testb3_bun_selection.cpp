@@ -570,7 +570,7 @@ static bool haveSameBits(FloatType a, FloatType b)
 }
 
 template<typename FloatType>
-static void checkSmallerOrLarger(bool isMax, FloatType a, FloatType b, FloatType result)
+static void checkMinOrMax(bool isMax, FloatType a, FloatType b, FloatType result)
 {
     if (a != a || b != b) {
         CHECK(result != result);
@@ -585,7 +585,7 @@ static void checkSmallerOrLarger(bool isMax, FloatType a, FloatType b, FloatType
 }
 
 template<typename FloatType>
-static void testSmallerAndLargerOfTwoNumbersOfType()
+static void testFMinAndFMaxOfType()
 {
     Vector<FloatType> numbers = numbersToCompare<FloatType>();
     auto constant = [](Graph& graph, BasicBlock* block, FloatType value) -> Value* {
@@ -613,7 +613,7 @@ static void testSmallerAndLargerOfTwoNumbersOfType()
                 CHECK_EQ(numberOfInsts(proc, [](Air::Inst& inst) { return inst.kind.opcode == Air::BranchDouble || inst.kind.opcode == Air::BranchFloat; }), 1u);
             for (FloatType a : numbers) {
                 for (FloatType b : numbers)
-                    checkSmallerOrLarger(isMax, a, b, invoke<FloatType>(*code, a, b));
+                    checkMinOrMax(isMax, a, b, invoke<FloatType>(*code, a, b));
             }
         }
         for (FloatType known : numbers) {
@@ -629,24 +629,24 @@ static void testSmallerAndLargerOfTwoNumbersOfType()
                 if (isX86() && known == known && (isMax || !isNegativeZero))
                     CHECK_EQ(numberOfInsts(proc, [](Air::Inst& inst) { return inst.kind.opcode == Air::BranchDouble || inst.kind.opcode == Air::BranchFloat; }), 0u);
                 for (FloatType a : numbers)
-                    checkSmallerOrLarger(isMax, isKnownFirst ? known : a, isKnownFirst ? a : known, invoke<FloatType>(*code, a));
+                    checkMinOrMax(isMax, isKnownFirst ? known : a, isKnownFirst ? a : known, invoke<FloatType>(*code, a));
             }
         }
     }
 }
 
-static void testSmallerAndLargerOfTwoNumbers()
+static void testFMinAndFMax()
 {
-    testSmallerAndLargerOfTwoNumbersOfType<double>();
-    testSmallerAndLargerOfTwoNumbersOfType<float>();
+    testFMinAndFMaxOfType<double>();
+    testFMinAndFMaxOfType<float>();
 }
 
-static void testSelectOfComparedNumbers()
+static void testSelectAsMinOrMax()
 {
     struct Case {
         B3::Opcode comparison;
-        bool comparesInOrderOfSelect;
-        bool hasSecondUserOfComparison;
+        bool comparesInSelectOrder;
+        bool comparisonHasSecondUse;
         bool isOneInstruction;
     };
     const Case cases[] = {
@@ -664,9 +664,9 @@ static void testSelectOfComparedNumbers()
         auto arguments = cCallArgumentValues<double, double>(graph.proc, root);
         Value* a = arguments[0];
         Value* b = arguments[1];
-        Value* condition = testCase.comparesInOrderOfSelect ? graph.make(root, testCase.comparison, a, b) : graph.make(root, testCase.comparison, b, a);
+        Value* condition = testCase.comparesInSelectOrder ? graph.make(root, testCase.comparison, a, b) : graph.make(root, testCase.comparison, b, a);
         Value* chosen = graph.select(root, condition, a, b);
-        graph.ret(root, testCase.hasSecondUserOfComparison ? graph.make(root, Add, chosen, graph.make(root, IToD, condition)) : chosen);
+        graph.ret(root, testCase.comparisonHasSecondUse ? graph.make(root, Add, chosen, graph.make(root, IToD, condition)) : chosen);
     };
     auto compare = [](B3::Opcode comparison, double a, double b) {
         switch (comparison) {
@@ -689,19 +689,19 @@ static void testSelectOfComparedNumbers()
             Graph loweredGraph { lowered };
             build(loweredGraph, testCase);
             lowerToAirForTesting(lowered);
-            bool isSelected = isX86() && usesPolicy && testCase.isOneInstruction;
-            CHECK_EQ(numberOfInsts(lowered, [](Air::Inst& inst) { return inst.kind.opcode == Air::MinOrSecondDouble || inst.kind.opcode == Air::MaxOrSecondDouble; }), isSelected ? 1u : 0u);
-            CHECK_EQ(numberOfInsts(lowered, Air::MoveDoubleConditionallyDouble), isSelected ? 0u : 1u);
+            bool usesMinOrMax = isX86() && usesPolicy && testCase.isOneInstruction;
+            CHECK_EQ(numberOfInsts(lowered, [](Air::Inst& inst) { return inst.kind.opcode == Air::MinOrSecondDouble || inst.kind.opcode == Air::MaxOrSecondDouble; }), usesMinOrMax ? 1u : 0u);
+            CHECK_EQ(numberOfInsts(lowered, Air::MoveDoubleConditionallyDouble), usesMinOrMax ? 0u : 1u);
 
-            Procedure proc(usesPolicy ? selectionPolicyFor(testCase.comparesInOrderOfSelect ? CPUFeatureSet() : CPUFeatureSet::host()) : Policy());
+            Procedure proc(usesPolicy ? selectionPolicyFor(testCase.comparesInSelectOrder ? CPUFeatureSet() : CPUFeatureSet::host()) : Policy());
             Graph graph { proc };
             build(graph, testCase);
             auto code = compileProc(proc);
             for (double a : numbers) {
                 for (double b : numbers) {
-                    bool isTrue = testCase.comparesInOrderOfSelect ? compare(testCase.comparison, a, b) : compare(testCase.comparison, b, a);
+                    bool isTrue = testCase.comparesInSelectOrder ? compare(testCase.comparison, a, b) : compare(testCase.comparison, b, a);
                     double expected = isTrue ? a : b;
-                    if (testCase.hasSecondUserOfComparison)
+                    if (testCase.comparisonHasSecondUse)
                         expected += isTrue;
                     CHECK(haveSameBits(invoke<double>(*code, a, b), expected));
                 }
@@ -710,7 +710,7 @@ static void testSelectOfComparedNumbers()
     }
 }
 
-static void testBranchOnExtendedValueTestsTheValue()
+static void testBranchOnExtendedValueTestsNarrowValue()
 {
     for (B3::Opcode extension : { ZExt32, SExt32 }) {
         for (bool hasSecondUser : { false, true }) {
@@ -1410,9 +1410,9 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testMul64ByImmediate());
     RUN(testStoreOfIncrementedAddressAtAddress());
     RUN(testSelectOfIncrementedValue());
-    RUN(testSmallerAndLargerOfTwoNumbers());
-    RUN(testSelectOfComparedNumbers());
-    RUN(testBranchOnExtendedValueTestsTheValue());
+    RUN(testFMinAndFMax());
+    RUN(testSelectAsMinOrMax());
+    RUN(testBranchOnExtendedValueTestsNarrowValue());
     RUN(testBranchOnLoad16());
     RUN(testLoadsFarFromTheirUsers());
     RUN(testPinnedRegisterIsNamedDirectly());

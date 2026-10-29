@@ -1161,13 +1161,13 @@ private:
         return true;
     }
 
-    // Select(LessThan(x, y), x, y) is y where one is NaN and where both are zeros. So of the two orders one gives a and the other b there, and both give the same value elsewhere.
+    // Select(LessThan(x, y), x, y) returns y when either operand is NaN and when both are zeros. In those cases the two operand orders return a and b; otherwise they return the same value.
     void lowerMinOrMaxWithSelects(bool isMax, Value* a, Value* b)
     {
         Opcode comparison = isMax ? GreaterThan : LessThan;
         auto select = [&](Value* first, Value* second) {
-            Value* isChosen = m_insertionSet.insert<Value>(m_index, comparison, m_origin, first, second);
-            return m_insertionSet.insert<Value>(m_index, Select, m_origin, isChosen, first, second);
+            Value* condition = m_insertionSet.insert<Value>(m_index, comparison, m_origin, first, second);
+            return m_insertionSet.insert<Value>(m_index, Select, m_origin, condition, first, second);
         };
         auto isNeverNaN = [](Value* value) {
             return (value->hasDouble() && value->asDouble() == value->asDouble()) || (value->hasFloat() && value->asFloat() == value->asFloat());
@@ -1177,13 +1177,13 @@ private:
         };
         if (isNeverNaN(a))
             std::swap(a, b);
-        // With b first, a is the answer where it is NaN and where both are zeros. That is wrong only where b is the zero that wins against the other zero.
+        // select(b, a) returns a when a is NaN and when both are zeros. That is only wrong when b is the zero that must win: -0 for min, +0 for max.
         if (isNeverNaN(b) && !isZeroWithSign(b, !isMax)) {
             m_value->replaceWithIdentity(select(b, a));
             m_changed = true;
             return;
         }
-        // Adding 0 turns -0 into 0 and changes nothing else.
+        // b is +0. Adding it turns -0 into +0 and leaves every other value unchanged.
         if (isMax && isNeverNaN(b)) {
             m_value->replaceWithIdentity(m_insertionSet.insert<Value>(m_index, Add, m_origin, select(b, a), b));
             m_changed = true;
@@ -1192,11 +1192,11 @@ private:
 
         Value* secondIfSpecial = select(a, b);
         Value* firstIfSpecial = select(b, a);
-        Value* joined = m_insertionSet.insert<Value>(m_index, isMax ? BitAnd : BitOr, m_origin, secondIfSpecial, firstIfSpecial);
+        Value* combined = m_insertionSet.insert<Value>(m_index, isMax ? BitAnd : BitOr, m_origin, secondIfSpecial, firstIfSpecial);
         Value* isUnordered = isMax
             ? m_insertionSet.insert<Value>(m_index, NotEqual, m_origin, secondIfSpecial, firstIfSpecial)
-            : m_insertionSet.insert<Value>(m_index, NotEqual, m_origin, joined, joined);
-        UpsilonValue* orderedResult = m_insertionSet.insert<UpsilonValue>(m_index, m_origin, joined);
+            : m_insertionSet.insert<Value>(m_index, NotEqual, m_origin, combined, combined);
+        UpsilonValue* orderedResult = m_insertionSet.insert<UpsilonValue>(m_index, m_origin, combined);
 
         BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
         BasicBlock* unordered = m_blockInsertionSet.insertBefore(m_block);
@@ -1599,7 +1599,7 @@ private:
         Type type = child->type();
         Value* index = first ? before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(first))) : child;
         bool isWholeSwitch = !start && end == cases.size();
-        if (isWholeSwitch && tests.size() == 1 && !coversAll && tryBuildValueOfBit(tests[0].target.block(), fallThrough.block(), tests[0].mask, index, limit, needsRangeCheck, before))
+        if (isWholeSwitch && tests.size() == 1 && !coversAll && tryBuildBranchlessBitTest(tests[0].target.block(), fallThrough.block(), tests[0].mask, index, limit, needsRangeCheck, before))
             return true;
         if (needsRangeCheck) {
             BasicBlock* inRange = m_blockInsertionSet.insertAfter(m_block);
@@ -1628,9 +1628,9 @@ private:
         return true;
     }
 
-    // Where both sides of the test of a bit only say a constant, nothing branches: the bit chooses the constant, and where the constants are 1 and 0 it is the answer.
-    // An index past the window shifts by some other amount. What that gives is masked by the test of the range.
-    bool tryBuildValueOfBit(BasicBlock* ifSet, BasicBlock* ifClear, uint64_t mask, Value* index, uint64_t limit, bool needsRangeCheck, BasicBlock* before)
+    // When both targets of a bit test only produce a constant, no branch is needed: select between the constants on the bit, or use the bit itself when they are 1 and 0.
+    // An out-of-range index shifts by an arbitrary amount, so the range check masks the result.
+    bool tryBuildBranchlessBitTest(BasicBlock* ifSet, BasicBlock* ifClear, uint64_t mask, Value* index, uint64_t limit, bool needsRangeCheck, BasicBlock* before)
     {
         std::optional<ValueTableArm> set = describeValueTableArm(ifSet);
         std::optional<ValueTableArm> clear = describeValueTableArm(ifClear);
@@ -1641,10 +1641,10 @@ private:
         Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, maskType, static_cast<int64_t>(mask)), amount);
         if (maskType == Int64)
             shifted = before->appendNew<Value>(m_proc, Trunc, m_origin, shifted);
-        Value* kept = needsRangeCheck
+        Value* isInRange = needsRangeCheck
             ? before->appendNew<Value>(m_proc, BelowEqual, m_origin, index, before->appendIntConstant(m_proc, m_origin, index->type(), static_cast<int64_t>(limit)))
             : before->appendIntConstant(m_proc, m_origin, Int32, 1);
-        Value* bit = before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, kept);
+        Value* bit = before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, isInRange);
         Value* result;
         if (static_cast<uint64_t>(set->constant) <= 1 && (set->constant ^ clear->constant) == 1) {
             result = set->constant ? bit : before->appendNew<Value>(m_proc, BitXor, m_origin, bit, before->appendIntConstant(m_proc, m_origin, Int32, 1));
@@ -1818,7 +1818,7 @@ private:
                         before->appendIntConstant(
                             m_proc, m_origin, type,
                             cases[start + i].caseValue())));
-                // The block behind the last comparison only jumps to the fall-through, so it is entered as often as that is. Once the jump is threaded this edge is all that says so.
+                // The block after the last comparison only jumps to the fall-through block, so it runs exactly as often. Once that jump is threaded, this edge is the only record of the frequency.
                 bool leadsToFallThrough = i + 1 == limit && !allConsecutive && m_proc.policy().optimization.estimatesFrequencies;
                 before->setSuccessors(cases[start + i].target(), FrequentedBlock(nextCheck, leadsToFallThrough ? fallThrough.frequency() : FrequencyClass::Normal));
 

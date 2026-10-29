@@ -656,7 +656,7 @@ static void testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew()
     }
 }
 
-// A loop whose turns may be long, and a policy that says nothing: the loop polls as it always did.
+// The loop keeps polling on every iteration when its iterations may be long or the policy does not allow polling between stretches.
 static void testUnrollLoopsKeepsPollThatMustRunOnEveryTurn()
 {
     enum class Reason : uint8_t { TurnsMayBeLong, Policy };

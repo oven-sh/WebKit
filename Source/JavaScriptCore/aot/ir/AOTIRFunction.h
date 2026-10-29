@@ -248,6 +248,8 @@ struct Function : FunctionRecord {
     bool framesTellWhetherNameWasLookedFor() const { return has(FunctionCapabilities::NotesLooksForName) || kind == FunctionKind::Getter || kind == FunctionKind::Setter; }
     bool runsOnlyBehindFailedTest() const { return role == FunctionRole::GenericVersion || has(FunctionFlags::IsSplitOffGenericVersion); }
     ConstructorForm constructorForm() const;
+    // The construct call allocates `this` for a plain function. A class constructor allocates its own.
+    bool takesThisFromConstruction() const { return kind == FunctionKind::Plain && constructorForm() == ConstructorForm::Base; }
 
     bool mayChangeSignature() const { return has(FunctionCapabilities::MayChangeSignature); }
     bool mayBeCloned() const { return has(FunctionCapabilities::MayBeCloned); }

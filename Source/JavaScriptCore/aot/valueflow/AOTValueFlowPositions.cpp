@@ -937,13 +937,10 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
             return loss;
         if (std::optional<ValueFlowUnknownSource> source = m_inputs.solver().unknownSourceOf(node))
             loss.cause = unprovenCauseOf(*source);
-        if (m_inputs.solver().input().remembersWhoLoggedEachEdge) {
-            std::call_once(m_counts.hasFoundBirths, [&] {
-                m_counts.births.emplace(m_inputs);
-            });
-            loss.witness = m_counts.births->witnessOf(node);
-            loss.hasOtherRoots = m_counts.births->hasSeveralRoots(node);
-            if (std::optional<ValueFlowUnknownSource> source = m_counts.births->sourceOf(node))
+        if (const ValueFlowBirthsOfUnknownObject* births = m_inputs.birthsOfUnknownObject) {
+            loss.witness = births->witnessOf(node);
+            loss.hasOtherRoots = births->hasSeveralRoots(node);
+            if (std::optional<ValueFlowUnknownSource> source = births->sourceOf(node))
                 loss.cause = unprovenCauseOf(*source);
         }
         return loss;
@@ -952,8 +949,14 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
         return { .cause = UnprovenCause::Untracked };
     case ValueFlowProof::OutsideFamily:
         return { .cause = result.stranger && isDataFromOutside(result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger };
-    case ValueFlowProof::UndecidedLayout:
+    case ValueFlowProof::UndecidedLayout: {
+        // Code outside the program constructs with a class that it holds.
+        LayoutID layout = result.stranger && m_inputs.universe().isObject(result.stranger) ? m_inputs.universe().layoutOf(result.stranger) : LayoutID();
+        FunctionID constructor = layout ? m_inputs.program.at(layout).constructor : FunctionID();
+        if (Witness origin = constructor && m_inputs.birthsOfUnknownObject ? m_inputs.birthsOfUnknownObject->originOfEscape(m_inputs.universe().closureOf(constructor)) : noWitness; hasFunction(origin))
+            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherOriginsOfEscape(m_inputs.universe().closureOf(constructor)) };
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

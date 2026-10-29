@@ -156,6 +156,7 @@
 #if OS(WINDOWS)
 #include <mmsystem.h>
 #include <windows.h>
+#include "AOTCrashExitCode.h"
 #if !USE(BUN_JSC_ADDITIONS)
 #include <wtf/win/WTFCRTDebug.h>
 #endif
@@ -4229,6 +4230,9 @@ int main(int argc, char** argv)
     // testing/debugging, as it causes the post-mortem debugger not to be invoked. We reset the
     // error mode here to work around Cygwin's behavior. See <http://webkit.org/b/55222>.
     ::SetErrorMode(0);
+#if ENABLE(AOT)
+    AOT::terminateWithExceptionCodeOnCrash();
+#endif
 
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);

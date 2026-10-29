@@ -39,10 +39,12 @@ function f1 name="header-under-handler" parameters=[{type=anything}, {type=boole
   b3():
     Return
 # CHECK: Jump -> next [[entry]]()
-# CHECK: b1() handler=b2():
+# CHECK: b1():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
+# CHECK-NEXT: Jump -> next [[rest]]()
 # CHECK: [[entry]]():
 # CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
 # CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: [[rest]]() handler=b2():
+# CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
 }

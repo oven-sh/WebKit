@@ -1463,17 +1463,19 @@ static std::optional<FunctionID> findFunctionVariable(const ProgramTables& table
     return FunctionID(found->function);
 }
 
-static bool readCreatesCell(const Instance& instance, SlotRepresentation representation, const void* slot)
+// The literal string in the slot, if reading the slot would create its cell.
+static std::optional<uint32_t> literalStringWithoutCell(const Instance& instance, SlotRepresentation representation, const void* slot)
 {
     if (traitsOf(representation).valueKind != SlotValueKind::LiteralString)
-        return false;
+        return std::nullopt;
     uint64_t word = readSlotBits(representation, slot);
     if (!isLiteralStringWord(word))
-        return false;
+        return std::nullopt;
     uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
     RELEASE_ASSERT(number < instance.tables().literalStrings().size());
     const ConstantCellWords& constants = instance.runtime.constants;
-    return instance.options().useWideReferences() ? !constants.wideLiteralStrings[number] : !constants.literalStrings[number];
+    bool hasCell = instance.options().useWideReferences() ? !!constants.wideLiteralStrings[number] : !!constants.literalStrings[number];
+    return hasCell ? std::nullopt : std::optional(number);
 }
 
 void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
@@ -1497,6 +1499,11 @@ uint32_t ProgramStatics::groupWithWord(uint32_t word) const
     auto next = std::ranges::upper_bound(groups, word, { }, &StaticsOfFiles::firstWord);
     RELEASE_ASSERT(next != groups.begin());
     return static_cast<uint32_t>(next - groups.begin()) - 1;
+}
+
+bool ProgramStatics::isInitialized(uint32_t offset) const
+{
+    return (m_programStaticsInitialized || offset >= sizeFilledAtProgramEntry(m_tables)) && isFilled(offset);
 }
 
 bool ProgramStatics::isFilled(uint32_t offset) const
@@ -1574,16 +1581,27 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closureIfCreated(FunctionID(offset));
     const ProgramStatics& statics = *state.statics;
-    if ((!statics.m_programStaticsInitialized && offset < sizeFilledAtProgramEntry(statics.m_tables)) || !statics.isFilled(offset))
+    if (!statics.isInitialized(offset))
         return { };
     const uint8_t* address = instance.statics() + offset;
-    if (readCreatesCell(instance, slot.representation(), address))
+    if (literalStringWithoutCell(instance, slot.representation(), address))
         return { };
     if (JSValue value = readSlot(slot.representation(), address, statics.m_strings))
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
         return closures.closureIfCreated(*function);
     return { };
+}
+
+String ProgramStatics::readStringWithoutAllocating(const Instance& instance, SlotData slot)
+{
+    if (JSValue value = readVariableWithoutAllocating(instance, slot))
+        return value.isString() ? asString(value)->tryGetValueWithoutGC() : String();
+    const ProgramStatics& statics = *instance.state->statics;
+    if (slot.representation() == SlotRepresentation::DeferredClosure || !statics.isInitialized(slot.offset))
+        return String();
+    std::optional<uint32_t> literal = literalStringWithoutCell(instance, slot.representation(), instance.statics() + slot.offset);
+    return literal ? ProgramStrings::text(statics.m_tables, StringID(statics.m_tables.literalStrings()[*literal])) : String();
 }
 
 void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue value)

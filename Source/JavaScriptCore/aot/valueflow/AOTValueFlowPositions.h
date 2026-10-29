@@ -90,8 +90,6 @@ public:
     std::atomic<size_t> bytesOfTypesOfSets { 0 };
     std::once_flag hasFoundLayoutsOfSites;
     ValueFlowLayoutsOfSites layoutsOfSites;
-    std::once_flag hasFoundBirths;
-    std::optional<ValueFlowBirthsOfUnknownObject> births;
 };
 
 class ValueFlowPositions {

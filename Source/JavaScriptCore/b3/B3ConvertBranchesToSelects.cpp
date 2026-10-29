@@ -41,13 +41,13 @@ public:
                 continue;
             if (block->taken().block()->numPredecessors() != 1 && block->notTaken().block()->numPredecessors() != 1)
                 continue;
-            bool mayChooseBetweenComparedValues = hasOnlyUpsilonsInArms(block) && isOrderingComparison(block->last()->child(0)->opcode());
+            bool mayBeMinOrMax = hasOnlyUpsilonsInArms(block) && isOrderingComparison(block->last()->child(0)->opcode());
             const NaturalLoop* loop = loops ? loops->innerMostLoopOf(block) : nullptr;
-            if (!loop && !mayChooseBetweenComparedValues)
+            if (!loop && !mayBeMinOrMax)
                 continue;
             if (!std::exchange(didResetValueOwners, true))
                 m_proc.resetValueOwners();
-            if ((mayChooseBetweenComparedValues && choosesBetweenComparedValues(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)))) {
+            if ((mayBeMinOrMax && isMinOrMax(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)))) {
                 heads.append(block);
                 hardToPredictBranches.add(block->last());
             }
@@ -127,13 +127,13 @@ private:
         return a == b || (a->isConstant() && a->key() == b->key());
     }
 
-    static bool areComparedValues(Value* condition, const std::array<Value*, 2>& values)
+    static bool areComparisonOperands(Value* condition, const std::array<Value*, 2>& values)
     {
         return (isSameValue(condition->child(0), values[0]) && isSameValue(condition->child(1), values[1]))
             || (isSameValue(condition->child(0), values[1]) && isSameValue(condition->child(1), values[0]));
     }
 
-    static std::array<Value*, 2> valuesChosenFor(Value* phi, BasicBlock* head, const Region& region)
+    static std::array<Value*, 2> incomingValuesFor(Value* phi, BasicBlock* head, const Region& region)
     {
         std::array<Value*, 2> result { };
         for (unsigned i = 0; i < 2; ++i) {
@@ -145,8 +145,8 @@ private:
         return result;
     }
 
-    // The smaller or the larger of two values. Which of them it is hangs on the data.
-    bool choosesBetweenComparedValues(BasicBlock* head)
+    // min(a, b) or max(a, b). The outcome depends on the data, so the branch predicts poorly.
+    bool isMinOrMax(BasicBlock* head)
     {
         Region region;
         unsigned cost = 0;
@@ -156,13 +156,13 @@ private:
             if (phi->opcode() != Phi)
                 continue;
             if ((region.arms[0] && lastUpsilonFor(region.arms[0], phi)) || (region.arms[1] && lastUpsilonFor(region.arms[1], phi)))
-                return areComparedValues(head->last()->child(0), valuesChosenFor(phi, head, region));
+                return areComparisonOperands(head->last()->child(0), incomingValuesFor(phi, head, region));
         }
         return false;
     }
 
-    // ARM64 selects one of two numbers by the flags. x86 has no such instruction, but it has the smaller and the larger of two numbers.
-    static bool isSelectedWithoutBranch(Value* phi, BasicBlock* head, const Region& region)
+    // ARM64 has fcsel. x86 has no floating-point conditional move, but minsd and maxsd handle min and max.
+    static bool canSelectWithoutBranch(Value* phi, BasicBlock* head, const Region& region)
     {
         if (phi->type().isInt())
             return true;
@@ -171,7 +171,7 @@ private:
         if (isARM64())
             return true;
         Value* condition = head->last()->child(0);
-        return (condition->opcode() == LessThan || condition->opcode() == GreaterThan) && areComparedValues(condition, valuesChosenFor(phi, head, region));
+        return (condition->opcode() == LessThan || condition->opcode() == GreaterThan) && areComparisonOperands(condition, incomingValuesFor(phi, head, region));
     }
 
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
@@ -337,7 +337,7 @@ private:
             }
             if (!isWritten)
                 continue;
-            if (!isSelectedWithoutBranch(phi, head, region))
+            if (!canSelectWithoutBranch(phi, head, region))
                 return false;
             if (++numberOfSelects > m_proc.limit(Limit::MaxSelectsPerJoin)) {
                 m_proc.didReachLimit(Limit::MaxSelectsPerJoin, head->last()->origin());

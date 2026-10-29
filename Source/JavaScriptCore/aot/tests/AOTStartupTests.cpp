@@ -346,8 +346,11 @@ static void testLoadedExecutableIsThisProgramAlone()
     Others others { loadedExecutable() };
     const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgramAlone));
     AOT_TEST_CHECK(code && code->p_flags & PF_X);
-    AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
-    AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
+    // The kernel describes the file that it was given. That is the dynamic linker where it was started with the program as its argument.
+    if (others.executable.findSegment(getauxval(AT_ENTRY))) {
+        AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
+        AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
+    }
 
     dl_iterate_phdr([](dl_phdr_info* object, size_t, void* data) {
         auto& others = *static_cast<Others*>(data);

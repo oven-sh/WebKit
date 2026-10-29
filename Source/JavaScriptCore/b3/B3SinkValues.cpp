@@ -61,12 +61,12 @@ public:
                         position = sink(value, position, uses);
                 } else if (!isPartOfAddresses && uses.first.block == block && uses.first.index > index + 1 && isInductionStep(value))
                     position = move(value, position, uses.first);
-                else if (uses.first.block == block && m_stepsOfWalks.contains(value)) {
-                    if (unsigned lowest = lowestIndexFor(position, uses.first.index); lowest > index + 1)
-                        position = move(value, position, { block, lowest });
+                else if (uses.first.block == block && m_pointerChasingLoads.contains(value)) {
+                    if (unsigned sinkIndex = findLatestSinkIndex(position, uses.first.index); sinkIndex > index + 1)
+                        position = move(value, position, { block, sinkIndex });
                 }
                 if (auto* upsilon = value->as<UpsilonValue>(); upsilon && isLoad(upsilon->child(0)->opcode()) && upsilon->child(0)->lastChild() == upsilon->phi())
-                    m_stepsOfWalks.add(upsilon->child(0));
+                    m_pointerChasingLoads.add(upsilon->child(0));
                 if (index + 1 == block->size())
                     comparisonFusedIntoBranch = findComparisonFusedIntoBranch(block);
                 std::optional<unsigned> partOfAddress = isOnlyPartOfAddresses ? scaledIndexOf(value) : addressFusedInto(value);
@@ -242,8 +242,8 @@ private:
         return value->opcode() == Sub && value->child(0)->opcode() == Phi;
     }
 
-    // For link = link.next. Below the other reads through the link, the next link can take the register of this one.
-    static unsigned lowestIndexFor(Position from, unsigned firstUse)
+    // For `node = node->next`: once the load is below the other loads from node, the next node can reuse node's register.
+    static unsigned findLatestSinkIndex(Position from, unsigned firstUse)
     {
         unsigned index = from.index + 1;
         for (; index < firstUse; ++index) {
@@ -504,7 +504,7 @@ private:
     IndexMap<BasicBlock*, bool> m_isOrdered;
     std::optional<CycleForest> m_cycles;
     IndexSet<Value*> m_moved;
-    IndexSet<Value*> m_stepsOfWalks;
+    IndexSet<Value*> m_pointerChasingLoads;
     IndexSet<BasicBlock*> m_changedBlocks;
     IndexSet<BasicBlock*> m_blocksBelowClones;
     Vector<SunkValue> m_sunk;

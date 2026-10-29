@@ -1153,7 +1153,7 @@ arm64: OrRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
 arm64: OrUnsignedRightShift64 U:G:64, U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Imm, Tmp
 
-# The first operand where it is below (Min) or above (Max) the second, else the second: also where one is NaN and where both are zeros.
+# minsd and maxsd: the first operand if it is less than (Min) or greater than (Max) the second, otherwise the second. A NaN operand or two zeros also give the second.
 x86_64: MinOrSecondDouble U:F:64, U:F:64, D:F:64 /preservesFlags
     x86_64_avx: Tmp, Tmp, Tmp
 

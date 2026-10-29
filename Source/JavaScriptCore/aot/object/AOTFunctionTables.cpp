@@ -22,6 +22,7 @@
 #include "AOTMembersLeftOut.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
+#include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
@@ -206,36 +207,42 @@ static bool isNamedInFramesByFunction(FunctionID closureFunction)
     return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !FunctionDescription(closureFunction).recordsCallee();
 }
 
+// functionName() can run at the end of a GC, where of() cannot create the tables.
+static FunctionTables* existingTables(VM& vm)
+{
+    return vm.aotState().functionTables.get();
+}
+
 static String nameSetAtRunTime(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
-    Locker locker { tables.namesLock };
-    if (String name = tables.namesShownUntilLookedFor.get(sourceFunction); !name.isNull())
+    Locker locker { tables->namesLock };
+    if (String name = tables->namesShownUntilLookedFor.get(sourceFunction); !name.isNull())
         return name;
-    return tables.namesSetAtRunTime.get(sourceFunction);
+    return tables->namesSetAtRunTime.get(sourceFunction);
 }
 
 static String nameShownUntilLookedFor(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
         return String();
-    Locker locker { tables.namesLock };
-    return tables.namesShownUntilLookedFor.get(sourceFunctionOf(function));
+    Locker locker { tables->namesLock };
+    return tables->namesShownUntilLookedFor.get(sourceFunctionOf(function));
 }
 
 static String nameLookedFor(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesLookedFor.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesLookedFor.load(std::memory_order_acquire)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
     {
-        Locker locker { tables.namesLock };
-        if (!tables.namesLookedFor.contains(sourceFunction.index()))
+        Locker locker { tables->namesLock };
+        if (!tables->namesLookedFor.contains(sourceFunction.index()))
             return String();
     }
     String name = initialNameProperty(sourceFunction);
@@ -459,19 +466,6 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
         setRecordedCalleeStorage(vm, *this, { });
 }
 
-static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)
-{
-    if (auto* classObject = dynamicDowncast<Closure>(closure)) {
-        const FieldData* field = StaticFields::findOwnField(*classObject, uid);
-        if (field && StaticFields::isInVariable(*classObject, *field))
-            return classObject->state().objects->classes.readStaticField(*field);
-    }
-    unsigned attributes;
-    PropertyOffset offset = closure->structure()->getConcurrently(uid, attributes);
-    if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
-        return JSValue();
-    return closure->getDirect(offset);
-}
 
 static String nullIfEmpty(const String& text)
 {
@@ -480,7 +474,16 @@ static String nullIfEmpty(const String& text)
 
 static String ownStringProperty(JSObject* closure, const Identifier& name)
 {
-    JSValue value = ownDataProperty(closure, name.impl());
+    if (auto* classObject = dynamicDowncast<Closure>(closure)) {
+        const FieldData* field = StaticFields::findOwnField(*classObject, name.impl());
+        if (String string = field ? ProgramStatics::readStringWithoutAllocating(classObject->state().instance, field->slot) : String(); !string.isNull())
+            return string;
+    }
+    unsigned attributes;
+    PropertyOffset offset = closure->structure()->getConcurrently(name.impl(), attributes);
+    if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+        return String();
+    JSValue value = closure->getDirect(offset);
     return value && value.isString() ? asString(value)->tryGetValueWithoutGC() : String();
 }
 
@@ -540,13 +543,13 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
 
 static String displayNameInFrames(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
-    Locker locker { tables.namesLock };
-    auto entry = tables.displayNames.find(sourceFunction);
-    if (entry == tables.displayNames.end() || entry->value.isOneOfSeveral)
+    Locker locker { tables->namesLock };
+    auto entry = tables->displayNames.find(sourceFunction);
+    if (entry == tables->displayNames.end() || entry->value.isOneOfSeveral)
         return String();
     if (!entry->value.stateOfClassObject)
         return entry->value.text;

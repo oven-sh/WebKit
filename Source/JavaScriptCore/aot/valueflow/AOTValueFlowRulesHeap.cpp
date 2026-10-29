@@ -840,9 +840,9 @@ void HeapRule::letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object,
 {
     if (key.keyClass == HeapKeyClass::Index || !isInProgramCode())
         return;
-    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.holdersOfLibraryExports());
+    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.holdersOfLibraryExportsThatMayRaiseEvents());
     if (key.keyClass == HeapKeyClass::Unknown)
-        holdersOfExports = m_context.unite(holdersOfExports, holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
+        holdersOfExports = m_context.unite(holdersOfExports, m_context.restrict(holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers), m_universe.holdersOfLibraryExportsThatMayRaiseEvents()));
     if (holdsAnything(holdersOfExports) && mayCallWhateverHasEscaped(m_context))
         letSeenCodeCallEscapedFunctionsAmong(m_context, key.keyClass == HeapKeyClass::Name ? m_context.lookup(holdersOfExports, nameOfLookupForValue(key), useOfLookupUnder(key)) : m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports));
 }

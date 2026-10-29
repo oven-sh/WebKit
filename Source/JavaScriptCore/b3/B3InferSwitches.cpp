@@ -72,7 +72,7 @@ public:
                 dataLog("Performing fixpoint iteration:\n");
             
             for (BasicBlock* block : m_proc)
-                changed |= attemptToMergeWithPredecessor(block) || attemptToMergeComparisonThatIsOnlyValue(block);
+                changed |= attemptToMergeWithPredecessor(block) || attemptToMergeComparisonUsedAsValue(block);
 
             everChanged |= changed;
         }
@@ -252,9 +252,9 @@ private:
         return true;
     }
 
-    // a == 1 || a == 2 || a == 3 || a == 4 as a value: three branches to a block that says true, and where none is taken the last comparison is the value.
-    // The last comparison becomes a case that leads to that block too, where the cases lie close enough for one test of a bit.
-    bool attemptToMergeComparisonThatIsOnlyValue(BasicBlock* block)
+    // When `a == 1 || a == 2 || a == 3 || a == 4` is used as a value, the first three comparisons branch to a block that produces true and the last comparison is the result.
+    // Turn the last comparison into a case with the same target, as long as all the cases fit in one bit test.
+    bool attemptToMergeComparisonUsedAsValue(BasicBlock* block)
     {
         if (!m_proc.policy().switchLowering.usesBitTests || block->numPredecessors() != 1 || block->last()->opcode() != Jump)
             return false;
@@ -283,46 +283,46 @@ private:
         if (!block->values().contains(comparison))
             return false;
 
-        int32_t valueOfMatch = comparison->opcode() == Equal;
-        int64_t matched = comparison->child(1)->asInt();
-        int64_t smallest = matched;
-        int64_t largest = matched;
+        int32_t resultOnMatch = comparison->opcode() == Equal;
+        int64_t caseValue = comparison->child(1)->asInt();
+        int64_t smallest = caseValue;
+        int64_t largest = caseValue;
         std::optional<FrequentedBlock> target;
         for (SwitchCase switchCase : switchValue->cases(predecessor)) {
-            if (switchCase.caseValue() == matched)
+            if (switchCase.caseValue() == caseValue)
                 return false;
             smallest = std::min(smallest, switchCase.caseValue());
             largest = std::max(largest, switchCase.caseValue());
-            if (!target && saysOnly(switchCase.targetBlock(), upsilon->phi(), valueOfMatch, block->successorBlock(0)))
+            if (!target && onlyProducesConstant(switchCase.targetBlock(), upsilon->phi(), resultOnMatch, block->successorBlock(0)))
                 target = switchCase.target();
         }
         if (!target || static_cast<uint64_t>(largest) - static_cast<uint64_t>(smallest) >= 64)
             return false;
 
         m_grown = nullptr;
-        Value* otherwise = m_proc.add<Const32Value>(comparison->origin(), !valueOfMatch);
-        block->values().insert(0, otherwise);
-        otherwise->owner = block;
-        upsilon->child(0) = otherwise;
+        Value* resultOnMismatch = m_proc.add<Const32Value>(comparison->origin(), !resultOnMatch);
+        block->values().insert(0, resultOnMismatch);
+        resultOnMismatch->owner = block;
+        upsilon->child(0) = resultOnMismatch;
         comparison->replaceWithNopIgnoringType();
-        switchValue->appendCase(predecessor, SwitchCase(matched, *target));
+        switchValue->appendCase(predecessor, SwitchCase(caseValue, *target));
         return true;
     }
 
-    static bool saysOnly(BasicBlock* block, Value* phi, int32_t constant, BasicBlock* successor)
+    static bool onlyProducesConstant(BasicBlock* block, Value* phi, int32_t constant, BasicBlock* successor)
     {
         if (block->last()->opcode() != Jump || block->successorBlock(0) != successor)
             return false;
-        bool says = false;
+        bool foundUpsilon = false;
         for (Value* value : *block) {
             if (value->isFree() || value == block->last())
                 continue;
             auto* upsilon = value->as<UpsilonValue>();
-            if (!upsilon || says || upsilon->phi() != phi || !upsilon->child(0)->isInt32(constant))
+            if (!upsilon || foundUpsilon || upsilon->phi() != phi || !upsilon->child(0)->isInt32(constant))
                 return false;
-            says = true;
+            foundUpsilon = true;
         }
-        return says;
+        return foundUpsilon;
     }
 
     struct SwitchDescription {

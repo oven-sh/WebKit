@@ -478,7 +478,7 @@ bool ClassTable::carriesBrandOfClass(Structure* structure, uint32_t rankOfClass)
     return found != m_brandsOfInstances.end() && structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(found->value);
 }
 
-Structure* RuntimeHooks::structureOfInstanceMadeForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
+Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
 {
     VMState& vmState = vm.aotState();
     vmState.newTargetOfSuperCall = nullptr;

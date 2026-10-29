@@ -1278,10 +1278,14 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     return true;
 }
 
-static bool isOnPrototypeChain(JSObject* first, UniquedStringImpl* name)
+// Compiled code skips the own properties of a pristine array only for immutable members of the chain.
+// A prototype can gain any other name after an array already has it, and that array stays pristine.
+static bool isImmutableOnPrototypeChain(JSObject* first, UniquedStringImpl* name)
 {
     for (JSObject* object = first; object; object = object->getPrototypeDirect().getObject()) {
         Structure* structure = object->structure();
+        if (!structure->isImmutablePropertyForReader(name))
+            continue;
         if (isValidOffset(structure->getConcurrently(name)))
             return true;
         if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(name))
@@ -1318,7 +1322,7 @@ void JSArray::validatePristine(VM& vm) const
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* name = entry.key();
         check(!name->isSymbol() && name != vm.propertyNames->toJSON.impl() && name != vm.propertyNames->then.impl());
-        check(!isOnPrototypeChain(realm->arrayPrototype(), name));
+        check(!isImmutableOnPrototypeChain(realm->arrayPrototype(), name));
         check(!structure->hasPristineElements() || !isCanonicalNumericIndexString(name));
         return true;
     });

@@ -18,6 +18,7 @@
 
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
@@ -351,6 +352,7 @@ int main(int argc, char** argv)
     using namespace JSC::AOT;
 
 #if OS(WINDOWS)
+    terminateWithExceptionCodeOnCrash();
     // A line ends the same way on every system.
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);

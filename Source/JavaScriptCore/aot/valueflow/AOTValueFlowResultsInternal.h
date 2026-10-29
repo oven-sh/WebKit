@@ -163,6 +163,8 @@ constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<Value
     return bits;
 }
 
+class ValueFlowBirthsOfUnknownObject;
+
 struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
@@ -181,6 +183,7 @@ struct ValueFlowResultInputs {
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
     const LedgerOfClassesAndClosures* classesAndClosures { nullptr };
+    const ValueFlowBirthsOfUnknownObject* birthsOfUnknownObject { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
     const ValueFlowUniverse& universe() const { return solution.bodies().universe(); }
@@ -385,6 +388,35 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// Where each object that code outside the program holds went out of sight. An object goes out at a statement that hands it over, or behind another object:
+// the contents behind their holder, a prototype and its constructor behind an instance, an instance behind its constructor. Those lead round in a ring,
+// so the ways out are taken in the order in which the rounds logged them: the origin of an object is the statement at the beginning of the first way that was open to it.
+class ValueFlowOriginsOfEscapes {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowOriginsOfEscapes);
+public:
+    explicit ValueFlowOriginsOfEscapes(const ValueFlowResultInputs&);
+
+    // Objects go out of sight along it: at a statement that hands them over, or behind any of the objects that hold them, make them or inherit from them.
+    struct WayOut {
+        uint32_t round { 0 };
+        ValueFlowStatementID statement;
+        ValueSetID leaders;
+        ValueSetID brought;
+        // The rule that follows what has gone out added them by itself: the leaders are all that had arrived since its last run.
+        bool isGuessed { false };
+    };
+
+    ValueFlowStatementID originOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : ValueFlowStatementID(); }
+    std::span<const WayOut> ways() const LIFETIME_BOUND { return m_ways.span(); }
+    std::span<const uint32_t> waysBehind(ValueFlowObjectID leader) const LIFETIME_BOUND { return m_waysBehind.subspan(m_firstWayBehind[leader.index()], m_firstWayBehind[leader.index() + 1] - m_firstWayBehind[leader.index()]); }
+
+private:
+    Vector<ValueFlowStatementID> m_originOfObject;
+    Vector<WayOut> m_ways;
+    Vector<uint32_t> m_firstWayBehind;
+    Vector<uint32_t> m_waysBehind;
+};
+
 class ValueFlowBirthsOfUnknownObject {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBirthsOfUnknownObject);
 public:
@@ -393,6 +425,10 @@ public:
     Witness witnessOf(ValueFlowNodeID) const;
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
+    // Where an object that code outside the program holds went out of sight, or the object that it followed.
+    Witness originOfEscape(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
+    // Without that place the object still goes out, by a way that begins elsewhere.
+    bool hasOtherOriginsOfEscape(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -410,6 +446,8 @@ private:
     Vector<uint32_t> m_rootOfNode;
     Vector<Root> m_roots;
     BitVector m_hasSeveralRoots;
+    Vector<Witness> m_originOfObject;
+    BitVector m_hasOtherOrigins;
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);

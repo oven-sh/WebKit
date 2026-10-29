@@ -504,7 +504,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
             setKeyCount(0);
         }
 
-        // Grows now if adding this many more keys would. Returns false, with the table as it was, if there is no memory for a larger one.
+        // Expands now if adding numberOfKeys more keys would expand the table. Returns false and leaves the table unchanged if the allocation fails.
         bool tryReserveCapacityForAdd(unsigned numberOfKeys = 1)
         {
             if (m_table && !HashTableSizePolicy::shouldExpand(static_cast<uint64_t>(keyCount()) + deletedCount() + numberOfKeys, tableSize())) [[likely]]

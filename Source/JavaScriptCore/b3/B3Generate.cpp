@@ -91,7 +91,7 @@ struct PipelineState {
     bool hasLoops { false };
     bool didRotateLoops { false };
     bool didVersionLoops { false };
-    bool didJoinWaysBack { false };
+    bool didMergeBackEdges { false };
     bool didRunStep { false };
 };
 
@@ -266,7 +266,7 @@ static constexpr Step steps[] = {
     { "rotateLoops"_s,
         [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.rotates; },
         [](Procedure& procedure, PipelineState& state) {
-            state.didRotateLoops = rotateLoops(procedure, nullptr, &state.didJoinWaysBack);
+            state.didRotateLoops = rotateLoops(procedure, nullptr, &state.didMergeBackEdges);
             return cleanupsIfChanged(state.didRotateLoops, Cleanup::FixSSA);
         } },
     { "hoistLoopInvariantValues"_s,
@@ -275,7 +275,7 @@ static constexpr Step steps[] = {
     { "cleanUpRotatedLoops"_s,
         [](Procedure&, const PipelineState& state) { return state.didRotateLoops; },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
-            if (std::exchange(state.didJoinWaysBack, false))
+            if (std::exchange(state.didMergeBackEdges, false))
                 eliminateRedundantPhiCycles(procedure);
             return { Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode };
         } },
@@ -302,10 +302,10 @@ static constexpr Step steps[] = {
     { "rotateLoops"_s,
         [](Procedure& procedure, const PipelineState& state) { return state.didVersionLoops && procedure.policy().loops.rotates && !state.topTestedVersionHeaders.isEmpty(); },
         [](Procedure& procedure, PipelineState& state) {
-            return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders, &state.didJoinWaysBack), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
+            return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders, &state.didMergeBackEdges), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
     { "eliminateRedundantPhiCycles"_s,
-        [](Procedure&, const PipelineState& state) { return state.didVersionLoops && state.didJoinWaysBack; },
+        [](Procedure&, const PipelineState& state) { return state.didVersionLoops && state.didMergeBackEdges; },
         [](Procedure& procedure, PipelineState&) -> Cleanups {
             eliminateRedundantPhiCycles(procedure);
             return Cleanup::EliminateDeadCode;

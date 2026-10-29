@@ -1662,6 +1662,33 @@ static void expectThisToBeCreatedBelow(const Program& program, const FlowApplica
     update.replacesExpectation = true;
 }
 
+// Treats the argument types that the library declares for a callback like an annotation on the callback, and on every function the callback forwards them to.
+static void predictDeclaredCallbackArguments(const ValueFlowResultInputs& inputs, const FlowApplication& application, const DeclaredType& declared, ValueFlowNodeID node, TypeArena& types, FlowPositionUpdate& update)
+{
+    ValueSetID arguments = inputs.solver().declaredCallbackArguments();
+    bool isUnchecked = !declared.site && (declared.isExpected() || declared.written() == TypeTable::anything);
+    if (arguments == ValueSets::nothing || update.isProven || !isUnchecked || inputs.program.at(declared.expected().predicted()).layouts)
+        return;
+    ValueSetID seen = inputs.solver().seenValuesOf(node);
+    if (ValueSets::isComplement(seen) || !inputs.sets().meet(seen, arguments))
+        return;
+    Vector<LayoutID, 4> expected;
+    bool hasTooManyLayouts = false;
+    inputs.sets().forEachMember(seen, [&](ValueFlowObjectID object) {
+        LayoutID layout = inputs.universe().isObject(object) && !ValueFlowResultInputs::isPlaceholder(object) ? inputs.universe().layoutOf(object) : LayoutID();
+        if (!layout || application.layouts[layout.index()].objectsAreDictionaries || expected.contains(layout))
+            return;
+        if (expected.size() == expected.capacity())
+            hasTooManyLayouts = true;
+        else
+            expected.append(layout);
+    });
+    if (hasTooManyLayouts || expected.isEmpty())
+        return;
+    update.type = types.intern(Type::forLayouts(expected.span(), types));
+    update.replacesExpectation = true;
+}
+
 static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, const FlowApplication& application, std::span<const LayoutID> createdBelow, ValueFlowPositions& positions, TypeArena& types, FlowSignatureUpdate& update)
 {
     const Function& function = inputs.program.at(id);
@@ -1673,6 +1700,8 @@ static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionI
             const DeclaredType* declared = function.thisParameterIndex() == index ? function.declaredEntryParameter(index) : nullptr;
             if (declared)
                 expectThisToBeCreatedBelow(inputs.program, application, *declared, createdBelow, types, parameters[index]);
+            else if (const DeclaredType* position = function.declaredEntryParameter(index))
+                predictDeclaredCallbackArguments(inputs, application, *position, inputs.bodies().nodes().entryParameter(id, index), types, parameters[index]);
             continue;
         }
         const DeclaredType* declared = function.declaredEntryParameter(index);
@@ -1681,6 +1710,7 @@ static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionI
         ValueFlowNodeID node = inputs.bodies().nodes().entryParameter(id, index);
         parameters[index] = positions.updateFor(*declared, node, DeadZone::MayBeObserved, numbers.ofEntryParameter(id, index));
         positions.takeWhatArrives(*declared, node, parameters[index]);
+        predictDeclaredCallbackArguments(inputs, application, *declared, node, types, parameters[index]);
     }
     if (!std::ranges::all_of(parameters, &FlowPositionUpdate::isEmpty))
         update.entryParameters = WTF::move(parameters);

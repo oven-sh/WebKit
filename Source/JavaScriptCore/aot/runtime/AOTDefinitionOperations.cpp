@@ -506,6 +506,17 @@ static void defineMethod(JSGlobalObject* globalObject, JSObject* holder, Propert
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A class's prototype object is marked as a prototype when it is created, but nothing inherits from it until the definition ends.
+// Defining the accessor before the mark keeps JSObject::notifyPresenceOfIndexedAccessors() from giving the realm a bad time.
+static void defineIndexedAccessorOnClassPrototype(JSGlobalObject* globalObject, JSObject* prototype, PropertyName key, JSObject* function, MethodKind kind)
+{
+    Structure* structure = prototype->structure();
+    structure->setMayBePrototype(false);
+    defineMethod(globalObject, prototype, key, function, kind);
+    structure->setMayBePrototype(true);
+    prototype->didBecomePrototype(globalObject->vm());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JSCell* classObject, EncodedJSValue property, JSCell* function, uint32_t sideAndKind))
 {
     constexpr Entry entry = Entry::operationAOTDefineMethod;
@@ -524,7 +535,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
     MethodKind kind = static_cast<MethodKind>(bits.kind);
     {
         ClassTable::MemberDefinition definition(instance->state->objects->classes, *classLayout, side, key.impl());
-        if (!tryDefineClassMemberWithoutTransition(globalObject, *closure, *classLayout, holder, key, member, kind))
+        if (side == ClassSide::Prototype && kind != MethodKind::Method && parseIndex(key) && holder->mayBePrototype())
+            defineIndexedAccessorOnClassPrototype(globalObject, holder, key, member, kind);
+        else if (!tryDefineClassMemberWithoutTransition(globalObject, *closure, *classLayout, holder, key, member, kind))
             defineMethod(globalObject, holder, key, member, kind);
     }
     OPERATION_RETURN_IF_EXCEPTION(scope);

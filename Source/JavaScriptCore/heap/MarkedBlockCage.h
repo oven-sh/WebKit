@@ -130,7 +130,7 @@ public:
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
     // Storage: what arrays and objects keep outside their cells. It comes from malloc.
-    // Tables: those of the VM that hold a key for each of some kind of value that the program keeps. A table asks malloc for all of its next size at once.
+    // Tables: the VM's hash tables that hold one entry per live value of some kind, such as Symbols. Growing one is a single large malloc.
     enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Storage = 1 << 2, Tables = 1 << 3 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
@@ -159,7 +159,7 @@ public:
     JS_EXPORT_PRIVATE static void didUseAddressSpaceBallast(VM&);
     // Called on the thread of the VM while pieces of the ballast are missing, ahead of work whose requests to malloc may not fail. Throws if there is no room to keep them again, unless the thread is exempt.
     JS_EXPORT_PRIVATE static bool throwErrorForMissingAddressSpaceBallast(VM&, JSGlobalObject*, ThrowScope&);
-    // Called on the thread of the VM ahead of each Symbol that is made. Under a limit on address space the table of Symbols grows ahead of need. Where it finds no memory it goes on with the room it has, and the program is owed an error.
+    // Called on the VM's thread before each Symbol is created. With limited address space, grows the Symbol table early, so a failed allocation can schedule an out-of-memory error while the table still has room.
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);

@@ -869,7 +869,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
             };
 
 #if ENABLE(AOT)
-            // The frame is there and the pc is not in the code of the function: the sample fell between the call and its first instruction.
+            // The frame exists but the pc is outside the function's code: the sample landed between the call and the callee's first instruction.
             if (std::optional<AOT::FunctionID> function = alreadyHasExecutable ? std::nullopt : AOT::functionOf(calleeCell)) {
                 stackFrame.compiledFrame = { { }, AOT::FunctionDescription(*function).sourceFunction(), CallSiteIndex(), false, false };
                 return;

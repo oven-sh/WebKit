@@ -440,7 +440,7 @@ static void testSinkValuesMovesInductionStepToFirstUse()
 }
 
 // for (link = first; link; link = link->next) sum += link->value;
-static void testSinkValuesMovesLoadOfNextLinkBelowOtherReads()
+static void testSinkValuesSinksPointerChasingLoadBelowOtherLoads()
 {
     struct Link {
         int64_t value;
@@ -1392,7 +1392,7 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
     RUN(testSinkValuesMovesInductionStepToFirstUse());
-    RUN(testSinkValuesMovesLoadOfNextLinkBelowOtherReads());
+    RUN(testSinkValuesSinksPointerChasingLoadBelowOtherLoads());
     RUN(testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle());
     RUN(testValidateRefusesNullEntryInBlock());
     RUN(testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress());

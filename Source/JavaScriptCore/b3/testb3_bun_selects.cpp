@@ -240,17 +240,17 @@ static void testConvertBranchesToSelectsKeepsBranchOutsideLoop()
     CHECK(!convertBranchesToSelectsAndValidate(proc));
 }
 
-enum class ChosenValues : uint8_t {
-    Compared,
-    ComparedInOtherOrder,
-    ComparedWithEqualConstant,
-    FirstAndThird,
+enum class SelectedValues : uint8_t {
+    ComparisonOperands,
+    ComparisonOperandsSwapped,
+    OperandAndEqualConstant,
+    OperandAndUnrelatedValue,
 };
 
 template<typename T>
-static bool convertsChoice(B3::Opcode comparison, ChosenValues chosen, bool isDiamond)
+static bool convertsMinOrMax(B3::Opcode comparison, SelectedValues selected, bool isDiamond)
 {
-    constexpr bool isNumber = std::is_floating_point_v<T>;
+    constexpr bool isFloatingPoint = std::is_floating_point_v<T>;
     Procedure proc;
     Graph graph { proc };
     BasicBlock* root = proc.addBlock();
@@ -259,17 +259,17 @@ static bool convertsChoice(B3::Opcode comparison, ChosenValues chosen, bool isDi
     BasicBlock* join = proc.addBlock();
     auto arguments = cCallArgumentValues<T, T, T>(proc, root);
     auto seven = [&](BasicBlock* block) -> Value* {
-        if constexpr (isNumber)
+        if constexpr (isFloatingPoint)
             return graph.number(block, 7);
         else
             return graph.int64(block, 7);
     };
     Value* a = arguments[0];
-    Value* b = chosen == ChosenValues::ComparedWithEqualConstant ? seven(root) : arguments[1];
+    Value* b = selected == SelectedValues::OperandAndEqualConstant ? seven(root) : arguments[1];
     Value* c = arguments[2];
-    Value* ifTrue = chosen == ChosenValues::ComparedInOtherOrder ? b : a;
-    Value* ifFalse = chosen == ChosenValues::ComparedInOtherOrder ? a : chosen == ChosenValues::FirstAndThird ? c : b;
-    if (chosen == ChosenValues::ComparedWithEqualConstant)
+    Value* ifTrue = selected == SelectedValues::ComparisonOperandsSwapped ? b : a;
+    Value* ifFalse = selected == SelectedValues::ComparisonOperandsSwapped ? a : selected == SelectedValues::OperandAndUnrelatedValue ? c : b;
+    if (selected == SelectedValues::OperandAndEqualConstant)
         ifFalse = seven(root);
     Value* phi = proc.add<Value>(Phi, a->type(), Origin());
     if (!isDiamond)
@@ -291,13 +291,13 @@ static bool convertsChoice(B3::Opcode comparison, ChosenValues chosen, bool isDi
     CHECK_EQ(numberOfValues(proc, Select), isConverted ? 1u : 0u);
     auto code = compileProc(proc);
     Vector<T> operands { static_cast<T>(-3), static_cast<T>(0), static_cast<T>(7), static_cast<T>(9) };
-    if constexpr (isNumber) {
+    if constexpr (isFloatingPoint) {
         operands.append(-0.0);
         operands.append(PNaN);
     }
     for (T x : operands) {
         for (T y : operands) {
-            T right = chosen == ChosenValues::ComparedWithEqualConstant ? static_cast<T>(7) : y;
+            T right = selected == SelectedValues::OperandAndEqualConstant ? static_cast<T>(7) : y;
             bool isTrue = false;
             switch (comparison) {
             case LessThan:
@@ -320,8 +320,8 @@ static bool convertsChoice(B3::Opcode comparison, ChosenValues chosen, bool isDi
                 break;
             }
             T third = static_cast<T>(5);
-            T whenTrue = chosen == ChosenValues::ComparedInOtherOrder ? right : x;
-            T whenFalse = chosen == ChosenValues::ComparedInOtherOrder ? x : chosen == ChosenValues::FirstAndThird ? third : right;
+            T whenTrue = selected == SelectedValues::ComparisonOperandsSwapped ? right : x;
+            T whenFalse = selected == SelectedValues::ComparisonOperandsSwapped ? x : selected == SelectedValues::OperandAndUnrelatedValue ? third : right;
             T expected = isTrue ? whenTrue : whenFalse;
             T result = invoke<T>(*code, x, y, third);
             CHECK(!memcmp(&result, &expected, sizeof(T)));
@@ -330,22 +330,22 @@ static bool convertsChoice(B3::Opcode comparison, ChosenValues chosen, bool isDi
     return isConverted;
 }
 
-// The smaller or the larger of two values needs no loop around it and no load in front of it.
-static void testConvertBranchesToSelectsConvertsChoiceBetweenComparedValues()
+// min and max are converted outside loops too, and without a load feeding the comparison.
+static void testConvertBranchesToSelectsConvertsMinAndMax()
 {
     for (bool isDiamond : { false, true }) {
-        for (ChosenValues chosen : { ChosenValues::Compared, ChosenValues::ComparedInOtherOrder, ChosenValues::ComparedWithEqualConstant }) {
+        for (SelectedValues selected : { SelectedValues::ComparisonOperands, SelectedValues::ComparisonOperandsSwapped, SelectedValues::OperandAndEqualConstant }) {
             for (B3::Opcode comparison : { LessThan, GreaterThan, LessEqual, GreaterEqual, Below })
-                CHECK(convertsChoice<int64_t>(comparison, chosen, isDiamond));
+                CHECK(convertsMinOrMax<int64_t>(comparison, selected, isDiamond));
             for (B3::Opcode comparison : { LessThan, GreaterThan })
-                CHECK(convertsChoice<double>(comparison, chosen, isDiamond));
+                CHECK(convertsMinOrMax<double>(comparison, selected, isDiamond));
             for (B3::Opcode comparison : { LessEqual, GreaterEqual })
-                CHECK_EQ(convertsChoice<double>(comparison, chosen, isDiamond), isARM64());
-            CHECK(!convertsChoice<int64_t>(Equal, chosen, isDiamond));
-            CHECK(!convertsChoice<double>(Equal, chosen, isDiamond));
+                CHECK_EQ(convertsMinOrMax<double>(comparison, selected, isDiamond), isARM64());
+            CHECK(!convertsMinOrMax<int64_t>(Equal, selected, isDiamond));
+            CHECK(!convertsMinOrMax<double>(Equal, selected, isDiamond));
         }
-        CHECK(!convertsChoice<int64_t>(LessThan, ChosenValues::FirstAndThird, isDiamond));
-        CHECK(!convertsChoice<double>(LessThan, ChosenValues::FirstAndThird, isDiamond));
+        CHECK(!convertsMinOrMax<int64_t>(LessThan, SelectedValues::OperandAndUnrelatedValue, isDiamond));
+        CHECK(!convertsMinOrMax<double>(LessThan, SelectedValues::OperandAndUnrelatedValue, isDiamond));
     }
 }
 
@@ -475,7 +475,7 @@ void addBunSelectTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testConvertBranchesToSelectsConvertsNestedTest());
     RUN(testConvertBranchesToSelectsKeepsOtherBranches());
     RUN(testConvertBranchesToSelectsKeepsBranchOutsideLoop());
-    RUN(testConvertBranchesToSelectsConvertsChoiceBetweenComparedValues());
+    RUN(testConvertBranchesToSelectsConvertsMinAndMax());
     RUN(testConvertBranchesToSelectsCountsLimits());
 }
 

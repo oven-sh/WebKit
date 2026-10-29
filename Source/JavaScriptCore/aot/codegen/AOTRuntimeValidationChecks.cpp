@@ -389,11 +389,17 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     ValidationFailureKind kind = provesOf(m_function.at(kept).opcode) == Proof::None ? ValidationFailureKind::ReadsDiffer : ValidationFailureKind::GuardNoLongerHolds;
 
     LBasicBlock differ = newBlock();
+    LBasicBlock differAsLiteralStrings = newBlock();
     LBasicBlock areNumbers = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.branch(m_out.equal(keptValue.value(), replacingValue.value()), normalEdge(continuation), rareEdge(differ));
 
+    // A string converted to LiteralString and back is the cell of the literal, which may not be the cell it started as.
     m_out.appendTo(differ);
+    const Type& anything = m_program.at(TypeTable::anything);
+    m_out.branch(equal(conversions.toLiteralString(keptValue, anything), conversions.toLiteralString(replacingValue, anything)).value(), normalEdge(continuation), rareEdge(differAsLiteralStrings));
+
+    m_out.appendTo(differAsLiteralStrings);
     Condition keptIsNumber = hasType(keptValue, isNumber);
     failUnless(logicalAnd(keptIsNumber, hasType(replacingValue, isNumber)), kind, keptValue, value.id());
     m_out.jump(areNumbers);

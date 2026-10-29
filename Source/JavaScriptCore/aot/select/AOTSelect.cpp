@@ -200,8 +200,7 @@ PassOutcome select(FunctionPassContext& pass)
     }
     if (context.didRewrite())
         outcome = PassOutcome::Changed;
-    if (context.allocatesLessUnderHandler())
-        outcome |= removeRedundantHandlers(pass);
+    outcome |= removeRedundantHandlersBehindSelection(pass, context.allocatesLessUnderHandler());
 
     bool didReturnTestedValues = returnTestedValues(pass.function);
     if (didReturnTestedValues)

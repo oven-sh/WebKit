@@ -933,67 +933,6 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
     return result;
 }
 
-static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
-{
-    const ValueFlowSolver& solver = inputs.solver();
-    const ValueFlowUniverse& universe = inputs.universe();
-    if (!solver.input().remembersWhoLoggedEachEdge)
-        return { };
-    Vector<Witness> witnesses(FillWith { }, inputs.program.functions.size(), noWitness);
-
-    using SetOfNode = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-    ValueSetID remaining = maker.intersect(solver.possibleValuesOf(escaped), universe.closures());
-    SetOfNode seen;
-    seen.add(escaped.index(), remaining);
-    Vector<std::pair<uint32_t, ValueSetID>> level { { escaped.index(), remaining } };
-    Vector<ValueFlowNodeID> predecessors;
-    while (!level.isEmpty() && remaining != ValueSets::nothing) {
-        SetOfNode next;
-        for (auto [node, lookedForAtNode] : level) {
-            ValueSetID lookedFor = maker.intersect(lookedForAtNode, remaining);
-            if (lookedFor == ValueSets::nothing)
-                continue;
-            predecessors.shrink(0);
-            solver.graph().forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
-                predecessors.append(predecessor);
-            });
-            AOT::sort(predecessors);
-            for (ValueFlowNodeID predecessor : predecessors) {
-                ValueSetID brought = maker.intersect(solver.possibleValuesOf(predecessor), lookedFor);
-                if (brought == ValueSets::nothing)
-                    continue;
-                Witness witness = noWitness;
-                if (ValueFlowStatementID logger = solver.statementThatLogged({ predecessor, ValueFlowNodeID(node) }))
-                    witness = witnessOfStatement(inputs.program, solver.statementAt(logger));
-                if (hasFunction(witness)) {
-                    inputs.sets().forEachMember(brought, [&](ValueFlowObjectID closure) {
-                        if (FunctionID function = universe.closureFunction(closure))
-                            witnesses[function.index()] = witness;
-                    });
-                    remaining = maker.intersect(remaining, ValueSets::complement(brought));
-                    lookedFor = maker.intersect(lookedFor, ValueSets::complement(brought));
-                    if (lookedFor == ValueSets::nothing)
-                        break;
-                    continue;
-                }
-                auto seenThere = seen.add(predecessor.index(), ValueSets::nothing);
-                ValueSetID fresh = maker.intersect(brought, ValueSets::complement(seenThere.iterator->value));
-                if (fresh == ValueSets::nothing)
-                    continue;
-                seenThere.iterator->value = maker.unite(seenThere.iterator->value, fresh);
-                auto entry = next.add(predecessor.index(), ValueSets::nothing);
-                entry.iterator->value = maker.unite(entry.iterator->value, fresh);
-            }
-        }
-        level.shrink(0);
-        for (auto& [node, lookedFor] : next)
-            level.append({ node, lookedFor });
-        AOT::sort(level, { }, [](const auto& entry) { return entry.first; });
-    }
-    return witnesses;
-}
-
 void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& calls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -1016,8 +955,6 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     times.didFinish("functions: unreached, named by unsolved code"_s);
     inputs.build.statistics().count(StatisticID::FlowUnreachedFunctions, std::ranges::count(tables.functions.functions, FunctionReachability::Unreached, &FunctionFlow::reachability));
 
-    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-    ValueSetMaker& maker = borrowedMaker.get();
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
 
@@ -1026,7 +963,6 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         if (entry.function && !isEnteredByCallsAlone(program, entry.id))
             isNamedByTable.quickSet(entry.function.index());
     }
-    Vector<Witness> witnessesOfEscapes = findWitnessesOfEscapes(inputs, maker);
     times.didFinish("functions: bound functions, named by table"_s);
 
     // A read of a name finds a value that was stored on the closure, or goes on to Function.prototype.
@@ -1041,8 +977,8 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         }
         if (inputs.hasEscaped(closure)) {
             flow.cause = UnprovenCause::ReachesNativeCode;
-            if (!witnessesOfEscapes.isEmpty())
-                flow.witness = witnessesOfEscapes[index];
+            if (inputs.birthsOfUnknownObject)
+                flow.witness = inputs.birthsOfUnknownObject->originOfEscape(closure);
             return;
         }
         if (inputs.isLost(closure)) {

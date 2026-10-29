@@ -2561,7 +2561,7 @@ private:
             inverted = !inverted;
         }
 
-        // An extended value is zero where the value is.
+        // ZExt32(x) and SExt32(x) are zero exactly when x is.
         if (m_procedure.policy().selection.extendsInstructionSelection && (value->opcode() == ZExt32 || value->opcode() == SExt32) && value != m_value && canCommitInternal && canBeInternal(value)) {
             commitInternal(value);
             value = value->child(0);
@@ -3949,7 +3949,7 @@ private:
             inverted);
     }
 
-    bool tryAppendSelectOfComparedNumbers()
+    bool tryAppendSelectAsMinOrMax()
     {
         if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection || !m_value->type().isFloat())
             return false;
@@ -6812,7 +6812,7 @@ private:
 
             if (tryAppendSelectOfIncrementedValue())
                 return;
-            if (tryAppendSelectOfComparedNumbers())
+            if (tryAppendSelectAsMinOrMax())
                 return;
 
             MoveConditionallyConfig config;

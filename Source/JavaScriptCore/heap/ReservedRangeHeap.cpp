@@ -160,7 +160,7 @@ static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
     return offset / granuleSize;
 }
 
-// What is reserved without access has none from the start, and child processes inherit it: malloc keeps its records of a range inside the range.
+// Maps an inaccessible range as PROT_NONE up front, and without MADV_DONTFORK: malloc keeps its metadata for a range inside the range, so a forked child needs it.
 static void* tryReserveAt(size_t size, OSAllocator::Usage usage, void* address, bool isWritable)
 {
 #if OS(LINUX)
@@ -183,11 +183,11 @@ static void* tryReserveAligned(size_t size, size_t alignment, OSAllocator::Usage
         if (!mapped)
             return nullptr;
         auto* aligned = std::bit_cast<uint8_t*>(roundUpToMultipleOf(alignment, std::bit_cast<uintptr_t>(mapped)));
-        size_t sizeBelow = aligned - mapped;
-        if (sizeBelow)
-            munmap(mapped, sizeBelow);
-        if (sizeBelow < alignment)
-            munmap(aligned + size, alignment - sizeBelow);
+        size_t leadingPadding = aligned - mapped;
+        if (leadingPadding)
+            munmap(mapped, leadingPadding);
+        if (leadingPadding < alignment)
+            munmap(aligned + size, alignment - leadingPadding);
         return aligned;
     }
 #endif
@@ -449,7 +449,7 @@ void ReservedRangeHeap::releaseFreeMemory()
 #if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) {
         Locker locker { m_lock };
-        // Not forced: a forced collection purges every arena of the process, one thread at a time. What is free here goes back when malloc's delay has passed.
+        // Not forced: a forced collection purges every arena in the process, one thread at a time. Free memory is returned to the OS after malloc's purge delay instead.
         for (void* heap : m_segmentHeaps)
             mi_heap_collect(static_cast<mi_heap_t*>(heap), false);
     }
