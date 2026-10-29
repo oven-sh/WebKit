@@ -529,8 +529,14 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     m_initialized = true;
 }
 
-void CyclicModuleRecord::setEvaluationError(VM& vm, JSValue error)
+NEVER_INLINE void CyclicModuleRecord::setEvaluationError(VM& vm, JSValue error)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // The embedder can withdraw a termination (VM::cancelTermination) and run script again, so the value of a pending
+    // termination never becomes the error of a module. Like V8, record null.
+    if (vm.hasPendingTerminationException() && error == vm.terminationException()->value()) [[unlikely]]
+        error = jsNull();
+#endif
     m_evaluationError.set(vm, this, error);
     // With an error the record never runs its body (again), whether the error is its own or came from a module it depends on.
     if (auto* jsModule = dynamicDowncast<JSModuleRecord>(this))
@@ -634,21 +640,6 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
-#if USE(BUN_JSC_ADDITIONS)
-        // The embedder can withdraw a termination (VM::cancelTermination) and run script again, so the value of the
-        // termination must not become the error of these modules. Like V8, record null. A termination cannot reject
-        // the capability that this call made, so the module does not keep it: the next Evaluate() makes a rejected one.
-        if (vm.isTerminationException(exception)) [[unlikely]] {
-            for (AbstractModuleRecord* abstractRecord : stack) {
-                auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(abstractRecord);
-                ASSERT(cyclic->status() == Status::Evaluating);
-                cyclic->setStatus(Status::Evaluated);
-                cyclic->setEvaluationError(vm, jsNull());
-            }
-            module->m_topLevelCapability.clear();
-            RELEASE_AND_RETURN(scope, nullptr);
-        }
-#endif
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);
         // 9.a. For each Cyclic Module Record m of stack, do
         for (AbstractModuleRecord* abstractRecord : stack) {
@@ -660,6 +651,14 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             // 9.a.iii. Set m.[[EvaluationError]] to result.
             cyclic->setEvaluationError(vm, exception->value());
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // A termination cannot reject the capability that this call made, so the module does not keep it: the next
+        // Evaluate() makes a rejected one. The error of the modules is null (setEvaluationError).
+        if (vm.isTerminationException(exception)) [[unlikely]] {
+            module->m_topLevelCapability.clear();
+            RELEASE_AND_RETURN(scope, nullptr);
+        }
+#endif
         // 9.b. Assert: module.[[Status]] is EVALUATED.
         ASSERT(module->status() == Status::Evaluated);
         // 9.c. Assert: module.[[EvaluationError]] and result are the same Completion Record.
