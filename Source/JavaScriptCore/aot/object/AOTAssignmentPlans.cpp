@@ -39,6 +39,7 @@ ExcludedNameList::ExcludedNameList(Vector<UniquedStringImpl*>&& names, uint32_t 
 AssignmentPlanCache::AssignmentPlanCache(State& state)
     : m_state(state)
     , m_chainDependentOwner(state.chainDependents->addOwner(*this))
+    , m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "assignment plans"_s, *this);
     if (Options::aotCountsPath())
@@ -103,7 +104,7 @@ bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
 {
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     unsigned setIndex = hash % numberOfSets;
     Set& set = (*m_sets)[setIndex];
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {

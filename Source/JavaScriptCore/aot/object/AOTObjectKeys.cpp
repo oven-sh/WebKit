@@ -995,6 +995,8 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 
 PropertyListCache::PropertyListCache(State& state)
     : m_state(state)
+    , m_entries(state.tableArena)
+    , m_ownKeyLists(state.tableArena)
 {
     state.caches->add(CacheKind::ClearedEachCollection, "property lists"_s, *this);
 }
@@ -1002,7 +1004,7 @@ PropertyListCache::PropertyListCache(State& state)
 CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
 {
     if (!m_entries)
-        m_entries = makeUniqueWithoutFastMallocCheck<Entries>();
+        m_entries.make();
     m_writes.recordAll();
     return (*m_entries)[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
 }
@@ -1012,7 +1014,7 @@ KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t ord
     constexpr unsigned listsPerSet = 4;
     static_assert(!(numberOfOwnKeyLists % listsPerSet));
     if (!m_ownKeyLists)
-        m_ownKeyLists = makeUniqueWithoutFastMallocCheck<OwnKeyLists>();
+        m_ownKeyLists.make();
     m_writes.recordAll();
     auto set = std::span { *m_ownKeyLists }.subspan(WTF::pairIntHash(structureID.bits(), orderWord) % (numberOfOwnKeyLists / listsPerSet) * listsPerSet, listsPerSet);
     KeptOwnKeys* unused = nullptr;

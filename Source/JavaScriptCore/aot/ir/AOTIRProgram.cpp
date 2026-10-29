@@ -695,10 +695,17 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
     Vector<ModuleID, 2> forms;
     auto visitFormsOf = [&](ModuleID file) {
         std::span<const uint8_t> path = program.string(program.at(file).path);
+        // A form stands under the path of its file, a question mark and the name of the form.
+        if (program.at(file).kind == ModuleKind::Data) {
+            if (auto mark = std::ranges::find_last(path, '?'); !mark.empty())
+                path = path.first(mark.begin() - path.begin());
+        }
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
             const Module& module = program.modules[index];
             std::span<const uint8_t> pathOfForm = program.string(module.path);
-            if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
+            if (module.kind != ModuleKind::Data || ModuleID(index) == file || !spanHasPrefix(pathOfForm, path))
+                continue;
+            if (pathOfForm.size() == path.size() || pathOfForm[path.size()] == '?')
                 forms.append(ModuleID(index));
         }
     };

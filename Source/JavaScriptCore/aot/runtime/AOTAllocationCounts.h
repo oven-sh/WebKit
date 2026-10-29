@@ -51,6 +51,8 @@ public:
     static void willAllocateMap(Instance&);
     static void willAllocateSet(Instance&);
     static void willRefill(VM&, const LocalAllocator&);
+    // A collection takes the free list from its allocator, so the used part is counted first.
+    static void willStopAllocating(VM&, const LocalAllocator&);
     // A VM's free lists are destroyed with its heap, so their used part is counted here and its allocators are dropped.
     static void willShutDownHeap(VMState&);
     JS_EXPORT_PRIVATE static void didMake(VM&, ASCIILiteral what, const char* detailOrNull = nullptr);

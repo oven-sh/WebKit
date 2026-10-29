@@ -1266,6 +1266,7 @@ void initializePropertyCacheWords(Instance& instance)
 template<typename T>
 CreatedAtFirstUse<T>::CreatedAtFirstUse(State& state)
     : m_state(state)
+    , m_value(state.tableArena)
 {
 }
 
@@ -1275,8 +1276,7 @@ CreatedAtFirstUse<T>::~CreatedAtFirstUse() = default;
 template<typename T>
 NEVER_INLINE T& CreatedAtFirstUse<T>::create()
 {
-    m_value = makeUnique<T>(m_state);
-    return *m_value;
+    return m_value.make(m_state);
 }
 
 template class CreatedAtFirstUse<PropertyCaches>;

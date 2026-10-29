@@ -724,6 +724,7 @@ static void applyUnknownResults(Program& program, const FlowResults& results, Bu
     editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         demoteTailCallsWithChecks(program, id, function, arenas.types, build);
         initializeMembersOfListedHolders(program, results, id, function, arenas.types, build);
+        nameSymbolsCreatedByLibraryModule(program, id, function, arenas.types, build);
     });
 }
 

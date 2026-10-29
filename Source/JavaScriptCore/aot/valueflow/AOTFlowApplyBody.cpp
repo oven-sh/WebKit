@@ -13,6 +13,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTNameCreatedSymbols.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPredictedValues.h"
 #include "AOTRepresentation.h"
@@ -937,6 +938,34 @@ void initializeMembersOfListedHolders(const Program& program, const FlowResults&
     FunctionAnalyses analyses(context, function);
     IRBuilder builder(context, function, types, &analyses);
     initializeMembersOfListedHolders(program.builtins(), results, function, analyses, builder);
+    builder.applyInsertions();
+}
+
+// The library declares fields under symbols that the bodies of its modules create, and the run time finds such a field by the symbol of its key.
+// The body of a module runs once, so the call creates that symbol whether or not flow has looked at the program.
+void nameSymbolsCreatedByLibraryModule(const Program& program, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+{
+    if (!function.module || program.at(function.module).body != id || !isLibraryCode(program, function))
+        return;
+
+    AnalysisContext context { build, program, nullptr, nullptr, id };
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
+    const UseLists& useLists = analyses.useLists();
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        for (ValueID call : function.blocks[blockIndex].values) {
+            std::optional<PropertyKey> named = keyOfSymbolsCreatedBy(function, function.at(call));
+            std::optional<PropertyKeyID> key = named ? program.types.find(*named) : std::nullopt;
+            if (!key || !callsSymbolDirectly(program.builtins(), function, function.at(call)) || analyses.isInCycle(BlockID(blockIndex)))
+                continue;
+            Value constant = IRBuilder::make(Opcode::KeyConstant);
+            constant.setKey(*key);
+            builder.setOrigin(function.at(call).origin());
+            ValueID symbol = builder.insertBefore(useLists.pointAfter(call), WTF::move(constant));
+            for (const Use& use : useLists.usesOf(call))
+                replaceUse(function, use, symbol);
+        }
+    }
     builder.applyInsertions();
 }
 

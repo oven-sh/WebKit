@@ -13,6 +13,7 @@
 #include "AOTObject.h"
 #include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
+#include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
@@ -370,7 +371,7 @@ private:
 
     State& m_state;
     ChainDependentOwnerID m_chainDependentOwner;
-    std::unique_ptr<Sets> m_sets;
+    MadeInArena<Sets> m_sets;
     // A plan stays where it is for as long as the cache does. One that has been made anew for another copy, or emptied, does not pass for the plan it was.
     std::array<AssignmentPlan*, numberOfRecentPlans> m_recentPlans { };
     static constexpr unsigned numberOfCopiesOfTwo = 64;

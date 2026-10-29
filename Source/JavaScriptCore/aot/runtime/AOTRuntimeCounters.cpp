@@ -420,6 +420,17 @@ static String describeCellsOf(const LocalAllocator& allocator)
     return makeString(countedAsWord(String::fromLatin1(allocator.directory().subspace()->name().data())), ':', allocator.cellSize());
 }
 
+static void addListInUse(const LocalAllocator& allocator, AllocationCounts::Lines& refills)
+{
+    const FreeList& list = freeListOf(&allocator);
+    uint64_t bytesLeft = 0;
+    list.forEachInterval([&](char* start, char* end) {
+        bytesLeft += end - start;
+    });
+    if (uint64_t bytesUsed = list.originalSize() - bytesLeft)
+        addLine(refills, makeString("- list_in_use "_s, describeCellsOf(allocator)), { bytesUsed, bytesUsed / list.cellSize() });
+}
+
 // A free list is counted when it is used up. Adding the used part of the current lists makes the lines sum to the number of cells handed out.
 static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills)
 {
@@ -427,15 +438,8 @@ static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills
     auto allocators = allocatorsOfVMs().find(&state);
     if (allocators == allocatorsOfVMs().end())
         return;
-    for (const LocalAllocator* allocator : allocators->value) {
-        const FreeList& list = freeListOf(allocator);
-        uint64_t bytesLeft = 0;
-        list.forEachInterval([&](char* start, char* end) {
-            bytesLeft += end - start;
-        });
-        if (uint64_t bytesUsed = list.originalSize() - bytesLeft)
-            addLine(refills, makeString("- list_in_use "_s, describeCellsOf(*allocator)), { bytesUsed, bytesUsed / list.cellSize() });
-    }
+    for (const LocalAllocator* allocator : allocators->value)
+        addListInUse(*allocator, refills);
 }
 
 void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
@@ -450,6 +454,12 @@ void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
     AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
     if (counts)
         addLine(counts->m_refills, makeString(describePlace(vm), ' ', describeCellsOf(allocator)), list);
+}
+
+void AllocationCounts::willStopAllocating(VM& vm, const LocalAllocator& allocator)
+{
+    if (AllocationCounts* counts = ensureForFirstInstance(vm))
+        addListInUse(allocator, counts->m_refills);
 }
 
 void AllocationCounts::willShutDownHeap(VMState& state)

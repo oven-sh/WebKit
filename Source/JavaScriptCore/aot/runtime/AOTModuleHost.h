@@ -84,6 +84,8 @@ struct ModuleHost {
     JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
     // The program has registered something with the host that answers to the name of a native module in its place. Null in a host where nothing can be registered.
     bool (*replacesNativeModule)(JSGlobalObject*, const String& path);
+    // Callbacks wait in a queue of the host's own that it empties between jobs, as process.nextTick() fills. Null in a host that has no such queue.
+    bool (*hasQueuedTicks)(JSGlobalObject*);
     // The host loads the module as the one import of a module of its own, the main module. Null in a host that has no such module.
     bool (*isImportOfMainModule)(JSGlobalObject*, ModuleID);
     // The body of the main module.

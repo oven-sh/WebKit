@@ -65,6 +65,7 @@ public:
     std::optional<ModuleID> findByPath(StringView publicPath) const;
     // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.
     bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
+    Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
     bool holdsPathStartingWith(StringView start) const;
     // The next search for the path of the module finds it at once.
     void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;

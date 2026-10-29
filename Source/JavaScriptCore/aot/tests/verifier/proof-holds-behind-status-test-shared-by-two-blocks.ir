@@ -5,9 +5,10 @@
 # or where every way from the operation leads through such an arm. A cast that says nothing new, and a test, stand anywhere.
 # Value and mode may go on as arguments of edges. A parameter stands for the mode where every edge that comes from the operation hands the mode on, or drops the value:
 # it passes no copy of the value, and no copy is defined above the block. So two copies of one operation may hand value and mode on to one block.
+# A copy that has passed an arm does not count: the result of one step may be the loop variable while the next step runs.
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: ProofInFrontOfMode 13
+# DIAGNOSTIC: ProofInFrontOfMode 14
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="made" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f1 promiseType=Promise promiseParameter=2}
@@ -365,5 +366,56 @@ function f24 name="badValueDefinedAboveTheBlockIsNamedBehindTheStatusOfAnotherSt
     v12 = AssumeType v4 provenType=object
     Return v12
   b4():
+    Return v1
+}
+function f25 name="goodProvenValueGoesAroundTheLoopAboveTheBlock" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f25 promiseType=Promise promiseParameter=2} {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ToBoolean v3
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = StepAsyncGenerator v2, v1, v2 @12
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    Branch v5 -> taken b4(v7, v8), notTaken b1(v1)
+  b3():
+    v9 = StepAsyncGenerator v2, v1, v2 @12
+    v10 = ResultAt v9 index=0
+    v11 = ResultAt v9 index=1
+    Branch v5 -> taken b4(v10, v11), notTaken b1(v1)
+  b4(v12, v13):
+    v14 = Integer integer=0
+    v15 = StrictEq v13, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = AssumeType v12 provenType=object
+    Jump -> next b1(v16)
+  b6():
+    Return v1
+}
+function f26 name="badValueGoesAroundTheLoopWithoutAnArmAndIsNamedBehindTheStatusOfAnotherStep" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f26 promiseType=Promise promiseParameter=2} {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ToBoolean v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = StepAsyncGenerator v2, v1, v2 @12
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    Branch v5 -> taken b4(v8), notTaken b1(v7)
+  b3():
+    v9 = StepAsyncGenerator v2, v1, v2 @12
+    v10 = ResultAt v9 index=1
+    Branch v5 -> taken b4(v10), notTaken b1(v1)
+  b4(v11):
+    v12 = Integer integer=0
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b5(), notTaken b6()
+  b5():
+    v14 = AssumeType v3 provenType=object
+    Return v14
+  b6():
     Return v1
 }

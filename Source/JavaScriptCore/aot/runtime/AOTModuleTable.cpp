@@ -88,6 +88,20 @@ bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
+Vector<ModuleID, 2> ModuleTable::formsThatAttributesAskFor(StringView publicPath) const
+{
+    String start = makeString(publicPath, '?');
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    Vector<ModuleID, 2> forms;
+    for (; place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start); ++place)
+        forms.append(ModuleID(byPath[place]));
+    return forms;
+}
+
 bool ModuleTable::holdsPathStartingWith(StringView start) const
 {
     ModuleNumbers byPath = modulesByPath();

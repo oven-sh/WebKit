@@ -106,7 +106,11 @@ void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode
         ASSERT(m_freeList.allocationWillFail());
         return;
     }
-    
+
+#if ENABLE(AOT)
+    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
+        AOT::AllocationCounts::willStopAllocating(m_directory->markedSpace().heap().vm(), *this);
+#endif
     m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;

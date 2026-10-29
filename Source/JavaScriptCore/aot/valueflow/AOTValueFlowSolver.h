@@ -833,6 +833,7 @@ private:
         HashMap<uint64_t, LatestNodes, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latest;
         HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latestWithBlock;
         HashMap<uint32_t, std::array<uint64_t, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sampleOfSet;
+        HashMap<uint64_t, Vector<ValueSetID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> cells;
     };
     static constexpr unsigned numberOfNodeMakers = 64;
     std::array<NodesOfManyObjects, numberOfNodeMakers> m_nodesOfManyObjects;

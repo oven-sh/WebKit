@@ -31,6 +31,7 @@ static constexpr uint32_t noSolverIndex = UINT32_MAX;
 AOT_THRESHOLD(uint32_t, mostObjectsOfFew, 8);
 AOT_THRESHOLD(uint32_t, mostObjectsListedByMember, 1024);
 AOT_THRESHOLD(uint32_t, mostObjectsLookedUpOneByOne, 64);
+AOT_THRESHOLD(uint32_t, mostCellsOfName, 256);
 static constexpr uint32_t mostNodesReportedOutsideFamily = 16;
 
 template<typename T, size_t inlineCapacity>
@@ -1228,7 +1229,7 @@ private:
         case ValueFlowMadeNodeKind::Written:
         case ValueFlowMadeNodeKind::ReadUnderKind:
         case ValueFlowMadeNodeKind::WrittenUnderKind:
-            if (makeUnionWithEarlierNode(number))
+            if (makeUnionWithEarlierNode(number) || makeUnionOfCells(number))
                 break;
             listToLink(at(number), readToLink, writtenToLink);
             if (key.kind == ValueFlowMadeNodeKind::Read || key.kind == ValueFlowMadeNodeKind::Written)
@@ -1327,7 +1328,7 @@ private:
             return true;
         }
         ValueFlowNodeKey key = at(number).key;
-        if (m_isMakingLeaf || ValueSets::isComplement(key.set) || m_sets.size(key.set) <= mostObjectsLookedUpOneByOne)
+        if (m_isMakingLeaf || m_isMakingCell || ValueSets::isComplement(key.set) || m_sets.size(key.set) <= mostObjectsLookedUpOneByOne)
             return false;
         uint64_t name = nameOf(key);
         NodesOfManyObjects& nodes = m_solver.m_nodesOfManyObjects[makerOfName(name)];
@@ -1408,6 +1409,59 @@ private:
         return true;
     }
 
+    // The sets of very many objects that one name is read or written on overlap. Cells are sets of very many objects that each such set holds whole or not at all.
+    // A set is the union of the cells inside it and of what is left. Only these are linked, so nodes that meet what several sets share are connected to it once.
+    bool makeUnionOfCells(uint32_t number)
+    {
+        ValueFlowNodeKey key = at(number).key;
+        if (m_isMakingCell || ValueSets::isComplement(key.set) || m_sets.size(key.set) <= mostObjectsListedByMember)
+            return false;
+        uint64_t name = nameOf(key);
+        Vector<ValueSetID>& cells = m_solver.m_nodesOfManyObjects[makerOfName(name)].cells.add(name, Vector<ValueSetID>()).iterator->value;
+        Vector<ValueSetID, 16> inside;
+        Vector<uint32_t, 16> cut;
+        for (uint32_t index = 0; index < cells.size(); ++index) {
+            uint32_t common = m_sets.numberOfCommonMembers(cells[index], key.set);
+            if (common == m_sets.size(cells[index]))
+                inside.append(cells[index]);
+            else if (common > mostObjectsListedByMember)
+                cut.append(index);
+        }
+        if (cells.size() + cut.size() >= mostCellsOfName)
+            return false;
+
+        for (uint32_t index : cut) {
+            ValueSetID cell = cells[index];
+            cells[index] = m_maker->intersect(cell, key.set);
+            inside.append(cells[index]);
+            ValueSetID outside = m_maker->intersect(cell, ValueSets::complement(key.set));
+            if (m_sets.size(outside) > mostObjectsListedByMember)
+                cells.append(outside);
+        }
+        if (inside.isEmpty()) {
+            cells.append(key.set);
+            return false;
+        }
+        ValueSetID rest = m_maker->intersect(key.set, ValueSets::complement(m_maker->uniteAll(inside.span())));
+        if (rest == ValueSets::nothing && inside.size() == 1)
+            return false;
+        if (m_sets.size(rest) > mostObjectsListedByMember)
+            cells.append(rest);
+        if (rest != ValueSets::nothing)
+            inside.append(rest);
+
+        Vector<uint32_t, 16> parts;
+        m_isMakingCell = true;
+        for (ValueSetID part : inside) {
+            ValueFlowNodeKey keyOfPart = key;
+            keyOfPart.set = part;
+            parts.append(ensure(keyOfPart));
+        }
+        m_isMakingCell = false;
+        makeUnionOf(number, parts.span(), 0);
+        return true;
+    }
+
     ValueFlowSolver& m_solver;
     const ValueSets& m_sets;
     ValueSetMaker* m_maker { nullptr };
@@ -1422,6 +1476,7 @@ private:
     bool m_hasMadeMoreOfName { false };
     Vector<ValueSetID> m_setsOfParts;
     bool m_isMakingLeaf { false };
+    bool m_isMakingCell { false };
     uint8_t m_rankOfBlockBeingMade { 0 };
     std::array<uint32_t, 2> m_blocksBeingJoined { };
 };
@@ -6422,6 +6477,7 @@ void ValueFlowSolver::dumpBytesByTable() const
         bytes.addMap(table, nodes.latest);
         bytes.addMap(table, nodes.latestWithBlock);
         bytes.addMap(table, nodes.sampleOfSet);
+        bytes.addMap(table, nodes.cells);
     }
     bytes.addList("uses: first use of statement"_s, m_firstUseOfStatement);
     bytes.addList("uses: records asked for by statements"_s, m_uses);

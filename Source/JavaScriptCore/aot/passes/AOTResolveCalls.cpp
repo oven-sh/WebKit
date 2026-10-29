@@ -487,6 +487,9 @@ bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID i
 bool canCallWithoutClosure(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
+    // Its frames are named by its function object.
+    if (isAccessor(callee) && recordsCalleeOnlyOnceRenamed(program, id))
+        return false;
     return callee.captures.isEmpty() && !callee.has(FunctionFlags::TakesCallee) && mayBeCalledDirectly(program, id);
 }
 

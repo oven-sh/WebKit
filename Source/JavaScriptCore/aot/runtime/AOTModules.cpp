@@ -814,8 +814,12 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (!data(module).isUncompiledCode()) {
         // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
-            if (std::optional<ModuleID> form = findWithAttributes(moduleKey(fileOf(module)), attributes))
+            ModuleID file = fileOf(module);
+            Identifier key = keyWithoutForm(file);
+            if (std::optional<ModuleID> form = findWithAttributes(key, attributes))
                 module = m_table.faceOfFile(*form).value_or(*form);
+            else
+                noteFormAnsweredFirst(key, *attributes, file);
         }
         RELEASE_AND_RETURN(scope, startImport(module, asyncEvaluationOrder(referrer)));
     }
@@ -835,6 +839,49 @@ std::optional<ModuleID> Modules::findByName(const Identifier& key)
     return found;
 }
 
+// The loader of `bun run` knows every form of a file by the path of the file.
+Identifier Modules::keyWithoutForm(ModuleID file)
+{
+    if (data(file).kind != ModuleKind::Data)
+        return moduleKey(file);
+    String path = m_table.pathText(file);
+    size_t mark = path.reverseFind('?');
+    return mark == notFound ? moduleKey(file) : Identifier::fromString(*m_instance.vm, path.left(mark));
+}
+
+// An import statement has asked for its form before any import() runs. Only the types of the host's own share a place in the loader.
+std::optional<ModuleID> Modules::findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters& fetchParameters, std::optional<ModuleID> asked) const
+{
+    if (fetchParameters.type() != ScriptFetchParameters::Type::HostDefined)
+        return std::nullopt;
+    Vector<ModuleID, 2> forms = m_table.formsThatAttributesAskFor(key.string());
+    forms.removeAllMatching([&](ModuleID form) {
+        return data(form).kind != ModuleKind::Data || m_table.pathText(form).endsWith("?json"_s);
+    });
+    if (forms.isEmpty() || (forms.size() == 1 && asked == forms[0]))
+        return std::nullopt;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        // A module that needs no link counts as linked before anybody has asked for it.
+        bool wasLoaded = status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
+        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (forms.contains(request.targetModule()))
+                return request.targetModule();
+        }
+    }
+    return std::nullopt;
+}
+
+// The host does not find every form by its type. The form that the build bound then answers, also for the types that are asked for later.
+void Modules::noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters& fetchParameters, ModuleID file)
+{
+    ModuleMapKey keyOfLoader { key.impl(), fetchParameters.type() };
+    if (data(file).kind == ModuleKind::Data && !loader()->moduleMap().contains(keyOfLoader))
+        m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, file });
+}
+
 std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
@@ -851,6 +898,8 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     if (auto first = m_formsAnsweredFirst.find(keyOfLoader); first != m_formsAnsweredFirst.end())
         return first->value.module;
     std::optional<ModuleID> module = host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
+    if (std::optional<ModuleID> loaded = findFormThatStatementLoaded(key, *fetchParameters, module))
+        module = loaded;
     if (module)
         m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, *module });
     return module;

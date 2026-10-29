@@ -114,6 +114,46 @@ private:
     size_t m_used { 0 };
 };
 
+// A table that is made at its first use. Its pages are set aside with the tables of the program, and a program that never makes it never touches them.
+// The first use may come where no more memory can be mapped, and what reads a property or copies an object has no way to report that.
+template<typename T>
+class MadeInArena {
+    WTF_MAKE_NONCOPYABLE(MadeInArena);
+public:
+    struct alignas(64) Storage {
+        static_assert(alignof(T) <= 64);
+        uint8_t bytes[sizeof(T)];
+    };
+
+    explicit MadeInArena(ZeroedTableArena& arena)
+        : m_storage(arena.allocate<Storage>(1))
+    {
+    }
+
+    ~MadeInArena()
+    {
+        if (m_value)
+            std::destroy_at(m_value);
+    }
+
+    explicit operator bool() const { return m_value; }
+    T& operator*() const { return *m_value; }
+    T* operator->() const { return m_value; }
+    T* get() const { return m_value; }
+
+    template<typename... Arguments>
+    T& make(Arguments&&... arguments)
+    {
+        ASSERT(!m_value);
+        m_value = new (NotNull, m_storage) T(std::forward<Arguments>(arguments)...);
+        return *m_value;
+    }
+
+private:
+    Storage* m_storage;
+    T* m_value { nullptr };
+};
+
 // Created at its first use. A program without one never pays for it.
 template<typename T>
 class CreatedAtFirstUse {
@@ -135,7 +175,7 @@ private:
     T& create();
 
     State& m_state;
-    std::unique_ptr<T> m_value;
+    MadeInArena<T> m_value;
 };
 
 extern template class CreatedAtFirstUse<PropertyCaches>;

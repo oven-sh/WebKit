@@ -1,6 +1,6 @@
 # const match = pattern.exec(text); return match && match[1];
-# The read of an element stands behind a test of the storage and a test that the element is there. `1 in list` asks that second test as well and shows its answer,
-# and a built-in that hands over its first elements without building the list does not say which of them are there. So the list is built.
+# An element read is guarded by a storage test and a presence test, and `1 in list` asks the same presence test and shows its answer.
+# A list of substrings has no holes, so its presence test is `index < length` and the list is not allocated. A list that may have holes is allocated.
 # FORM: Prepared
 # RUN: pass SinkAllocations
 
@@ -30,8 +30,9 @@ function f0 name="firstGroup" parameters=[{type=RegExp}, {type=string}] results=
     Jump -> next b6(v14)
   b6(v15: undefined|null|string):
     Return v15
-# CHECK-NOT: builtinCallForm=Prefix
-# CHECK: = IsElementPresent v5, v6,
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: IsElementPresent
+# CHECK: = Less
 }
 
 function f1 name="asked" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}, {type=int[0, 2]}] results=[{type=boolean}] {

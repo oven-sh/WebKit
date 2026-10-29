@@ -225,8 +225,12 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
     };
     // The blocks that are reached from the operation by no arm.
     BitVector reachedByNoArm;
+    Vector<ValueID, 8> copiesOfValue;
+    BitVector isCopyOfValue;
     auto findArms = [&] {
         arms.clear();
+        copiesOfValue.clear();
+        isCopyOfValue.clearAll();
         for (ValueID mode : modes) {
             for (const Use& use : useLists.usesOf(mode)) {
                 if (use.kind == Use::Kind::TerminatorOperand && m_function.at(use.block).terminator.kind == TerminatorKind::Switch)
@@ -247,19 +251,21 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
             });
         }
     };
-    Vector<ValueID, 8> copiesOfValue;
-    BitVector isCopyOfValue;
     auto addCopyOfValue = [&](ValueID id) {
         if (!isCopyOfValue.set(id.index()))
             copiesOfValue.append(id);
     };
+    // A copy that has passed an arm is not followed: its mode has been asked.
     auto findCopiesOfValue = [&] {
         std::ranges::for_each(sameValues, addCopyOfValue);
         for (size_t next = 0; next < copiesOfValue.size(); ++next) {
             for (const Use& use : useLists.usesOf(copiesOfValue[next])) {
-                if (use.isEdgeUse())
-                    addCopyOfValue(parameterTaking(use));
-                else if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(m_function.at(use.user).opcode))
+                if (!reachedByNoArm.quickGet(use.block.index()))
+                    continue;
+                if (use.isEdgeUse()) {
+                    if (!arms.contains(use.edge()))
+                        addCopyOfValue(parameterTaking(use));
+                } else if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(m_function.at(use.user).opcode))
                     addCopyOfValue(use.user);
             }
         }

@@ -906,6 +906,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
+            bool hadQueuedTicks = hasQueuedTicks();
             callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
             if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
@@ -966,6 +967,23 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 m_rootWhoseFilesRanAhead = root;
                 return true;
             }
+            // A tick runs between the steps that the loader of `bun run` has left, and so do the first jobs that it queues.
+            if (!hadQueuedTicks && hasQueuedTicks()) [[unlikely]] {
+                std::optional<ModuleID> lastFile;
+                for (const ModuleRequestData& request : m_table.imports(root)) {
+                    if (!request.isHoisted)
+                        break;
+                    if (isCommonJSFileOrFace(request.targetModule()) && status(request.targetModule()) == ModuleStatus::Evaluated)
+                        lastFile = request.targetModule();
+                }
+                if (lastFile) {
+                    handGraphToLoader(filesBeingRun, *lastFile);
+                    if (filesBeingRun.fileHandedToLoader) {
+                        finishStepInWhichFileRan(*lastFile, JSValue());
+                        return true;
+                    }
+                }
+            }
         }
     }
     // The files stand in front of everything else that the root requests.
@@ -992,6 +1010,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             continue;
         didRunFile |= statusAtStart != ModuleStatus::Failed;
         size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
+        bool hadQueuedTicks = hasQueuedTicks();
         filesBeingRun.fileOrFace = imported;
         filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
         // As the start of the root would call it.
@@ -1000,7 +1019,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         else
             evaluateModuleInRecord(imported);
         Exception* exception = scope.exception();
-        bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && numberOfJobsThatWouldWait(jobs) != numberOfJobs;
+        bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && (numberOfJobsThatWouldWait(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
         if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
             TRY_CLEAR_EXCEPTION(scope, didRunFile);
             handGraphToLoader(filesBeingRun, imported);

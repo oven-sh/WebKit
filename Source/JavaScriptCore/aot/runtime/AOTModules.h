@@ -371,6 +371,7 @@ private:
     void evaluateWithOwnStack(ModuleID root);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
+    bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }
     struct LevelOfLoad;
     struct PlanOfLoad;
     bool planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay = nullptr);
@@ -410,6 +411,9 @@ private:
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
     std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
+    Identifier keyWithoutForm(ModuleID file);
+    std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
+    void noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters&, ModuleID file);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     bool isAnythingBeingLoaded() const;

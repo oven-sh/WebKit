@@ -232,6 +232,7 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
 }
 
 FieldMovePlanCache::FieldMovePlanCache(State& state)
+    : m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "field move plans"_s, *this);
 }
@@ -270,7 +271,7 @@ const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {

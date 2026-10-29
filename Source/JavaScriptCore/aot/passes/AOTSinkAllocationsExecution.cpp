@@ -1602,10 +1602,45 @@ static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDesc
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }
 
+// A list of substrings has no holes, so an element is present exactly when its index is below the length.
+// The test becomes that comparison. Both edges of its branch stay live and the list stays virtual on both.
+bool ObjectInterpreter::executePresenceTestOnDenseList(ValueID id)
+{
+    const Value& test = function().at(id);
+    if (test.opcode != Opcode::IsElementPresent)
+        return false;
+    VirtualObjectID list = objectOf(test.operand(0));
+    if (!list || !stateOf(list)->isVirtual() || stateOf(list)->variants.size() != 1)
+        return false;
+
+    const VirtualFamily& family = m_sinking.familyOf(list);
+    const VirtualShape& shape = singleShapeOf(list);
+    if (shape.kind != VirtualShapeKind::Fields)
+        return false;
+    const VirtualObjectDescription& description = family.descriptionOf(shape);
+    if (description.kind != VirtualObjectKind::BuiltinPrefix || !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
+        return false;
+
+    std::optional<int64_t> index = integerConstantThroughCasts(program(), function(), test.positionOperand());
+    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
+    if (!index || *index < 0 || !length || !hasStored(shape, *length))
+        return false;
+
+    m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
+    if (isRewriting()) {
+        IRBuilder& builder = cursor().builder();
+        ValueID position = builder.appendInteger(*index);
+        replaceRead(id, builder.append(Opcode::Less, { position, values().find(list)->field(*length) }));
+    }
+    return true;
+}
+
 void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
+    if (executePresenceTestOnDenseList(id))
+        return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);
     if (!entry) {
