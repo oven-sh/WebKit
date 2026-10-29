@@ -140,10 +140,13 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
     });
 }
 
-static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader)
+// A reader that resolves ropes may throw, and so may the flattening that replaces it, so the flattening is hoisted no further than the reader's handler covers.
+static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader, bool userResolvesRopes)
 {
+    const Function& function = context.function();
     const NaturalLoops& loops = context.analyses().naturalLoops();
     std::optional<BlockID> header;
+    std::optional<BlockID> headerSharingUserHandler;
     // What is invariant in a loop is invariant in the loops inside it, and a loop around a suspending loop suspends too.
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
         bool loopSuspends = table.suspendingLoops.ensure(loop->header(), [&] {
@@ -156,10 +159,12 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
         if (loopSuspends)
             break;
         header = loop->header();
+        if (function.at(loop->header()).handler == function.at(user).handler)
+            headerSharingUserHandler = header;
         if (loop->header() == outermostHeader)
             break;
     }
-    return header;
+    return userResolvesRopes && headerSharingUserHandler ? headerSharingUserHandler : header;
 }
 
 // The reader has a string. Outside the loop the same value may have a wider type, which the loop entry tests.
@@ -176,12 +181,12 @@ static std::optional<InvariantOperand> findInvariantString(SelectionContext& con
     return findOutermostInvariantLoop(context, block, context.analyses().identityOf(string), mayBeString);
 }
 
-static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string)
+static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string, bool readerResolvesRopes)
 {
     std::optional<InvariantOperand> invariant = findInvariantString(context, block, string);
     if (!invariant)
         return std::nullopt;
-    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header);
+    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header, readerResolvesRopes);
     if (!header)
         return std::nullopt;
 
@@ -211,8 +216,8 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
             if (!reader)
                 continue;
 
-            reader->pair = findOrAddPair(context, table, block, reader->string);
             reader->resolvesRopes = effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(id));
+            reader->pair = findOrAddPair(context, table, block, reader->string, reader->resolvesRopes);
             reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];
@@ -313,12 +318,15 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 }
 
 // The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
+// When the entry gets its own block under the header's handler, the handler gains a predecessor before the header, so code after the handler can be reached without the flat string.
 static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint point)
 {
     FunctionAnalyses& analyses = context.analyses();
     if (pair.firstReader)
         return analyses.dominates(pair.firstReader, point);
-    return pair.header != point.block && analyses.dominators().dominates(pair.header, point.block);
+    if (pair.header == point.block || !analyses.dominators().dominates(pair.header, point.block))
+        return false;
+    return !loopEntryGetsNewHandlerEdge(context, pair.header) || analyses.naturalLoops().belongsTo(point.block, *analyses.naturalLoops().headerOf(pair.header));
 }
 
 // A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.
@@ -419,6 +427,8 @@ static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, P
 static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const StringCharacterMatch& match, ValueID flat)
 {
     ValueID root = match.group.root;
+    if (flat && match.resolvesRopes && rewriter.function().at(context.analyses().useLists().blockOf(root)).handler)
+        context.noteRemovedAllocationUnderHandler();
     // The reader runs only where the value is a string, and there the flat string has been made.
     if (flat && context.typeOf(flat).mayBeUnspecified())
         flat = rewriter.insert(makeCastBehindFact(rewriter.function(), rewriter.builder().types(), flat, rewriter.insert(IRBuilder::make(Opcode::Specified))));

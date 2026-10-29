@@ -20,6 +20,7 @@
 #include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
@@ -60,6 +61,12 @@ public:
                         position = sink(value, position, uses);
                 } else if (!isPartOfAddresses && uses.first.block == block && uses.first.index > index + 1 && isInductionStep(value))
                     position = move(value, position, uses.first);
+                else if (uses.first.block == block && m_pointerChasingLoads.contains(value)) {
+                    if (unsigned sinkIndex = findLatestSinkIndex(position, uses.first.index); sinkIndex > index + 1)
+                        position = move(value, position, { block, sinkIndex });
+                }
+                if (auto* upsilon = value->as<UpsilonValue>(); upsilon && isLoad(upsilon->child(0)->opcode()) && upsilon->child(0)->lastChild() == upsilon->phi())
+                    m_pointerChasingLoads.add(upsilon->child(0));
                 if (index + 1 == block->size())
                     comparisonFusedIntoBranch = findComparisonFusedIntoBranch(block);
                 std::optional<unsigned> partOfAddress = isOnlyPartOfAddresses ? scaledIndexOf(value) : addressFusedInto(value);
@@ -233,6 +240,18 @@ private:
         if (value->opcode() == Add)
             return value->child(0)->opcode() == Phi || value->child(1)->opcode() == Phi;
         return value->opcode() == Sub && value->child(0)->opcode() == Phi;
+    }
+
+    // For `node = node->next`: once the load is below the other loads from node, the next node can reuse node's register.
+    static unsigned findLatestSinkIndex(Position from, unsigned firstUse)
+    {
+        unsigned index = from.index + 1;
+        for (; index < firstUse; ++index) {
+            Effects effects = from.block->at(index)->effects();
+            if (effects.terminal || effects.exitsSideways || effects.writesLocalState || effects.writesPinned || effects.fence || effects.writes)
+                break;
+        }
+        return index;
     }
 
     Value* findComparisonFusedIntoBranch(BasicBlock* block)
@@ -485,6 +504,7 @@ private:
     IndexMap<BasicBlock*, bool> m_isOrdered;
     std::optional<CycleForest> m_cycles;
     IndexSet<Value*> m_moved;
+    IndexSet<Value*> m_pointerChasingLoads;
     IndexSet<BasicBlock*> m_changedBlocks;
     IndexSet<BasicBlock*> m_blocksBelowClones;
     Vector<SunkValue> m_sunk;

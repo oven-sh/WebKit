@@ -658,6 +658,7 @@ private:
         case SExt32:
         case ZExt32:
         case Trunc:
+        case BitwiseCast:
             return true;
         default:
             return isIntegerComparison(opcode);
@@ -867,7 +868,23 @@ private:
             if (result != TriState::Indeterminate)
                 return taken(result == TriState::True);
         }
+        TriState result = evaluateBitsOfNonNaNDouble(test.value, known);
+        if (result != TriState::Indeterminate)
+            return taken(result == TriState::True);
         return TriState::Indeterminate;
+    }
+
+    // A double that equals itself is not NaN, and the bits of a non-NaN double, read as a signed integer, never exceed those of +Infinity.
+    TriState evaluateBitsOfNonNaNDouble(Value* test, const DominatingCondition& known)
+    {
+        Value* number = known.value->opcode() == Equal ? known.value->child(0) : nullptr;
+        if (!known.isNonZero || !number || number != known.value->child(1) || number->type() != Double || !isComparisonWithConstant(test))
+            return TriState::Indeterminate;
+        Value* bits = valueOnPath(test->child(0));
+        if (!bits || bits->opcode() != BitwiseCast || !isSameOnPath(bits->child(0), number, m_maxTestDepth))
+            return TriState::Indeterminate;
+        IntRange nonNaNBits(std::numeric_limits<int64_t>::min(), std::bit_cast<int64_t>(std::numeric_limits<double>::infinity()));
+        return evaluateComparison(test->opcode(), nonNaNBits, test->child(1)->asInt());
     }
 
     TriState evaluateTest(BasicBlock* tail, DominatingConditions::Chain chain, bool mayQueryConditions)

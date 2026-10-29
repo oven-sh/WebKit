@@ -27,7 +27,7 @@ operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iterato
 
 family ForIn AsRead..Placed
 operation ForInOpen (object: Any/retains(result)+runs(OwnKeys+PrototypeChain)) -> natural(Enumerator) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = GetPropertyEnumerator ; flow = TableProves ; flowRule = Heap
-operation ForInStep (enumerator: Enumerator/inspects, object: Any/inspects+runs(OwnKeys+PrototypeChain), engine position?: Integer/inspects) -> results(ForInStepResult: natural(boolean), natural(string), natural(int[0, 8589934590])) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = EnumeratorNext ; flow = TableProves ; flowRule = Heap
+operation ForInStep (enumerator: Enumerator/inspects, object: Any/inspects+runs(OwnKeys+PrototypeChain), engine position?: Integer/inspects) [| engine keysChangeOnlyInSteps] -> results(ForInStepResult: natural(boolean), natural(string), natural(int[0, 8589934590])) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = EnumeratorNext ; flow = TableProves ; flowRule = Heap
 
 family Coroutine AsRead..Prepared
 operation Await (value: Any/retains+runs(Thenable), held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame ; flow = Copies ; flowRule = Await

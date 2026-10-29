@@ -7,7 +7,7 @@
 # CHECK: variable g0 name="fromKept" {{*}}declared={type=int}
 # CHECK: variable g1 name="fromDeleted" {{*}}declared={type=undefined|int}
 # CHECK: variable g2 name="fromDeletedByKey" {{*}}declared={type=undefined|int}
-# CHECK: variable g3 name="fromBelow" {{*}}declared={type=undefined|int|string}
+# CHECK: variable g3 name="fromBelow" {{*}}declared={type=undefined|int|"up"}
 # CHECK: variable g4 name="fromOther" {{*}}declared={type=undefined}
 # GO: 1
 # GO-NEXT: undefined

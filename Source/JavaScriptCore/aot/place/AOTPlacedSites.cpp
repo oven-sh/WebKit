@@ -16,6 +16,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTObjectWords.h"
 #include "AOTOpcodesNamingRecords.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSchemaWalkers.h"
@@ -64,8 +65,21 @@ struct PlacedFunctionSites : SiteLists {
     Vector<GlobalBindingSite> globalBindingSites;
     FunctionID function;
     Vector<LayoutSetID> receiversOfStoresThatMayAdd;
+    // The fields that stores and definitions with a known key may create, in body order.
+    Vector<FieldCreationUse> sourceFieldCreations;
     uint32_t numberOfOperationsWithWordForSiteCache { 0 };
+
+    bool hasFoundNothing() const
+    {
+        auto areEmpty = [](const auto&... lists) { return (lists.isEmpty() && ...); };
+        return areEmpty(fieldAccesses, shapeTests, allocations, keyOrderTests, fieldCreations, guards, guardSets, tableCalls, profiledArrayLiterals, regExpLiterals, templateObjects)
+            && areEmpty(copyOnWriteArrays, arraysWithStorageInImage, builtinCells, bigIntConstants, requireEdges, moduleBuiltins)
+            && areEmpty(variables, types, typesTestedByCode, allocatedClosures, data, layouts, layoutSets, layoutsOfData, keyCellUses, globalBindingSites, receiversOfStoresThatMayAdd, sourceFieldCreations)
+            && !maxClosureCaptures && !numberOfOperationsWithWordForSiteCache;
+    }
 };
+// Name every new list in hasFoundNothing().
+static_assert(sizeof(SiteLists) == 17 * sizeof(Vector<uint32_t>) + sizeof(uint64_t) && sizeof(PlacedFunctionSites) == sizeof(SiteLists) + 12 * sizeof(Vector<uint32_t>) + 2 * sizeof(uint64_t));
 
 using FunctionSitesArray = std::span<PlacedFunctionSites* const>;
 
@@ -253,8 +267,33 @@ private:
                 if (field && slots.slot(member, *field).canBeCreatedByStore())
                     fields.append(*field);
             }
-            if (!fields.isEmpty())
+            if (!fields.isEmpty()) {
+                m_sites->sourceFieldCreations.append(FieldCreationUse { member, fields });
                 m_sites->fieldCreations.append(FieldCreationUse { member, WTF::move(fields) });
+            }
+        }
+    }
+
+    // `Object.defineProperty(exports, "name", { enumerable: true, get })` creates the field, positioned where the definition appears among the stores.
+    void appendFieldCreationByDefinition(const Value& definition)
+    {
+        LayoutSetID receivers = knownSetOf(definition.objectOperand());
+        ConstantKey constant = constantKeyOf(m_program, m_program.typeOf(m_function, definition.computedKeyOperand()));
+        if (!receivers || constant.kind != ConstantKeyKind::Text)
+            return;
+        std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text });
+        if (!key)
+            return;
+        const SlotPlan& slots = m_context.slots();
+        for (LayoutID member : m_program.at(receivers).completeMembers()) {
+            if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
+                continue;
+            std::optional<FieldIndex> field = m_program.at(member).findField(*key);
+            if (!field || !slots.slot(member, *field).hasStorage())
+                continue;
+            m_sites->sourceFieldCreations.append(FieldCreationUse { member, { *field } });
+            if (slots.slot(member, *field).canBeCreatedByStore())
+                m_sites->fieldCreations.append(FieldCreationUse { member, { *field } });
         }
     }
 
@@ -497,6 +536,9 @@ private:
         case Opcode::DefineAccessors:
             for (PropertyKeyID key : value.keys())
                 appendKeyCell(key);
+            break;
+        case Opcode::DefineOwnProperty:
+            appendFieldCreationByDefinition(value);
             break;
         case Opcode::GetGlobalBinding:
             sites.globalBindingSites.append(GlobalBindingSite { { value.key(), value.seesScriptBindings(), false, value.isForTypeOf() }, m_id, point, id });
@@ -757,7 +799,7 @@ static bool isMadeOnlyWhereItIsNamed(const Program& program, LayoutID id)
     return id.index() < program.numberOfLayoutsAsRead() && !layout.has(LayoutFlags::IsDerived) && !layout.has(LayoutFlags::IsOfCreatedObject) && !layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
 }
 
-static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bodiesWithoutCode, FunctionSitesArray functions)
+static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bodiesWithoutCode, FunctionSitesArray functions, std::span<const FunctionID> functionsWhereNothingWasFound)
 {
     Vector<LayoutID> worklist;
     BitVector inUse(program.layouts.size());
@@ -767,6 +809,11 @@ static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bo
     };
     BitVector layoutSets(program.types.numberOfLayoutSets());
     BitVector hasEntrypoint(program.functions.size());
+    auto useWhatRecordNames = [&](FunctionID function) {
+        use(program.at(function).constructedClass);
+        if (const auto* entrypoint = program.at(function).creator.tryAs<CreatorRecord::Entrypoint>())
+            hasEntrypoint.set(entrypoint->target.index());
+    };
     for (const PlacedFunctionSites* function : functions) {
         for (LayoutID layout : function->layoutsOfData)
             use(layout);
@@ -775,9 +822,11 @@ static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bo
         for (LayoutID layout : function->layouts)
             use(layout);
         setBits(layoutSets, function->layoutSets);
-        use(program.at(function->function).constructedClass);
-        if (const auto* entrypoint = program.at(function->function).creator.tryAs<CreatorRecord::Entrypoint>())
-            hasEntrypoint.set(entrypoint->target.index());
+        useWhatRecordNames(function->function);
+    }
+    for (FunctionID function : functionsWhereNothingWasFound) {
+        if (!bodiesWithoutCode.get(function.index()))
+            useWhatRecordNames(function);
     }
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
@@ -827,9 +876,30 @@ struct BodyScansForPlacement::State {
     {
     }
 
+    // Most small functions have nothing that placement asks about. They share one record.
+    static PlacedFunctionSites* nothingFound()
+    {
+        static NeverDestroyed<PlacedFunctionSites> record;
+        return &record.get();
+    }
+
+    struct Scans {
+        Scans(size_t size) { ofFunction.fill(nullptr, size); }
+        Scans(Scans&&) = default;
+        ~Scans()
+        {
+            for (PlacedFunctionSites* scan : ofFunction) {
+                if (scan != nothingFound())
+                    delete scan;
+            }
+        }
+
+        Vector<PlacedFunctionSites*> ofFunction;
+    };
+
     CellSizeClasses sizeClasses;
     PlacementContext context;
-    Vector<std::unique_ptr<PlacedFunctionSites>> scans;
+    Scans scans;
     uint64_t numberOfOperationsWithWordForSiteCache { 0 };
 };
 
@@ -842,14 +912,20 @@ BodyScansForPlacement::~BodyScansForPlacement() = default;
 
 void BodyScansForPlacement::scan(FunctionID id, FunctionAnalyses* analyses)
 {
-    auto scan = makeUnique<PlacedFunctionSites>();
-    SiteScanner(m_state->context, id, analyses).run(*scan);
-    m_state->scans[id.index()] = WTF::move(scan);
+    PlacedFunctionSites scan;
+    SiteScanner(m_state->context, id, analyses).run(scan);
+    PlacedFunctionSites*& kept = m_state->scans.ofFunction[id.index()];
+    if (kept != State::nothingFound())
+        delete kept;
+    kept = scan.hasFoundNothing() ? State::nothingFound() : new PlacedFunctionSites(WTF::move(scan));
 }
 
 void BodyScansForPlacement::didAddFunctions()
 {
-    m_state->scans.grow(m_state->context.program.functions.size());
+    Vector<PlacedFunctionSites*>& scans = m_state->scans.ofFunction;
+    size_t size = m_state->context.program.functions.size();
+    RELEASE_ASSERT(size >= scans.size());
+    scans.insertFill(scans.size(), nullptr, size - scans.size());
 }
 
 uint64_t BodyScansForPlacement::numberOfOperationsWithWordForSiteCache() const
@@ -859,28 +935,34 @@ uint64_t BodyScansForPlacement::numberOfOperationsWithWordForSiteCache() const
 
 const Vector<KeyCellUse>& BodyScansForPlacement::keyCellUsesOf(FunctionID id) const
 {
-    RELEASE_ASSERT(m_state->scans[id.index()]);
-    return m_state->scans[id.index()]->keyCellUses;
+    RELEASE_ASSERT(m_state->scans.ofFunction[id.index()]);
+    return m_state->scans.ofFunction[id.index()]->keyCellUses;
 }
 
 const Vector<GlobalBindingSite>& BodyScansForPlacement::globalBindingSitesOf(FunctionID id) const
 {
-    RELEASE_ASSERT(m_state->scans[id.index()]);
-    return m_state->scans[id.index()]->globalBindingSites;
+    RELEASE_ASSERT(m_state->scans.ofFunction[id.index()]);
+    return m_state->scans.ofFunction[id.index()]->globalBindingSites;
 }
 
 PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
 {
     const Program& program = context.program;
     const ParallelLoops& loops = context.build.parallelLoops();
-    RELEASE_ASSERT(m_state->scans.size() == program.functions.size());
+    RELEASE_ASSERT(m_state->scans.ofFunction.size() == program.functions.size());
     Vector<PlacedFunctionSites*> functionsWithBodies;
+    Vector<FunctionID> functionsWhereNothingWasFound;
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (!program.functions[index].hasBody())
             continue;
-        RELEASE_ASSERT(m_state->scans[index]);
-        functionsWithBodies.append(m_state->scans[index].get());
-        m_state->numberOfOperationsWithWordForSiteCache += m_state->scans[index]->numberOfOperationsWithWordForSiteCache;
+        PlacedFunctionSites* scan = m_state->scans.ofFunction[index];
+        RELEASE_ASSERT(scan);
+        if (scan == State::nothingFound()) {
+            functionsWhereNothingWasFound.append(FunctionID(index));
+            continue;
+        }
+        functionsWithBodies.append(scan);
+        m_state->numberOfOperationsWithWordForSiteCache += scan->numberOfOperationsWithWordForSiteCache;
     }
     FunctionSitesArray functions = functionsWithBodies.span();
     PlacedSites sites;
@@ -891,6 +973,9 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { mergeEach(&SiteLists::fieldAccesses); },
         [&] { mergeEach(&SiteLists::shapeTests); },
         [&] {
+            for (PlacedFunctionSites* function : functions)
+                sites.sourceFieldCreations.appendVector(WTF::move(function->sourceFieldCreations));
+            std::ranges::stable_sort(sites.sourceFieldCreations, { }, &FieldCreationUse::layout);
             mergeEach(&SiteLists::allocations, &SiteLists::keyOrderTests, &SiteLists::fieldCreations, &SiteLists::guards);
             sites.guards.removeAllMatching([&](const GuardUse& guard) {
                 return speaksOfNameOrLengthMadeOnDemand(program, guard) || isLookedForAboveRecords(context, guard);
@@ -904,7 +989,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { numberStoresThatMayAdd(program, functions, sites); },
         [&] {
             sites.bodiesWithoutCode = findBodiesWithoutCode(program, context.build);
-            sites.layoutsOutOfUse = findLayoutsOutOfUse(program, sites.bodiesWithoutCode, functions);
+            sites.layoutsOutOfUse = findLayoutsOutOfUse(program, sites.bodiesWithoutCode, functions, functionsWhereNothingWasFound.span());
         },
     });
     return sites;

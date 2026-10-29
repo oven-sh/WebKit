@@ -36,6 +36,7 @@ struct StubRecording;
 namespace Typed {
 class FlowResults;
 class Program;
+class SlotPlan;
 }
 
 // Everything that may change the code of a stub. The image records every member.
@@ -50,9 +51,12 @@ struct StubOptions {
     // So it may rest on a guess that the program meets no proxy.
     Typed::Expected<bool> callsTrapsOfProxies { true };
     bool validates { false };
+    bool checksProofs { false };
     bool countsAllocations { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t layoutSeed { 0 };
+    // Every row of the image's table of fields has an entry for each name up to this one.
+    uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;
 };
 
@@ -70,15 +74,23 @@ struct StubPolicy {
     AOT_CLASS_THRESHOLD(uint32_t, minUsesForOwnStub, 512);
 
     const BitVector& namesWithOwnStub(Typed::Access access) const { return namesWithOwnStubByAccess[static_cast<size_t>(access)]; }
+    std::optional<uint32_t> expectedFieldTableEntry(uint32_t name) const
+    {
+        auto found = expectedFieldTableEntries.find(name);
+        return found == expectedFieldTableEntries.end() ? std::nullopt : std::optional(found->value);
+    }
     RegExpLiteralConstants regExpLiteral(std::optional<uint32_t> record, bool isGlobal) const;
 
     // Bit i: the name that a stub takes as immediate i.
     std::array<BitVector, numberOfEnumerators<Typed::Access>> namesWithOwnStubByAccess;
+    // For a name with its own stub for reads: the entry of the field table that most layouts have for it, where that is a JSValue in the cell or in the Extension. A guess that the stub tests.
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> expectedFieldTableEntries;
     // [RegExpRecordID::index()], for the literal without the flag g.
     Vector<RegExpLiteralConstants> regExpLiterals;
 };
 
 StubPolicy chooseStubPolicy(const KeyUses&, const IdentifierNumbering&, BuildContext&);
+void addExpectedFieldTableEntries(StubPolicy&, const Typed::Program&, const Typed::SlotPlan&, const IdentifierNumbering&);
 void addRegExpLiterals(StubPolicy&, const RegExpRequests&, bool legacyStaticsMayBeRead, BuildContext&);
 
 struct StubSummary {

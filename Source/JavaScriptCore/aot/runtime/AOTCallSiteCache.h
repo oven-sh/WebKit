@@ -34,6 +34,8 @@ public:
         // Of such an entry only address and stubFrameKind say anything.
         bool isStubReturnSite() const { return !code; }
         ALWAYS_INLINE std::optional<unsigned> shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const;
+        // The frame of an entrypoint that called the body in tail position and stays on the stack to return a known result. The body may have left by a tail call since.
+        bool isOfEntrypointAtTailCall() const { return outermostVisibleFunction == OutermostVisibleFunction::None && site.isTailCall(); }
         const HandlerRecord* exceptionHandler() const { return handler && handler->catchesExceptions() ? &*handler : nullptr; }
 
         const void* address { nullptr };
@@ -43,10 +45,15 @@ public:
         bool rejectsOnThrow : 1 { false };
         bool isInModuleBody : 1 { false };
         bool innermostIsAsync : 1 { false };
-        // What the site calls is a function object that its own function made and handed to nobody.
-        bool callsOwnFunctionObject : 1 { false };
+        // Image::calleeOfSiteAt() returns a value.
+        bool hasRecordedCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
+        // Of the frames that were inlined around the site and whose callee Image::calleeOfSiteAt() knows: FunctionDescription::recordsCallee() holds of one, recordsCalleeOnceRenamed() holds of one.
+        bool hasInlinedFrameRecordingCallee : 1 { false };
+        bool hasInlinedFrameRecordingCalleeOnceRenamed : 1 { false };
+        // leavesByTailCall(site.calledBuiltin): the frame of the built-in is listed only while its callee has not been entered.
+        bool namesTailCallingBuiltin : 1 { false };
         // Once the callee of the site has been entered.
         OutermostVisibleFunction outermostVisibleFunction : 2 { OutermostVisibleFunction::Listed };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
@@ -105,6 +112,8 @@ static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberO
 ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
 {
     ASSERT(!isStubReturnSite());
+    if (namesTailCallingBuiltin) [[unlikely]]
+        return std::nullopt;
     bool isTailDeleted = site.isTailDeleted(calleeWasEntered);
     if (hasShownFrame) {
         if (site.isTailCall() && !isTailDeleted) [[unlikely]]

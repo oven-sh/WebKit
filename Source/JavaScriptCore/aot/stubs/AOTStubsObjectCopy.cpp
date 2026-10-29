@@ -171,12 +171,12 @@ static Jump loadCopyWithoutFrame(StubAssembler& jit, GPRReg target, GPRReg sourc
     jit.add32(Address(source, offsetOfShapeWord), place);
     jit.add32(Address(source, offsetOfOrderWord), place);
     jit.and32(TrustedImm32(AllocationWords::numberOfCopiesWithoutFrame - 1), place);
-    jit.loadPtr(BaseIndex(instanceGPR, place, CCallHelpers::ScalePtr, AOT_INSTANCE_OFFSET(allocation.copiesWithoutFrame)), copy);
+    jit.loadPtr(BaseIndex(instanceGPR, place, CCallHelpers::ScalePtr, static_cast<int32_t>(InstanceLayout::offsetOfCopiesWithoutFrame)), copy);
     return jit.branchTestPtr(CCallHelpers::Zero, copy);
 }
 
 // What tryCopyByFieldMapWithoutFrame() does, for a copy all of whose moves the stub makes. It falls through where that function is to make the copy: the copy is kept for this source and the stub does not make its moves, or has refused one.
-// The places are few, so in a large program most hold a copy, and most often that of other objects: then the copy takes a frame at once.
+// A place may hold the copy of other objects: then the copy takes a frame at once.
 static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg count, GPRReg excludedKeys, GPRReg structureIDOfTarget, GPRReg copy, GPRReg word, JumpList& takesFrame, const Invocable<void()> auto& leaveWithCopyMade)
 {
     const GPRReg structure = structureIDOfTarget;

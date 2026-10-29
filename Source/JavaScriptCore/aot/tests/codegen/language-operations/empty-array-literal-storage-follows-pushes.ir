@@ -1,0 +1,79 @@
+# An empty array literal whose elements have no declared type is born with the storage for what is pushed into it, whatever capacity is planned for it: none, the capacity that an empty
+# literal has anyway, one past the limit, or one that is known at run time
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="int32s" parameters=[{type=i32}, {type=int[0, 100000]}] results=[{type=anything}] {
+    v2 = Integer integer=4
+    v3 = Integer integer=5
+    v4 = Integer integer=200000
+    v5 = NewArray contents=anything
+    v6 = NewArray contents=anything capacity=v2
+    v7 = NewArray contents=anything capacity=v3
+    v8 = NewArray contents=anything capacity=v4
+    v9 = NewArray contents=anything capacity=v1
+# REPEAT: i = 0..4
+    v%(i+10) = CallInline v%(i+5), v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# END REPEAT
+    v15 = NewArray v5, v6, v7, v8, v9 contents=anything
+    Return v15
+}
+# The list of the five lists is the only one with storage for every value. The fallback of a capacity known at run time is the literal without one.
+# CHECK: f0: size=
+# CHECK-NOT: stub ArrayLiteral.0
+# CHECK: stub NewArrayWithLength.Int32 x1
+# CHECK-NEXT: stub NewEmptyArray.Int32DefaultCapacity x5
+# CHECK-NOT: stub NewEmptyArray
+# CHECK-NOT: stub NewArrayWithLength
+function f1 name="doubles" parameters=[{type=number}, {type=int[0, 100000]}] results=[{type=anything}] {
+    v2 = Integer integer=4
+    v3 = Integer integer=5
+    v4 = Integer integer=200000
+    v5 = NewArray contents=anything
+    v6 = NewArray contents=anything capacity=v2
+    v7 = NewArray contents=anything capacity=v3
+    v8 = NewArray contents=anything capacity=v4
+    v9 = NewArray contents=anything capacity=v1
+# REPEAT: i = 0..4
+    v%(i+10) = CallInline v%(i+5), v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# END REPEAT
+    v15 = NewArray v5, v6, v7, v8, v9 contents=anything
+    Return v15
+}
+# CHECK: f1: size=
+# CHECK-NOT: stub ArrayLiteral.0
+# CHECK: stub NewArrayWithLength.Double x1
+# CHECK-NEXT: stub NewEmptyArray.DoubleDefaultCapacity x5
+# CHECK-NOT: stub NewEmptyArray
+# CHECK-NOT: stub NewArrayWithLength
+function f2 name="int32sAndDoubles" parameters=[{type=i32}, {type=number}] results=[{type=anything}] {
+    v2 = Integer integer=4
+    v3 = NewArray contents=anything capacity=v2
+    v4 = CallInline v3, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v5 = CallInline v3, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return v3
+}
+# The widest of what is pushed decides.
+# CHECK: f2: size=
+# CHECK: stub NewEmptyArray.DoubleDefaultCapacity x1
+function f3 name="int32sAndTexts" parameters=[{type=i32}, {type=string}] results=[{type=anything}] {
+    v2 = Integer integer=4
+    v3 = NewArray contents=anything capacity=v2
+    v4 = CallInline v3, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v5 = CallInline v3, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return v3
+}
+# CHECK: f3: size=
+# CHECK-NOT: stub NewEmptyArray
+# CHECK-NOT: stub NewArrayWithLength
+function f4 name="holesAlone" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewArray contents=anything holes=[0, 1]
+    v2 = CallInline v1, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return v1
+}
+# A literal of holes has storage for every value, as arrayStorageOfLiteral() says of it.
+# CHECK: f4: size=
+# CHECK-NOT: Int32
+# CHECK-NOT: Double

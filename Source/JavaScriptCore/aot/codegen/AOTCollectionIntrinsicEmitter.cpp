@@ -47,7 +47,6 @@ public:
 
     LValue storageOf(CellPointer owner) { return m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), owner.value(), JSMap::offsetOfStorage())); }
     TypedPointer tableField(LValue table, ptrdiff_t offset) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), table, offset); }
-    TypedPointer dataAt(LValue base, ptrdiff_t index) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), base, index * sizeof(EncodedJSValue)); }
 
     LValue keysOf(LValue table)
     {
@@ -61,17 +60,6 @@ public:
         return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), m_out.add(base, m_out.shl(index, m_out.constInt32(shift))));
     }
 
-    LValue entriesOf(LValue data)
-    {
-        LValue capacity = m_out.zeroExtPtr(m_out.load32(dataAt(data, JSMap::Helper::capacityIndex())));
-        return m_out.add(data, m_out.shl(m_out.add(capacity, JSMap::Helper::hashTableStartIndex()), 3));
-    }
-
-    LValue entryAt(Collection kind, LValue entries, LValue entryIndex)
-    {
-        return m_out.add(entries, m_out.mul(entryIndex, m_out.constIntPtr((kind == Collection::Map ? JSMap::Helper::EntrySize : JSSet::Helper::EntrySize) * sizeof(EncodedJSValue))));
-    }
-
     Boxed decodeNarrow(NarrowReference word)
     {
         Condition isReference = isCellReferenceAmongAllWords(word);
@@ -80,31 +68,35 @@ public:
         return select(isReference, cell, immediate);
     }
 
+    // Most tables have no deleted entries, so the first entry is checked inline and the loop that skips deleted entries is off the likely path.
     LValue firstAliveEntry(LValue start, LValue used, LBasicBlock hasNoEntry, NOESCAPE const Invocable<LValue(LValue)> auto& isAlive)
     {
+        LBasicBlock isFirstUsed = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock isUsed = m_out.newBlock();
-        LBasicBlock isDeleted = m_out.newBlock();
         LBasicBlock found = m_out.newBlock();
-        ValueFromBlock first = m_out.anchor(start);
-        m_out.jump(loop);
+        m_out.branch(m_out.below(start, used), normalEdge(isFirstUsed), unlikelyEdge(hasNoEntry));
+
+        m_out.appendTo(isFirstUsed);
+        ValueFromBlock aliveAtStart = m_out.anchor(start);
+        ValueFromBlock deletedAtStart = m_out.anchor(start);
+        m_out.branch(isAlive(start), normalEdge(found), unlikelyEdge(loop));
 
         m_out.appendTo(loop);
-        LValue entryIndex = m_out.phi(B3::Int64, first);
-        m_out.branch(m_out.below(entryIndex, used), normalEdge(isUsed), unlikelyEdge(hasNoEntry));
+        LValue deletedEntry = m_out.phi(B3::Int64, deletedAtStart);
+        LValue candidate = m_out.add(deletedEntry, m_out.constInt64(1));
+        m_out.branch(m_out.below(candidate, used), normalEdge(isUsed), unlikelyEdge(hasNoEntry));
 
         m_out.appendTo(isUsed);
-        m_out.branch(isAlive(entryIndex), normalEdge(found), unlikelyEdge(isDeleted));
-
-        m_out.appendTo(isDeleted);
-        m_out.addIncomingToPhi(entryIndex, m_out.anchor(m_out.add(entryIndex, m_out.constInt64(1))));
-        m_out.jump(loop);
+        ValueFromBlock liveAfterDeletedEntries = m_out.anchor(candidate);
+        m_out.addIncomingToPhi(deletedEntry, m_out.anchor(candidate));
+        m_out.branch(isAlive(candidate), normalEdge(found), normalEdge(loop));
 
         m_out.appendTo(found);
-        return entryIndex;
+        return m_out.phi(B3::Int64, aliveAtStart, liveAfterDeletedEntries);
     }
 
-    TableEntry compactEntryAt(Collection kind, CompactTable::Width keyWidth, LValue table, LValue keys, LValue entryIndex)
+    TableEntry compactEntryAt(Collection kind, CompactTable::Width keyWidth, std::optional<CompactTable::Width> expectedValueWidth, LValue table, LValue keys, LValue entryIndex)
     {
         const bool keysAreWide = keyWidth == CompactTable::Width::Wide;
         Boxed key = keysAreWide ? Boxed(m_out.load64(elementAt(keys, entryIndex, 3))) : decodeNarrow(NarrowReference(m_out.load32(elementAt(keys, entryIndex, 2))));
@@ -115,7 +107,8 @@ public:
         Join<Boxed> join(m_out);
         LValue values = m_out.add(keys, m_out.shl(m_out.zeroExtPtr(m_out.load32(tableField(table, CompactTable::offsetOfCapacity()))), keysAreWide ? 3 : 2));
         LValue width = m_out.load8ZeroExt32(tableField(table, CompactTable::offsetOfValueWidth()));
-        m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))), normalEdge(isNarrow), unlikelyEdge(isWide));
+        m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))),
+            expectedValueWidth == CompactTable::Width::Wide ? unlikelyEdge(isNarrow) : normalEdge(isNarrow), expectedValueWidth == CompactTable::Width::Narrow ? unlikelyEdge(isWide) : normalEdge(isWide));
 
         m_out.appendTo(isNarrow);
         join.add(decodeNarrow(NarrowReference(m_out.load32(elementAt(values, entryIndex, 2)))));
@@ -157,7 +150,6 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     LBasicBlock isCurrent = newBlock();
     LBasicBlock isChanged = newBlock();
     LBasicBlock isCompact = newBlock();
-    LBasicBlock isOrdinary = newBlock();
     LBasicBlock hasNoEntry = newBlock();
     LBasicBlock slowPath = newBlock();
     StepJoin join(m_out);
@@ -168,7 +160,8 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.branch(m_out.isNull(storage), normalEdge(hasNoEntry), rareEdge(slowPath));
 
     m_out.appendTo(isCurrent);
-    m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), unlikelyEdge(isOrdinary), normalEdge(isCompact));
+    // In compiled code a collection gets a compact table with its first entry. The stub handles the other kind of table.
+    m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), rareEdge(slowPath), normalEdge(isCompact));
 
     m_out.appendTo(isCompact);
     // A number never fits a short key, and a table with one wide key has wide keys only: the type of the keys says which of the two widths is read in line. The other one is the stub's.
@@ -201,24 +194,18 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.jump(isMarked);
 
     m_out.appendTo(isMarked);
-    TableEntry entry = reader.compactEntryAt(kind, keyWidth, storage, column, entryIndex);
+    // A number never fits a short value either. If the values may be of both kinds, the table's width is unknown.
+    std::optional<CompactTable::Width> expectedValueWidth;
+    if (kind == Collection::Map) {
+        Type values = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, typeOf(value->mapOperand()), ContentsSlot::Value).withoutPrimitives(Primitive::Undefined | Primitive::Null | Primitive::Boolean);
+        if (values.isNumber())
+            expectedValueWidth = CompactTable::Width::Wide;
+        else if (!(values.primitives & Primitive::Number))
+            expectedValueWidth = CompactTable::Width::Narrow;
+    }
+    TableEntry entry = reader.compactEntryAt(kind, keyWidth, expectedValueWidth, storage, column, entryIndex);
     Condition hasEntry = boolean(true);
     join.add(hasEntry, low32(Integer(entryIndex)), entry.key, entry.value);
-
-    m_out.appendTo(isOrdinary);
-    LValue data = m_out.add(storage, m_out.constIntPtr(JSCellButterfly::offsetOfData()));
-    LValue aliveInStorage = m_out.load32(reader.dataAt(data, JSMap::Helper::aliveEntryCountIndex()));
-    LValue usedInStorage = m_out.zeroExtPtr(m_out.add(aliveInStorage, m_out.load32(reader.dataAt(data, JSMap::Helper::deletedEntryCountIndex()))));
-    LValue entries = reader.entriesOf(data);
-    LValue deletedValue = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, vm().value(), VM::offsetOfOrderedHashTableDeletedValue()));
-    LValue entryIndexInStorage = reader.firstAliveEntry(start.value(), usedInStorage, hasNoEntry, [&](LValue candidate) {
-        return m_out.notEqual(m_out.load64(reader.dataAt(reader.entryAt(kind, entries, candidate), 0)), deletedValue);
-    });
-    LValue words = reader.entryAt(kind, entries, entryIndexInStorage);
-    Boxed keyInStorage(m_out.load64(reader.dataAt(words, 0)));
-    Boxed valueInStorage = kind == Collection::Map ? Boxed(m_out.load64(reader.dataAt(words, 1))) : undefined();
-    Condition hasEntryInStorage = boolean(true);
-    join.add(hasEntryInStorage, low32(Integer(entryIndexInStorage)), keyInStorage, valueInStorage);
 
     m_out.appendTo(hasNoEntry);
     Condition hasNone = boolean(false);

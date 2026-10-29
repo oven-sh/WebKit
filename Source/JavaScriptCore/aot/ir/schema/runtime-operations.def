@@ -64,8 +64,8 @@ runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(a
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayOfHoles : JSCell* (uint32_t lengthAndCapacity, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayAtReviewedSite : JSCell* (void* profile, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
-runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; RuntimeGrowsArray
-runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; RuntimeGrowsArray
+runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; unknownCode
+runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; unknownCode
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
@@ -181,11 +181,16 @@ runtime PhotographOperand : void (EncodedJSValue operand, uint64_t writtenHeaps,
 runtime CompareOperandWithPhotograph : void (EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex) ; reads(all) writes(ValidationState)
 runtime NoteFailedGuard : void (uint32_t function, uint32_t opcode, uint32_t ordinal) ; reads(ValidationState) writes(ValidationState)
 runtime CountStopsForCollector : uint64_t () ; reads(ValidationState) writes(ValidationState)
+runtime MakeCheckedFrameCell : void* (void* slot, void* wordOfFrame, uint64_t sizeAndFunction, uint64_t valueAndModule, uint64_t lineAndColumn) ; reads(all) writes(ValidationState)
+runtime LeaveFrameOfCheckedCells : void (void* wordOfFrame) ; reads(all) writes(ValidationState)
+runtime ReportEscapedFrameCell : void (void* cell) ; reads(all) writes(ExternalState)
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant
 runtime PollSlow : void () ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
-runtime PollBeforeEnteringFunctionObject : void (JSCell* callee, void* stackPointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
+runtime PollBeforeEntering : void (void* stackPointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
+runtime PollBeforeEnteringFunctionObject : void (JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
 runtime PollAtPrologue : void* (uint8_t* returnAddress) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime PollAtPrologueWithoutCollecting : void* (uint8_t* returnAddress) ; reads(all) writes(AllocatorState, RuntimeState) throws
 
 runtime DirectEval : EncodedJSValue (EncodedJSValue text, uint32_t request, uint32_t count, const EncodedJSValue* operands) ; unknownCode
 

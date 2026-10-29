@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTFieldTable.h"
 #include "AOTFlowResults.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
@@ -165,10 +166,12 @@ struct FunctionWalk {
         namedStrings.append(string.index());
     }
 
-    void countKey(PropertyKeyID key, Typed::Access access, bool looksUpInTables)
+    void countKey(PropertyKeyID key, Typed::Access access, bool looksUpByName, bool looksUpInTables)
     {
         KeyUse& use = shared.keys[key.index()];
         addRelaxed(use.uses);
+        if (looksUpByName)
+            addRelaxed(use.lookupsByName);
         addRelaxed(use.usesByAccess[static_cast<size_t>(access)]);
         nameString(program.at(key).text);
         if (!looksUpInTables)
@@ -188,7 +191,8 @@ struct FunctionWalk {
     void visit(const InstructionType& instruction, Operation operation, bool runsAtMostOnce)
     {
         bool createsStringConstant = runtimeOf(operation) == Typed::RuntimeOperation::StringConstant;
-        bool looksUpInTables = !runsAtMostOnce && looksUpKeysByName(operation);
+        bool looksUpByName = looksUpKeysByName(operation);
+        bool looksUpInTables = !runsAtMostOnce && looksUpByName;
         forEachReference(instruction, [&]<typename Reference>(const Reference& reference) {
             if constexpr (std::same_as<Reference, StringID>) {
                 nameString(reference);
@@ -197,7 +201,7 @@ struct FunctionWalk {
                 else if (reference && !hasStringsForMessagesOnly(operation))
                     shared.isNamedBesideCreation.atomicSetAndCheck(reference.index(), true);
             } else if constexpr (std::same_as<Reference, PropertyKeyID>)
-                countKey(reference, accessOf(operation), looksUpInTables);
+                countKey(reference, accessOf(operation), looksUpByName, looksUpInTables);
         });
         bool usesEveryOperandAsKey = usesOperandsAsKeys(operation);
         instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -333,6 +337,7 @@ struct NameCandidate {
     bool isEngineSymbol { false };
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
+    uint32_t lookupsByName { 0 };
     FunctionID firstTableLookupFunction { };
 };
 
@@ -381,6 +386,7 @@ static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program,
             .isEngineSymbol = isEngineSymbol(program.at(key).kind),
             .uses = use.uses,
             .tableLookupUses = use.tableLookupUses,
+            .lookupsByName = use.lookupsByName,
             .firstTableLookupFunction = use.firstTableLookupFunction,
         });
     }
@@ -433,6 +439,9 @@ static void reportNamesWithoutColumn(std::span<const NameCandidate> namesWithout
 static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandidate> namesWithoutColumn)
 {
     parallelSort(loops, namesWithoutColumn, [](const NameCandidate& a, const NameCandidate& b) {
+        // The table of fields takes more names than the front table. The names that code looks up get the low numbers, which are the ones it takes.
+        if (!a.lookupsByName != !b.lookupsByName)
+            return !!a.lookupsByName;
         if (a.isEngineSymbol != b.isEngineSymbol)
             return a.isEngineSymbol;
         if (a.identifier.text != b.identifier.text)
@@ -464,6 +473,10 @@ IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUs
             numbering.m_numbersByText[identifier.text.index()] = number;
     }
     numbering.m_countWithLookupTableColumn = columnCount + 1;
+    auto lookedUpWithoutColumn = static_cast<uint64_t>(std::ranges::count_if(names.span().subspan(columnCount), [](const NameCandidate& name) {
+        return name.lookupsByName > 0;
+    }));
+    numbering.m_countWithFieldTableColumn = static_cast<uint32_t>(std::min<uint64_t>(columnCount + lookedUpWithoutColumn, FieldTableEntry::maxName) + 1);
 
     context.statistics().count(StatisticID::IdentifiersNumbered, names.size());
     if (context.exceeds(LimitID::MaxIdentifiers, numbering.count()))

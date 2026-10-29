@@ -288,9 +288,10 @@ String describe(const ProgramTables& tables, const RuntimeType& type)
         switch (test.kind) {
         case CellTestKind::IsObject:
         case CellTestKind::ShapeIn:
+        case CellTestKind::CarriesBrandOfClass:
             if (auto set = type.layoutSet())
                 appendUnique(layoutSetNames, nameOf(tables, tables.layoutSets()[*set]));
-            else if (test.kind == CellTestKind::IsObject)
+            else if (test.kind != CellTestKind::ShapeIn)
                 allowsAnyObject = true;
             else
                 appendUnique(layoutSetNames, describeMembers(tables, tables.shapeTestAt(test.shapeTestOffset())));

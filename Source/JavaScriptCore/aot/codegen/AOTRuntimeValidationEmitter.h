@@ -25,7 +25,7 @@ public:
         ValueID operation;
         ValueID operand;
         Pointer address;
-        Integer header;
+        std::optional<Integer> header;
         Integer wordBehindHeader;
     };
     using OperandCells = Vector<OperandCell, 2>;
@@ -33,7 +33,9 @@ public:
     void validateParameters(BlockID, const Block&);
     void validateOperands(const OperationContext&);
     void validateResult(const ValueContext&);
-    OperandCells captureOperandCells(const OperationContext&);
+    // Objects: the header and the following word of every operand that is an object. Arrays: the word after the header of every operand that is an array.
+    enum class ComparedCells : uint8_t { Objects, Arrays };
+    OperandCells captureOperandCells(const OperationContext&, ComparedCells);
     void checkCellsWereNotConverted(const OperandCells& beforeCall);
     // A call that runs no other code is judged by what it does to the operands of its operation: each is photographed in front of the call and compared behind it.
     using PhotographedOperands = Vector<ValueID, 4>;
@@ -51,7 +53,7 @@ public:
     void generateValidateFirstRun(const ValueContext&);
     void generateValidateSameValue(const ValueContext&);
     void generateShouldFailPrediction(const ValueContext&);
-    void reportUnreachable(ValueID);
+    void reportUnreachable(ValueID, PassID cutBy = PassID::None);
     void checkSlotAccessWithoutGuard(const OperationContext&);
     void checkAssumedType(const ValueContext&);
 
@@ -60,7 +62,9 @@ public:
     // A short form of a test answers as the whole test does.
     void checkTypeTestsAgree(Condition, CellPointer tested);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);
-    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer);
+    // Whether an operation may receive an array kept in a frame and whether it may receive any other frame cell are separate questions. The operand determines at run time which one applies.
+    enum class FrameCellFilter : uint8_t { All, Arrays, AllButArrays };
+    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer, FrameCellFilter = FrameCellFilter::All);
     void checkIsNotReleased(const OperationContext&, CellPointer environment, LayoutID);
     void poisonFrameCells(ProgramPoint);
     void poisonEnvironment(CellPointer, LayoutID);
@@ -85,6 +89,7 @@ private:
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
     void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind);
+    void checkLiteralStringWord(ValueID, LiteralStringWord);
     Condition hasShapeAmong(CellPointer, LayoutSetID, std::span<const uint32_t> ascendingShapes);
     void checkReceiverOfSlotAccess(const OperationContext&, const Value&);
     void checkShapeBehindGuard(const OperationContext&, const Value&);
@@ -92,7 +97,7 @@ private:
     void checkClassProofs(ValueID, Operand, const Type&);
     void checkClassProofs(ValueID, CellPointer, const ClassPart&);
     bool hasTestableBits(ValueID);
-    Pointer addressOfObjectOrOfCode(Operand);
+    Pointer addressOfObjectOrOfCode(Operand, ComparedCells);
     Integer headerAt(Pointer);
     Integer wordBehindHeaderAt(Pointer);
     void checkEnvironmentShape(CellPointer, LayoutID, ValueID);

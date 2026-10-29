@@ -68,7 +68,7 @@ function f5 name="two" flags=[HasThis] thisType={type=anything} results=[{type=a
 function f6 name="three" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
     Return
 }
-function f7 name="toClass" module=m1 kind=Method role=Model length=3 enclosingRuntimeFunction=131085 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f7 name="toClass" module=m1 kind=Method role=Model length=3 enclosingRuntimeFunction=ObjectsToClass thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Builtin builtin=Object
     v4 = Builtin builtin=ObjectCreate
     v5 = ToBoolean v2
@@ -97,4 +97,4 @@ function f7 name="toClass" module=m1 kind=Method role=Model length=3 enclosingRu
     v24 = Call v12, v3, v0, v22, v23 calleeName="defineProperty"
     Return
 }
-runtimefunction id=131085 function=f7
+runtimefunction id=ObjectsToClass function=f7

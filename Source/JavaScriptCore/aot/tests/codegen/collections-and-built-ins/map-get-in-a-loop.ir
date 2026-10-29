@@ -15,6 +15,8 @@
 # REQUIRES(LOOP): unsanitized-code
 # RUN(CALLS): lower-to-b3 optimized loops f1
 # REQUIRES(CALLS): unsanitized-code
+# RUN(STORAGE): lower-to-b3 optimized loops f1
+# REQUIRES(STORAGE): unsanitized-code
 # RUN(WHOLE): lower-to-b3 optimized f1
 # REQUIRES(WHOLE): unsanitized-code
 # RUN(X64): lower-to-air loops f1
@@ -164,14 +166,15 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # LOOP: Int32 b@[[isMissing]] = GreaterEqual(b@{{*}}, {{*}}:TypeTest)
 # LOOP-NEXT: Branch(b@[[isMissing]], Terminal, {{*}}:TypeTest)
 # LOOP: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
-# The stub is declared to write the storage of arrays, so the storage and the length of the list are loaded again behind it, once.
-# LOOP: Int64 b@[[again]] = Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}})
-# LOOP-NEXT: Int32 b@{{*}} = Load(b@[[again]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}})
-# LOOP-NOT: Reads:JSObject_butterfly
 # LOOP-LABEL: end of loop
+# The stub writes the storage of no array: the storage and the length of the list are loaded ahead of the loop.
+# STORAGE-LABEL: loop #
+# STORAGE-NOT: Reads:JSArray_butterfly
+# STORAGE-NOT: Reads:Butterfly_publicLength
+# STORAGE-LABEL: end of loop
 # The stub is the only call of the loop.
 # CALLS-LABEL: loop #
-# The stub may write the length, which is read again on every turn: nothing counts the turns ahead of the loop, so the loop polls on each of them.
+# A loop that calls is not cut into stretches of turns, so the loop polls on each of them.
 # CALLS-COUNT-2: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
@@ -183,5 +186,5 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 23, patchpoints: 3
-# ARM64: loop #{{*}}, instructions: 20, patchpoints: 4
+# X64: loop #{{*}}, instructions: 21, patchpoints: 3
+# ARM64: loop #{{*}}, instructions: 19, patchpoints: 4

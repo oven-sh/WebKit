@@ -13,9 +13,11 @@
 #include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowWidenedSolve.h"
+#include <wtf/IterationStatus.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Threading.h>
 
@@ -150,112 +152,223 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
         textsPassed.appendVector(std::exchange(bodies[chunk].textsPassed, { }));
 
+    // `a.to = b.from` stores again under `to` what lies under `from`. The lists of functions under names are not closed over that: n names, each stored into the next, would hold n * n / 2 members.
+    // Names that are stored into each other in a circle form a group. A group keeps what is stored under its names directly and knows the groups that are stored into it.
     constexpr uint32_t noList = UINT32_MAX;
     Vector<uint32_t> listOfName;
     listOfName.fill(noList, program.types.numberOfPropertyKeys());
-    Vector<Vector<uint32_t, 2>> functionsUnderName;
-    BitVector takesFunctionsOfOtherNames(program.types.numberOfPropertyKeys());
-    using SetOfFunctions = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    Vector<SetOfFunctions> listed;
+    uint32_t numberOfLists = 0;
     auto ensureListOf = [&](uint32_t name) {
         uint32_t& list = listOfName[name];
-        if (list == noList) {
-            list = static_cast<uint32_t>(functionsUnderName.size());
-            functionsUnderName.append(Vector<uint32_t, 2>());
-            listed.append(SetOfFunctions());
-        }
+        if (list == noList)
+            list = numberOfLists++;
         return list;
     };
-    struct NameStoredAgain {
-        uint32_t from;
-        uint32_t to;
-        uint32_t pair;
+    using Pairs = Vector<std::pair<uint32_t, uint32_t>>;
+    struct Rows {
+        std::span<const uint32_t> of(uint32_t row) const LIFETIME_BOUND { return entries.span().subspan(first[row], first[row + 1] - first[row]); }
+
+        Vector<uint32_t> first;
+        Vector<uint32_t> entries;
     };
-    Vector<NameStoredAgain> namesStoredAgain;
-    Vector<uint32_t> numberTaken;
-    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numberOfPair;
-    for (unsigned index = 0; index < bodies.size(); ++index) {
-        for (auto [from, to] : bodies[index].namesStoredAgain)
-            takesFunctionsOfOtherNames.quickSet(to);
-    }
-    for (unsigned index = 0; index < bodies.size(); ++index) {
-        for (auto [name, function] : bodies[index].functionsStoredUnderNames) {
-            uint32_t list = ensureListOf(name);
-            functionsUnderName[list].append(function);
-            if (takesFunctionsOfOtherNames.quickGet(name))
-                listed[list].add(function);
+    auto layOutRows = [](uint32_t numberOfRows, Pairs&& pairs) {
+        AOT::sort(pairs);
+        removeRepeatedElements(pairs);
+        Rows rows;
+        rows.first.fill(0, numberOfRows + 1);
+        rows.entries.reserveInitialCapacity(pairs.size());
+        for (auto [row, entry] : pairs) {
+            ++rows.first[row + 1];
+            rows.entries.append(entry);
         }
+        for (uint32_t row = 0; row < numberOfRows; ++row)
+            rows.first[row + 1] += rows.first[row];
+        return rows;
+    };
+
+    Pairs functionsOfLists;
+    Pairs listsStoredAgain;
+    for (const Found& body : bodies.span()) {
+        for (auto [name, function] : body.functionsStoredUnderNames)
+            functionsOfLists.append({ ensureListOf(name), function });
     }
-    for (unsigned index = 0; index < bodies.size(); ++index) {
-        for (auto [nameFrom, nameTo] : bodies[index].namesStoredAgain) {
+    for (const Found& body : bodies.span()) {
+        for (auto [nameFrom, nameTo] : body.namesStoredAgain) {
             uint32_t from = ensureListOf(nameFrom);
             uint32_t to = ensureListOf(nameTo);
-            auto pair = numberOfPair.add(static_cast<uint64_t>(from) << 32 | to, static_cast<uint32_t>(numberTaken.size()));
-            if (pair.isNewEntry)
-                numberTaken.append(0);
-            namesStoredAgain.append({ from, to, pair.iterator->value });
+            if (from != to)
+                listsStoredAgain.append({ from, to });
         }
     }
-    for (bool hasMoved = true; hasMoved;) {
-        hasMoved = false;
-        for (const NameStoredAgain& stored : namesStoredAgain) {
-            uint32_t end = functionsUnderName[stored.from].size();
-            for (uint32_t& taken = numberTaken[stored.pair]; taken < end; ++taken) {
-                uint32_t function = functionsUnderName[stored.from][taken];
-                if (listed[stored.to].add(function).isNewEntry) {
-                    functionsUnderName[stored.to].append(function);
-                    hasMoved = true;
+
+    // A group is numbered behind every group that it is stored into.
+    Vector<uint32_t> groupOfList;
+    groupOfList.fill(noList, numberOfLists);
+    uint32_t numberOfGroups = 0;
+    {
+        Rows storedInto = layOutRows(numberOfLists, Pairs(listsStoredAgain));
+        struct Visit {
+            uint32_t list;
+            uint32_t next;
+        };
+        Vector<Visit> visits;
+        Vector<uint32_t> open;
+        Vector<uint32_t> order;
+        Vector<uint32_t> lowest;
+        order.fill(0, numberOfLists);
+        lowest.fill(0, numberOfLists);
+        BitVector isOpen(numberOfLists);
+        uint32_t nextInOrder = 1;
+        auto enter = [&](uint32_t list) {
+            order[list] = lowest[list] = nextInOrder++;
+            open.append(list);
+            isOpen.quickSet(list);
+            visits.append({ list, storedInto.first[list] });
+        };
+        for (uint32_t root = 0; root < numberOfLists; ++root) {
+            if (order[root])
+                continue;
+            enter(root);
+            while (!visits.isEmpty()) {
+                uint32_t list = visits.last().list;
+                if (visits.last().next < storedInto.first[list + 1]) {
+                    uint32_t other = storedInto.entries[visits.last().next++];
+                    if (!order[other])
+                        enter(other);
+                    else if (isOpen.quickGet(other))
+                        lowest[list] = std::min(lowest[list], order[other]);
+                    continue;
                 }
+                visits.removeLast();
+                if (!visits.isEmpty())
+                    lowest[visits.last().list] = std::min(lowest[visits.last().list], lowest[list]);
+                if (lowest[list] != order[list])
+                    continue;
+                for (;;) {
+                    uint32_t member = open.takeLast();
+                    isOpen.quickClear(member);
+                    groupOfList[member] = numberOfGroups;
+                    if (member == list)
+                        break;
+                }
+                ++numberOfGroups;
             }
         }
     }
 
-    constexpr uint32_t positionsCounted = 8;
-    struct PositionsTaken {
-        std::array<uint32_t, positionsCounted> functionsTakingKeyAt { };
-        uint32_t functionsTakingKeyFurtherOn { 0 };
-    };
-    Vector<PositionsTaken> positionsTakenUnder(functionsUnderName.size());
-    auto count = [&](uint32_t list, uint32_t position, uint32_t change) {
-        if (position == noKey)
-            return;
-        PositionsTaken& taken = positionsTakenUnder[list];
-        (position < positionsCounted ? taken.functionsTakingKeyAt[position] : taken.functionsTakingKeyFurtherOn) += change;
-    };
     BitVector mayMove(numberOfFunctions);
     for (const Found& body : bodies.span()) {
         for (const CallPassingParameters& call : body.calls)
             mayMove.quickSet(call.caller);
     }
-    Vector<uint32_t> endOfListsHolding;
-    endOfListsHolding.fill(0, numberOfFunctions + 1);
-    for (uint32_t list = 0; list < functionsUnderName.size(); ++list) {
-        for (uint32_t function : functionsUnderName[list]) {
-            count(list, positionOfKey[function], 1);
-            endOfListsHolding[function] += mayMove.quickGet(function);
-        }
+    Pairs groupsOfFunctionsThatMayMove;
+    for (auto& [list, function] : functionsOfLists) {
+        list = groupOfList[list];
+        if (mayMove.quickGet(function))
+            groupsOfFunctionsThatMayMove.append({ function, list });
     }
-    for (uint32_t function = 0, sum = 0; function <= numberOfFunctions; ++function)
-        endOfListsHolding[function] = sum += endOfListsHolding[function];
-    Vector<uint32_t> listsHoldingFunctions(endOfListsHolding[numberOfFunctions]);
-    for (uint32_t list = functionsUnderName.size(); list--;) {
-        for (uint32_t function : functionsUnderName[list]) {
-            if (mayMove.quickGet(function))
-                listsHoldingFunctions[--endOfListsHolding[function]] = list;
-        }
+    Pairs sourcesOfGroups;
+    Pairs targetsOfGroups;
+    for (auto [from, to] : listsStoredAgain) {
+        if (groupOfList[from] == groupOfList[to])
+            continue;
+        sourcesOfGroups.append({ groupOfList[to], groupOfList[from] });
+        targetsOfGroups.append({ groupOfList[from], groupOfList[to] });
     }
-    auto listsHolding = [&](uint32_t function) {
-        return listsHoldingFunctions.span().subspan(endOfListsHolding[function], endOfListsHolding[function + 1] - endOfListsHolding[function]);
+    listsStoredAgain = { };
+    Rows functionsOf = layOutRows(numberOfGroups, WTF::move(functionsOfLists));
+    Rows groupsHolding = layOutRows(numberOfFunctions, WTF::move(groupsOfFunctionsThatMayMove));
+    Rows sourcesOf = layOutRows(numberOfGroups, WTF::move(sourcesOfGroups));
+    Rows targetsOf = layOutRows(numberOfGroups, WTF::move(targetsOfGroups));
+
+    // At which positions the functions under a name take their keys: one bit a position, and one for every position further on.
+    constexpr uint32_t positionsCounted = 8;
+    using Positions = uint16_t;
+    constexpr Positions takesKeyFurtherOn = 1 << positionsCounted;
+    auto slotOf = [](uint32_t position) {
+        return position < positionsCounted ? position : positionsCounted;
     };
-    BitVector liesUnderNameItCalls;
-    size_t numberOfCalls = 0;
-    for (const Found& body : bodies.span()) {
-        for (const CallPassingParameters& call : body.calls) {
-            size_t number = numberOfCalls++;
-            if (!call.callee && std::ranges::contains(listsHolding(call.caller), listOfName[call.nameOfCallee.index()]))
-                liesUnderNameItCalls.set(number);
+    Vector<std::array<uint32_t, positionsCounted + 1>> functionsTakingKeyAt(numberOfGroups);
+    for (uint32_t group = 0; group < numberOfGroups; ++group) {
+        functionsTakingKeyAt[group].fill(0);
+        for (uint32_t function : functionsOf.of(group)) {
+            if (positionOfKey[function] != noKey)
+                ++functionsTakingKeyAt[group][slotOf(positionOfKey[function])];
         }
     }
+    Vector<Positions> positionsTakenUnder;
+    positionsTakenUnder.fill(0, numberOfGroups);
+    auto computePositionsTakenUnder = [&](uint32_t group) {
+        Positions positions = 0;
+        for (uint32_t slot = 0; slot <= positionsCounted; ++slot)
+            positions |= static_cast<Positions>(!!functionsTakingKeyAt[group][slot]) << slot;
+        for (uint32_t source : sourcesOf.of(group))
+            positions |= positionsTakenUnder[source];
+        return positions;
+    };
+    for (uint32_t group = numberOfGroups; group--;)
+        positionsTakenUnder[group] = computePositionsTakenUnder(group);
+    Vector<uint32_t> groupsToRefresh;
+    auto didMove = [&](uint32_t function, uint32_t positionBefore, uint32_t position) {
+        for (uint32_t holder : groupsHolding.of(function)) {
+            if (positionBefore != noKey)
+                --functionsTakingKeyAt[holder][slotOf(positionBefore)];
+            if (position != noKey)
+                ++functionsTakingKeyAt[holder][slotOf(position)];
+            groupsToRefresh.append(holder);
+        }
+        while (!groupsToRefresh.isEmpty()) {
+            uint32_t group = groupsToRefresh.takeLast();
+            Positions positions = computePositionsTakenUnder(group);
+            if (positions == positionsTakenUnder[group])
+                continue;
+            positionsTakenUnder[group] = positions;
+            groupsToRefresh.append(targetsOf.of(group));
+        }
+    };
+
+    Vector<uint32_t> walkThatVisited;
+    walkThatVisited.fill(0, numberOfGroups);
+    uint32_t numberOfWalk = 0;
+    Vector<uint32_t> groupsToVisit;
+    // Visits the group and every group that reaches it, until the functor says that it has seen enough.
+    auto forEachGroupThatReaches = [&](uint32_t group, NOESCAPE const Invocable<IterationStatus(uint32_t)> auto& functor) {
+        ++numberOfWalk;
+        groupsToVisit.shrink(0);
+        groupsToVisit.append(group);
+        walkThatVisited[group] = numberOfWalk;
+        while (!groupsToVisit.isEmpty()) {
+            uint32_t visited = groupsToVisit.takeLast();
+            if (functor(visited) == IterationStatus::Done)
+                return;
+            for (uint32_t source : sourcesOf.of(visited)) {
+                if (std::exchange(walkThatVisited[source], numberOfWalk) != numberOfWalk)
+                    groupsToVisit.append(source);
+            }
+        }
+    };
+    size_t numberOfCalls = 0;
+    for (const Found& body : bodies.span())
+        numberOfCalls += body.calls.size();
+    enum class LiesUnderNameItCalls : uint8_t { IsNotAsked, No, Yes };
+    Vector<LiesUnderNameItCalls> liesUnderNameItCalls;
+    liesUnderNameItCalls.fill(LiesUnderNameItCalls::IsNotAsked, numberOfCalls);
+    auto callerLiesUnder = [&](size_t numberOfCall, uint32_t caller, uint32_t group) {
+        LiesUnderNameItCalls& answer = liesUnderNameItCalls[numberOfCall];
+        if (answer == LiesUnderNameItCalls::IsNotAsked) {
+            answer = LiesUnderNameItCalls::No;
+            std::span<const uint32_t> holders = groupsHolding.of(caller);
+            if (!holders.empty()) {
+                forEachGroupThatReaches(group, [&](uint32_t visited) {
+                    if (!std::ranges::binary_search(holders, visited))
+                        return IterationStatus::Continue;
+                    answer = LiesUnderNameItCalls::Yes;
+                    return IterationStatus::Done;
+                });
+            }
+        }
+        return answer == LiesUnderNameItCalls::Yes;
+    };
 
     for (bool hasMoved = true; hasMoved;) {
         hasMoved = false;
@@ -279,28 +392,34 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                         }
                     }
                 };
+                // A caller that is its own callee takes part with the position it has when its turn comes: the one it had, or one that this call has just given it.
+                auto mayHandOnToItself = [&] {
+                    return std::ranges::any_of(arguments, [&](const Argument& argument) {
+                        return argument.index == positionBefore || std::ranges::contains(arguments, argument.index, &Argument::positionOfParameter);
+                    });
+                };
                 if (call.callee)
                     handOnTo(call.callee.index());
                 else if (uint32_t list = listOfName[call.nameOfCallee.index()]; list != noList) {
-                    const PositionsTaken& taken = positionsTakenUnder[list];
-                    if (taken.functionsTakingKeyFurtherOn || liesUnderNameItCalls.get(number)) {
-                        for (uint32_t callee : functionsUnderName[list])
-                            handOnTo(callee);
+                    uint32_t group = groupOfList[list];
+                    Positions taken = positionsTakenUnder[group];
+                    if ((taken & takesKeyFurtherOn) || (mayHandOnToItself() && callerLiesUnder(number, index, group))) {
+                        forEachGroupThatReaches(group, [&](uint32_t visited) {
+                            for (uint32_t callee : functionsOf.of(visited))
+                                handOnTo(callee);
+                            return IterationStatus::Continue;
+                        });
                     } else {
                         for (const Argument& argument : arguments) {
-                            if (argument.index < positionsCounted && taken.functionsTakingKeyAt[argument.index] && argument.positionOfParameter < positionOfKey[index]) {
+                            if (argument.index < positionsCounted && (taken >> argument.index & 1) && argument.positionOfParameter < positionOfKey[index]) {
                                 positionOfKey[index] = argument.positionOfParameter;
                                 hasMoved = true;
                             }
                         }
                     }
                 }
-                if (positionOfKey[index] != positionBefore) {
-                    for (uint32_t list : listsHolding(index)) {
-                        count(list, positionBefore, -1);
-                        count(list, positionOfKey[index], 1);
-                    }
-                }
+                if (positionOfKey[index] != positionBefore)
+                    didMove(index, positionBefore, positionOfKey[index]);
             }
         }
     }
@@ -469,12 +588,13 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
+        .mostObjectsListedByMember = build.limit(LimitID::MaxValueFlowObjectsListedByMember),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
-        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
+        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
         .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);

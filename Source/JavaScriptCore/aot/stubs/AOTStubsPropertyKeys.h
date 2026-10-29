@@ -53,6 +53,11 @@ constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFam
 
 // The operands: the object and the token of the evaluation of the class. The immediate: the index of the field in the record of the layout that declares it.
 constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
+// For a caller that knows where an object of the declaring layout keeps the field: in the cell, in this representation, in a class that is evaluated once. The upper half of the immediate is the offset of the slot.
+constexpr unsigned bitsOfFieldInPrivateGet = 16;
+static_assert(descriptorOf(StubFamily::PrivateGet).maxCount == numberOfEnumerators<SlotRepresentation>);
+constexpr StubKey privateGetFromSlot(SlotRepresentation representation) { return privateGet().withCount(static_cast<unsigned>(representation) + 1); }
+constexpr std::optional<SlotRepresentation> representationKnownTo(StubKey privateGet) { return privateGet.count() ? std::optional(static_cast<SlotRepresentation>(privateGet.count() - 1)) : std::nullopt; }
 
 constexpr StubKey storeElementOfCompiledObject(PutMode mode) { return StubKey(StubFamily::StoreElementOfCompiledObject).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putById(PutMode mode) { return StubKey(StubFamily::PutById).withForm(static_cast<uint8_t>(mode)); }
@@ -64,6 +69,8 @@ constexpr StubKey putByIdAtSiteBehindFieldTable(PutMode mode) { return StubKey(S
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 // For a caller that knows that the slot lies in the cell and holds any value as it is, and that the type of the field is that of any value.
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
+// For a caller that knows the slot is inline and holds a double, and that the field's type accepts any number.
+constexpr StubKey putKnownFieldAcceptingAnyNumber(PutMode mode) { return putKnownField(mode).withCount(2); }
 constexpr StubKey putByIdOnce(PutMode mode) { return StubKey(StubFamily::PutByIdOnce).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey createKnownField(PutMode mode) { return StubKey(StubFamily::CreateKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putBooleanOrDoubleField(PutMode mode) { return StubKey(StubFamily::PutBooleanOrDoubleField).withForm(static_cast<uint8_t>(mode)); }

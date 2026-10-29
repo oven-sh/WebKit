@@ -119,6 +119,7 @@ static void runNewDictionary(const ValueFlowStatement& statement, ValueFlowRuleC
 void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& call)
 {
     const ValueFlowUniverse& universe = context.universe();
+    describeObjectsRefusedAsFunctions(context, call.callees);
     if (!context.meet(call.callees, universe.callables()))
         return;
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();

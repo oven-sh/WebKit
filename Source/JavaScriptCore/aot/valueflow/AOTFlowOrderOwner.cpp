@@ -343,12 +343,11 @@ private:
         if (m_index.calls.functionsEnteredByHost.get(function.index()))
             return unknownScopeEntry;
         FlowScopeEntry entry = neverScopeEntry;
-        for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
+        m_index.calls.forEachCallOf(function, [&](const FlowScopeCall& call) {
             FlowScopeFrame* frame = findFrame(call.caller);
             entry = meet(entry, frame ? entryAt(*frame, call.site) : laterOf(entryOf(call.caller), call.subject ? entryByStoresTo(call.subject) : unknownScopeEntry));
-            if (entry.state == FlowScopeEntryState::Unknown)
-                break;
-        }
+            return entry.state == FlowScopeEntryState::Unknown ? IterationStatus::Done : IterationStatus::Continue;
+        });
         return entry;
     }
 
@@ -657,11 +656,12 @@ private:
             if (refined == current)
                 continue;
             m_entries.set(function, refined);
-            for (const FlowScopeCall& call : m_index.calls.callsBy(function)) {
+            m_index.calls.forEachCallBy(m_index.inputs.calleeLists, function, [&](const FlowScopeCall& call) {
                 auto callee = m_entries.find(call.callee);
                 if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(call.callee).isNewEntry)
                     m_queue.append(call.callee);
-            }
+                return IterationStatus::Continue;
+            });
         }
         m_queue.shrink(0);
     }
@@ -783,13 +783,19 @@ private:
             FunctionID function = followed[next];
             if (followed.size() > mostCallersToFollow || m_index.calls.functionsEnteredByHost.get(function.index()) || !anyPrecedes(stores, entryOf(function)))
                 return false;
-            for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
+            bool precedesCallsInFrames = true;
+            m_index.calls.forEachCallOf(function, [&](const FlowScopeCall& call) {
                 if (FlowScopeFrame* frame = findFrame(call.caller)) {
-                    if (!anyPrecedes(stores, entryAt(*frame, call.site)))
-                        return false;
+                    if (!anyPrecedes(stores, entryAt(*frame, call.site))) {
+                        precedesCallsInFrames = false;
+                        return IterationStatus::Done;
+                    }
                 } else if (!followed.contains(call.caller))
                     followed.append(call.caller);
-            }
+                return IterationStatus::Continue;
+            });
+            if (!precedesCallsInFrames)
+                return false;
         }
         return true;
     }

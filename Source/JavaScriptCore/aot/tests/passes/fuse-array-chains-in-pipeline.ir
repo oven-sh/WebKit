@@ -13,9 +13,9 @@ variable g0 name="hot" module=m0 declared={type=anything} initialization=Undefin
 variable g1 name="across" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="count" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="once" module=m1 declared={type=anything} initialization=Undefined
-runtimefunction id=32 function=f7
-runtimefunction id=64 function=f8
-runtimefunction id=131091 function=f10
+runtimefunction id=ArrayPrototypeFilter function=f7
+runtimefunction id=ArrayPrototypeMap function=f8
+runtimefunction id=ArrayTraversalTraverseArray function=f10
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=0
@@ -110,7 +110,7 @@ function f6 name="runsOnce" module=m1 kind=Module results=[{type=anything}] {
 # FIRST-LABEL: function f6 name="runsOnce"
 # FIRST: [[kept]]{{*}} = CallDirect {{*}} function=f7
 # FIRST: PutModuleVariable {{*}} variable=g3
-function f7 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = PropGet v0 key="length"
     v4 = Check v3 expectedType=int[0, 4294967295]
@@ -139,7 +139,7 @@ function f7 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingR
   b5():
     Return v7
 }
-function f8 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = PropGet v0 key="length"
     v4 = Check v3 expectedType=int[0, 4294967295]
@@ -165,7 +165,7 @@ function f8 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRunt
   b4():
     Return v7
 }
-function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131091 parameters=[{type=number}, {type=number}] results=[{type=int[0, 4294967295]}] {
+function f9 name="clampToLength" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=number}, {type=number}] results=[{type=int[0, 4294967295]}] {
     v2 = Integer integer=0
     v3 = Less v0, v2
     Branch v3 -> taken b1(), notTaken b4()
@@ -185,7 +185,7 @@ function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131091 pa
     v9 = URShift v8, v2
     Return v9
 }
-function f10 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
+function f10 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
     v6 = Integer integer=0
     v7 = Integer integer=1
     v8 = Integer integer=2

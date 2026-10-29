@@ -28,7 +28,9 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringImpl.h>
 
@@ -86,6 +88,12 @@ public:
             return image;
         return currentOfThread();
     }
+    // Null if there is no image or if threads differ: ask current() then. For callers that cannot afford the call in current().
+    static const Image* sharedByAllThreads()
+    {
+        const Image* image = s_current.load(std::memory_order_acquire);
+        return image != differsByThread() ? image : nullptr;
+    }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
     // For a thread whose VM runs no compiled program.
@@ -93,6 +101,8 @@ public:
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
+    // Calls the functor for every image that any thread has started to use, with that image as the calling thread's current image. Takes no lock.
+    static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
@@ -138,6 +148,10 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
+    // The part of ImageSection::StubAddresses that has the stubs of the family, sorted by key.
+    std::span<const StubAddressInImage> stubAddressesSortedWith(StubFamily) const;
+    // For the stub that starts at this offset in the shared code. x86-64 only.
+    bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }
@@ -159,7 +173,9 @@ public:
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
-    bool callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex) const;
+    // nullopt: the site does not record which function object it calls.
+    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
+    bool hasCalleesOfSites(uint32_t function) const { return this->function(function).has(ImageFunctionFlag::HasCalleesOfSites); }
     // The callee of a direct construct that may leave its frame by a tail call.
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;

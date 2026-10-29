@@ -12,7 +12,7 @@ function f0 name="inBalancedCode" captures=[{type=classtoken}] parameters=[{type
 }
 # CHECK-LABEL: f0: size=
 # CHECK-NOT: operation operationAOTPrivateGet
-# CHECK: stub PrivateGet x1
+# CHECK: stub PrivateGet.n0 x1
 # S: f0 b0 Balanced
 function f1 name="inCompactCode" captures=[{type=classtoken}] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v2 -> taken b1(), notTaken b2()
@@ -24,7 +24,7 @@ function f1 name="inCompactCode" captures=[{type=classtoken}] parameters=[{type=
 }
 # CHECK-LABEL: f1: size=
 # CHECK-NOT: operation operationAOTPrivateGet
-# CHECK: stub PrivateGet x1
+# CHECK: stub PrivateGet.n0 x1
 # S: f1 b1 Compact
 function f2 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
     v1 = GetConstructPrototype v0 layout=L0

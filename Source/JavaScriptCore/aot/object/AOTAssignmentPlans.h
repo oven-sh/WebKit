@@ -11,7 +11,9 @@
 #include "AOTFieldMoves.h"
 #include "AOTMappedCopy.h"
 #include "AOTObject.h"
+#include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
+#include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
@@ -57,13 +59,32 @@ private:
     uint32_t m_runNumberPlusOne;
 };
 
+// A field that holds a literal-string word usually holds the same word as in the previous copy. The strings for such words live as long as the instance.
+template<typename Store>
+struct LiteralStringsReadByStore {
+    // Null if the word is not a literal-string word.
+    ALWAYS_INLINE JSString* stringForWordInSlot(uint64_t word) const
+    {
+        if (word == store.lastLiteralStringWord) [[likely]]
+            return store.lastLiteralString;
+        if (!strings || !isLiteralStringWord(word))
+            return nullptr;
+        store.lastLiteralString = strings->stringForLiteralStringWord(word);
+        store.lastLiteralStringWord = static_cast<uint32_t>(word);
+        return store.lastLiteralString;
+    }
+
+    const ProgramStrings* strings;
+    const Store& store;
+};
+
 struct AssignmentSource {
     ALWAYS_INLINE JSValue read(const auto& store) const
     {
         if (!store.from)
             return propertyStorage->getDirect(store.sourceOffset);
         if (!store.from->isOutOfLine())
-            return compiledObject->readInline(*store.from);
+            return readInline(store);
         SlotRepresentation representation = store.from->slot.representation();
         const void* slot = extension ? extension->slotOrNull(store.from->slot.offset) : nullptr;
         if (slot && representation != SlotRepresentation::DeferredClosure) [[likely]] {
@@ -71,6 +92,13 @@ struct AssignmentSource {
                 return value;
         }
         return compiledObject->read(*store.from);
+    }
+
+    template<typename Store>
+    ALWAYS_INLINE JSValue readInline(const Store& store) const
+    {
+        LiteralStringsReadByStore<Store> literalStrings { strings, store };
+        return compiledObject->readInline(*store.from, &literalStrings);
     }
 
     StructureID propertyStorageStructureID() const { return propertyStorage ? propertyStorage->structureID() : StructureID(); }
@@ -95,6 +123,11 @@ struct AssignmentPlan {
         PropertyOffset sourceOffset { invalidOffset };
         StructureID lastAcceptedStructure { };
         OptionSet<ValueKind> acceptedKinds;
+        // The int32s that the field takes. A field in a narrow slot takes all but a few, so Int32 is not among acceptedKinds.
+        int32_t leastInt32 { 0 };
+        int32_t greatestInt32 { -1 };
+        // The slot holds an integer in two's complement, and each of those int32s fits it.
+        bool writesInt32AsItIs { false };
         bool sourceAlwaysFits { false };
         bool sourceFitsUnlessUndefinedOrNull { false };
         bool isDirect { false };
@@ -106,6 +139,8 @@ struct AssignmentPlan {
         bool leavesUndefinedAndNullToOtherWay { false };
         uint8_t width { 0 };
         uint64_t absentBits { 0 };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
     };
 
     struct ExtraPropertyStore {
@@ -115,6 +150,8 @@ struct AssignmentPlan {
         // extraPropertiesAfter keeps it.
         UniquedStringImpl* name { nullptr };
         bool addsName { false };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
     };
     // In storesInSourceOrder: the index of an ExtraPropertyStore. Without it, of a FieldStore.
     static constexpr uint16_t isExtraPropertyStore = 1 << 15;
@@ -339,7 +376,7 @@ private:
 
     State& m_state;
     ChainDependentOwnerID m_chainDependentOwner;
-    std::unique_ptr<Sets> m_sets;
+    MadeInArena<Sets> m_sets;
     // A plan stays where it is for as long as the cache does. One that has been made anew for another copy, or emptied, does not pass for the plan it was.
     std::array<AssignmentPlan*, numberOfRecentPlans> m_recentPlans { };
     static constexpr unsigned numberOfCopiesOfTwo = 64;

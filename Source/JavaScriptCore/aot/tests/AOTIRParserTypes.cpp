@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIRPrinter.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -597,20 +598,6 @@ static IDType parseBuiltinToken(TextParser& parser, IDType (BuiltinTable::*fromT
     return id;
 }
 
-template<typename IDType>
-static IDType parseBuiltinNumber(TextParser& parser)
-{
-    TextPosition position = parser.token().position;
-    IDType id(parser.parseUInt32());
-    if (parser.hasFailed())
-        return { };
-    if (!parser.builtins().contains(id)) {
-        parser.fail(InternalErrorKind::IRTextError, position);
-        return { };
-    }
-    return id;
-}
-
 BuiltinID TextParser::parseBuiltin()
 {
     return parseBuiltinToken(*this, &BuiltinTable::builtinFromToken);
@@ -651,7 +638,13 @@ RuntimeModuleID TextParser::parseRuntimeModule()
 
 RuntimeFunctionID TextParser::parseRuntimeFunction()
 {
-    return parseBuiltinNumber<RuntimeFunctionID>(*this);
+    RuntimeFunctionID id = at(TokenKind::Word) ? runtimeFunctionFromToken(m_builtins, token().view()) : RuntimeFunctionID();
+    if (!id) {
+        fail();
+        return { };
+    }
+    advance();
+    return id;
 }
 
 } } } // namespace JSC::AOT::Typed

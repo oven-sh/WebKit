@@ -55,6 +55,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTImage.h"
@@ -512,6 +513,10 @@ static void* linkRegisterOf(const PlatformRegisters& registers)
     return MachineContext::linkRegister(registers).untaggedPtr();
 #elif OS(LINUX) && CPU(ARM64)
     return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.regs[30]));
+#elif OS(WINDOWS) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.Lr));
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.mc_gpregs.gp_lr));
 #else
     UNUSED_PARAM(registers);
     return nullptr;
@@ -862,6 +867,14 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 stackFrame.callee = callee;
                 m_liveCellPointers.add(callee);
             };
+
+#if ENABLE(AOT)
+            // The frame exists but the pc is outside the function's code: the sample landed between the call and the callee's first instruction.
+            if (std::optional<AOT::FunctionID> function = alreadyHasExecutable ? std::nullopt : AOT::functionOf(calleeCell)) {
+                stackFrame.compiledFrame = { { }, AOT::FunctionDescription(*function).sourceFunction(), CallSiteIndex(), false, false };
+                return;
+            }
+#endif
 
             if (!isJSFunctionType(calleeCell->type())) {
                 if (JSObject* object = dynamicDowncast<JSObject>(calleeCell))

@@ -740,7 +740,7 @@ static PlacementRule findKnownSetFailure(const PlacementCheckContext& context, c
     // An object of a member that exists without a shape, such as a module namespace object, is none of the set's member shapes.
     auto all = context.program.at(known).all();
     bool listsEveryObjectByShape = all && std::ranges::all_of(*all, [&](LayoutID member) {
-        return context.slots.storageOf(member) == LayoutStorage::CompiledObject || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
+        return context.slots.holdsCompiledObjects(member) || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     if (!listsEveryObjectByShape)
         return test == context.shapes.testOf(tested) ? PlacementRule::None : PlacementRule::TestFormNeedsKnownShapes;

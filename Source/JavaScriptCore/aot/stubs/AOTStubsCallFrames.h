@@ -33,7 +33,6 @@ void emitSpillArgumentRegisters(CCallHelpers&);
 void emitDropSpilledArgumentRegisters(CCallHelpers&);
 void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers&);
 
-void emitCallFromArgumentListFrame(CCallHelpers&, const ScopedLambda<void()>& emitJumpToCallee);
 void emitDropArgumentListFrames(CCallHelpers&, GPRReg scratch);
 void emitMoveStackWordsToArgumentListFrame(CCallHelpers&, unsigned numberOfWords, unsigned bytesAboveFrameRecord);
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTCodeShapes.h"
@@ -1074,11 +1075,28 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     };
     // A range is copied as one block.
     auto mayRejoinAt = [&](ProgramPoint point) { return !wanted.isAnyProofWantedAt(point) && !stretches.isInsideRange(point); };
-    plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt);
+
+    // The copies of a cold function in a very large program hold only their stretches and never rejoin: see TestPlacer::goesOnBehindStretch(). Of these points the placer then only keeps those inside a block
+    // that have tests, to give those tests their own block, and ignores the rest. So the rest are not searched for.
+    const Heat& heat = context.inputs.heat;
+    bool copiesHoldOnlyStretches = heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted();
+    BitVector blocksWithTests;
+    Vector<uint32_t> lastTestIn;
+    if (copiesHoldOnlyStretches) {
+        lastTestIn.fill(0, function.blocks.size());
+        for (const PlannedTest& test : plan.tests) {
+            if (test.position != PlannedTestPosition::BeforeUse || !test.point.index)
+                continue;
+            blocksWithTests.set(test.point.block.index());
+            lastTestIn[test.point.block.index()] = std::max(lastTestIn[test.point.block.index()], test.point.index);
+        }
+    }
+    if (!copiesHoldOnlyStretches || !blocksWithTests.isEmpty())
+        plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt, copiesHoldOnlyStretches ? &blocksWithTests : nullptr);
 
     // Code that is rarer than what leads to it is a slow path already: the generic version of the function, or the copy of an earlier run. The copy of this run goes on there and copies none of it.
     const CFG& cfg = analyses.cfg();
-    for (BlockID block : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldOnlyStretches ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (function.at(block).isHandlerBlock())
             continue;
         Expected<BlockFrequency> frequency = function.at(block).frequency;
@@ -1099,14 +1117,19 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     plan.rejoinPoints.removeAllMatching(isSplitPoint);
 
     std::span<const StretchRange> ranges = stretches.ranges();
-    BitVector isBehindCopiedRange = findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
-    if (isBehindCopiedRange.isEmpty())
+    // A point after the end of a range only has tests if the block has tests that far down.
+    auto hasTestsAfter = [&](const StretchRange& range) { return range.isCloned && lastTestIn[range.block.index()] >= range.end; };
+    bool hasNoTestsAfterRanges = copiesHoldOnlyStretches && std::ranges::none_of(ranges, hasTestsAfter);
+    if (hasNoTestsAfterRanges && std::ranges::none_of(ranges, &StretchRange::isCloned))
+        return;
+    BitVector isBehindCopiedRange = copiesHoldOnlyStretches ? BitVector() : findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
+    if (!copiesHoldOnlyStretches && isBehindCopiedRange.isEmpty())
         return;
     // How soon the copy comes back follows from expected types, and is shuffled with them.
     const RecordedOptions& options = context.build.recordedOptions();
     if (options.has(TestingSwitch::ShuffleExpectedTypes) && WTF::pairIntHash(options.layoutSeed, context.id.index()) % 2) [[unlikely]]
         return;
-    for (BlockID block : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldOnlyStretches ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (isBehindCopiedRange.get(block.index()) && block != cfg.root() && !function.at(block).isHandlerBlock() && mayRejoinAt(ProgramPoint::atHeadOf(block)))
             plan.rejoinPointsWithoutTests.append(ProgramPoint::atHeadOf(block));
     }
@@ -1117,6 +1140,9 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         const TestSite& site = plan.sites.sites[use.site];
         (expectedTypeTellsResultOf(context, site) ? narrowedAsExpected : narrowedInUnknownWay).append(site.use);
     }
+    // The query above may assign a type its number, and types are numbered in the order they are first requested.
+    if (hasNoTestsAfterRanges)
+        return;
     Vector<ValueID> subjects = collectSubjectsKnownBeyondTheirTypes(context, plan);
     BitVector isKnownBetter = findValuesTypedCodeKnowsMoreAbout(analyses, context.types, { narrowedAsExpected.span(), narrowedInUnknownWay.span(), subjects.span() });
 
@@ -1142,7 +1168,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
             if (ranges[next].isCloned)
                 firstEnd = std::min(firstEnd, ranges[next].end);
         }
-        if (firstEnd == numberOfValues)
+        if (firstEnd == numberOfValues || (copiesHoldOnlyStretches && lastTestIn[block.index()] < firstEnd))
             continue;
         BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
@@ -1364,6 +1390,8 @@ struct NamedUse {
     bool isOnEveryPath { true };
     bool callsBuiltinMethod { false };
     bool isAnsweredByBuiltins { false };
+    // Built-ins have a member of the name too, which the program does not use.
+    bool isNameOfUnusedBuiltin { false };
 };
 
 struct LayoutsToTest {
@@ -1530,7 +1558,7 @@ static bool findsSetterOfProgram(const Program& program, PropertyKeyID key)
     });
 }
 
-static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
+static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key, bool& isNameOfUnusedBuiltin)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
@@ -1546,8 +1574,12 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
         if (found.outcome != BuiltinMemberLookup::Outcome::Found)
             return false;
         BuiltinID member = builtins.canonicalID(found.member);
+        // Flow lists how the program uses each built-in. A member that no access of the program is seen to reach speaks for no receiver, though code that nobody has seen may come by it.
+        bool isUnused = !context.inputs.flow.usesOf(member).containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Written });
         // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
-        return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
+        bool isOfOtherKind = (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
+        isNameOfUnusedBuiltin |= isUnused && !isOfOtherKind;
+        return isUnused || isOfOtherKind;
     });
 }
 
@@ -1586,10 +1618,11 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             bool tellsLayouts = tellsLayoutsApart(program, key);
             bool isBuiltinMethodCall = !tellsLayouts && callsBuiltinMethod(context, id, key);
             // Among the layouts such a name tells as much as any other. Whether the object has a layout at all is for the other names to say.
-            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isOfOtherKindInBuiltins(context, id, key);
+            bool isNameOfUnusedBuiltin = false;
+            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isOfOtherKindInBuiltins(context, id, key, isNameOfUnusedBuiltin);
             if (isAnsweredByBuiltins && !isOrdinaryText(program, key))
                 continue;
-            uses.append(NamedUse { { }, id, receiver, block, key, PayloadWord::receivers(opcode) ? access.receivers() : LayoutSetID(), demandOf(context, id, key), true, isBuiltinMethodCall, isAnsweredByBuiltins });
+            uses.append(NamedUse { { }, id, receiver, block, key, PayloadWord::receivers(opcode) ? access.receivers() : LayoutSetID(), demandOf(context, id, key), true, isBuiltinMethodCall, isAnsweredByBuiltins, isNameOfUnusedBuiltin && !isAnsweredByBuiltins });
         }
     }
     return uses;
@@ -1743,8 +1776,9 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     return { LayoutList(kept.span()), kept.size() < layouts.size() };
 }
 
-// Whoever gets hold of an object may store to it. Where flow knows every writer of a field, no object with that field has reached code that flow does not see, and none comes out of it.
-static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
+// Flow lists on each access of a field the layouts that it saw arrive there. Beside those, only an object that has escaped can arrive.
+// An access of a method has no such list, so it rules out nothing.
+static LayoutList withoutLayoutsThatCannotArrive(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
     LayoutList layoutsSeenToArrive;
     for (const NamedUse& use : uses) {
@@ -1753,11 +1787,10 @@ static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::spa
     }
     LayoutList kept;
     for (LayoutID layout : layouts) {
-        bool staysInSight = std::ranges::any_of(uses, [&](const NamedUse& use) {
-            std::optional<FieldReference> field = findField(program, layout, use.key, BaseChain::Predicted);
-            return field && fieldAt(program, *field).flow.location.writers == WriterState::AllKnown;
+        bool wouldBeListed = std::ranges::any_of(uses, [&](const NamedUse& use) {
+            return findField(program, layout, use.key, BaseChain::Predicted).has_value();
         });
-        if (!staysInSight || layoutsSeenToArrive.contains(layout))
+        if (!wouldBeListed || !program.at(layout).flow.neverEscapes || layoutsSeenToArrive.contains(layout))
             kept.add(layout);
     }
     return kept;
@@ -1784,7 +1817,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
             return LayoutList();
         LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
         if (layouts.size() <= maxLayouts)
-            layouts = withoutLayoutsThatStayInSight(program, uses, layouts);
+            layouts = withoutLayoutsThatCannotArrive(program, uses, layouts);
         if (!layouts.isEmpty())
             return layouts;
     }
@@ -1800,7 +1833,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
                 layoutsWithAnyName.add(layout);
         }
     }
-    return withoutLayoutsThatStayInSight(program, uses, layoutsWithAnyName);
+    return withoutLayoutsThatCannotArrive(program, uses, layoutsWithAnyName);
 }
 
 static Expected<bool> resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)
@@ -1980,8 +2013,22 @@ static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassCont
     return layouts;
 }
 
+static LayoutList layoutsUnderOneTypeWith(const Program& program, const auto& expected, const LayoutList& candidates)
+{
+    auto isSupertypeOf = [&](LayoutID above, LayoutID below) { return std::ranges::binary_search(program.at(below).supertypes, above); };
+    LayoutList related;
+    for (LayoutID candidate : candidates) {
+        bool isRelated = std::ranges::any_of(expected, [&](LayoutID layout) {
+            return isSupertypeOf(layout, candidate) || isSupertypeOf(candidate, layout) || std::ranges::any_of(program.at(layout).supertypes, [&](LayoutID shared) { return isSupertypeOf(shared, candidate); });
+        });
+        if (isRelated)
+            related.add(candidate);
+    }
+    return related;
+}
+
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues, ExpectedValues& widenedValues)
 {
     Function& function = context.function;
     auto expectLayouts = [&](std::span<const NamedUse> uses, const Expected<LayoutList>& layouts) {
@@ -2000,6 +2047,35 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
         });
     });
+    // In untyped code, a value's expected type is derived from the places observed to produce it. An escaped object arrives without an observed producer:
+    // if the analysis saw nothing arrive either, the escaped layouts that hold the names are added to the expected type.
+    // A name that built-ins also have says little about what arrives, and a test only handles so many layouts.
+    // In a checked function of the program only the layouts that the checker put under one type with an expected one are added: `[{ rank }, { a, rank }][i]`.
+    bool followsCheckerAlone = function.has(FunctionFlags::IsChecked) && isLibraryCode(context.program, function);
+    bool isExpectedFromSourceOnly = isFollowed && !followsCheckerAlone && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
+    if (isExpectedFromSourceOnly && !waitsForOtherSubjects) {
+        LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
+        if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
+            for (const NamedUse& use : usesOfSubject) {
+                TypeID expected = function.at(use.receiver).expected().predicted();
+                if (!expected || !context.types.at(expected).layouts)
+                    continue;
+                LayoutList added = others.layouts.predicted();
+                if (function.has(FunctionFlags::IsChecked))
+                    added = layoutsUnderOneTypeWith(context.program, membersOf(context.program, context.types.at(expected)), added);
+                if (added.isEmpty())
+                    continue;
+                Type arriving = Type::forLayouts(added.span(), context.types);
+                if (arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+                    continue;
+                Type widened = context.types.at(expected).unionWith(arriving, context.types);
+                if (membersOf(context.program, widened).size() <= context.limit(LimitID::MaxDispatchCases))
+                    widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
+            }
+        }
+    }
+    if (isExpectedFromSourceOnly && waitsForOtherSubjects)
+        return false;
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
 
@@ -2026,6 +2102,12 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
         noteMet(layoutsStoredUnderName);
         expectLayouts(uses, layoutsStoredUnderName);
         return true;
+    }
+    // `this._events[type]` with the type "data", which is also a member of built-ins: a dictionary is stored under `_events`, and no layout that answers. A test for a layout would turn the dictionary away.
+    if (std::ranges::any_of(uses, &NamedUse::isNameOfUnusedBuiltin)) {
+        auto read = propertyReadBy(context.program, function.at(context.analyses.identityOf(uses[0].receiver)));
+        if (read && read->second && context.inputs.heat.isDictionaryStoredUnder(read->second).predicted())
+            return true;
     }
     LayoutsToTest chosen = findLayoutsToTestFor(context, uses, maxDeclarations, context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
     if (chosen.layouts.predicted().isEmpty())
@@ -2204,7 +2286,7 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
 
 void reportUnionReceiverTests(TestSiteReporter& reporter)
 {
-    reporter.forEachCandidate([&](const Value& use) {
+    reporter.forEachCandidate({ Opcode::PropGet, Opcode::PropSet, Opcode::Call }, [&](const Value& use) {
         auto reportTestFor = [&](ValueID receiver, const Type& tested) {
             reporter.report({ makeTypeTest(receiver, reporter.types().intern(tested)) }, reporter.analyses().effectsOf(reporter.use()).normal);
         };
@@ -2271,16 +2353,23 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
+    ExpectedValues widenedValues;
     Expected<LayoutList> layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
-        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))
+        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues, widenedValues))
             unsettledSubjects.constructAndAppend(usesOfSubject);
     }
     if (!unsettledSubjects.isEmpty())
         addLayoutsOfKnownReceivers(context, layoutsMet);
     for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
-        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
+        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues, widenedValues);
+    for (auto [value, expected] : widenedValues) {
+        if (findUncheckedEntryParameter(context.function, value))
+            continue;
+        expectations.expect(value, expected.predicted());
+        expectations.didGuessFromNames(value);
+    }
     return expectValues(context, expectedValues, expectations);
 }
 
@@ -3865,6 +3954,62 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
     return outcome;
 }
 
+// `index in list`, where the list has a known storage kind, nothing on its prototype chain has indexed properties and the key is an index, performs the check that the read of `list[index]` needs first: one test serves both.
+// The arm it fails into is the program's, not the generic form of an access. The test records that, for code that looks for a place where an access can restart.
+static PassOutcome requestElementPositions(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::HasArrayElement))
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID id = values[index];
+            const Value& question = function.at(id);
+            if (question.opcode != Opcode::HasArrayElement || !question.keyIsIntegral() || !hasArrayStorageForm(question.arrayStorage()))
+                continue;
+            const Type& position = context.program.typeOf(function, question.positionOperand());
+            if (!isArrayIndex(position) || !position.isInteger())
+                continue;
+            ValueID array = question.arrayOperand();
+            ValueID key = question.positionOperand();
+            ValueID guard = question.guardOperand();
+            ArrayStorage arrayStorage = question.arrayStorage();
+            const Type& list = context.program.typeOf(function, array);
+            // If the storage kind is only tested, reads of numbers are copied for another kind, and an element that does not fit the copy leaves through the arm of the read's own test.
+            const ClassPart* part = list.singleBuiltinClass();
+            bool storageIsProven = part && part->contentsAreProven && part->arrayStorage == arrayStorage && !list.mayBeUndefinedOrNull();
+            if (!storageIsProven && (holdsOnlyNumbers(arrayStorage) || typeOfContentsRead({ context.program, function, context.types, TypeLevel::Expected }, list, ContentsSlot::Element).withoutPrimitives(Primitive::Undefined).isNumber()))
+                continue;
+            bool isDense = pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Dense);
+            // A validating build also evaluates the original query and compares the two results.
+            if (context.build.validates()) {
+                builder.setOrigin(question.origin());
+                ValueID asWritten = builder.insertBefore(ProgramPoint { block, index }, Value(question));
+                builder.insertBefore(ProgramPoint { block, index + 1 }, IRBuilder::make(Opcode::ValidateSameValue, { asWritten, id }));
+            }
+            Value& test = function.edit(id);
+            test.become(isDense ? Opcode::IsInBounds : Opcode::IsElementPresent);
+            test.setArrayOperand(array);
+            test.setPositionOperand(key);
+            test.setIsFromProgram(true);
+            if (!isDense) {
+                test.setGuardOperand(guard);
+                test.setArrayStorage(arrayStorage);
+                test.setKeyIsIntegral(true);
+            }
+            outcome = PassOutcome::Changed;
+        }
+    }
+    if (outcome == PassOutcome::Changed) {
+        builder.applyInsertions();
+        context.analyses.didChangeValues();
+    }
+    return outcome;
+}
+
 // `x !== x`: only NaN differs from itself. So what is no number has its answer, and the test for a number is no guess that sends other values into a copy.
 static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext& context)
 {
@@ -3923,6 +4068,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
+    marked |= requestElementPositions(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

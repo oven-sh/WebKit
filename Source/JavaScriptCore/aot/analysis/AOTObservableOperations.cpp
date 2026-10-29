@@ -215,9 +215,13 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
             bool isListed = !!now;
             if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id))
                 result.append({ id, blockID, value.opcode, OperationThatWent::How::LostItsHandler, OperationThatWent::Under::TypesAsTheyStand });
-            // An operation that has become another one is the matter of whoever rewrote it.
-            if (isListed)
+            // The pass that rewrote an operation into another one is responsible for it: it may know operand values that the types do not show.
+            // The replacement may have no effect and be removed by a later run, which does not report it, so tell the outer listener now.
+            if (isListed) {
+                if (reasons.outer() && after.at(now).opcode != value.opcode && isSeenByProgram(declaredBoundOf(value.opcode)))
+                    reasons.addForOperationThatWent(id, InPlaceOfOperation::NothingByProofOfThePass);
                 continue;
+            }
             if (!blockIsReached || (endWasCut && index >= numberOfValuesUpToLastOneLeft))
                 continue;
             const Effects& bound = declaredBoundOf(value.opcode);

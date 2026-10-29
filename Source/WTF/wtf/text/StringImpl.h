@@ -271,6 +271,14 @@ public:
     WTF_EXPORT_PRIVATE static RefPtr<StringImpl> create(std::span<const char8_t>);
 
     static Ref<StringImpl> createSubstringSharingImpl(StringImpl&, unsigned offset, unsigned length);
+    static Ref<StringImpl> createSubstringSharingImpl(StringImpl& rep, unsigned offset, unsigned length, unsigned hash)
+    {
+        Ref string = createSubstringSharingImpl(rep, offset, length);
+        ASSERT(hash == (string->is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(string->span8()) : StringHasher::computeHashAndMaskTop8Bits(string->span16())));
+        if (!string->isStatic() && !string->hasHash())
+            string->setHash(hash);
+        return string;
+    }
 
     ALWAYS_INLINE static Ref<StringImpl> create(ASCIILiteral literal) { return createWithoutCopying(literal.span8()); }
 
@@ -283,6 +291,18 @@ public:
         Ref string = create(characters);
         if (!string->isStatic() && !string->hasHash())
             string->setHash(hash);
+        return string;
+    }
+    static RefPtr<StringImpl> tryCreate(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        ASSERT(!characters.empty());
+        ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));
+        std::span<Latin1Character> copy;
+        RefPtr string = tryCreateUninitialized(characters.size(), copy);
+        if (!string) [[unlikely]]
+            return nullptr;
+        copyCharacters(copy, characters);
+        string->setHash(hash);
         return string;
     }
 

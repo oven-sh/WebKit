@@ -106,7 +106,11 @@ void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode
         ASSERT(m_freeList.allocationWillFail());
         return;
     }
-    
+
+#if ENABLE(AOT)
+    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
+        AOT::AllocationCounts::willStopAllocating(m_directory->markedSpace().heap().vm(), *this);
+#endif
     m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;
@@ -194,7 +198,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     if (!block) [[unlikely]] {
         if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
             failureMode = AllocationFailureMode::Assert;
-        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+        if (heap.tryCollectForExhaustedCage(deferralContext, subspace->alignedMemoryAllocator())) {
             if (m_currentBlock)
                 return allocate(heap, cellSize, deferralContext, failureMode);
             result = tryAllocateWithoutCollecting(cellSize);

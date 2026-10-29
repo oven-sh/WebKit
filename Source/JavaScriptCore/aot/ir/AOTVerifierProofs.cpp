@@ -225,8 +225,12 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
     };
     // The blocks that are reached from the operation by no arm.
     BitVector reachedByNoArm;
+    Vector<ValueID, 8> copiesOfValue;
+    BitVector isCopyOfValue;
     auto findArms = [&] {
         arms.clear();
+        copiesOfValue.clear();
+        isCopyOfValue.clearAll();
         for (ValueID mode : modes) {
             for (const Use& use : useLists.usesOf(mode)) {
                 if (use.kind == Use::Kind::TerminatorOperand && m_function.at(use.block).terminator.kind == TerminatorKind::Switch)
@@ -247,32 +251,53 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
             });
         }
     };
-    Vector<ValueID, 8> copiesOfValue;
-    BitVector isCopyOfValue;
     auto addCopyOfValue = [&](ValueID id) {
         if (!isCopyOfValue.set(id.index()))
             copiesOfValue.append(id);
     };
+    // A copy that has passed an arm is not followed: its mode has been asked.
     auto findCopiesOfValue = [&] {
         std::ranges::for_each(sameValues, addCopyOfValue);
         for (size_t next = 0; next < copiesOfValue.size(); ++next) {
             for (const Use& use : useLists.usesOf(copiesOfValue[next])) {
-                if (use.isEdgeUse())
-                    addCopyOfValue(parameterTaking(use));
-                else if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(m_function.at(use.user).opcode))
+                if (!reachedByNoArm.quickGet(use.block.index()))
+                    continue;
+                if (use.isEdgeUse()) {
+                    if (!arms.contains(use.edge()))
+                        addCopyOfValue(parameterTaking(use));
+                } else if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(m_function.at(use.user).opcode))
                     addCopyOfValue(use.user);
             }
         }
     };
-    // An edge drops the value where it passes no copy of it and no copy is defined above the target: past the edge the value is named only after the operation has run again.
+    auto blocksReachedBeforeNextRun = [&](BlockID start) {
+        BitVector reached(m_function.blocks.size());
+        reached.quickSet(start.index());
+        Vector<BlockID, 16> worklist { start };
+        while (!worklist.isEmpty()) {
+            forEachOutgoingEdge(m_function, worklist.takeLast(), [&](Edge, const Target& target) {
+                if (target.block != blockOfSuspension && !reached.quickSet(target.block.index()))
+                    worklist.append(target.block);
+            });
+        }
+        return reached;
+    };
+    // An edge drops the value where it passes no copy of it, and no copy defined above the target is named past the edge before the operation runs again.
     auto dropsValue = [&](Edge edge) {
         if (copiesOfValue.isEmpty())
             findCopiesOfValue();
         const Target& target = targetOf(m_function, edge);
         if (target.arguments.containsIf([&](ValueID argument) { return isCopyOfValue.get(argument.index()); }))
             return false;
+        std::optional<BitVector> reached;
         return std::ranges::none_of(copiesOfValue, [&](ValueID value) {
-            return analyses().dominators().strictlyDominates(useLists.locationOf(value).block, target.block);
+            if (!analyses().dominators().strictlyDominates(useLists.locationOf(value).block, target.block))
+                return false;
+            if (!reached)
+                reached = blocksReachedBeforeNextRun(target.block);
+            return std::ranges::any_of(useLists.usesOf(value), [&](const Use& use) {
+                return reached->quickGet(use.block.index());
+            });
         });
     };
     // A parameter stands for the mode where every edge that is reached by no arm hands the mode on or drops the value. On any other edge the mode has been asked, or the edge comes from elsewhere.

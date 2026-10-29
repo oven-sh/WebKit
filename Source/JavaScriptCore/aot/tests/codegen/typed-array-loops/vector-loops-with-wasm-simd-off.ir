@@ -1,0 +1,730 @@
+# function checksum(a) { let s = 0; for (let i = 0; i < a.length; ++i) s = (s * 31 + a[i]) % 65521; return s; }
+# function zeroThirty(a) { for (var j = 0; j < 30; ++j) a[j] = 0; return a[3]; }
+# function onesToLength(a) { for (let j = 0; j < a.length; ++j) a[j] = 1; }
+# function fillInt8(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; }
+# function fillInt32(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; }
+# function fillFloat32(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; }
+# function fillFloat64(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; }
+# let calls = 0;
+# function count(round) { calls += round; return calls; }
+# function fillInRounds(a, rounds, v) { for (let round = 0; round < rounds; ++round) { count(round); for (let j = 0; j < a.length; ++j) a[j] = v; a[round] = round; } }
+# function mix(a, n, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29) { for (let j = 0; j < n; ++j) a[j] = ((((((((((((((((((((((((((((((a[j] + v0) ^ v1) + v2) ^ v3) + v4) ^ v5) + v6) ^ v7) + v8) ^ v9) + v10) ^ v11) + v12) ^ v13) + v14) ^ v15) + v16) ^ v17) + v18) ^ v19) + v20) ^ v21) + v22) ^ v23) + v24) ^ v25) + v26) ^ v27) + v28) ^ v29); }
+# const uint16 = new Uint16Array(37);
+# for (let j = 0; j < uint16.length; ++j) uint16[j] = 7;
+# report(checksum(uint16));
+# report(zeroThirty(uint16));
+# report(checksum(uint16));
+# const uint8 = new Uint8Array(45);
+# onesToLength(uint8);
+# report(checksum(uint8));
+# const int8 = new Int8Array(50);
+# fillInt8(int8, 41, -3);
+# report(checksum(int8));
+# fillInt8(int8, 3, 5);
+# report(checksum(int8));
+# const int32 = new Int32Array(23);
+# fillInt32(int32, 21, 123456789);
+# report(checksum(int32));
+# fillInt32(int32, 6, -2);
+# report(checksum(int32));
+# const float32 = new Float32Array(19);
+# fillFloat32(float32, 18, 1.5);
+# report(checksum(float32));
+# fillFloat32(float32, 5, -0.25);
+# report(checksum(float32));
+# const float64 = new Float64Array(11);
+# fillFloat64(float64, 9, 2.5);
+# report(checksum(float64));
+# fillFloat64(float64, 2, 1e300);
+# report(float64[1]);
+# const int16 = new Int16Array(43);
+# fillInRounds(int16, 5, 258);
+# report(checksum(int16));
+# fillInRounds(int16, 2, -7);
+# report(checksum(int16));
+# report(calls);
+# const mixed = new Int32Array(29);
+# for (let j = 0; j < mixed.length; ++j) mixed[j] = j * 1000003;
+# mix(mixed, 27, 12345, 506964459, 1013916573, 1520868687, 2027820801, 387289268, 894241382, 1401193496, 1908145610, 267614077, 774566191, 1281518305, 1788470419, 147938886, 654891000, 1161843114, 1668795228, 28263695, 535215809, 1042167923, 1549120037, 2056072151, 415540618, 922492732, 1429444846, 1936396960, 295865427, 802817541, 1309769655, 1816721769);
+# report(checksum(mixed));
+# mix(mixed, 29, -7, -40510, -81013, -121516, -162019, -202522, -243025, -283528, -324031, -364534, -405037, -445540, -486043, -526546, -567049, -607552, -648055, -688558, -729061, -769564, -810067, -850570, -891073, -931576, -972079, -12579, -53082, -93585, -134088, -174591);
+# report(checksum(mixed));
+# report("end");
+# Vector loops over typed arrays, compiled and run with Options::useWasmSIMD() off. The policy of a build allows SIMD, whatever that option says.
+# fillInRounds calls a function between two runs of a vector loop that stores the same value. mix keeps more vectors alive than x86-64 has registers.
+# At the end the shell runs the same source itself and compares every answer.
+# FORM: AsRead
+# JSC-OPTIONS: --useWasmSIMD=0
+# OPTIONS: disable=pass:InlineCalls
+# RUN: run-in-shell --useWasmSIMD=0 (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function checksum(a) { let s = 0; for (let i = 0; i < a.length; ++i) s = (s * 31 + a[i]) % 65521; return s; } function zeroThirty(a) { for (var j = 0; j < 30; ++j) a[j] = 0; return a[3]; } function onesToLength(a) { for (let j = 0; j < a.length; ++j) a[j] = 1; } function fillInt8(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; } function fillInt32(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; } function fillFloat32(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; } function fillFloat64(a, n, v) { for (let j = 0; j < n; ++j) a[j] = v; } let calls = 0; function count(round) { calls += round; return calls; } function fillInRounds(a, rounds, v) { for (let round = 0; round < rounds; ++round) { count(round); for (let j = 0; j < a.length; ++j) a[j] = v; a[round] = round; } } function mix(a, n, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29) { for (let j = 0; j < n; ++j) a[j] = ((((((((((((((((((((((((((((((a[j] + v0) ^ v1) + v2) ^ v3) + v4) ^ v5) + v6) ^ v7) + v8) ^ v9) + v10) ^ v11) + v12) ^ v13) + v14) ^ v15) + v16) ^ v17) + v18) ^ v19) + v20) ^ v21) + v22) ^ v23) + v24) ^ v25) + v26) ^ v27) + v28) ^ v29); } const uint16 = new Uint16Array(37); for (let j = 0; j < uint16.length; ++j) uint16[j] = 7; report(checksum(uint16)); report(zeroThirty(uint16)); report(checksum(uint16)); const uint8 = new Uint8Array(45); onesToLength(uint8); report(checksum(uint8)); const int8 = new Int8Array(50); fillInt8(int8, 41, -3); report(checksum(int8)); fillInt8(int8, 3, 5); report(checksum(int8)); const int32 = new Int32Array(23); fillInt32(int32, 21, 123456789); report(checksum(int32)); fillInt32(int32, 6, -2); report(checksum(int32)); const float32 = new Float32Array(19); fillFloat32(float32, 18, 1.5); report(checksum(float32)); fillFloat32(float32, 5, -0.25); report(checksum(float32)); const float64 = new Float64Array(11); fillFloat64(float64, 9, 2.5); report(checksum(float64)); fillFloat64(float64, 2, 1e300); report(float64[1]); const int16 = new Int16Array(43); fillInRounds(int16, 5, 258); report(checksum(int16)); fillInRounds(int16, 2, -7); report(checksum(int16)); report(calls); const mixed = new Int32Array(29); for (let j = 0; j < mixed.length; ++j) mixed[j] = j * 1000003; mix(mixed, 27, 12345, 506964459, 1013916573, 1520868687, 2027820801, 387289268, 894241382, 1401193496, 1908145610, 267614077, 774566191, 1281518305, 1788470419, 147938886, 654891000, 1161843114, 1668795228, 28263695, 535215809, 1042167923, 1549120037, 2056072151, 415540618, 922492732, 1429444846, 1936396960, 295865427, 802817541, 1309769655, 1816721769); report(checksum(mixed)); mix(mixed, 29, -7, -40510, -81013, -121516, -162019, -202522, -243025, -283528, -324031, -364534, -405037, -445540, -486043, -526546, -567049, -607552, -648055, -688558, -729061, -769564, -810067, -850570, -891073, -931576, -972079, -12579, -53082, -93585, -134088, -174591); report(checksum(mixed)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 18 of 18 of 18
+# CHECK-NEXT: exited with 0
+# RUN(AIR): lower-to-air f3 f4 f5 f6 f7 f8 f9 f10
+# REQUIRES(AIR): unsanitized-code
+# AIR-LABEL: function f3 name="zeroThirty"
+# AIR: MoveVector
+# AIR-LABEL: function f4 name="onesToLength"
+# AIR: MoveVector
+# AIR-LABEL: function f5 name="fillInt8"
+# AIR: MoveVector
+# AIR-LABEL: function f6 name="fillInt32"
+# AIR: MoveVector
+# AIR-LABEL: function f7 name="fillFloat32"
+# AIR: MoveVector
+# AIR-LABEL: function f8 name="fillFloat64"
+# AIR: MoveVector
+# AIR-LABEL: function f9 name="fillInRounds"
+# AIR: MoveVector
+# AIR-LABEL: function f10 name="mix"
+# AIR: MoveVector
+# RUN(SPILLS): lower-to-air f10
+# REQUIRES(SPILLS): x86_64 unsanitized-code
+# SPILLS: MoveVector %xmm{{*}}, {{*}}(%r{{*}}p)
+# SPILLS: MoveVector {{*}}(%r{{*}}p), %xmm
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f8 @0
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f9 @0
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f10 @0
+    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v18 = Integer @558
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @558
+    PutModuleVariable v19 variable=g1 @550
+    v21 = Builtin builtin=Uint16Array @1236
+    v22 = Integer integer=37 @1248
+    v23 = Construct v21, -, v22 calleeName="Uint16Array" @1236 constructs
+    v24 = Convert v23 declared={type=undefined|null|Uint16Array flags=[IsExpected]} @1232
+    v25 = Integer @1266
+    v26 = Convert v25 declared={type=i32 flags=[IsExpected]} @1266
+    Jump -> next b2(v26) @1262
+  b2(v27):
+    LoopHint @1262
+    v29 = PropGet v24 key="length" @1273
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @1273
+    v31 = Less v27, v30 @1269
+    Branch v31 -> taken b3(| 0), notTaken b6(| 0) @1269
+  b3(v32):
+    Jump -> next b4() @1269
+  b4():
+    v33 = Integer integer=7 @1305
+    ElemSet v24, v32, v33 @1293
+    Jump -> next b5() @1293
+  b5():
+    v35 = Increment v32 @1293
+    v36 = Convert v35 declared={type=i32 flags=[IsExpected]} @1290
+    Jump -> next b2(v36) @1290
+  b6(v37):
+    Jump -> next b7() @1269
+  b7():
+    v38 = Builtin builtin=GlobalThis @1308
+    v39 = PropGet v38 key="report" [isFreeName] @1308
+    v40 = Call v1, -, v24 calleeName="checksum" @1315
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @1315
+    v42 = Call v39, -, v41 calleeName="report" @1308
+    v43 = Builtin builtin=GlobalThis @1334
+    v44 = PropGet v43 key="report" [isFreeName] @1334
+    v45 = Call v3, -, v24 calleeName="zeroThirty" @1341
+    v46 = Convert v45 declared={type=number flags=[IsExpected]} @1341
+    v47 = Call v44, -, v46 calleeName="report" @1334
+    v48 = Builtin builtin=GlobalThis @1362
+    v49 = PropGet v48 key="report" [isFreeName] @1362
+    v50 = Call v1, -, v24 calleeName="checksum" @1369
+    v51 = Convert v50 declared={type=number flags=[IsExpected]} @1369
+    v52 = Call v49, -, v51 calleeName="report" @1362
+    v53 = Builtin builtin=Uint8Array @1406
+    v54 = Integer integer=45 @1417
+    v55 = Construct v53, -, v54 calleeName="Uint8Array" @1406 constructs
+    v56 = Convert v55 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @1402
+    v57 = Call v5, -, v56 calleeName="onesToLength" @1422
+    v58 = Builtin builtin=GlobalThis @1443
+    v59 = PropGet v58 key="report" [isFreeName] @1443
+    v60 = Call v1, -, v56 calleeName="checksum" @1450
+    v61 = Convert v60 declared={type=number flags=[IsExpected]} @1450
+    v62 = Call v59, -, v61 calleeName="report" @1443
+    v63 = Builtin builtin=Int8Array @1485
+    v64 = Integer integer=50 @1495
+    v65 = Construct v63, -, v64 calleeName="Int8Array" @1485 constructs
+    v66 = Convert v65 declared={type=undefined|null|Int8Array flags=[IsExpected]} @1481
+    v67 = Integer integer=41 @1515
+    v68 = Integer integer=-3 @1519
+    v69 = Call v7, -, v66, v67, v68 calleeName="fillInt8" @1500
+    v70 = Builtin builtin=GlobalThis @1524
+    v71 = PropGet v70 key="report" [isFreeName] @1524
+    v72 = Call v1, -, v66 calleeName="checksum" @1531
+    v73 = Convert v72 declared={type=number flags=[IsExpected]} @1531
+    v74 = Call v71, -, v73 calleeName="report" @1524
+    v75 = Integer integer=3 @1563
+    v76 = Integer integer=5 @1566
+    v77 = Call v7, -, v66, v75, v76 calleeName="fillInt8" @1548
+    v78 = Builtin builtin=GlobalThis @1570
+    v79 = PropGet v78 key="report" [isFreeName] @1570
+    v80 = Call v1, -, v66 calleeName="checksum" @1577
+    v81 = Convert v80 declared={type=number flags=[IsExpected]} @1577
+    v82 = Call v79, -, v81 calleeName="report" @1570
+    v83 = Builtin builtin=Int32Array @1612
+    v84 = Integer integer=23 @1623
+    v85 = Construct v83, -, v84 calleeName="Int32Array" @1612 constructs
+    v86 = Convert v85 declared={type=undefined|null|Int32Array flags=[IsExpected]} @1608
+    v87 = Integer integer=21 @1645
+    v88 = Integer integer=123456789 @1649
+    v89 = Call v9, -, v86, v87, v88 calleeName="fillInt32" @1628
+    v90 = Builtin builtin=GlobalThis @1661
+    v91 = PropGet v90 key="report" [isFreeName] @1661
+    v92 = Call v1, -, v86 calleeName="checksum" @1668
+    v93 = Convert v92 declared={type=number flags=[IsExpected]} @1668
+    v94 = Call v91, -, v93 calleeName="report" @1661
+    v95 = Integer integer=6 @1703
+    v96 = Integer integer=-2 @1706
+    v97 = Call v9, -, v86, v95, v96 calleeName="fillInt32" @1686
+    v98 = Builtin builtin=GlobalThis @1711
+    v99 = PropGet v98 key="report" [isFreeName] @1711
+    v100 = Call v1, -, v86 calleeName="checksum" @1718
+    v101 = Convert v100 declared={type=number flags=[IsExpected]} @1718
+    v102 = Call v99, -, v101 calleeName="report" @1711
+    v103 = Builtin builtin=Float32Array @1756
+    v104 = Integer integer=19 @1769
+    v105 = Construct v103, -, v104 calleeName="Float32Array" @1756 constructs
+    v106 = Convert v105 declared={type=undefined|null|Float32Array flags=[IsExpected]} @1752
+    v107 = Integer integer=18 @1795
+    v108 = Double number=1.5 @1799
+    v109 = Call v11, -, v106, v107, v108 calleeName="fillFloat32" @1774
+    v110 = Builtin builtin=GlobalThis @1805
+    v111 = PropGet v110 key="report" [isFreeName] @1805
+    v112 = Call v1, -, v106 calleeName="checksum" @1812
+    v113 = Convert v112 declared={type=number flags=[IsExpected]} @1812
+    v114 = Call v111, -, v113 calleeName="report" @1805
+    v115 = Integer integer=5 @1853
+    v116 = Double number=-0.25 @1856
+    v117 = Call v11, -, v106, v115, v116 calleeName="fillFloat32" @1832
+    v118 = Builtin builtin=GlobalThis @1864
+    v119 = PropGet v118 key="report" [isFreeName] @1864
+    v120 = Call v1, -, v106 calleeName="checksum" @1871
+    v121 = Convert v120 declared={type=number flags=[IsExpected]} @1871
+    v122 = Call v119, -, v121 calleeName="report" @1864
+    v123 = Builtin builtin=Float64Array @1911
+    v124 = Integer integer=11 @1924
+    v125 = Construct v123, -, v124 calleeName="Float64Array" @1911 constructs
+    v126 = Convert v125 declared={type=undefined|null|Float64Array flags=[IsExpected]} @1907
+    v127 = Integer integer=9 @1950
+    v128 = Double number=2.5 @1953
+    v129 = Call v13, -, v126, v127, v128 calleeName="fillFloat64" @1929
+    v130 = Builtin builtin=GlobalThis @1959
+    v131 = PropGet v130 key="report" [isFreeName] @1959
+    v132 = Call v1, -, v126 calleeName="checksum" @1966
+    v133 = Convert v132 declared={type=number flags=[IsExpected]} @1966
+    v134 = Call v131, -, v133 calleeName="report" @1959
+    v135 = Integer integer=2 @2007
+    v136 = Double number=1e+300 @2010
+    v137 = Call v13, -, v126, v135, v136 calleeName="fillFloat64" @1986
+    v138 = Builtin builtin=GlobalThis @2018
+    v139 = PropGet v138 key="report" [isFreeName] @2018
+    v140 = Integer integer=1 @2025
+    v141 = ElemGet v126, v140 @2025
+    v142 = Convert v141 declared={type=number flags=[IsExpected]} @2025
+    v143 = Call v139, -, v142 calleeName="report" @2018
+    v144 = Builtin builtin=Int16Array @2056
+    v145 = Integer integer=43 @2067
+    v146 = Construct v144, -, v145 calleeName="Int16Array" @2056 constructs
+    v147 = Convert v146 declared={type=undefined|null|Int16Array flags=[IsExpected]} @2052
+    v148 = Integer integer=5 @2092
+    v149 = Integer integer=258 @2095
+    v150 = Call v15, -, v147, v148, v149 calleeName="fillInRounds" @2072
+    v151 = Builtin builtin=GlobalThis @2101
+    v152 = PropGet v151 key="report" [isFreeName] @2101
+    v153 = Call v1, -, v147 calleeName="checksum" @2108
+    v154 = Convert v153 declared={type=number flags=[IsExpected]} @2108
+    v155 = Call v152, -, v154 calleeName="report" @2101
+    v156 = Integer integer=2 @2146
+    v157 = Integer integer=-7 @2149
+    v158 = Call v15, -, v147, v156, v157 calleeName="fillInRounds" @2126
+    v159 = Builtin builtin=GlobalThis @2154
+    v160 = PropGet v159 key="report" [isFreeName] @2154
+    v161 = Call v1, -, v147 calleeName="checksum" @2161
+    v162 = Convert v161 declared={type=number flags=[IsExpected]} @2161
+    v163 = Call v160, -, v162 calleeName="report" @2154
+    v164 = Builtin builtin=GlobalThis @2179
+    v165 = PropGet v164 key="report" [isFreeName] @2179
+    v166 = GetModuleVariable variable=g1 @2191 @2186
+    v167 = CheckInitialized v166 name="calls" @2191 @2186
+    v168 = Call v165, -, v167 calleeName="report" @2179
+    v169 = Builtin builtin=Int32Array @2212
+    v170 = Integer integer=29 @2223
+    v171 = Construct v169, -, v170 calleeName="Int32Array" @2212 constructs
+    v172 = Convert v171 declared={type=undefined|null|Int32Array flags=[IsExpected]} @2208
+    v173 = Integer @2241
+    v174 = Convert v173 declared={type=i32 flags=[IsExpected]} @2241
+    Jump -> next b8(v174) @2237
+  b8(v175):
+    LoopHint @2237
+    v177 = PropGet v172 key="length" @2248
+    v178 = Convert v177 declared={type=number flags=[IsExpected]} @2248
+    v179 = Less v175, v178 @2244
+    Branch v179 -> taken b9(| 0), notTaken b12(| 0) @2244
+  b9(v180):
+    Jump -> next b10() @2244
+  b10():
+    v181 = Integer integer=1000003 @2282
+    v182 = Mul v180, v181 @2278
+    ElemSet v172, v180, v182 @2267
+    Jump -> next b11() @2267
+  b11():
+    v184 = Increment v180 @2267
+    v185 = Convert v184 declared={type=i32 flags=[IsExpected]} @2264
+    Jump -> next b8(v185) @2264
+  b12(v186):
+    Jump -> next b13() @2244
+  b13():
+    v187 = Integer integer=27 @2302
+    v188 = Integer integer=12345 @2306
+    v189 = Integer integer=506964459 @2313
+    v190 = Integer integer=1013916573 @2324
+    v191 = Integer integer=1520868687 @2336
+    v192 = Integer integer=2027820801 @2348
+    v193 = Integer integer=387289268 @2360
+    v194 = Integer integer=894241382 @2371
+    v195 = Integer integer=1401193496 @2382
+    v196 = Integer integer=1908145610 @2394
+    v197 = Integer integer=267614077 @2406
+    v198 = Integer integer=774566191 @2417
+    v199 = Integer integer=1281518305 @2428
+    v200 = Integer integer=1788470419 @2440
+    v201 = Integer integer=147938886 @2452
+    v202 = Integer integer=654891000 @2463
+    v203 = Integer integer=1161843114 @2474
+    v204 = Integer integer=1668795228 @2486
+    v205 = Integer integer=28263695 @2498
+    v206 = Integer integer=535215809 @2508
+    v207 = Integer integer=1042167923 @2519
+    v208 = Integer integer=1549120037 @2531
+    v209 = Integer integer=2056072151 @2543
+    v210 = Integer integer=415540618 @2555
+    v211 = Integer integer=922492732 @2566
+    v212 = Integer integer=1429444846 @2577
+    v213 = Integer integer=1936396960 @2589
+    v214 = Integer integer=295865427 @2601
+    v215 = Integer integer=802817541 @2612
+    v216 = Integer integer=1309769655 @2623
+    v217 = Integer integer=1816721769 @2635
+    v218 = Call v17, -, v172, v187, v188, v189, v190, v191, v192, v193, v194, v195, v196, v197, v198, v199, v200, v201, v202, v203, v204, v205, v206, v207, v208, v209, v210, v211, v212, v213, v214, v215, v216, v217 calleeName="mix" @2291
+    v219 = Builtin builtin=GlobalThis @2648
+    v220 = PropGet v219 key="report" [isFreeName] @2648
+    v221 = Call v1, -, v172 calleeName="checksum" @2655
+    v222 = Convert v221 declared={type=number flags=[IsExpected]} @2655
+    v223 = Call v220, -, v222 calleeName="report" @2648
+    v224 = Integer integer=29 @2684
+    v225 = Integer integer=-7 @2688
+    v226 = Integer integer=-40510 @2692
+    v227 = Integer integer=-81013 @2700
+    v228 = Integer integer=-121516 @2708
+    v229 = Integer integer=-162019 @2717
+    v230 = Integer integer=-202522 @2726
+    v231 = Integer integer=-243025 @2735
+    v232 = Integer integer=-283528 @2744
+    v233 = Integer integer=-324031 @2753
+    v234 = Integer integer=-364534 @2762
+    v235 = Integer integer=-405037 @2771
+    v236 = Integer integer=-445540 @2780
+    v237 = Integer integer=-486043 @2789
+    v238 = Integer integer=-526546 @2798
+    v239 = Integer integer=-567049 @2807
+    v240 = Integer integer=-607552 @2816
+    v241 = Integer integer=-648055 @2825
+    v242 = Integer integer=-688558 @2834
+    v243 = Integer integer=-729061 @2843
+    v244 = Integer integer=-769564 @2852
+    v245 = Integer integer=-810067 @2861
+    v246 = Integer integer=-850570 @2870
+    v247 = Integer integer=-891073 @2879
+    v248 = Integer integer=-931576 @2888
+    v249 = Integer integer=-972079 @2897
+    v250 = Integer integer=-12579 @2906
+    v251 = Integer integer=-53082 @2914
+    v252 = Integer integer=-93585 @2922
+    v253 = Integer integer=-134088 @2930
+    v254 = Integer integer=-174591 @2939
+    v255 = Call v17, -, v172, v224, v225, v226, v227, v228, v229, v230, v231, v232, v233, v234, v235, v236, v237, v238, v239, v240, v241, v242, v243, v244, v245, v246, v247, v248, v249, v250, v251, v252, v253, v254 calleeName="mix" @2673
+    v256 = Builtin builtin=GlobalThis @2949
+    v257 = PropGet v256 key="report" [isFreeName] @2949
+    v258 = Call v1, -, v172 calleeName="checksum" @2956
+    v259 = Convert v258 declared={type=number flags=[IsExpected]} @2956
+    v260 = Call v257, -, v259 calleeName="report" @2949
+    v261 = Builtin builtin=GlobalThis @2974
+    v262 = PropGet v261 key="report" [isFreeName] @2974
+    v263 = String string="end" @2981
+    v264 = Call v262, -, v263 calleeName="report" @2974
+    v265 = Undefined @2974
+    Return v265 @2974
+}
+function f1 name="count" module=m0 position=561 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @561
+  b1():
+    v1 = GetModuleVariable variable=g1 @585
+    v2 = CheckInitialized v1 name="calls" @585
+    v3 = Add v2, v0 @585
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @585
+    v5 = GetModuleVariable variable=g1 @585
+    v6 = CheckInitialized v5 name="calls" @585
+    PutModuleVariable v4 variable=g1 @585
+    v8 = GetModuleVariable variable=g1 @608
+    v9 = CheckInitialized v8 name="calls" @608
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @608
+    Return v10 @608
+}
+function f2 name="checksum" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @0
+  b1():
+    v1 = Integer @31
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @31
+    v3 = Integer @47
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @47
+    Jump -> next b2(v2, v4) @43
+  b2(v5, v6):
+    LoopHint @43
+    v8 = PropGet v0 key="length" @54
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @54
+    v10 = Less v6, v9 @50
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @50
+  b3(v11):
+    Jump -> next b4() @50
+  b4():
+    v12 = Integer integer=31 @78
+    v13 = Mul v5, v12 @74
+    v14 = ElemGet v0, v11 @83
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @83
+    v16 = Add v13, v15 @74
+    v17 = Integer integer=65521 @91
+    v18 = Mod v16, v17 @69
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @69
+    Jump -> next b5() @69
+  b5():
+    v20 = Increment v11 @69
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @66
+    Jump -> next b2(v19, v21) @66
+  b6(v22):
+    Jump -> next b7() @50
+  b7():
+    v23 = Convert v5 declared={type=number flags=[IsExpected]} @105
+    Return v23 @105
+}
+function f3 name="zeroThirty" module=m0 position=110 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @110
+  b1():
+    v1 = Undefined @130
+    v2 = Integer @148
+    v3 = Convert v2 declared={type=undefined|i32 flags=[IsExpected]} @148
+    Jump -> next b2(v3) @144
+  b2(v4):
+    LoopHint @144
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]} @151
+    v7 = Integer integer=30 @155
+    v8 = Less v6, v7 @151
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0) @151
+  b3(v9):
+    Jump -> next b4() @151
+  b4():
+    v10 = Convert v9 declared={type=i32 flags=[IsExpected]} @166
+    v11 = Integer @171
+    ElemSet v0, v10, v11 @164
+    Jump -> next b5() @164
+  b5():
+    v13 = Increment v10 @164
+    v14 = Convert v13 declared={type=undefined|i32 flags=[IsExpected]} @161
+    Jump -> next b2(v14) @161
+  b6(v15):
+    Jump -> next b7() @151
+  b7():
+    v16 = Integer integer=3 @181
+    v17 = ElemGet v0, v16 @181
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @181
+    Return v18 @181
+}
+function f4 name="onesToLength" module=m0 position=189 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @189
+  b1():
+    v1 = Integer @229
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @229
+    Jump -> next b2(v2) @225
+  b2(v3):
+    LoopHint @225
+    v5 = PropGet v0 key="length" @236
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @236
+    v7 = Less v3, v6 @232
+    Branch v7 -> taken b3(| 0), notTaken b6(| 0) @232
+  b3(v8):
+    Jump -> next b4() @232
+  b4():
+    v9 = Integer integer=1 @258
+    ElemSet v0, v8, v9 @251
+    Jump -> next b5() @251
+  b5():
+    v11 = Increment v8 @251
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]} @248
+    Jump -> next b2(v12) @248
+  b6(v13):
+    Jump -> next b7() @232
+  b7():
+    v14 = Undefined @248
+    Return v14 @248
+}
+function f5 name="fillInt8" module=m0 position=263 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything, v2: anything):
+    Jump -> next b1() @263
+  b1():
+    v3 = Integer @305
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @305
+    Jump -> next b2(v4) @301
+  b2(v5):
+    LoopHint @301
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @312
+    v8 = Less v5, v7 @308
+    Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @308
+  b3(v9, v10):
+    Jump -> next b4() @308
+  b4():
+    v11 = Convert v2 declared={type=number flags=[IsExpected]} @327
+    ElemSet v0, v9, v11 @320
+    Jump -> next b5() @320
+  b5():
+    v13 = Increment v9 @320
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @317
+    Jump -> next b2(v14) @317
+  b6(v15, v16):
+    Jump -> next b7() @308
+  b7():
+    v17 = Undefined @317
+    Return v17 @317
+}
+function f6 name="fillInt32" module=m0 position=332 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything, v2: anything):
+    Jump -> next b1() @332
+  b1():
+    v3 = Integer @375
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @375
+    Jump -> next b2(v4) @371
+  b2(v5):
+    LoopHint @371
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @382
+    v8 = Less v5, v7 @378
+    Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @378
+  b3(v9, v10):
+    Jump -> next b4() @378
+  b4():
+    v11 = Convert v2 declared={type=number flags=[IsExpected]} @397
+    ElemSet v0, v9, v11 @390
+    Jump -> next b5() @390
+  b5():
+    v13 = Increment v9 @390
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @387
+    Jump -> next b2(v14) @387
+  b6(v15, v16):
+    Jump -> next b7() @378
+  b7():
+    v17 = Undefined @387
+    Return v17 @387
+}
+function f7 name="fillFloat32" module=m0 position=402 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything, v2: anything):
+    Jump -> next b1() @402
+  b1():
+    v3 = Integer @447
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @447
+    Jump -> next b2(v4) @443
+  b2(v5):
+    LoopHint @443
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @454
+    v8 = Less v5, v7 @450
+    Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @450
+  b3(v9, v10):
+    Jump -> next b4() @450
+  b4():
+    v11 = Convert v2 declared={type=number flags=[IsExpected]} @469
+    ElemSet v0, v9, v11 @462
+    Jump -> next b5() @462
+  b5():
+    v13 = Increment v9 @462
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @459
+    Jump -> next b2(v14) @459
+  b6(v15, v16):
+    Jump -> next b7() @450
+  b7():
+    v17 = Undefined @459
+    Return v17 @459
+}
+function f8 name="fillFloat64" module=m0 position=474 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything, v2: anything):
+    Jump -> next b1() @474
+  b1():
+    v3 = Integer @519
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @519
+    Jump -> next b2(v4) @515
+  b2(v5):
+    LoopHint @515
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @526
+    v8 = Less v5, v7 @522
+    Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @522
+  b3(v9, v10):
+    Jump -> next b4() @522
+  b4():
+    v11 = Convert v2 declared={type=number flags=[IsExpected]} @541
+    ElemSet v0, v9, v11 @534
+    Jump -> next b5() @534
+  b5():
+    v13 = Increment v9 @534
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @531
+    Jump -> next b2(v14) @531
+  b6(v15, v16):
+    Jump -> next b7() @522
+  b7():
+    v17 = Undefined @531
+    Return v17 @531
+}
+function f9 name="fillInRounds" module=m0 position=617 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: anything, v2: anything):
+    Jump -> next b1() @617
+  b1():
+    v3 = Integer @672
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @672
+    Jump -> next b2(v4) @664
+  b2(v5):
+    LoopHint @664
+    v7 = Convert v1 declared={type=number flags=[IsExpected]} @683
+    v8 = Less v5, v7 @675
+    Branch v8 -> taken b3(| 0, 1), notTaken b12(| 0, 1) @675
+  b3(v9, v10):
+    Jump -> next b4() @675
+  b4():
+    v11 = GetModuleVariable variable=g0 @702
+    v12 = Call v11, -, v9 calleeName="count" @702
+    v13 = Integer @729
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @729
+    Jump -> next b5(v14) @725
+  b5(v15):
+    LoopHint @725
+    v17 = PropGet v0 key="length" @736
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @736
+    v19 = Less v15, v18 @732
+    Branch v19 -> taken b6(| 0), notTaken b9(| 0) @732
+  b6(v20):
+    Jump -> next b7() @732
+  b7():
+    v21 = Convert v2 declared={type=number flags=[IsExpected]} @758
+    ElemSet v0, v20, v21 @751
+    Jump -> next b8() @751
+  b8():
+    v23 = Increment v20 @751
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]} @748
+    Jump -> next b5(v24) @748
+  b9(v25):
+    Jump -> next b10() @732
+  b10():
+    ElemSet v0, v9, v9 @761
+    Jump -> next b11() @761
+  b11():
+    v27 = Increment v9 @761
+    v28 = Convert v27 declared={type=i32 flags=[IsExpected]} @693
+    Jump -> next b2(v28) @693
+  b12(v29, v30):
+    Jump -> next b13() @675
+  b13():
+    v31 = Undefined @693
+    Return v31 @693
+}
+function f10 name="mix" module=m0 position=783 flags=[HasExplicitName] length=32 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}, {type=anything}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: anything, v2: anything, v3: i32, v4: anything, v5: i32, v6: anything, v7: i32, v8: anything, v9: i32, v10: anything, v11: i32, v12: anything, v13: i32, v14: anything, v15: i32, v16: anything, v17: i32, v18: anything, v19: i32, v20: anything, v21: i32, v22: anything, v23: i32, v24: anything, v25: i32, v26: anything, v27: i32, v28: anything, v29: i32, v30: anything, v31: i32):
+    Jump -> next b1() @783
+  b1():
+    v32 = Integer @957
+    v33 = Convert v32 declared={type=i32 flags=[IsExpected]} @957
+    Jump -> next b2(v33) @953
+  b2(v34):
+    LoopHint @953
+    v36 = Convert v1 declared={type=number flags=[IsExpected]} @964
+    v37 = Less v34, v36 @960
+    Branch v37 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @960
+  b3(v38, v39):
+    Jump -> next b4() @960
+  b4():
+    v40 = ElemGet v0, v38 @1009
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @1009
+    v42 = Convert v2 declared={type=number flags=[IsExpected]} @1016
+    v43 = Add v41, v42 @1009
+    v44 = BitXor v43, v3 @1009
+    v45 = Convert v4 declared={type=number flags=[IsExpected]} @1028
+    v46 = Add v44, v45 @974
+    v47 = BitXor v46, v5 @974
+    v48 = Convert v6 declared={type=number flags=[IsExpected]} @1040
+    v49 = Add v47, v48 @974
+    v50 = BitXor v49, v7 @974
+    v51 = Convert v8 declared={type=number flags=[IsExpected]} @1052
+    v52 = Add v50, v51 @974
+    v53 = BitXor v52, v9 @974
+    v54 = Convert v10 declared={type=number flags=[IsExpected]} @1064
+    v55 = Add v53, v54 @974
+    v56 = BitXor v55, v11 @974
+    v57 = Convert v12 declared={type=number flags=[IsExpected]} @1076
+    v58 = Add v56, v57 @974
+    v59 = BitXor v58, v13 @974
+    v60 = Convert v14 declared={type=number flags=[IsExpected]} @1090
+    v61 = Add v59, v60 @974
+    v62 = BitXor v61, v15 @974
+    v63 = Convert v16 declared={type=number flags=[IsExpected]} @1104
+    v64 = Add v62, v63 @974
+    v65 = BitXor v64, v17 @974
+    v66 = Convert v18 declared={type=number flags=[IsExpected]} @1118
+    v67 = Add v65, v66 @974
+    v68 = BitXor v67, v19 @974
+    v69 = Convert v20 declared={type=number flags=[IsExpected]} @1132
+    v70 = Add v68, v69 @974
+    v71 = BitXor v70, v21 @974
+    v72 = Convert v22 declared={type=number flags=[IsExpected]} @1146
+    v73 = Add v71, v72 @974
+    v74 = BitXor v73, v23 @974
+    v75 = Convert v24 declared={type=number flags=[IsExpected]} @1160
+    v76 = Add v74, v75 @974
+    v77 = BitXor v76, v25 @974
+    v78 = Convert v26 declared={type=number flags=[IsExpected]} @1174
+    v79 = Add v77, v78 @974
+    v80 = BitXor v79, v27 @974
+    v81 = Convert v28 declared={type=number flags=[IsExpected]} @1188
+    v82 = Add v80, v81 @974
+    v83 = BitXor v82, v29 @974
+    v84 = Convert v30 declared={type=number flags=[IsExpected]} @1202
+    v85 = Add v83, v84 @974
+    v86 = BitXor v85, v31 @974
+    ElemSet v0, v38, v86 @972
+    Jump -> next b5() @972
+  b5():
+    v88 = Increment v38 @972
+    v89 = Convert v88 declared={type=i32 flags=[IsExpected]} @969
+    Jump -> next b2(v89) @969
+  b6(v90, v91):
+    Jump -> next b7() @960
+  b7():
+    v92 = Undefined @969
+    Return v92 @969
+}

@@ -81,6 +81,17 @@ const Image* Image::findByCodeAddress(const void* address)
     return nullptr;
 }
 
+void Image::forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>& functor)
+{
+    const Image* previousImage = t_currentImage;
+    for (const Image* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->m_publishedBefore) {
+        t_currentImage = image;
+        if (functor(*image) == IterationStatus::Done)
+            break;
+    }
+    t_currentImage = previousImage;
+}
+
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16 && offsetof(ImageHeader, size) == 32, "check() reads magic, stamp and identity before it knows that the rest of the header has this build's layout");
 static_assert(alignof(ImageHeader) <= imageSectionAlignment && alignof(ProgramTables) <= imageSectionAlignment);
 
@@ -170,6 +181,13 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && (!code.ffiCodeSize || !(code.ffiCodeOffset % imagePageSize));
     if (!hasValidCodeParts || rangeOf(ImageSection::ProgramTables).size < sizeof(ProgramTables))
         return false;
+
+    if (header.numberOfStubsFoundByKey > numberOfElements(ImageSection::StubAddresses))
+        return false;
+    for (uint32_t offset : header.singleReturnSites) {
+        if (offset > code.sharedCodeSize)
+            return false;
+    }
 
     auto& tables = *reinterpret_cast<const ProgramTables*>(bytes.data() + rangeOf(ImageSection::ProgramTables).offset);
     const ClosureFunctionRangeData& closures = tables.closureFunctions;
@@ -330,11 +348,18 @@ CodeLocation Image::locate(const void* pc) const
     return { CodeKind::Function, StubFrameKind::Plain, index, offset - starts[index] };
 }
 
+std::span<const StubAddressInImage> Image::stubAddressesSortedWith(StubFamily family) const
+{
+    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    size_t sizeOfFirstPart = header().numberOfStubsFoundByKey;
+    return isFoundByKey(family) ? addresses.first(sizeOfFirstPart) : addresses.subspan(sizeOfFirstPart);
+}
+
 const void* Image::stubAddress(StubKey key) const
 {
     if (sharedCodeCopies().empty())
         return nullptr;
-    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    std::span addresses = stubAddressesSortedWith(key.family());
     auto address = std::ranges::lower_bound(addresses, key.bits(), { }, &StubAddressInImage::key);
     if (address == addresses.end() || address->key != key.bits())
         return nullptr;
@@ -344,10 +369,17 @@ const void* Image::stubAddress(StubKey key) const
 // The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
-    auto addresses = std::ranges::equal_range(section<StubAddressInImage>(ImageSection::StubAddresses), family, { }, [](const StubAddressInImage& address) {
+    auto addresses = std::ranges::equal_range(stubAddressesSortedWith(family), family, { }, [](const StubAddressInImage& address) {
         return StubKey::fromBits(address.key).family();
     });
     return { addresses.begin(), addresses.end() };
+}
+
+bool Image::usesCallConvention(uint32_t offsetInSharedCode) const
+{
+    return std::ranges::any_of(section<StubAddressInImage>(ImageSection::StubAddresses), [&](const StubAddressInImage& address) {
+        return address.offset == offsetInSharedCode && address.usesCallConvention;
+    });
 }
 
 bool Image::hasFrameAt(uint32_t function, uint32_t offset) const

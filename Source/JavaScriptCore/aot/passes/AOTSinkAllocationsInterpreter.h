@@ -149,12 +149,15 @@ private:
     ValueID emitUndefined();
 
     void executeTest(ValueID);
+    bool executePresenceTestOnDenseList(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
     void noteListsThatMayNotFit(ValueID test);
     void executeReturn(const Terminator&);
     void buildBeforeBranch(const Terminator&);
+    void buildBeforeLeavingHandler(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
+    void narrowToProvenType(VirtualObjectID, TypeID provenType);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
     void forgetAnswersOfTests();
     std::optional<TestEntry> answerAtBranch(ValueID condition) const;

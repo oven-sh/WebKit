@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <mutex>
 #include <stdio.h>
 #include <wtf/CPUTime.h>
@@ -18,6 +19,10 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StringPrintStream.h>
+
+#if OS(UNIX)
+#include <sys/resource.h>
+#endif
 
 #if OS(LINUX) && CPU(X86_64) && __has_include(<linux/perf_event.h>)
 #define AOT_HAS_INSTRUCTION_COUNTERS 1
@@ -199,6 +204,58 @@ size_t PhaseTimes::residentMegabytes()
 #endif
 }
 
+// Linux lets a process reset its own high-water mark, so each line of the log can say how high its phase went.
+// The reset also lowers what getrusage() reports, so the peak of the process is kept here.
+PhaseTimes::PeakResidentMegabytes PhaseTimes::takePeakResidentMegabytes()
+{
+    static std::atomic<size_t> peakOfProcess { 0 };
+    size_t sinceLastTaken = takePeakResidentMegabytesSinceLastTaken();
+    size_t ofProcess = std::max({ sinceLastTaken, peakResidentMegabytes(), peakOfProcess.load(std::memory_order_relaxed) });
+    peakOfProcess.store(ofProcess, std::memory_order_relaxed);
+    return { ofProcess, sinceLastTaken };
+}
+
+size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()
+{
+#if OS(LINUX)
+    size_t peakKilobytes = 0;
+    if (FILE* file = fopen("/proc/self/status", "r")) {
+        char line[256];
+        while (fgets(line, sizeof(line), file)) {
+            unsigned long value = 0;
+            if (sscanf(line, "VmHWM: %lu kB", &value) == 1) {
+                peakKilobytes = value;
+                break;
+            }
+        }
+        fclose(file);
+    }
+    if (FILE* file = fopen("/proc/self/clear_refs", "w")) {
+        fputs("5", file);
+        fclose(file);
+    }
+    return peakKilobytes / KB;
+#else
+    return 0;
+#endif
+}
+
+size_t PhaseTimes::peakResidentMegabytes()
+{
+#if OS(UNIX)
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage))
+        return 0;
+#if OS(DARWIN)
+    return usage.ru_maxrss / MB;
+#else
+    return usage.ru_maxrss / KB;
+#endif
+#else
+    return 0;
+#endif
+}
+
 PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID pass)
     : m_build(build)
     , m_namePrefix(namePrefix)
@@ -264,7 +321,8 @@ void PhaseTimes::didFinish(ASCIILiteral phase)
         minThreads = BusyThreads::maxThreadsOfBucket[bucket] + 1;
     }
     m_busyThreadsTimesAtPhaseStart = busyThreadsTimes;
-    dataLogLn("AOT phase times: ", m_namePrefix, m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms", instructions.toString(), " | outside parallel loops ", serialCPUTime.milliseconds(), " ms | ms by busy threads ", busyThreads.toString());
+    PeakResidentMegabytes peak = takePeakResidentMegabytes();
+    dataLogLn("AOT phase times: ", m_namePrefix, m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | peak ", peak.ofProcess, " MB | peak since the last line ", peak.sinceLastTaken, " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms", instructions.toString(), " | outside parallel loops ", serialCPUTime.milliseconds(), " ms | ms by busy threads ", busyThreads.toString());
     m_serialCPUTimeAtPhaseStart = serialCPUTimeOfCurrentThread();
     m_phaseStart = MonotonicTime::now();
     m_processCPUTimeAtPhaseStart = processCPUTime();

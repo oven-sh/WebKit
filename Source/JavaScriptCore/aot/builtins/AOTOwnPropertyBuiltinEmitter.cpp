@@ -123,11 +123,11 @@ void OwnPropertyBuiltinEmitter::generateObjectEntries(const InlineCall& call)
 void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
 {
     OwnKeysKind kind = call.parameter<OwnKeysKind>(0);
-    if (!call.canMiss()) {
+    ValueID argument = call.argumentOrNull(0);
+    if (!call.canMiss() && (!argument || !typeOf(argument).isObject())) {
         finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
         return;
     }
-    ValueID argument = call.argument(0);
     const Type& type = typeOf(argument);
     KeyListReader reader(generator());
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
@@ -144,14 +144,15 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
             lists.add(pointerConstant(0));
             return;
         }
-        if (kind != OwnKeysKind::Keys) {
+        if (kind == OwnKeysKind::Symbols) {
             lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Shape, listKind));
             return;
         }
         LBasicBlock isNotCachedByShape = newBlock();
-        lists.add(reader.keyListOrElse(object, unlikelyEdge(isNotCachedByShape), KeyListKey::Shape));
+        lists.add(reader.keyListOrElse(object, unlikelyEdge(isNotCachedByShape), KeyListKey::Shape, listKind));
         m_out.appendTo(isNotCachedByShape);
         branchUnless(hasBits(shapeTests.orderWordOf(object), orderWordHasExtraProperties), outOfLine);
+        // A list cached by Structure holds every own key: all are enumerable strings.
         lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Structure));
     };
     bool mayBeCompiledObject = type.anyObject || type.layouts;

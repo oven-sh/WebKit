@@ -51,6 +51,9 @@ public:
     void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateHasFixedBytes(const ValueContext&);
+    void generateGetEnumeratorIndexedLength(const ValueContext&);
+    void generateIsElementInStorage(const ValueContext&);
+    void generateToEnumeratorPosition(const ValueContext&);
     void generateTypedArrayRange(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);
     void generatePutTypedArrayElement(const ValueContext&);
@@ -62,6 +65,8 @@ public:
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
+    // Emits nothing except in a build that validates or checks proofs, which reports an array with a different storage kind.
+    void validateStorage(const OperationContext&, CellPointer array, ArrayStorage);
     Word32 indexingMode(CellPointer array, IndexingType mask);
     Condition hasShape(Word32 maskedMode, const ArrayStorageForm& form) { return equal(maskedMode, word32(form.shape)); }
     // Storage of int32 and contiguous storage both hold boxed values, with 0 for a hole.
@@ -70,7 +75,7 @@ public:
     // The answer of hasWritableShape() while no thread holds the lock of the cell.
     Condition hasWritableShapeIgnoringLock(Word32 modeWithWritability, const ArrayStorageForm& form) { return hasWritableShape(bitAnd(modeWithWritability, word32(0xff & ~cellLockBits)), form); }
 
-    ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSObject_butterfly) }; }
+    ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSArray_butterfly) }; }
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }
     Integer vectorLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength)); }
     void setPublicLength(const ArrayElements& elements, Integer length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length)); }
@@ -109,6 +114,7 @@ public:
     Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
     // Taken if the array has an element of its own at the position. A position that is no index has none.
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
+    void branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets);
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     // The result is the new length.
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);
@@ -119,7 +125,6 @@ public:
     void storeTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType, Operand stored);
 
 private:
-    void validateStorage(const ValueContext&, CellPointer array, ArrayStorage);
     void readWithKnownStorage(const ValueContext&, const ArrayStorageForm&);
     void readInsideLength(const ValueContext&, const ArrayStorageForm&);
     void readWithAnyStorage(const ValueContext&);

@@ -24,6 +24,13 @@ Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer di
         unsigned shift = WTF::fastLog2(static_cast<uint64_t>(divisors.minimum));
         if (!shift)
             return dividend;
+        if (dividends.minimum < 0 && dividends.isSubsetOf(Range::int32()) && shift < 32) {
+            Word32 narrowDividend = low32(dividend);
+            Word32 roundedTowardZero = isX86()
+                ? select(lessThan(narrowDividend, 0), add(narrowDividend, word32(static_cast<int32_t>(divisors.minimum - 1))), narrowDividend)
+                : add(narrowDividend, Word32(m_out.lShr(m_out.aShr(narrowDividend.value(), 31), 32 - shift)));
+            return signExtended(Word32(m_out.aShr(roundedTowardZero.value(), m_out.constInt32(shift))));
+        }
         if (dividends.minimum < 0)
             dividend = add(dividend, Integer(m_out.lShr(m_out.aShr(dividend.value(), 63), 64 - shift)));
         return Integer(m_out.aShr(dividend.value(), m_out.constInt32(shift)));

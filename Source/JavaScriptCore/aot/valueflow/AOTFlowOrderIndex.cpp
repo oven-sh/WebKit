@@ -246,15 +246,15 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
         const Value& call = caller.at(link.site);
         return call.opcode == Opcode::Call && sameObjectThroughCasts(caller, call.calleeOperand()) == closure.second;
     };
-    for (const FlowCall& link : index.inputs.calls) {
+    index.inputs.forEachCall([&](const FlowCall& link) {
         FlowCallSite& site = index.calls.soleCallSites[link.callee.index()];
         if (FlowCallSite closure = std::exchange(closures[link.callee.index()], { }); closure.second && callsClosure(link, closure)) {
             site = { link.caller, link.site };
-            continue;
+            return;
         }
         if (site != FlowCallSite { link.caller, link.site })
             site = { };
-    }
+    });
 }
 
 static void findFunctionsThatFilesOfCyclesMayEnter(FlowScopeIndex& index)
@@ -268,10 +268,11 @@ static void findFunctionsThatFilesOfCyclesMayEnter(FlowScopeIndex& index)
             worklist.append(body.index());
     }
     while (!worklist.isEmpty()) {
-        for (const FlowScopeCall& call : index.calls.callsBy(FunctionID(worklist.takeLast()))) {
+        index.calls.forEachCallBy(index.inputs.calleeLists, FunctionID(worklist.takeLast()), [&](const FlowScopeCall& call) {
             if (!functions.quickSet(call.callee.index()))
                 worklist.append(call.callee.index());
-        }
+            return IterationStatus::Continue;
+        });
     }
 }
 
@@ -286,6 +287,29 @@ static void collectCalls(FlowScopeIndex& index)
             calls.functionsEnteredByHost.set(link.callee.index());
         else
             calls.byCaller.append({ link.caller, link.callee, link.site, { } });
+    }
+    unsigned numberOfFunctions = index.program().functions.size();
+    unsigned numberOfLists = inputs.calleeLists.size();
+    calls.callsOfLists = inputs.callsOfLists.map([&](const FlowCallOfList& link) {
+        return FlowScopeCallOfList { link.caller, link.site, variableBehindSubjectOf(index.program().at(link.caller), link.site), link.calleeList };
+    });
+    groupByIndex(numberOfFunctions, calls.firstListByCallee, calls.listsByCallee, [&](const auto& add) {
+        for (uint32_t list = 0; list < numberOfLists; ++list) {
+            for (FunctionID callee : inputs.calleeLists[list])
+                add(callee.index(), list);
+        }
+    });
+    groupByIndex(numberOfLists, calls.firstCallOfList, calls.callsOfListsByList, [&](const auto& add) {
+        for (uint32_t position = 0; position < calls.callsOfLists.size(); ++position)
+            add(calls.callsOfLists[position].calleeList, position);
+    });
+    calls.firstCallOfListByCaller.fill(0, numberOfFunctions + 1);
+    for (const FlowScopeCallOfList& call : calls.callsOfLists)
+        ++calls.firstCallOfListByCaller[call.caller.index() + 1];
+    for (unsigned function = 0; function < numberOfFunctions; ++function) {
+        calls.firstCallOfListByCaller[function + 1] += calls.firstCallOfListByCaller[function];
+        if (calls.firstListByCallee[function] != calls.firstListByCallee[function + 1])
+            isCalled.set(function);
     }
     for (unsigned function = 0; function < index.program().functions.size(); ++function) {
         if (!isCalled.get(function))

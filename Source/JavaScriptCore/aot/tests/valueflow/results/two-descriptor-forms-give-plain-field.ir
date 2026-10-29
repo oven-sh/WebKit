@@ -1,0 +1,43 @@
+# function Type(options) { fill(this, options) }
+# function fill(made, options) { Object.defineProperty(made, "mark", { value: options, enumerable: false }); Object.defineProperty(made, "mark", { value: options, enumerable: true }) }
+# Two forms: neither is planned for.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Type" constructor=f1
+# CHECK-NOT: form=[
+# CHECK: layout L1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Options"
+layout L3 name="OtherDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L2
+    v2 = FinishObject v1
+    v3 = Construct v0, -, v2
+    v4 = PropGet v3 key="mark"
+    Return
+}
+function f1 name="Type" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f2 name="fill" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="mark"
+    v5 = Boolean
+    v6 = NewObject -, v1, v5 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Call v3, v2, v0, v4, v7
+    v9 = Boolean boolean=true
+    v10 = NewObject -, v1, v9 layout=L3 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Call v3, v2, v0, v4, v11
+    v13 = Undefined
+    Return v13
+}

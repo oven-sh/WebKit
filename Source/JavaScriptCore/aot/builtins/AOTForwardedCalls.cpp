@@ -122,15 +122,21 @@ bool forwardsCall(const BuiltinOverload& overload)
     return !!forwardedOperandsOf(overload);
 }
 
-bool forwardsCallOfAnyReceiver(const BuiltinOverload& overload)
+bool forwardsCallOfAnyReceiver(BuiltinID builtin)
 {
-    return overload.builtin == Builtins::FunctionPrototypeCall || overload.builtin == Builtins::FunctionPrototypeApply;
+    return builtin == Builtins::FunctionPrototypeCall || builtin == Builtins::FunctionPrototypeApply;
 }
 
 std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload& overload)
 {
     std::optional<ForwardedOperands> operands = forwardedOperandsOf(overload);
     return operands ? std::optional(operands->callee) : std::nullopt;
+}
+
+std::optional<BuiltinOperand> operandListedBy(const BuiltinOverload& overload)
+{
+    std::optional<ForwardedOperands> operands = forwardedOperandsOf(overload);
+    return operands ? operands->list : std::nullopt;
 }
 
 // Function.prototype.apply takes undefined and null for an empty list. A built-in that requires its list refuses them.
@@ -142,12 +148,15 @@ static bool mayOmit(const BuiltinOverload& overload, BuiltinOperand operand)
 
 static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const Function& function, const BuiltinCall& call, bool constructs)
 {
-    std::optional<ForwardedOperands> operands = forwardedOperandsOf(program.builtins().at(call.overload), constructs);
+    const BuiltinOverload& overload = program.builtins().at(call.overload);
+    std::optional<ForwardedOperands> operands = forwardedOperandsOf(overload, constructs);
     if (!operands)
         return std::nullopt;
 
     ForwardedCallPlan plan;
     plan.constructs = constructs;
+    if (forwardsCallOfAnyReceiver(overload))
+        plan.tailCallingBuiltin = overload.builtin;
     plan.callee = call.operandAt(operands->callee);
     if (!plan.callee)
         return std::nullopt;
@@ -189,15 +198,23 @@ bool isAlwaysArray(const Type& type)
     return part && part->builtinClass == BuiltinClasses::Array && !type.mayBeUndefinedOrNull();
 }
 
+bool forwardsInPlace(const Value& builtinCall)
+{
+    return builtinCall.calleeName() || builtinCall.isDoneInPlace();
+}
+
 void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
 {
     AccessSiteID accessSite = call.accessSite();
     StringID calleeName = call.calleeName();
+    bool hasFrameOfBuiltin = plan.tailCallingBuiltin && plan.calleeMayRefuse && !forwardsInPlace(call);
     Vector<ValueID, 8> arguments(call.argumentsOperands().subspan(plan.firstForwardedArgument));
 
     if (plan.constructs) {
         call.become(plan.list ? Opcode::ConstructList : Opcode::Construct);
         call.setNewTargetOperand(plan.newTarget);
+        // A call written as Reflect.construct(..) constructs in place, and a construct is never a tail call.
+        call.isTailCall = false;
     } else {
         call.become(plan.list ? Opcode::CallList : Opcode::Call);
         call.setThisValueOperand(plan.thisValue);
@@ -210,6 +227,8 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     call.setAccessSite(accessSite);
     if (calleeName && plan.calleeMayRefuse)
         call.setCalleeName(calleeName);
+    if (hasFrameOfBuiltin)
+        call.setCalledBuiltin(plan.tailCallingBuiltin);
     call.type = TypeTable::anything;
 }
 

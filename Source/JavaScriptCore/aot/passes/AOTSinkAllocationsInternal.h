@@ -60,6 +60,17 @@ void removeEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key v
         entries.removeAt(entry - entries.begin());
 }
 
+// `values` is in ascending order, like the entries.
+template<typename Entry, size_t inlineCapacity, typename Key>
+void removeEntries(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, std::span<const Key> values)
+{
+    if (values.empty())
+        return;
+    entries.removeAllMatching([&](const Entry& entry) {
+        return std::ranges::binary_search(values, entry.*key);
+    });
+}
+
 struct ObjectVariant {
     std::optional<uint8_t> tagBit;
     VirtualShapeID shape;
@@ -230,6 +241,7 @@ struct SinkingPolicy {
     BlocksThatMayGetTests* blocksThatMayGetTests { nullptr };
     // Ascending: what addTracesOfFruitlessAllocations() has listed behind earlier analyses of the function. Allocations with such a number are not followed again.
     const Vector<uint64_t>* tracesOfFruitlessAllocations { nullptr };
+    TypeArena* types { nullptr };
 };
 
 // One rule for whatever puts a value into a field: a store, a copy out of the field of another object, and the look ahead that says which stores will fold.
@@ -259,6 +271,12 @@ struct Candidate {
     bool diesVirtual { false };
     bool diesOutsideJoins { false };
     bool isBuiltBeforeBranches { false };
+    // The same, from the point where the object holds its referrer. The solver requests it in one round and follows it from the next round on.
+    bool isBuiltBeforeBranchesOnceCyclic { false };
+    bool willBeBuiltBeforeBranchesOnceCyclic { false };
+    // Created under a handler and needed where no handler covers: it is built before the path leaves the handler, so that a failed allocation throws to that handler. Requested and followed as above.
+    bool isBuiltUnderHandler { false };
+    bool willBeBuiltUnderHandler { false };
     bool wasFruitlessBefore { false };
     // Abandoned before the families were made: no field of it is known, so nothing may take it up again.
     bool isLeftOut { false };
@@ -294,6 +312,8 @@ struct SinkingInputs {
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
+    // Each block's handler block, as the function was read.
+    Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
     bool hasObjectsGivenPrototypes { false };
     bool isLargeForItsWork { false };
@@ -323,6 +343,7 @@ public:
     ObjectValues& ensure(VirtualObjectID object) { return ensureEntry(m_entries, &Entry::object, object).values; }
     const ObjectValues* find(VirtualObjectID) const;
     void remove(VirtualObjectID object) { removeEntry(m_entries, &Entry::object, object); }
+    void remove(std::span<const VirtualObjectID> ascendingObjects) { removeEntries(m_entries, &Entry::object, ascendingObjects); }
 
 private:
     struct Entry {
@@ -389,6 +410,12 @@ public:
     void setOrigin(Origin origin) { m_builder.setOrigin(origin); }
 
     void stateDidChange() { m_handlerArgumentsAreStale = true; }
+    // Building may fail to allocate and throw. Every block added between the two is covered like the block where the first one is called, so the handler sees the objects as they were before.
+    void willBuild(ObjectInterpreter&);
+    void didBuild();
+    // What is built on the exits of a block goes before its terminator, so the handler sees the objects as they are there.
+    void willEnterEdges(ObjectInterpreter& atTerminator) { m_interpreterAtTerminator = &atTerminator; }
+    void didEnterEdges() { m_interpreterAtTerminator = nullptr; }
     void willKeepThrowingValue(ObjectInterpreter&);
     void cut(ObjectInterpreter&);
 
@@ -406,6 +433,9 @@ private:
     std::optional<Target> m_originalHandler;
     Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     bool m_handlerArgumentsAreStale { false };
+    unsigned m_numberOfBuildsBegun { 0 };
+    std::optional<Target> m_handlerOfBuild;
+    ObjectInterpreter* m_interpreterAtTerminator { nullptr };
 };
 
 // What an analysis ended with: which candidates it gave up, and what it decided to build where.
@@ -553,10 +583,14 @@ public:
     void tagVariants(BlockID, VirtualObjectID, ObjectState&);
     void buildAtHeadForLackOfTagBits(BlockID, VirtualObjectID);
     bool isIgnored(Edge) const;
+    bool isOutsideTrialRange(BlockID block) const { return m_trialRange && !m_trialRange->quickGet(block.index()); }
     void addVirtualReturn(VirtualReturn&&);
     void addEdgeNeedingCode(Edge);
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
+    bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
+    void buildUnderHandler(VirtualObjectID);
+    BlockID handlerOf(BlockID block) const { return m_inputs.handlers[block.index()]; }
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
 
@@ -583,6 +617,7 @@ private:
     void computeInputsOf(BlockID);
 
     void solve();
+    void solveAgainIn(std::span<const BlockID> range);
     void giveUpOnEveryCandidate();
     bool startOverWithFewerCandidates();
     void giveUpForLackOfWork(std::span<const uint32_t> candidates);
@@ -596,6 +631,7 @@ private:
     void takeBackJoinsSetAside();
     void invalidateResults();
     void count();
+    void countIn(std::span<const BlockID> range);
     void countBlock(BlockID);
     bool abandonUnprofitableCandidates();
     bool buildBeforeBranchesInsteadOfAbandoning();
@@ -607,6 +643,8 @@ private:
     bool handOnToNextJoin(IRBuilder&, const Candidate& join);
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);
+    bool savesAllocation(VirtualObjectID, BlockID merge, const BitVector& allocatedOnEveryPath) const;
+    bool mayPayWithoutEdges(VirtualObjectID, std::span<const Edge>, std::span<const BlockID> range, const BitVector& allocatedOnEveryPath);
     bool paysWithoutEdges(VirtualObjectID, std::span<const Edge>);
     void duplicate(IRBuilder&, std::span<const BlockID> region, std::span<const Edge> cellEdges);
 
@@ -674,6 +712,7 @@ private:
     bool m_setsAsideJoins { false };
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
+    const BitVector* m_trialRange { nullptr };
     Vector<Edge, 2> m_edgesNeedingCode;
     Vector<ValueID, 2> m_testedListsThatMayNotFit;
     const FreshResultShape* m_resultShape { nullptr };

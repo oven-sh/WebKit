@@ -272,6 +272,8 @@ static PassOutcome insertChecksBeforeAccesses(FunctionPassContext& context)
 
 PassOutcome insertObjectCoercibleChecks(FunctionPassContext& context)
 {
+    if (context.function.role == FunctionRole::GenericVersion && waitsForGenericVersion(context.program, context.function))
+        return PassOutcome::Unchanged;
     bool replacedTests = replaceTestsThatOnlyNullishValuesFail(context);
     PassOutcome outcome = insertChecksBeforeAccesses(context);
     if (!replacedTests)

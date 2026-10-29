@@ -512,10 +512,20 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     if (layout.keysAreNeverEnumerated)
         return;
     KeyOrderTable& keyOrders = state.objects->keyOrders;
+    if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), indexOf(field))) {
+        setOrderAndCount(*after);
+        return;
+    }
     uint32_t before = orderWord() & orderAndCountMask;
     std::optional<uint32_t> numberOfExtraKeys = numberOfExtraKeysByStructure();
     if (numberOfExtraKeys && !hasOutOfLineKeyOrder()) {
         if (std::optional<uint32_t> after = keyOrders.publishedTransition(layout, before, field, *numberOfExtraKeys)) {
+            setOrderAndCount(*after);
+            return;
+        }
+    }
+    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && !(field.flags & fieldMayExistWithoutStorage)) {
+        if (std::optional<uint32_t> after = keyOrders.tryAppendToAddedOrder(layout, before, field)) {
             setOrderAndCount(*after);
             return;
         }
@@ -985,6 +995,8 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 
 PropertyListCache::PropertyListCache(State& state)
     : m_state(state)
+    , m_entries(state.tableArena)
+    , m_ownKeyLists(state.tableArena)
 {
     state.caches->add(CacheKind::ClearedEachCollection, "property lists"_s, *this);
 }
@@ -992,7 +1004,7 @@ PropertyListCache::PropertyListCache(State& state)
 CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
 {
     if (!m_entries)
-        m_entries = makeUniqueWithoutFastMallocCheck<Entries>();
+        m_entries.make();
     m_writes.recordAll();
     return (*m_entries)[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
 }
@@ -1002,7 +1014,7 @@ KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t ord
     constexpr unsigned listsPerSet = 4;
     static_assert(!(numberOfOwnKeyLists % listsPerSet));
     if (!m_ownKeyLists)
-        m_ownKeyLists = makeUniqueWithoutFastMallocCheck<OwnKeyLists>();
+        m_ownKeyLists.make();
     m_writes.recordAll();
     auto set = std::span { *m_ownKeyLists }.subspan(WTF::pairIntHash(structureID.bits(), orderWord) % (numberOfOwnKeyLists / listsPerSet) * listsPerSet, listsPerSet);
     KeptOwnKeys* unused = nullptr;

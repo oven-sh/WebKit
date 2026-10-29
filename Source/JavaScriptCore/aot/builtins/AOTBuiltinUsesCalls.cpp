@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTFlowResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
@@ -279,8 +280,8 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     } else {
         known.operands.receiver = call.thisValueOperand();
         known.stamps.expectedResult = call.expectedResult();
-        // `f.call(..)` names `f.call` where `f` refuses. What such a call has become names nothing more.
-        if (call.calleeKey() && (answer.callee == Builtins::FunctionPrototypeCall || answer.callee == Builtins::FunctionPrototypeApply))
+        // JSC compiles `f.call(..)` and `f.apply(..)` in place, so a refusal names `f.call`. Reached any other way, the built-in runs in a frame of its own and names nothing.
+        if (call.calleeKey() && forwardsCallOfAnyReceiver(answer.callee) && findOwnMember(inputs.program, Builtins::FunctionPrototype, call.calleeKey()) == answer.callee)
             known.stamps.calleeName = call.calleeName();
         thisValueHandling = thisValueHandlingOf(inputs, answer.callee, known.operands.receiver);
     }

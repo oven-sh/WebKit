@@ -39,6 +39,7 @@ struct RuntimeCellTest {
     static constexpr RuntimeCellTest isSymbol(uint32_t propertyKeyNumber) { return { CellTestKind::IsSymbol, 0, 0, 0, propertyKeyNumber }; }
     static constexpr RuntimeCellTest sharingModeIs(ArrayBufferSharingMode sharingMode) { return { CellTestKind::SharingModeIs, 0, 0, 0, static_cast<uint32_t>(sharingMode) }; }
     static constexpr RuntimeCellTest isNamespaceOf(ModuleID module) { return { CellTestKind::IsNamespaceOf, 0, 0, 0, module.index() }; }
+    static constexpr RuntimeCellTest carriesBrandOfClass(uint32_t rankOfClass) { return { CellTestKind::CarriesBrandOfClass, 0, 0, 0, rankOfClass }; }
 
     constexpr JSTypeRange cellTypes() const
     {
@@ -61,6 +62,7 @@ struct RuntimeCellTest {
     constexpr uint32_t symbolKeyNumber() const { return operandOf(CellTestKind::IsSymbol); }
     constexpr ArrayBufferSharingMode sharingMode() const { return operandOf(CellTestKind::SharingModeIs) ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
     constexpr ModuleID module() const { return ModuleID(operandOf(CellTestKind::IsNamespaceOf)); }
+    constexpr uint32_t rankOfClass() const { return operandOf(CellTestKind::CarriesBrandOfClass); }
 
     static constexpr ptrdiff_t offsetOfKind() { return 0; }
     static constexpr ptrdiff_t offsetOfFirstCellType() { return 1; }

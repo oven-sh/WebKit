@@ -297,6 +297,14 @@ BuiltinTableIDRange<BuiltinID> BuiltinTable::membersOf(BuiltinID holder) const
     return { object.firstMember, object.memberCount };
 }
 
+std::span<const Builtin> BuiltinTable::memberEntriesOf(BuiltinID holder) const
+{
+    const Builtin& object = at(holder);
+    if (!object.memberCount)
+        return { };
+    return m_data.builtins.subspan(object.firstMember.index(), object.memberCount);
+}
+
 BuiltinID BuiltinTable::findOwnMember(BuiltinID holder, BuiltinName name) const
 {
     const Builtin& object = at(holder);

@@ -199,11 +199,22 @@ static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, cons
         unsigned character = input[at];
         return program.startTable[sizeof(CharType) == 1 || character < 256 ? character : 256];
     };
-    // Behind a surrogate pair the places of a match are no longer those of the subject: the attempt is made.
+    // A place of the table is a character, which takes two units if it is a surrogate pair. No character starts inside a pair.
     auto canBeginAt = [&](unsigned at) {
-        for (unsigned place = 0; place < depth; ++place) {
-            if (sizeof(CharType) > 1 && U16_IS_SURROGATE(input[at + place]) && program.decodesSurrogatePairs)
+        if constexpr (sizeof(CharType) > 1) {
+            if (program.decodesSurrogatePairs) {
+                if (at && U16_IS_TRAIL(input[at]) && U16_IS_LEAD(input[at - 1]))
+                    return false;
+                for (unsigned place = 0; place < depth && at < length; ++place, ++at) {
+                    if (!(entryOf(at) >> place & 1))
+                        return false;
+                    if (U16_IS_LEAD(input[at]) && at + 1 < length && U16_IS_TRAIL(input[at + 1]))
+                        ++at;
+                }
                 return true;
+            }
+        }
+        for (unsigned place = 0; place < depth; ++place) {
             if (!(entryOf(at + place) >> place & 1))
                 return false;
         }
@@ -252,6 +263,20 @@ static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, cons
             return from + std::countr_zero(mask) / StartCandidates::bitsPerCharacter;
         }
     }
+    if (program.onlyStart) {
+        char32_t start = *program.onlyStart;
+        bool isPair = !U_IS_BMP(start);
+        for (;; ++from) {
+            size_t found = WTF::find(std::span { input, length }, static_cast<CharType>(isPair ? U16_LEAD(start) : start), from);
+            if (found == notFound || found > last)
+                return none;
+            from = found;
+            if (isPair && (from + 1 == length || input[from + 1] != U16_TRAIL(start)))
+                continue;
+            if (canBeginAt(from))
+                return from;
+        }
+    }
     for (; from <= last; ++from) {
         if (canBeginAt(from))
             return from;
@@ -280,6 +305,16 @@ static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const 
             return next;
         from = next;
     }
+}
+
+// failedOp: the last op that failed. Whatever the attempt wrote and did not undo, it wrote on its path to that op.
+static NEVER_INLINE void resetCaptures(const FlatProgram& program, unsigned* output, size_t failedOp)
+{
+    FlatProgram::SlotRange range { 2, (program.numSubpatterns + 1) * 2 };
+    if (!program.dirtyCaptureRanges.isEmpty())
+        range = program.dirtyCaptureRanges[failedOp];
+    for (unsigned i = range.begin; i < range.end; ++i)
+        output[i] = offsetNoMatch;
 }
 
 // The characters around the last one from 256 up that was looked for in a set, as far as the set treats them alike: the letters of one script lie side by side.
@@ -2138,8 +2173,12 @@ struct Machine {
                 if (program.triesOnlyOnce || matchStart >= length)
                     return Step::NoMatch;
                 ++matchStart;
-                for (unsigned i = 2; i < slots; ++i)
-                    output[i] = offsetNoMatch;
+                if constexpr (isFull)
+                    resetCaptures(program, output, op - ops);
+                else {
+                    for (unsigned i = 2; i < slots; ++i)
+                        output[i] = offsetNoMatch;
+                }
                 if (!beginAttempt())
                     return Step::NoMatch;
                 if constexpr (remembers || isFull)

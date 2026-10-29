@@ -92,6 +92,7 @@ struct TestFile {
     bool isOptimizing { false };
     unsigned formLine { 0 };
     Vector<OptionWord> optionWords;
+    Vector<OptionWord> jscOptions;
     Vector<CheckGroup> checkGroups;
     Vector<ExpectedDiagnostic> diagnostics;
     Vector<ExpectedStatistic> statistics;

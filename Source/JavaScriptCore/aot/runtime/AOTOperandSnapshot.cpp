@@ -200,11 +200,11 @@ static void captureHashTable(JSObject* object, ptrdiff_t offsetOfStorage, Operan
     state.internalState.append(hashSnapshotBytes(bytes.subspan(offsetOfIterationEntry + sizeof(EncodedJSValue))));
 }
 
-// Another thread writes shared memory while the call runs: that the bytes differ behind the call says nothing about the call.
+// Another thread may write and grow shared memory during the call, so a difference in the bytes or their count after the call says nothing about the call.
 static void captureBytes(const void* bytes, size_t byteLength, bool isShared, OperandSnapshot& state)
 {
     state.bytes = bytes;
-    state.byteLength = byteLength;
+    state.byteLength = isShared ? 0 : byteLength;
     state.hashOfBytes = bytes && !isShared ? hashSnapshotBytes(std::span(static_cast<const uint8_t*>(bytes), byteLength)) : 0;
 }
 
@@ -295,7 +295,16 @@ static OperandDifference differenceAt(OperandChange change, UniquedStringImpl* k
     return { change, key->isSymbol() ? makeString("[Symbol("_s, StringView(key), ")]"_s) : String(key), key, arrived };
 }
 
-static void compareNamedProperties(const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
+// A field that holds undefined may exist without storage.
+static bool liesInField(VM& vm, const Object& object, const FieldData& field)
+{
+    if (object.isInSlot(field))
+        return true;
+    return field.flags & fieldMayExistWithoutStorage && object.isInKeyOrder(object.state(), field) && !(object.hasExtraProperties() && livesInExtraProperties(vm, object, field));
+}
+
+// `compiled` is as `after` has it.
+static void compareNamedProperties(VM& vm, const Object* compiled, const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
 {
     if (before.hasTooManyProperties || after.hasTooManyProperties)
         return;
@@ -313,14 +322,22 @@ static void compareNamedProperties(const OperandSnapshot& before, const OperandS
             bool isStoredInField = differences.containsIf([&](const OperandDifference& field) {
                 return field.change == OperandChange::PropertyStored && field.key == key;
             });
+            // A slot that its field has left keeps its bits, and the value that returns may have the same bits. If the shape word changed, the fields were not compared.
+            bool hasMovedToField = compiled && std::ranges::any_of(compiled->layout().fields(), [&](const FieldData& field) {
+                return propertyNameOf(vm, *compiled, field) == key && liesInField(vm, *compiled, field);
+            });
             if (!isStoredInField)
-                differences.append(differenceAt(OperandChange::PropertyRemoved, key));
+                differences.append(differenceAt(hasMovedToField ? OperandChange::PropertyStored : OperandChange::PropertyRemoved, key));
         } else if (old.attributes != current->attributes) {
             // A value that native code makes at the first read and puts in the place of its getter is the same data property to a script.
             if (old.attributes != (current->attributes | PropertyAttribute::CustomValue))
                 differences.append(differenceAt(OperandChange::AttributesChanged, key, old.value != current->value ? current->value : 0));
-        } else if (old.value != current->value)
-            differences.append(differenceAt(OperandChange::PropertyStored, key, current->value));
+        } else if (old.value != current->value) {
+            // A native accessor may store what it was given on the object under a private name.
+            bool isKeptByNativeAccessor = before.createsPropertiesLazily && key->isSymbol() && static_cast<SymbolImpl*>(key)->isPrivate();
+            if (!isKeptByNativeAccessor)
+                differences.append(differenceAt(OperandChange::PropertyStored, key, current->value));
+        }
     }
     if (before.createsPropertiesLazily || after.createsPropertiesLazily)
         return;
@@ -382,14 +399,17 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
 
     if (Object* compiled = compiledObjectOrNull(object))
         compareFields(vm, *compiled, before, after, differences);
-    compareNamedProperties(before, after, differences);
+    compareNamedProperties(vm, compiledObjectOrNull(object), before, after, differences);
     if (compiledObjectOrNull(object))
         compareKeyOrder(before, after, differences);
 
     if (before.length != after.length)
         differences.append({ OperandChange::ArrayStorageChanged, makeString("length "_s, before.length, " -> "_s, after.length) });
-    else if (before.indexingMode != after.indexingMode)
+    else if (before.indexingMode != after.indexingMode) {
         differences.append({ OperandChange::ArrayStorageChanged, makeString("indexing mode "_s, static_cast<unsigned>(before.indexingMode), " -> "_s, static_cast<unsigned>(after.indexingMode)) });
+        // Once an indexed accessor is on the prototype chain of an object with elements, untouched objects check their chain on every store. Their contents are unchanged.
+        differences.last().isRepresentationOnly = hasSlowPutArrayStorage(after.indexingMode);
+    }
     else if (before.elements != after.elements && hasAnyArrayStorage(before.indexingMode)) {
         // A change of integrity moves the elements of a sparse array from the vector to the map.
         differences.append({ OperandChange::ArrayStorageChanged, "vector"_s });

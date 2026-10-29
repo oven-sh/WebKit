@@ -12,6 +12,7 @@
 #include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
@@ -273,7 +274,7 @@ BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) con
 }
 
 // No realm holds a function that the files of the engine link by name. Unless a row says that native code calls it, it runs only where a statement calls it directly, on the operands of that statement.
-static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& program)
+static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& program, const ParallelLoops& loops)
 {
     const BuiltinTable& builtins = program.builtins();
     BitVector isCalledByNativeCode;
@@ -298,18 +299,17 @@ static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& progr
         RuntimeFunctionID linked;
         bool isDirectCall;
     };
-    Vector<Naming> namings;
-    Vector<uint32_t> functionsOfLinkedCode;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+    Vector<Naming> namings = collectInParallel<Naming>(loops, program.functions.size(), [&](unsigned index, Vector<Naming>& found) {
         const Function& function = program.functions[index];
-        if (linkedFunctionAround(function))
-            functionsOfLinkedCode.append(index);
         forEachFunctionReference(program, function, [&](FunctionID named, FunctionReferenceKind kind) {
             RuntimeFunctionID linked = linkedFunctionAround(program.at(named));
             if (linked && linked != function.enclosingRuntimeFunction)
-                namings.append({ index, linked, kind == FunctionReferenceKind::Call });
+                found.append({ index, linked, kind == FunctionReferenceKind::Call });
         });
-    }
+    });
+    Vector<uint32_t> functionsOfLinkedCode = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
+        return !!linkedFunctionAround(program.functions[index]);
+    });
 
     BitVector isCalled;
     BitVector isNamedElsewhere;
@@ -329,7 +329,7 @@ static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& progr
     }
 }
 
-static BitVector findCodeThatRecordsDescribe(const Program& program)
+static BitVector findCodeThatRecordsDescribe(const Program& program, const ParallelLoops& loops)
 {
     enum class NamedFunctions : uint8_t { None, AllDescribed, SomeNotDescribed };
     Vector<NamedFunctions> namedFunctionsOfModule(FillWith { }, program.modules.size(), NamedFunctions::None);
@@ -357,7 +357,7 @@ static BitVector findCodeThatRecordsDescribe(const Program& program)
         if (standsBehindDescribedBuiltins(program, FunctionID(index)) || (isNamedOnlyInItsFile && namedFunctionsOfModule[function.module.index()] == NamedFunctions::AllDescribed))
             code.quickSet(index);
     }
-    addLinkedFunctionsCalledOnlyBy(code, program);
+    addLinkedFunctionsCalledOnlyBy(code, program, loops);
     return code;
 }
 
@@ -365,7 +365,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
 {
     ValueSetMaker maker(sets);
     const BuiltinTable& builtins = program.builtins();
-    m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program);
+    m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program, loops);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
         if (!entry.function || !Typed::isEnteredByCallsAlone(program, entry.id))
             continue;

@@ -211,6 +211,7 @@ public:
     };
 
     bool isInitializingCell() const { return m_initializationDepth; }
+    bool isPassingHandlerArguments() const { return m_isPassingHandlerArguments; }
 
 private:
     struct Emitters;
@@ -295,6 +296,7 @@ private:
     // By the index of the source: one more than the index of its newest form, or zero.
     Vector<uint32_t> m_newestSharedFormOf;
     size_t m_firstSharedFormInReach { 0 };
+    bool m_isPassingHandlerArguments { false };
     Vector<BlockID> m_blockOfParameter;
     // Takes what the operation that is being generated defines, in place of the table of values.
     Operand* m_definitionTaken { nullptr };

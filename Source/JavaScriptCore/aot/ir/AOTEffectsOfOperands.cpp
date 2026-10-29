@@ -204,9 +204,6 @@ Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
         for (const BuiltinParameter& parameter : overload.parameters)
             addNamesOfParameter(parameter);
     }
-
-    AOT::sort(names, { }, &BuiltinName::index);
-    removeRepeatedElements(names);
     return names;
 }
 
@@ -1006,8 +1003,10 @@ std::optional<uint32_t> entryParameterOf(const Function& callee, const Value& ca
     if (!argument) {
         if (OperandPosition::thisValue(call.opcode) == operandIndex)
             return callee.thisParameterIndex();
-        if (OperandPosition::newTarget(call.opcode) == operandIndex)
-            return callee.newTargetParameterIndex();
+        if (OperandPosition::newTarget(call.opcode) == operandIndex) {
+            // Allocating `this` reads new.target.prototype before the callee runs, so the parameter does not describe every use.
+            return callee.takesThisFromConstruction() ? std::nullopt : callee.newTargetParameterIndex();
+        }
         if (operandUsesOf(call.opcode, operandIndex).containsAny(callingUses))
             return callee.calleeParameterIndex();
         return std::nullopt;

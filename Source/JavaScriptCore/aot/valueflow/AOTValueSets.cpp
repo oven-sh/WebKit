@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTSystemResources.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/Locker.h>
@@ -63,13 +64,15 @@ ValueSets::InternedRuns::~InternedRuns()
 
 uint32_t ValueSets::InternedRuns::takeUnits(uint32_t numberOfUnits)
 {
-    RELEASE_ASSERT(numberOfUnits <= unitsPerSegment);
+    if (numberOfUnits > unitsPerSegment) [[unlikely]]
+        exitProgramTooLarge();
     numberOfUnits = static_cast<uint32_t>(roundUpToMultipleOf<unitsPerLine>(numberOfUnits));
     Locker locker { m_lockOfUnits };
     if (m_nextUnit % unitsPerSegment + numberOfUnits > unitsPerSegment)
         m_nextUnit = static_cast<uint32_t>(roundUpToMultipleOf<unitsPerSegment>(m_nextUnit));
     uint32_t segment = m_nextUnit / unitsPerSegment;
-    RELEASE_ASSERT(segment < numberOfSegments);
+    if (segment >= numberOfSegments) [[unlikely]]
+        exitProgramTooLarge();
     if (!m_segments[segment].load(std::memory_order_relaxed))
         m_segments[segment].store(static_cast<char*>(fastAlignedMalloc(64, unitsPerSegment * bytesPerUnit)), std::memory_order_release);
     uint32_t first = m_nextUnit;
@@ -252,7 +255,8 @@ ValueSets::ValueSets(uint32_t sizeOfUniverse)
     , m_bitsOfRememberedByAll(std::clamp<unsigned>(std::bit_width(sizeOfUniverse), 12, 22) - 2)
     , m_rememberedByAll(std::make_unique<RememberedByAll[]>(static_cast<size_t>(1) << m_bitsOfRememberedByAll))
 {
-    RELEASE_ASSERT(sizeOfUniverse < namesOneMember);
+    if (sizeOfUniverse >= namesOneMember) [[unlikely]]
+        exitProgramTooLarge();
 }
 
 static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32_t> highMembers, NOESCAPE const Invocable<void(uint32_t place, uint64_t hashOfBlock)> auto& functor)
@@ -344,6 +348,50 @@ std::array<uint64_t, 4> ValueSets::sampleOfBlocks(ValueSetID set) const
         take(place, m_blocks.at(block).hashOfMembers);
     });
     return sample;
+}
+
+void ValueSets::WordsOfBlocks::start(const ValueSets& sets, const Run& run)
+{
+    m_sets = &sets;
+    m_entries = run.span();
+    m_presentPlaces = 0;
+    m_presentWords = 0;
+}
+
+auto ValueSets::WordsOfBlocks::next() -> WordOfMembers
+{
+    for (;;) {
+        if (m_presentWords) {
+            uint32_t first = m_firstOfBlock + static_cast<uint32_t>(std::countr_zero(m_presentWords)) * 64;
+            m_presentWords &= m_presentWords - 1;
+            return { first, *m_word++ };
+        }
+        uint32_t place;
+        uint32_t block;
+        if (m_presentPlaces) {
+            place = m_firstPlace + static_cast<uint32_t>(std::countr_zero(m_presentPlaces));
+            block = *m_block++;
+            m_presentPlaces &= m_presentPlaces - 1;
+        } else {
+            if (m_entries.empty())
+                return { 0, 0 };
+            uint64_t entry = m_entries.front();
+            m_entries = m_entries.subspan(1);
+            if (isGroup(entry)) {
+                const uint64_t* words = m_sets->m_groups.at(groupOf(entry)).words();
+                m_firstPlace = placeOf(entry);
+                m_presentPlaces = words[0];
+                m_block = blocksOfGroup(words);
+                continue;
+            }
+            place = placeOf(entry);
+            block = blockOf(entry);
+        }
+        const uint64_t* words = m_sets->m_blocks.at(block).words();
+        m_firstOfBlock = place * membersPerBlock;
+        m_presentWords = words[0];
+        m_word = words + 1;
+    }
 }
 
 uint32_t ValueSets::blockAt(std::span<const uint64_t> list, uint32_t place) const
@@ -1642,6 +1690,20 @@ void ValueSetMaker::appendParts(ValueSetID set, Vector<ValueSetID>& parts)
         uint64_t entry = static_cast<uint64_t>(ValueSets::placeOf(list[0])) << 32 | number;
         parts.append(ValueSetID(internList(singleElementSpan(entry)) * 2));
     }
+}
+
+void ValueSetMaker::appendCoarseParts(ValueSetID set, Vector<ValueSetID>& parts)
+{
+    if (!ValueSets::isComplement(set) && !ValueSets::holdsOneMember(ValueSets::storedSetOf(set)) && set != ValueSets::nothing) {
+        const ValueSets::Run& run = m_sets.m_lists.at(ValueSets::storedSetOf(set));
+        if (!ValueSets::isShort(run) && run.numberOfWords > 1) {
+            // Runs never move, so the span stays valid while the parts are interned.
+            for (uint64_t entry : run.span())
+                parts.append(ValueSetID(internList(singleElementSpan(entry)) * 2));
+            return;
+        }
+    }
+    appendParts(set, parts);
 }
 
 ValueSetID ValueSetMaker::uniteAll(std::span<const ValueSetID> sets)

@@ -17,6 +17,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
@@ -559,6 +560,26 @@ static bool mayStop(const Effects& effects)
     return effects.mayThrow || !effects.alwaysCompletes();
 }
 
+// A stack overflow is the same error whichever call hits it, and an omitted call hits none.
+static bool mayStopOtherThanStackOverflow(const Effects& effects)
+{
+    return effects.mayThrowOtherThanStackOverflow() || !effects.alwaysCompletes();
+}
+
+// Every call of such a function from one loop needs the same stack space, so either the first call overflows or none does.
+static bool entersNoFurtherFrame(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    auto runsNoCode = [](const EffectDescription& description) {
+        return description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode;
+    };
+    return function.hasBody() && std::ranges::all_of(function.blocks, [&](const Block& block) {
+        return runsNoCode(describeCodeRunBy(program, function, block.terminator)) && std::ranges::all_of(block.values, [&](ValueID value) {
+            return runsNoCode(describeCodeRunBy(program, function, function.at(value)));
+        });
+    });
+}
+
 static bool mayAccessSameMemory(const Effects& a, const Effects& b)
 {
     LocationMasks orderedWritesOfA = a.writes.restrictedTo(orderedHeaps);
@@ -605,11 +626,13 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
 
     EffectContext effectContext { program, context.inputs.effects };
     Vector<Effects, ChainShape::maxNumberOfLinks + 2> effects;
+    Vector<bool, ChainShape::maxNumberOfLinks + 2> mayStopAfterFirstCall;
     for (const ChainCallback& callback : chain.callbacks) {
         CalleeList callees = callback.callee ? CalleeList::none() : CalleeList::unknown();
         if (callback.callee)
             callees.add(callback.callee);
         effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
+        mayStopAfterFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
     }
     if (chain.shape.end == ChainEndKind::Join) {
         const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
@@ -629,14 +652,16 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         for (size_t later = earlier + 1; later < effects.size(); ++later) {
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
-            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (mayStop(a) && (canBeObserved(b) || mayStop(b))))
+            bool earlierStopsAmongLaterCalls = earlier < mayStopAfterFirstCall.size() ? mayStopAfterFirstCall[earlier] : mayStop(a);
+            bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
+            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
                 return ArrayChainDeclineReason::CallbacksInterfere;
             if (mayStop(b) && canBeObserved(a))
                 return ArrayChainDeclineReason::SkippedCallIsObservable;
         }
     }
     bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
-        return canBeObserved(step) || mayStop(step);
+        return canBeObserved(step) || mayStopOtherThanStackOverflow(step);
     });
     if (skipsCallThatShows)
         return ArrayChainDeclineReason::SkippedCallIsObservable;
@@ -740,8 +765,18 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
         frames.append(frame);
         return static_cast<uint32_t>(frames.size() - 1);
     };
+    // A method that is not written in JavaScript has the frame of a built-in whose steps stand in its caller.
+    auto calledBuiltinOf = [&](const Value& call) -> BuiltinID {
+        if (call.opcode != Opcode::CallBuiltin || (call.inlineFrame && frames[call.inlineFrame].calledBuiltin))
+            return { };
+        const BuiltinTable& builtins = context.program.builtins();
+        const BuiltinOverload& overload = builtins.at(call.overload());
+        return overload.mode == BuiltinCallMode::Call ? builtins.canonicalID(overload.builtin) : BuiltinID();
+    };
     auto appendFrameOfBuiltin = [&](ValueID id) -> std::optional<Origin> {
         const Value& call = function.at(id);
+        if (BuiltinID builtin = calledBuiltinOf(call))
+            return function.enterFrameOfBuiltin(context.id, call.origin(), builtin);
         if (call.opcode != Opcode::CallDirect)
             return std::nullopt;
         const Function& builtin = context.program.at(call.function());
@@ -754,13 +789,16 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     bool linksHavePlacesOfTheirOwn = std::ranges::any_of(links, [&](const ChainCallback& link) {
         return link.call != chain.lastCall;
     });
-    bool linksAreWrittenInJavaScript = std::ranges::all_of(links, [&](const ChainCallback& link) {
-        return function.at(link.call).opcode == Opcode::CallDirect;
+    bool linksHaveFrames = std::ranges::all_of(links, [&](const ChainCallback& link) {
+        const Value& call = function.at(link.call);
+        return call.opcode == Opcode::CallDirect || calledBuiltinOf(call);
     });
-    if (linksHavePlacesOfTheirOwn && linksAreWrittenInJavaScript) {
+    if (linksHavePlacesOfTheirOwn && linksHaveFrames) {
         // The frames of the links stand in a row in front of the frame of the site, which is where the copy of the traversal looks for them.
-        for (const ChainCallback& link : links)
-            appendFrameOfBuiltin(link.call);
+        for (const ChainCallback& link : links) {
+            std::optional<Origin> frameOfLink = appendFrameOfBuiltin(link.call);
+            RELEASE_ASSERT(frameOfLink);
+        }
         const Function& traversal = context.program.at(findChainTraversal(context.program));
         origin = Origin { traversal.position, appendFrame({ .callee = step, .callPosition = origin.position, .parent = origin.inlineFrame, .isTailCall = origin.isTailCall, .module = traversal.module }) };
     }
@@ -1204,6 +1242,7 @@ struct PresenceQuery {
     TypedArrayType typedArrayType { NotTypedArray };
     bool keyIsInteger { false };
     bool isDense { false };
+    bool isNeverPristine { false };
 };
 
 // What the function itself does with an array says what to expect of it: a position that it compares with the length lies inside, and an array that it stores into has storage of its own.
@@ -1414,7 +1453,7 @@ static bool hasFormWithoutAbsentElement(FunctionPassContext& context, const Pres
     // A store outside a typed array does nothing, and no program relies on that.
     if (query.form == ElementAccessForm::TypedArray)
         return (query.kind == Access::Read || query.kind == Access::Store) && hasInlineElementAccess(query.typedArrayType);
-    if (query.form != ElementAccessForm::Array || query.kind != Access::Read || !hasArrayStorageForm(query.arrayStorage))
+    if (query.form != ElementAccessForm::Array || query.kind != Access::Read || (!hasArrayStorageForm(query.arrayStorage) && !query.isNeverPristine))
         return false;
     // The first elements of such a result are delivered without the array, each as the element or undefined. An array that lasts through the turns of a loop stays an array.
     // In a dense one only a position outside finds nothing, and the arm for that is one comparison with the length, which the loop mostly makes itself.
@@ -1439,6 +1478,8 @@ static std::optional<PresenceTest> choosePresenceTest(FunctionPassContext& conte
 {
     if (!hasFormWithoutAbsentElement(context, query) || context.analyses.blockFrequencies().classOf(query.block).predicted() == BlockFrequency::Rare)
         return std::nullopt;
+    if (query.isNeverPristine)
+        return PresenceTest::ElementPresent;
     if (query.kind == Access::Read && isTestedForAbsence(context.analyses, query.access))
         return std::nullopt;
     if (query.form == ElementAccessForm::TypedArray)
@@ -1518,7 +1559,7 @@ static Type keyTypeAfterTests(const TestSiteReporter& reporter, const Value& use
 
 static PresenceQuery presenceQueryOf(ValueID access, BlockID block, const Value& use, const ElementAccessPlan& plan, const Type& receiver, const Type& key)
 {
-    return { access, block, use.objectOperand(), *elementAccessOf(use.opcode), plan.form, plan.arrayStorage, plan.typedArrayType, key.isInteger(), isDenseArray(receiver) };
+    return { access, block, use.objectOperand(), *elementAccessOf(use.opcode), plan.form, plan.arrayStorage, plan.typedArrayType, key.isInteger(), isDenseArray(receiver), plan.receiverIsNeverPristine };
 }
 
 // Where nothing asks whether the element is there, an absent element leaves typed code: the access behind the test has no arm for it.
@@ -1624,10 +1665,37 @@ static void reportPresenceTestOfResolvedAccess(TestSiteReporter& reporter, Array
     countPresenceTest(reporter);
 }
 
+static ArrayStorage arrayStorageExpectedOfRead(const TestSiteReporter& reporter)
+{
+    const Function& function = reporter.function();
+    auto storageHolding = [&](TypeID type) {
+        return type && !reporter.types().at(type).isAnything() ? arrayStorageHolding(reporter.types().at(type)) : ArrayStorage::Other;
+    };
+    Vector<ValueID, maxValuesFollowed> followed { reporter.use() };
+    for (size_t index = 0; index < followed.size(); ++index) {
+        const Value& value = function.at(followed[index]);
+        for (TypeID type : { value.type, value.expected().predicted() }) {
+            if (ArrayStorage expected = storageHolding(type); expected != ArrayStorage::Other)
+                return expected == ArrayStorage::Int32 ? ArrayStorage::Double : expected;
+        }
+        for (const Use& use : reporter.analyses().useLists().usesOf(followed[index])) {
+            ValueID next;
+            if (use.kind == Use::Kind::Operand && !use.operandIndex && isCast(function.at(use.user).opcode))
+                next = use.user;
+            else if (use.kind == Use::Kind::EdgeArgument)
+                next = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+            if (next && followed.size() < maxValuesFollowed && !followed.contains(next))
+                followed.append(next);
+        }
+    }
+    return ArrayStorage::Other;
+}
+
 void reportElementAccessTests(TestSiteReporter& reporter)
 {
     ArrayUses arrays { reporter.analyses() };
-    reporter.forEachCandidate([&](const Value& use) {
+    static constexpr OpcodeSet operations = resolvedAccessesWithPresenceTest | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas };
+    reporter.forEachCandidate(operations, [&](const Value& use) {
         if (resolvedAccessesWithPresenceTest.contains(use.opcode))
             return reportPresenceTestOfResolvedAccess(reporter, arrays, use);
         ProgramPoint point = reporter.point();
@@ -1642,6 +1710,10 @@ void reportElementAccessTests(TestSiteReporter& reporter)
             plan.testsArrayStorage = true;
             plan.level = KnowledgeLevel::Expected;
         }
+        if (plan.receiverIsNeverPristine && plan.arrayStorage == ArrayStorage::Other) {
+            plan.arrayStorage = arrayStorageExpectedOfRead(reporter);
+            plan.testsArrayStorage = hasArrayStorageForm(plan.arrayStorage);
+        }
         // The test is placed only where the comparison says how it will come out: an append by index, `a[n++] = x`, fails it every time.
         if (plan.form == ElementAccessForm::Array && hasArrayStorageForm(plan.arrayStorage) && Value::opcodesWithIsInBounds.contains(plan.operation) && keyTypeAfterTests(reporter, use, plan).isInteger()) {
             // A store that converts the storage is no store of one element.
@@ -1649,6 +1721,11 @@ void reportElementAccessTests(TestSiteReporter& reporter)
                 plan.testsInBounds = arrays.isComparedWithLength(use.objectOperand(), use.propertyOperand(), reporter.point().block);
         }
         bool expectsPresentElement = expectPresentElement(reporter, use, plan);
+        bool storesIntoTestedStorage = plan.operation == Opcode::PutArrayElement && plan.testsArrayStorage;
+        if (plan.receiverIsNeverPristine && !plan.testsPresence && !storesIntoTestedStorage)
+            return;
+        if (plan.receiverIsNeverPristine && storesIntoTestedStorage)
+            plan.requiredAspects = { };
         bool hasGuardedForm = plan.isCharacterReadAfterTests() || (plan.isResolved() && !plan.needsNoTest() && (plan.form != ElementAccessForm::Array || plan.arrayStorage == ArrayStorage::Other || hasArrayStorageForm(plan.arrayStorage)));
         std::optional<ElementAccessTests> tests = hasGuardedForm ? createTests(reporter, arrays, use, plan) : std::nullopt;
         if (!tests)
@@ -1720,7 +1797,7 @@ void rewriteTestedElementAccess(TestSiteRewriter& rewriter)
         plan.isPresent = false;
     }
     // The plan is made again here and knows nothing of what was expected of the position when the tests were reported.
-    if (plan.isPresent)
+    if (plan.isPresent || (plan.receiverIsNeverPristine && plan.operation == Opcode::PutArrayElement && hasArrayStorageForm(plan.arrayStorage)))
         plan.requiredAspects = { };
     // A comparison with the length also puts the test of the bounds, so the test alone does not say what was expected of a hole.
     plan.readsHoleAsNaN = false;

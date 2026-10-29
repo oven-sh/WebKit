@@ -1,0 +1,64 @@
+# Five groups of seventy objects. `first` may be any object of groups 0 to 2 and `last` any of groups 2 to 4, so they share a third.
+# Both write a function under one name, and both receivers and single objects read it.
+# Flow links a receiver of many objects through the sets it shares with other receivers. The bound is lowered so that a few hundred objects are many.
+# OPTIONS: limit=MaxValueFlowObjectsListedByMember:64
+# RUN: valueflow-solve calls cells
+# What `first` reads, then `last`, then one object of groups 0, 2 and 4.
+# CHECK: f0 v720 -> f1 f2
+# CHECK: f0 v722 -> f1 f2
+# CHECK: f0 v724 -> f1
+# CHECK: f0 v726 -> f1 f2
+# CHECK: f0 v728 -> f2
+# The names and kinds of names under which receivers were split into the sets they share. Without the split there are none.
+# CHECK: names-with-several-cells 10
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+# REPEAT: i = 0..349
+    v%(i) = NewArray contents=anything
+# END REPEAT
+    v350 = NewArray contents=anything
+    v351 = NewArray contents=anything
+    v352 = NewArray contents=anything
+    v353 = NewArray contents=anything
+    v354 = NewArray contents=anything
+# REPEAT: i = 0..69
+    AppendElement v350, v%(i)
+    AppendElement v351, v%(i+70)
+    AppendElement v352, v%(i+140)
+    AppendElement v353, v%(i+210)
+    AppendElement v354, v%(i+280)
+# END REPEAT
+    v705 = Integer integer=0
+    v706 = ElemGet v350, v705
+    v707 = ElemGet v351, v705
+    v708 = ElemGet v352, v705
+    v709 = ElemGet v353, v705
+    v710 = ElemGet v354, v705
+    v711 = NewArray v706, v707, v708 contents=anything
+    v712 = NewArray v708, v709, v710 contents=anything
+    v713 = ElemGet v711, v705
+    v714 = ElemGet v712, v705
+    v715 = NewClosure function=f1
+    v716 = NewClosure function=f2
+    PropSet v713, v715 key="handler" mode=Strict
+    PropSet v714, v716 key="handler" mode=Strict
+    v719 = PropGet v713 key="handler"
+    v720 = Call v719, v713
+    v721 = PropGet v714 key="handler"
+    v722 = Call v721, v714
+    v723 = PropGet v0 key="handler"
+    v724 = Call v723, v0
+    v725 = PropGet v140 key="handler"
+    v726 = Call v725, v140
+    v727 = PropGet v280 key="handler"
+    v728 = Call v727, v280
+    Return
+}
+function f1 name="fromFirst" results=[{type=anything}] {
+    Return
+}
+function f2 name="fromLast" results=[{type=anything}] {
+    Return
+}

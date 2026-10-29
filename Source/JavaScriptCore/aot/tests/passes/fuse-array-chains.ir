@@ -7,77 +7,77 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=30 function=f1
-runtimefunction id=32 function=f2
-runtimefunction id=34 function=f3
-runtimefunction id=36 function=f4
-runtimefunction id=41 function=f5
-runtimefunction id=43 function=f6
-runtimefunction id=64 function=f7
-runtimefunction id=81 function=f8
-runtimefunction id=88 function=f9
-runtimefunction id=131091 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeEvery function=f1
+runtimefunction id=ArrayPrototypeFilter function=f2
+runtimefunction id=ArrayPrototypeFind function=f3
+runtimefunction id=ArrayPrototypeFindIndex function=f4
+runtimefunction id=ArrayPrototypeFlatMap function=f5
+runtimefunction id=ArrayPrototypeForEach function=f6
+runtimefunction id=ArrayPrototypeMap function=f7
+runtimefunction id=ArrayPrototypeReduce function=f8
+runtimefunction id=ArrayPrototypeSome function=f9
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
-function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=36 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFindIndex thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeReduce thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array<anything>):
     v4 = Integer integer=0
     v5 = ElemGet v0, v4
     v6 = Call v2, -, v5, v5, v4, v0
     Return v6
 }
-function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3

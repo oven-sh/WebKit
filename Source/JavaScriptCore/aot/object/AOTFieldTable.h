@@ -48,7 +48,8 @@ struct FieldTableEntry {
     static constexpr uint32_t endOfDoubles = firstDouble + 1024;
     static constexpr uint32_t maxFormAndOperand = (1u << nameShift) - 1;
     static constexpr uint32_t noName = 0;
-    static constexpr uint32_t maxName = (1u << 15) - 1;
+    // More names than the front table has columns: a large program reads and stores fields under names that are too cold for a column there.
+    static constexpr uint32_t maxName = UINT16_MAX;
     static constexpr uint32_t minNarrowValue = nullCell32;
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != noName && identifierNumber <= maxName; }
@@ -193,7 +194,7 @@ private:
 // The index of the field in the record of the shape's layout. The shape is an object's and the name has a column.
 inline std::optional<uint16_t> findFieldInTable(const ProgramTables& tables, uint32_t shape, uint32_t name)
 {
-    ASSERT(shape && shape <= tables.numberOfFieldTableRows && FieldTableEntry::hasColumn(name));
+    ASSERT(shape && shape <= tables.numberOfFieldTableRows && tables.hasFieldTableColumn(name));
     uint32_t index = tables.fieldTableRowOf(shape) + name;
     if (index >= tables.fieldRecordIndices().size() || FieldTableEntry { tables.fieldTableEntries()[index] }.name() != name)
         return std::nullopt;

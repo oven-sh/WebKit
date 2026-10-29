@@ -384,9 +384,10 @@ static void testOwnFieldHeapsAreNested()
     AOTHeaps& heaps = fixture.heaps;
 
 #define AOT_CHECK_MUTABLE_FIELD_HEAP(name, offset, irHeap) \
-    AOT_TEST_CHECK(heaps.name.parent() == &heaps.entire(IRHeap::irHeap) && heaps.name.mutability() == B3::Mutability::Mutable);
+    AOT_TEST_CHECK(heaps.locationsOf(heaps.name) && heaps.locationsOf(heaps.name)->heap == IRHeap::irHeap && heaps.name.mutability() == B3::Mutability::Mutable);
     FOR_EACH_AOT_MUTABLE_FIELD_HEAP(AOT_CHECK_MUTABLE_FIELD_HEAP)
 #undef AOT_CHECK_MUTABLE_FIELD_HEAP
+    AOT_TEST_CHECK(heaps.JSArray_butterfly.parent() == &heaps.JSObject_butterfly && heaps.JSNonArray_butterfly.parent() == &heaps.JSObject_butterfly);
 
 #define AOT_CHECK_IMMUTABLE_FIELD_HEAP(name, offset) \
     AOT_TEST_CHECK(heaps.name.parent() == &heaps.root && heaps.name.mutability() == B3::Mutability::Immutable && !heaps.locationsOf(heaps.name));
@@ -507,7 +508,7 @@ static void testIsCoveredBy()
     AOT_TEST_CHECK(heaps.isCoveredBy(heaps.JSBoundFunction_boundThis, LocationMasks(Typed::AbstractHeapSet { IRHeap::RuntimeState })));
     AOT_TEST_CHECK(!heaps.isCoveredBy(heaps.JSBoundFunction_boundThis, LocationMasks::top().without({ IRHeap::RuntimeState })));
 
-#define AOT_CHECK_HEAP_OUTSIDE_IR(name) AOT_TEST_CHECK(heaps.isCoveredBy(heaps.name, nothing));
+#define AOT_CHECK_HEAP_OUTSIDE_IR(name) AOT_TEST_CHECK(heaps.isCoveredBy(heaps.name, nothing) == (&heaps.name != &heaps.weakTableStorage && &heaps.name != &heaps.weakTableEntries));
     FOR_EACH_AOT_HEAP_OUTSIDE_IR(AOT_CHECK_HEAP_OUTSIDE_IR)
 #undef AOT_CHECK_HEAP_OUTSIDE_IR
     AOT_TEST_CHECK(heaps.isCoveredBy(heaps.JSCell_cellState, nothing));
@@ -759,9 +760,32 @@ static void testCallsConvertCells()
     throws.mayThrow = true;
     AOT_TEST_CHECK(convertsCells(throws));
 
+    auto replacesStorageOfArrays = [](const Typed::Effects& effects) {
+        return AOTHeaps::mayReplaceStorageOfArrays(effects);
+    };
+    auto writing = [](IRHeap heap) {
+        Typed::Effects effects = Typed::Effects::none();
+        effects.writes.add(heap);
+        return effects;
+    };
+    for (IRHeap heap : { IRHeap::ArrayStorage, IRHeap::Elements, IRHeap::NamedProperties, IRHeap::PrototypeLinks })
+        AOT_TEST_CHECK(replacesStorageOfArrays(writing(heap)));
+    for (IRHeap heap : { IRHeap::ModuleVariables, IRHeap::EnvironmentFields, IRHeap::ObjectFields, IRHeap::ShapeWords, IRHeap::StringStorage, IRHeap::CollectionStorage, IRHeap::CollectionEntries, IRHeap::TypedArrayElements, IRHeap::AllocatorState, IRHeap::RuntimeState })
+        AOT_TEST_CHECK(!replacesStorageOfArrays(writing(heap)));
+    AOT_TEST_CHECK(replacesStorageOfArrays(reading(IRHeap::NamedProperties)));
+    for (IRHeap heap : { IRHeap::ObjectFields, IRHeap::ShapeWords, IRHeap::ArrayStorage, IRHeap::Elements, IRHeap::StringStorage })
+        AOT_TEST_CHECK(!replacesStorageOfArrays(reading(heap)));
+    AOT_TEST_CHECK(!replacesStorageOfArrays(createsConstant) && !replacesStorageOfArrays(collects) && !replacesStorageOfArrays(throws));
+    AOT_TEST_CHECK(replacesStorageOfArrays(Typed::Effects::unknownCode()));
+    Typed::Effects suspends = Typed::Effects::none();
+    suspends.maySuspend = true;
+    AOT_TEST_CHECK(replacesStorageOfArrays(suspends));
+
     B3::MemoryValue* loadOfStructureID = fixture.appendLoad(heaps.JSCell_structureID);
     B3::MemoryValue* loadOfUsefulBytes = fixture.appendLoad(heaps.JSCell_usefulBytes);
     B3::MemoryValue* loadOfButterfly = fixture.appendLoad(heaps.JSObject_butterfly);
+    B3::MemoryValue* loadOfButterflyOfArray = fixture.appendLoad(heaps.JSArray_butterfly);
+    B3::MemoryValue* loadOfButterflyOfNonArray = fixture.appendLoad(heaps.JSNonArray_butterfly);
     B3::MemoryValue* loadOfSlimClosureWord = fixture.appendLoad(heaps.AOTSlimClosure_word);
     B3::MemoryValue* loadOfClosureEntry = fixture.appendLoad(heaps.AOTClosure_entry);
     B3::MemoryValue* loadOfShapeWord = fixture.appendLoad(heaps.AOTObject_shapeWord);
@@ -770,16 +794,86 @@ static void testCallsConvertCells()
     heaps.appendHeapsOfConvertedCells(written);
     AOT_TEST_CHECK(written.contains(&heaps.JSCell_header) && written.contains(&heaps.JSObject_butterfly) && written.contains(&heaps.AOTSlimClosure_word));
     heaps.decoratePatchpointWrite(written.span(), lookup);
+    B3::PatchpointValue* allocation = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    B3HeapList writtenOutsideArrays;
+    heaps.appendHeapsOfConvertedCells(writtenOutsideArrays, AOTHeaps::ConvertedCells::AllButArrays);
+    heaps.decoratePatchpointWrite(writtenOutsideArrays.span(), allocation);
+    B3::PatchpointValue* growth = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    B3HeapList writtenByGrowth;
+    heaps.appendHeaps(writing(IRHeap::ArrayStorage).writes, writtenByGrowth);
+    heaps.decoratePatchpointWrite(writtenByGrowth.span(), growth);
+    B3::PatchpointValue* additionOfProperty = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    B3HeapList writtenByAdditionOfProperty;
+    heaps.appendHeaps(writing(IRHeap::NamedProperties).writes, writtenByAdditionOfProperty);
+    heaps.decoratePatchpointWrite(writtenByAdditionOfProperty.span(), additionOfProperty);
     heaps.computeRangesAndDecorateInstructions();
 
-    for (B3::MemoryValue* load : { loadOfStructureID, loadOfUsefulBytes, loadOfButterfly, loadOfSlimClosureWord }) {
+    for (B3::MemoryValue* load : { loadOfStructureID, loadOfUsefulBytes, loadOfButterfly, loadOfButterflyOfArray, loadOfButterflyOfNonArray, loadOfSlimClosureWord }) {
         AOT_TEST_CHECK(load->readsMutability() == B3::Mutability::Mutable);
         AOT_TEST_CHECK(lookup->effects.writes.overlaps(load->range()));
+        AOT_TEST_CHECK(allocation->effects.writes.overlaps(load->range()) == (load != loadOfButterflyOfArray));
     }
+    for (B3::MemoryValue* load : { loadOfButterfly, loadOfButterflyOfArray, loadOfButterflyOfNonArray }) {
+        AOT_TEST_CHECK(growth->effects.writes.overlaps(load->range()));
+        AOT_TEST_CHECK(additionOfProperty->effects.writes.overlaps(load->range()));
+    }
+    AOT_TEST_CHECK(!loadOfButterflyOfArray->range().overlaps(loadOfButterflyOfNonArray->range()));
+    AOT_TEST_CHECK(loadOfButterfly->range().overlaps(loadOfButterflyOfArray->range()) && loadOfButterfly->range().overlaps(loadOfButterflyOfNonArray->range()));
     for (B3::MemoryValue* load : { loadOfClosureEntry, loadOfShapeWord })
         AOT_TEST_CHECK(load->readsMutability() == B3::Mutability::Immutable);
     for (IRHeap heap : { IRHeap::ObjectFields, IRHeap::Elements, IRHeap::EnvironmentFields, IRHeap::StringStorage })
         AOT_TEST_CHECK(!lookup->effects.writes.overlaps(heaps.rangeOf(heaps.entire(heap))));
+}
+
+static void testCollectionsWriteOnlyWeakTables()
+{
+    HeapFixture fixture;
+    AOTHeaps& heaps = fixture.heaps;
+
+    B3::MemoryValue* loadOfTable = fixture.appendLoad(heaps.entire(IRHeap::CollectionStorage));
+    B3::MemoryValue* loadOfTableOfMap = fixture.appendLoad(heaps.JSMap_storage);
+    B3::MemoryValue* loadOfEntry = fixture.appendLoad(heaps.entire(IRHeap::CollectionEntries));
+    B3::MemoryValue* loadOfWeakBuffer = fixture.appendLoad(heaps.WeakMapImpl_buffer);
+    B3::MemoryValue* loadOfWeakKey = fixture.appendLoad(heaps.WeakMapBucket_key);
+    auto appendPatchpointWriting = [&](const B3HeapList& written) {
+        B3::PatchpointValue* patchpoint = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+        patchpoint->effects = B3::Effects::none();
+        heaps.decoratePatchpointWrite(written.span(), patchpoint);
+        return patchpoint;
+    };
+    auto heapsOf = [&](IRHeap heap) {
+        Typed::LocationMasks masks;
+        masks.add(heap);
+        B3HeapList list;
+        heaps.appendHeaps(masks, list);
+        return list;
+    };
+    B3HeapList writtenByCollection;
+    heaps.appendHeapsWrittenByCollection(writtenByCollection);
+    B3::PatchpointValue* collection = appendPatchpointWriting(writtenByCollection);
+    B3::PatchpointValue* growth = appendPatchpointWriting(heapsOf(IRHeap::CollectionStorage));
+    B3::PatchpointValue* insertion = appendPatchpointWriting(heapsOf(IRHeap::CollectionEntries));
+    heaps.computeRangesAndDecorateInstructions();
+
+    for (B3::MemoryValue* load : { loadOfTable, loadOfTableOfMap, loadOfEntry })
+        AOT_TEST_CHECK(!collection->effects.writes.overlaps(load->range()));
+    for (B3::MemoryValue* load : { loadOfWeakBuffer, loadOfWeakKey })
+        AOT_TEST_CHECK(collection->effects.writes.overlaps(load->range()));
+    for (B3::MemoryValue* load : { loadOfTable, loadOfTableOfMap, loadOfWeakBuffer }) {
+        AOT_TEST_CHECK(growth->effects.writes.overlaps(load->range()));
+        AOT_TEST_CHECK(!insertion->effects.writes.overlaps(load->range()));
+    }
+    for (B3::MemoryValue* load : { loadOfEntry, loadOfWeakKey }) {
+        AOT_TEST_CHECK(insertion->effects.writes.overlaps(load->range()));
+        AOT_TEST_CHECK(!growth->effects.writes.overlaps(load->range()));
+    }
+
+    Typed::LocationMasks storage;
+    storage.add(IRHeap::CollectionStorage);
+    Typed::LocationMasks entries;
+    entries.add(IRHeap::CollectionEntries);
+    AOT_TEST_CHECK(heaps.isCoveredBy(heaps.WeakMapImpl_buffer, storage) && !heaps.isCoveredBy(heaps.WeakMapImpl_buffer, entries) && !heaps.isCoveredBy(heaps.WeakMapImpl_buffer, { }));
+    AOT_TEST_CHECK(heaps.isCoveredBy(heaps.WeakMapBucket_key, entries) && !heaps.isCoveredBy(heaps.WeakMapBucket_key, storage) && !heaps.isCoveredBy(heaps.WeakMapBucket_key, { }));
 }
 
 static void testWhatCellsOwnOutsideTheHeap()
@@ -931,6 +1025,7 @@ std::span<const NativeTest> b3HeapTests()
         { "b3-heaps/ranges-of-heaps-that-grow-inside-one-another"_s, testRangesOfHeapsThatGrowInsideOneAnother },
         { "b3-heaps/write-sets-exclude-other-heaps"_s, testWriteSetsExcludeOtherHeaps },
         { "b3-heaps/calls-convert-cells"_s, testCallsConvertCells },
+        { "b3-heaps/collections-write-weak-tables-alone"_s, testCollectionsWriteOnlyWeakTables },
         { "b3-heaps/what-cells-own-outside-the-heap"_s, testWhatCellsOwnOutsideTheHeap },
         { "b3-heaps/words-outside-the-heap-are-read-again-in-front-of-collections"_s, testWordsOutsideTheHeapAreReadAgainInFrontOfCollections },
     };

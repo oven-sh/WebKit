@@ -198,6 +198,16 @@ static void testConvertBranchesToSelectsKeepsOtherBranches()
         graph.increase(arm, loop.sum, 1);
         graph.callLikePatchpoint(arm);
     }));
+    for (bool onlyKeepsChildrenAlive : { false, true }) {
+        CHECK_EQ(convertsTriangle(onLoadedValue, [&](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value*) {
+            graph.increase(arm, loop.sum, 1);
+            PatchpointValue* patchpoint = graph.emptyPatchpoint(arm);
+            patchpoint->effects.writesLocalState = true;
+            patchpoint->effects.reads = HeapRange::top();
+            patchpoint->append(loop.pointer, ValueRep::ColdAny);
+            patchpoint->onlyKeepsChildrenAlive = onlyKeepsChildrenAlive;
+        }), onlyKeepsChildrenAlive);
+    }
     CHECK(!convertsTriangle(onLoadedValue, [](Graph& graph, TopTestedLoop& loop, BasicBlock* arm, Value* loaded) {
         graph.set(arm, loop.sum, graph.make(arm, Div, graph.get(arm, loop.sum), loaded));
     }));
@@ -228,6 +238,115 @@ static void testConvertBranchesToSelectsKeepsBranchOutsideLoop()
     fixSSA(proc);
     validate(proc);
     CHECK(!convertBranchesToSelectsAndValidate(proc));
+}
+
+enum class SelectedValues : uint8_t {
+    ComparisonOperands,
+    ComparisonOperandsSwapped,
+    OperandAndEqualConstant,
+    OperandAndUnrelatedValue,
+};
+
+template<typename T>
+static bool convertsMinOrMax(B3::Opcode comparison, SelectedValues selected, bool isDiamond)
+{
+    constexpr bool isFloatingPoint = std::is_floating_point_v<T>;
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* notTaken = isDiamond ? proc.addBlock() : nullptr;
+    BasicBlock* join = proc.addBlock();
+    auto arguments = cCallArgumentValues<T, T, T>(proc, root);
+    auto seven = [&](BasicBlock* block) -> Value* {
+        if constexpr (isFloatingPoint)
+            return graph.number(block, 7);
+        else
+            return graph.int64(block, 7);
+    };
+    Value* a = arguments[0];
+    Value* b = selected == SelectedValues::OperandAndEqualConstant ? seven(root) : arguments[1];
+    Value* c = arguments[2];
+    Value* ifTrue = selected == SelectedValues::ComparisonOperandsSwapped ? b : a;
+    Value* ifFalse = selected == SelectedValues::ComparisonOperandsSwapped ? a : selected == SelectedValues::OperandAndUnrelatedValue ? c : b;
+    if (selected == SelectedValues::OperandAndEqualConstant)
+        ifFalse = seven(root);
+    Value* phi = proc.add<Value>(Phi, a->type(), Origin());
+    if (!isDiamond)
+        graph.upsilon(root, ifFalse, phi);
+    graph.branch(root, graph.make(root, comparison, a, b), taken, isDiamond ? notTaken : join);
+    graph.upsilon(taken, ifTrue, phi);
+    graph.jump(taken, join);
+    if (isDiamond) {
+        graph.upsilon(notTaken, ifFalse, phi);
+        graph.jump(notTaken, join);
+    }
+    join->append(phi);
+    graph.ret(join, phi);
+    proc.resetReachability();
+    validate(proc);
+
+    bool isConverted = convertBranchesToSelectsAndValidate(proc);
+    CHECK_EQ(numberOfValues(proc, Branch), isConverted ? 0u : 1u);
+    CHECK_EQ(numberOfValues(proc, Select), isConverted ? 1u : 0u);
+    auto code = compileProc(proc);
+    Vector<T> operands { static_cast<T>(-3), static_cast<T>(0), static_cast<T>(7), static_cast<T>(9) };
+    if constexpr (isFloatingPoint) {
+        operands.append(-0.0);
+        operands.append(PNaN);
+    }
+    for (T x : operands) {
+        for (T y : operands) {
+            T right = selected == SelectedValues::OperandAndEqualConstant ? static_cast<T>(7) : y;
+            bool isTrue = false;
+            switch (comparison) {
+            case LessThan:
+                isTrue = x < right;
+                break;
+            case GreaterThan:
+                isTrue = x > right;
+                break;
+            case LessEqual:
+                isTrue = x <= right;
+                break;
+            case GreaterEqual:
+                isTrue = x >= right;
+                break;
+            case Below:
+                isTrue = static_cast<uint64_t>(x) < static_cast<uint64_t>(right);
+                break;
+            default:
+                isTrue = x == right;
+                break;
+            }
+            T third = static_cast<T>(5);
+            T whenTrue = selected == SelectedValues::ComparisonOperandsSwapped ? right : x;
+            T whenFalse = selected == SelectedValues::ComparisonOperandsSwapped ? x : selected == SelectedValues::OperandAndUnrelatedValue ? third : right;
+            T expected = isTrue ? whenTrue : whenFalse;
+            T result = invoke<T>(*code, x, y, third);
+            CHECK(!memcmp(&result, &expected, sizeof(T)));
+        }
+    }
+    return isConverted;
+}
+
+// min and max are converted outside loops too, and without a load feeding the comparison.
+static void testConvertBranchesToSelectsConvertsMinAndMax()
+{
+    for (bool isDiamond : { false, true }) {
+        for (SelectedValues selected : { SelectedValues::ComparisonOperands, SelectedValues::ComparisonOperandsSwapped, SelectedValues::OperandAndEqualConstant }) {
+            for (B3::Opcode comparison : { LessThan, GreaterThan, LessEqual, GreaterEqual, Below })
+                CHECK(convertsMinOrMax<int64_t>(comparison, selected, isDiamond));
+            for (B3::Opcode comparison : { LessThan, GreaterThan })
+                CHECK(convertsMinOrMax<double>(comparison, selected, isDiamond));
+            for (B3::Opcode comparison : { LessEqual, GreaterEqual })
+                CHECK_EQ(convertsMinOrMax<double>(comparison, selected, isDiamond), isARM64());
+            CHECK(!convertsMinOrMax<int64_t>(Equal, selected, isDiamond));
+            CHECK(!convertsMinOrMax<double>(Equal, selected, isDiamond));
+        }
+        CHECK(!convertsMinOrMax<int64_t>(LessThan, SelectedValues::OperandAndUnrelatedValue, isDiamond));
+        CHECK(!convertsMinOrMax<double>(LessThan, SelectedValues::OperandAndUnrelatedValue, isDiamond));
+    }
 }
 
 static void checkSelectsAtJoin(unsigned variableCount, std::optional<Limit> reachedLimit)
@@ -356,6 +475,7 @@ void addBunSelectTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testConvertBranchesToSelectsConvertsNestedTest());
     RUN(testConvertBranchesToSelectsKeepsOtherBranches());
     RUN(testConvertBranchesToSelectsKeepsBranchOutsideLoop());
+    RUN(testConvertBranchesToSelectsConvertsMinAndMax());
     RUN(testConvertBranchesToSelectsCountsLimits());
 }
 

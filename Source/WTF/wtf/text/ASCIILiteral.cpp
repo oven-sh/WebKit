@@ -32,7 +32,7 @@
 
 namespace WTF {
 
-void ASCIILiteral::dump(PrintStream& out) const
+NEVER_INLINE void ASCIILiteral::dump(PrintStream& out) const
 {
     out.print(StringView(span8()));
 }

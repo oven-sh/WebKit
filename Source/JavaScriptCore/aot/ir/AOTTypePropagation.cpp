@@ -593,6 +593,19 @@ TypeID TypePropagation::computeValue(const TypingContext& context, ValueID id)
     return type;
 }
 
+ALWAYS_INLINE TypeID TypePropagation::computeIncomingType(const TypingContext& context, Edge edge, uint32_t index)
+{
+    const Target& target = targetOf(context.function, edge);
+    if (index < target.arguments.size())
+        return context.typeIDOf(target.arguments[index]);
+    if (!edge.isHandlerEdge()) {
+        EdgeResultPosition position { edge.from, edge.targetIndex, index - static_cast<uint32_t>(target.arguments.size()) };
+        if (std::optional<EdgeResult> result = tryGetEdgeResult(context.function, position))
+            return computeTypeOnEdge(context, position, *result);
+    }
+    return TypeTable::anything;
+}
+
 TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID id, BlockID block, uint32_t index)
 {
     const Function& function = context.function;
@@ -605,18 +618,32 @@ TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID i
     for (Edge edge : incomingEdges) {
         if (passesNothing(edge.from) || (skipsSeldomTakenEdges && isSeldomTaken(function, edge)))
             continue;
-        const Target& target = targetOf(function, edge);
-        TypeID incoming = TypeTable::anything;
-        if (index < target.arguments.size())
-            incoming = context.typeIDOf(target.arguments[index]);
-        else if (!edge.isHandlerEdge()) {
-            EdgeResultPosition position { edge.from, edge.targetIndex, index - static_cast<uint32_t>(target.arguments.size()) };
-            if (std::optional<EdgeResult> result = tryGetEdgeResult(function, position))
-                incoming = computeTypeOnEdge(context, position, *result);
-        }
-        joined = joinIntoParameter(context, id, joined, incoming);
+        joined = joinIntoParameter(context, id, joined, computeIncomingType(context, edge, index));
     }
     return joined;
+}
+
+// Every cycle of values passes through a back edge. Growth before a parameter has already been widened there, so it terminates on its own.
+bool TypePropagation::growsOnBackEdge(TypeLevel level, ValueID parameter, TypeID old, TypeID grown)
+{
+    ValueLocation location = locationForRule(parameter);
+    if (location.placement != ValuePlacement::Parameter)
+        return false;
+    auto incomingEdges = m_cfg.incomingEdges(location.block);
+    uint32_t position = m_cfg.reversePostOrderIndex(location.block);
+    auto leadsBack = [&](Edge edge) {
+        return m_cfg.reversePostOrderIndex(edge.from) >= position;
+    };
+    if (incomingEdges.size() < 2 || std::ranges::none_of(incomingEdges, leadsBack))
+        return false;
+    TypeArena& types = m_inputs.types;
+    TypingContext context = typingContext(level);
+    TypeID withForwardEdgeTypes = old;
+    for (Edge edge : incomingEdges) {
+        if (!leadsBack(edge) && !passesNothing(edge.from))
+            withForwardEdgeTypes = types.unionOf(withForwardEdgeTypes, computeIncomingType(context, edge, location.index));
+    }
+    return types.unionOf(withForwardEdgeTypes, grown) != withForwardEdgeTypes;
 }
 
 TypeID TypePropagation::computeTypeOnEdge(const TypingContext& context, EdgeResultPosition position, const EdgeResult& result)
@@ -728,7 +755,7 @@ bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, T
     TypeID next = computed;
     if (direction == Direction::Ascending) {
         next = types.unionOf(old, computed);
-        if (next != old && isJoin())
+        if (next != old && old != TypeTable::never && growsOnBackEdge(level, id, old, next))
             next = widenGrownParameter(id, old, next);
         if (next != computed)
             m_valuesAboveTheirRules.append(id);
@@ -995,12 +1022,16 @@ void TypePropagation::cutAfterNeverValues()
         Origin origin = isNeverEntered ? block.terminator.origin() : function.at(block.values[index]).origin();
         for (ValueID value : block.values.span().subspan(index + keepsValue))
             explainOperationThatGoes(function, value, InPlaceOfOperation::NothingBecauseNothingComesHere);
+        // The call stays in tail position, as in IRBuilder::demoteReturnCall(): its function is gone from the stack once the callee runs.
+        if (keepsValue && block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index])
+            m_inputs.function.edit(block.values[index], ValueEdit::Definition).isTailCall = true;
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
         // A handler sees the parameters of the block that it covers. Nothing is left here that throws.
         if (cut.values.isEmpty())
             cut.handler = std::nullopt;
         cut.terminator.become(TerminatorKind::Unreachable);
+        cut.terminator.setCutBy(m_inputs.build.passToReportForUnreachableCode());
         cut.terminator.setOrigin(origin);
         ++m_outcome.cutBlocks;
     }

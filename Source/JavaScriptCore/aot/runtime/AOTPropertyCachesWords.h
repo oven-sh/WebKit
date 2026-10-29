@@ -131,7 +131,9 @@ struct AbsenceFilter {
     uint32_t structureID;
     uint32_t generationForStores;
     uint64_t namesThatStopStores[numberOfWordsForStores];
-    uint64_t unused;
+    // The number of changes under a name that had been reported when the filter was built. While the count is unchanged, the filter is complete for every name.
+    uint32_t changesUnderNames;
+    uint32_t unused;
 };
 
 struct NameOfText {
@@ -170,6 +172,15 @@ struct KeyedValuePlace {
     // The low bits of a StructureID are zero. What a place says beside the absence bit holds until an object of some chain changes: PropertyCacheWords::placesSayAbsence.
     static constexpr uint32_t absenceBit = 1;
     static constexpr uint32_t fieldBit = 2;
+    static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
+
+    // For a compiled object whose Structure identifies the Structure of its extra-property object.
+    struct ExtraProperty {
+        // The offset in the cell of the reference to the object that holds the property.
+        uint16_t hiddenWordOffset;
+        // Slot::wordIndexFor() in that object.
+        int16_t wordIndex;
+    };
 
     JSCell* key;
     uint32_t structureID;
@@ -178,6 +189,8 @@ struct KeyedValuePlace {
         int32_t wordIndex;
         // Beside the field bit: SlotData::bits() of a field that lies in the cell.
         uint32_t slotData;
+        // Beside both bits.
+        ExtraProperty extraProperty;
     };
 };
 
@@ -214,6 +227,7 @@ struct PropertyCacheWords {
     uint64_t hashedSlotOffsetMask;
     AbsenceFilter* absenceFilters;
     uint32_t absenceFilterGenerationForStores;
+    uint32_t changesUnderNamesOnChains;
     const uint64_t* namesOfObjectPrototypes;
     const uint64_t* namesChangedOnChains;
     uint8_t* missesOfPairs;

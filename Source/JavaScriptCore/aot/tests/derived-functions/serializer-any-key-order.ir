@@ -1,0 +1,51 @@
+# Where the program is seen to give objects of a layout a key behind their creation, the serializer has one arm for the longest order at creation and a loop for every other order: it walks the keys by the order word and goes to the code of the member that each key names
+# FORM: Prepared
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2
+# STATISTIC: SerializersCreated = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="BuiltUp" fields=[{key="id" declared={type=number} flow={location={writers=AllKnown initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="title" declared={type=string} flow={location={writers=AllKnown} stability=[IsNeverStoredWithOtherType]}}, {key="held" declared={type=anything} flow={location={writers=AllKnown}}}, {key="tag" declared={type=symbol} flow={location={writers=AllKnown}}}] flow={baseState=None constructorOrders=[{fields=[0]}, {fields=[0, 1]}]}
+layout L1 name="FilledAtCreation" fields=[{key="id" declared={type=number} flow={location={writers=AllKnown initialization=SetAtCreation} stability=[IsNeverStoredWithOtherType]}}, {key="title" declared={type=string} flow={location={writers=AllKnown initialization=SetAtCreation} stability=[IsNeverStoredWithOtherType]}}] flow={baseState=None constructorOrders=[{fields=[0]}, {fields=[0, 1]}]}
+layout L2 name="StoredByWhoKnows" fields=[{key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="title" declared={type=string} flow={stability=[IsNeverStoredWithOtherType]}}] flow={baseState=None constructorOrders=[{fields=[0]}, {fields=[0, 1]}]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NOT: HasKeyOrder
+# CHECK: [[order]]: int[0, 4294967295] = GetOrderWord v0, {{*}} layout=L0
+# CHECK: [[first]]: int[-2, 65535] = GetFieldInKeyOrder [[order]], {{*}} layout=L0
+# CHECK: [[notListed]]: -2 = Integer integer=-2
+# CHECK-NEXT: = StrictEq [[first]], [[notListed]]
+# CHECK: [[count]]: int[0, 4095] = BitAnd
+# CHECK: = JSONAppendToken v1, {{*}}
+# CHECK: ([[position]]: int[0, 4095], {{*}}: buildercursor, [[guard]]: guard):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: StringBuilderCommit v1
+# CHECK-NEXT: [[atKey]]: buildercursor = StringBuilderReserve v1
+# CHECK-NEXT: = Less [[position]], [[count]]
+# CHECK: [[field]]: int[-2, 65535] = GetFieldInKeyOrder [[order]], {{*}} layout=L0
+# CHECK-NEXT: Switch [[field]] cases=[0, 1, 2, 3]
+# CHECK: = JSONAppendToken v1, [[atKey]] jsonToken=CloseObjectOverComma
+# CHECK: = GetSlotOrUndefined v0, [[guard]] key="id" receivers=[L0] level=Expected
+# CHECK: = GetSlotOrUndefined v0, [[guard]] key="title" receivers=[L0] level=Expected
+# CHECK: = GetSlotOrUndefined v0, [[guard]] key="held" receivers=[L0] level=Expected
+# CHECK: = JSONAppendKey v1, [[atKey]] string="id"
+# CHECK: = JSONAppendKey v1, [[atKey]] string="title"
+# CHECK: = JSONAppendKey v1, [[atKey]] string="held"
+# CHECK: = StringBuilderAppendJSON v1
+# What the host has written may have run code: the loop goes on while the object has its shape and its order word, and the host writes the keys that are left by their names otherwise
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: [[orderNow]]: int[0, 4294967295] = GetOrderWord v0, {{*}} layout=L0
+# CHECK-NEXT: = StrictEq [[orderNow]], [[order]]
+# CHECK-NOT: key="tag"
+# CHECK: [[names]]{{*}} = GetKeyNamesInOrder [[order]], {{*}} layout=L0
+# CHECK: = StringBuilderAppendJSONMembers v1, v0, [[names]]
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1]
+# CHECK-NOT: GetOrderWord
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1]
+# CHECK-NOT: GetOrderWord

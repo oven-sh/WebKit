@@ -35,7 +35,7 @@ protected:
         , m_valueID(valueID)
         , m_instruction(instruction)
         , m_analyses(analyses)
-        , m_handler(block.handler && effects().mayThrow() ? &*block.handler : nullptr)
+        , m_handler(block.handler ? &*block.handler : nullptr)
         , m_shape(block.shape)
     {
     }

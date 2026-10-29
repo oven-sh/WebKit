@@ -25,6 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 struct PlacementContext {
     const SlotPlan& slots() const { return inputs.slots; }
     bool isCompiledObject(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::CompiledObject; }
+    bool holdsCompiledObjects(LayoutID id) const { return inputs.slots.holdsCompiledObjects(id); }
     bool isEnvironment(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::Environment; }
     bool receivesShape(LayoutID id) const { return isCompiledObject(id) || isEnvironment(id) || id == closureLayout; }
 
@@ -179,6 +180,8 @@ struct SiteLists {
 };
 
 struct PlacedSites : SiteLists {
+    // The fields that stores may create, per layout, in the order in which the bodies contain the stores.
+    Vector<FieldCreationUse> sourceFieldCreations;
     // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
     Vector<uint32_t> firstStoreThatMayAdd;
     // By store that may add a field, the functions in their sequence.

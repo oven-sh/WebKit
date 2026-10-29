@@ -142,6 +142,8 @@ struct ProgramTables {
     static constexpr uint32_t expectedMagic = 0x44505943;
     static constexpr uint32_t mayRunInMultipleInstances = 1;
     static constexpr uint32_t neverReadsLegacyRegExpStatics = 2;
+    // Of functions that record their callee from the start. Such a function may run without a record.
+    static constexpr uint32_t callersKeepCallees = 4;
 
     uint32_t magic;
     uint32_t flags;
@@ -150,6 +152,7 @@ struct ProgramTables {
     uint32_t firstEnvironmentShape;
     uint32_t numberOfLayoutIndices;
     uint32_t numberOfFieldTableRows;
+    uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
@@ -180,6 +183,7 @@ struct ProgramTables {
     }
     std::span<const uint32_t> fieldTableEntries() const { return fieldTable().subspan(numberOfFieldTableRows); }
     uint32_t fieldTableRowOf(uint32_t shape) const { return fieldTable()[numberOfFieldTableRows - shape]; }
+    bool hasFieldTableColumn(uint32_t identifierNumber) const { return identifierNumber && identifierNumber < numberOfFieldTableColumns; }
     const EnvironmentData& environmentForShape(uint32_t shape) const
     {
         ASSERT(shape >= firstEnvironmentShape);
@@ -279,6 +283,12 @@ struct ProgramTables {
         std::span<const Number24> sources = functionSources();
         size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
+    }
+    // The functions that implement the source's closures. Listed only for a source that has several and recordsCalleeOnceRenamed.
+    std::span<const Number24> closureFormsOf(uint32_t source) const
+    {
+        auto forms = std::ranges::equal_range(closureFormsBySource(), source, { }, [&](Number24 form) { return sourceFunctionOf(form); });
+        return { forms.begin(), forms.end() };
     }
     // A form of a function has the name of its source.
     static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }

@@ -34,7 +34,7 @@ static_assert(std::ranges::all_of(arrayStorageForms, [](const ArrayStorageForm& 
     return form.element == Representation::Int32 || form.element == Representation::Double || form.element == Representation::JSValue;
 }));
 
-void ElementAccessEmitter::validateStorage(const ValueContext& value, CellPointer array, ArrayStorage kind)
+void ElementAccessEmitter::validateStorage(const OperationContext& operation, CellPointer array, ArrayStorage kind)
 {
     if (!generator().validatesOrChecksProofs())
         return;
@@ -43,7 +43,7 @@ void ElementAccessEmitter::validateStorage(const ValueContext& value, CellPointe
     m_out.branch(hasArrayStorage(array, kind).value(), normalEdge(continuation), rareEdge(isInvalid));
 
     m_out.appendTo(isInvalid);
-    callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
+    callVoidOperation(operation, RuntimeOperation::ReportValidationFailure, { boxCell(array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(operation.valueID().index()) }, { .isOnRarePath = true });
     m_out.unreachable();
 
     m_out.appendTo(continuation);
@@ -594,6 +594,16 @@ void ElementAccessEmitter::branchOnPresentElement(const ValueContext& test, cons
     branchOnElementPresence(test, &form, elementsOf(array), index, targets);
 }
 
+void ElementAccessEmitter::branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets targets)
+{
+    CellPointer array = in<CellPointer>(test->arrayOperand());
+    Integer index = indexOrElse(test->positionOperand(), test->keyIsIntegral(), targets.notTaken.block(), NaNIndexMode::ProduceOutOfBoundsIndex);
+    ArrayElements elements = elementsOf(array);
+    forBoxedAndDoubleShapes(*this, m_out, indexingMode(array, arrayStorageTestMask), targets.notTaken.block(), [&](const ArrayStorageForm* form) {
+        branchOnElementPresence(test, form, elements, index, targets);
+    });
+}
+
 void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -641,6 +651,40 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
             branch(hasOutOfLine(), targets);
         }
     });
+}
+
+void ElementAccessEmitter::generateGetEnumeratorIndexedLength(const ValueContext& value)
+{
+    define(value, zeroExtended(loadField<Word32>(in<CellPointer>(value->enumeratorOperand()), m_heaps.JSPropertyNameEnumerator_indexLength)));
+}
+
+// An own element in one of the three storage forms. Anything else that could supply the element fails the test.
+void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
+{
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        Integer position = indexOrElse(value->positionOperand(), false, targets.notTaken.block());
+        Operand operand = get(value->objectOperand());
+        CellPointer object = operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>());
+        if (!operand.is<CellPointer>())
+            branchUnless(isCell(operand.as<Boxed>()), targets.notTaken.block());
+        // One arm for all three forms: an element is eight bytes in each, and only the hole marker differs.
+        static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape && !(IndexingShapeMask & 1));
+        Word32 shape = indexingMode(object, IndexingShapeMask);
+        branchUnless(belowOrEqual(sub(shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), targets.notTaken.block());
+        ArrayElements elements = elementsOf(object);
+        LengthTest test = testLength(position, elements);
+        branchUnless(test.isInside, targets.notTaken.block());
+        Integer hole = select(equal(shape, word32(DoubleShape)), integer(arrayStorageFormOf(ArrayStorage::Double).hole), integer(arrayStorageFormOf(ArrayStorage::Contiguous).hole));
+        branch(notEqual(Integer(loadBoxedElement(elements, test.indexInside).value()), hole), targets);
+    });
+}
+
+// The position is an enumerator index, whatever its type says in a copy of the loop without proofs.
+void ElementAccessEmitter::generateToEnumeratorPosition(const ValueContext& value)
+{
+    Operand position = get(value->positionOperand());
+    Integer whole = position.is<Word32>() ? signExtended(position.as<Word32>()) : position.is<Integer>() ? position.as<Integer>() : emitter<ConversionEmitter>().toInteger(position.as<Number>());
+    define(value, zeroExtended(low32(whole)));
 }
 
 void ElementAccessEmitter::generateGetStringLength(const ValueContext& value)

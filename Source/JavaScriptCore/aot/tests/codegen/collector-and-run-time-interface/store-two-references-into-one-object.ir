@@ -112,6 +112,6 @@ function f1 name="fill" module=m0 position=55 flags=[IsChecked, HasExplicitName]
 # CHECK: Patchpoint(b@[[fork]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-NOT: Patchpoint(
 # CHECK-LABEL: end of function
-# ARM64 stores both references with one instruction.
+# arm64 stores both references with one instruction.
 # X64: instructions: 5, patchpoints: 0
 # ARM64: instructions: 5, patchpoints: 0

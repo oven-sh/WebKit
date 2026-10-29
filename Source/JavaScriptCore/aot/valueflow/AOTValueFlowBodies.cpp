@@ -80,6 +80,9 @@ struct PendingStatement {
 struct Guard {
     ValueID value;
     uint32_t mask { 0 };
+    bool testsTypeOfCell { false };
+    // Among the guards that were written for the block.
+    uint8_t position { UINT8_MAX };
 };
 
 struct GuardsOfBlock {
@@ -671,7 +674,7 @@ private:
         const Value& test = m_function.at(tested);
         if (test.opcode == Opcode::HasJSType) {
             if (uint32_t mask = maskOfCellTypeTest(test, side); mask && carriesValue(test.valueOperand()))
-                addGuard(guards, { test.valueOperand(), mask });
+                addGuard(guards, { test.valueOperand(), mask, true });
             return;
         }
         if (isNegated && carriesValue(tested))
@@ -694,6 +697,15 @@ private:
                 }
             }
         }
+    }
+
+    // `new Proxy(target, handler)` with the constructor named on the spot and no other new.target makes a proxy or throws.
+    bool constructsProxyByName(const Value& value) const
+    {
+        if (value.opcode != Opcode::Construct || value.newTargetOperand())
+            return false;
+        const Value& callee = m_function.at(definitionThroughSameValues(m_function, value.calleeOperand()));
+        return callee.opcode == Opcode::Builtin && m_program.builtins().canonicalID(callee.builtin()) == Builtins::Proxy;
     }
 
     static bool isStrictlyEqualOnlyToItself(const Type& type) { return (type.isSingleValue() || !type.hasObjects()) && !(type.primitives & Primitive::Number); }
@@ -898,6 +910,11 @@ private:
                 connect(captures[index], NodeName::entryParameter(value.function(), index));
             return;
         }
+        // A capture is an entry parameter of the closure's function, and NewClosure passes it there.
+        case Opcode::GetCapture:
+            if (carriesValue(id))
+                setNode(id, NodeName::entryParameter(value.function(), value.index()));
+            return;
         case Opcode::CallDirect:
             return describeCallDirect(block, id, value);
         case Opcode::Results:
@@ -1026,7 +1043,7 @@ private:
         }
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             bool namesLayout = value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList;
-            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { } });
+            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { }, false, constructsProxyByName(value) });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
         }
         if (!carriesValue(id))
@@ -1985,11 +2002,13 @@ private:
         if (!guards.areWritten) {
             guards.areWritten = true;
             guards.first = m_body.operands.size();
-            for (const Guard& guard : guards.values) {
+            for (Guard& guard : guards.values) {
+                // A block takes the guards of the block in front of it, which were written at other positions.
+                guard.position = UINT8_MAX;
                 // Of a value that has no node flow says nothing.
                 if (OperandForm form = operandFormOf(guard.value); form.node) {
                     m_body.operands.append(guard.mask ? throughMask(form, guard.mask) : form);
-                    ++guards.count;
+                    guard.position = guards.count++;
                 }
             }
         }
@@ -1997,6 +2016,16 @@ private:
         if (!callsHelperOfCompiler(value) && value.opcode != Opcode::Data) {
             statement.firstGuard = guards.first;
             statement.guardCount = guards.count;
+            for (const Guard& guard : guards.values) {
+                if (!guard.testsTypeOfCell || guard.position >= 4)
+                    continue;
+                ValueID tested = definitionThroughSameValues(m_function, guard.value);
+                for (uint32_t index = 0; index < std::min<uint32_t>(pending.operandCount, 8); ++index) {
+                    ValueID operand = m_statementOperands[pending.firstOperand + index];
+                    if (operand && definitionThroughSameValues(m_function, operand) == tested)
+                        statement.guardsOfOperands |= 1u << (index * 4 + guard.position);
+                }
+            }
         }
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;

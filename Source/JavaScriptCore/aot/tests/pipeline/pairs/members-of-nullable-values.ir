@@ -1,0 +1,8 @@
+# The program of ../../answers is one in which unions are split, tests are placed, and stretch copies come back behind the failing arm in which the language asks whether a value has members at all.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: UnionsSplit >= 1
+# STATISTIC: TypeTestsPlaced >= 1
+# STATISTIC: WaysBackFromStretchCopies >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/members-of-nullable-values.ir

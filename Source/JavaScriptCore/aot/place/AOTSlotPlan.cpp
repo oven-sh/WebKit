@@ -161,6 +161,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
             return;
 
         bool isCompiledObject = planned.storage == LayoutStorage::CompiledObject;
+        planned.isRecordAlone = isCompiledObject && builtinBaseClassOf(context.program, id);
         planned.holdsWideReferences = holdsWideReferences(context, id);
         planned.keysAreNeverEnumerated = isCompiledObject && keysAreNeverEnumerated(context.program, context.inputs.flow, id);
         planned.size = packed.sizes[index];
@@ -210,10 +211,10 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     packEnvironments(context, uses, claims.span(), packed);
     if (!finishStep("packEnvironments"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::Numbers, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::Numbers, packed);
     if (!finishStep("widenSlotsIntoPadding(Numbers)"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::References, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::References, packed);
     if (!finishStep("widenSlotsIntoPadding(References)"_s))
         return { };
     reserveEmptySlotsInPadding(context, uses, packed);
@@ -365,7 +366,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
         if (program.at(member).flow.allocation == AllocationState::NeverAllocated)
             continue;
         std::optional<uint32_t> field;
-        if (storageOf(member) == LayoutStorage::CompiledObject)
+        if (holdsCompiledObjects(member))
             field = program.at(member).findField(key);
         if (!field || !slot(member, *field).hasStorage()) {
             agreement.membersWithoutSlot.append(member);
@@ -393,7 +394,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
     agreement.membersWithoutSlotKeepBytesZero = shared.storage == SlotStorage::Inline
         && representsAbsentAsZero(shared.representation)
         && std::ranges::all_of(agreement.membersWithoutSlot, [&](LayoutID member) {
-            return storageOf(member) == LayoutStorage::CompiledObject && layout(member).keepsZero(shared.offset, shared.width());
+            return holdsCompiledObjects(member) && layout(member).keepsZero(shared.offset, shared.width());
         });
     return agreement;
 }
@@ -930,7 +931,7 @@ static bool capturesNothingButClassEnvironment(const Program& program, const Fun
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)
 {
-    if (!member.key || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
+    if (!member.key || member.isAssignedByProgram || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
         return false;
     const Function& function = program.at(member.function);
     return function.name && capturesNothingButClassEnvironment(program, constructor, function);
@@ -975,7 +976,7 @@ static bool isClassWithConstantNames(const Layout& layout)
     if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
         return false;
     return std::ranges::all_of(layout.classFlow.members, [](const ClassMember& member) {
-        return !!member.key;
+        return member.key && !member.isAssignedByProgram;
     });
 }
 

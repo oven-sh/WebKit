@@ -285,6 +285,7 @@ aot/runtime/AOTBuiltinLocationWatch.cpp
 aot/runtime/AOTBuiltinModules.cpp
 aot/runtime/AOTCallOperations.cpp
 aot/runtime/AOTChainDependents.cpp
+aot/runtime/AOTCheckedFrameCells.cpp
 aot/runtime/AOTClassOperations.cpp
 aot/runtime/AOTCompactTable.cpp
 aot/runtime/AOTCompiledFrameIterator.cpp

@@ -133,7 +133,7 @@ void loadGetterSetterInField(StubAssembler& jit, GPRReg address, GPRReg represen
     isLoaded.link(&jit);
 }
 
-void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldReadExits& exits)
+void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldReadExits& exits, std::optional<SlotRepresentation> known)
 {
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.number, r.numberScratch));
     RELEASE_ASSERT(noOverlap(r.result, r.field.address, r.field.representation, r.value));
@@ -257,12 +257,17 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
         returnInt32();
         isMarker.link(&jit);
         // A slot that is always filled has no markers.
-        jit.branch32(CCallHelpers::Equal, r.field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Int32))).linkTo(isNumber, &jit);
+        if (known == SlotRepresentation::Int32) {
+            jit.jump().linkTo(isNumber, &jit);
+            return;
+        }
+        if (!known)
+            jit.branch32(CCallHelpers::Equal, r.field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Int32))).linkTo(isNumber, &jit);
         branchOnMarkers(traits);
         exits.cannot.append(jit.jump());
     };
 
-    emitDispatchOnRepresentationForRead(jit, r.field.representation, [&](SlotRepresentation representation) {
+    auto readAndReturn = [&](SlotRepresentation representation) {
         const SlotTraits traits = traitsOf(representation);
         switch (traits.valueKind) {
         case SlotValueKind::Boxed:
@@ -330,7 +335,11 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
-    });
+    };
+    if (known)
+        readAndReturn(representationWithCodeForRead(*known));
+    else
+        emitDispatchOnRepresentationForRead(jit, r.field.representation, readAndReturn);
 
     returnsUndefined.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), r.result);
@@ -455,6 +464,7 @@ void generatePrivateGet(StubAssembler& jit)
     const GPRReg T12 = jit.allocateScratch(StubRegister::T12);
     RELEASE_ASSERT(noOverlap(object, token, field, T10, T11, T12));
     JumpList goesToRunTime;
+    const std::optional<SlotRepresentation> knownRepresentation = representationKnownTo(jit.key());
 
     goesToRunTime.append(jit.branchIfNotCell(object));
     Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
@@ -467,13 +477,15 @@ void generatePrivateGet(StubAssembler& jit)
         // The number is an int32 in a JSValue: its lower half is the number.
         jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), T10);
         goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, Address(layout, OBJECT_OFFSETOF(LayoutData, index))));
-        jit.load32(Address(layout), T10);
-        jit.and32(TrustedImm32(static_cast<int32_t>(evaluationMask)), T10);
-        goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, TrustedImm32(static_cast<int32_t>(provenOnce))));
-        jit.zeroExtend32ToWord(field, record);
-        jit.lshift64(TrustedImm32(fieldSizeShift), record);
-        jit.addPtr(layout, record);
-        goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToRunTime)));
+        if (!knownRepresentation) {
+            jit.load32(Address(layout), T10);
+            jit.and32(TrustedImm32(static_cast<int32_t>(evaluationMask)), T10);
+            goesToRunTime.append(jit.branch32(CCallHelpers::NotEqual, T10, TrustedImm32(static_cast<int32_t>(provenOnce))));
+            jit.zeroExtend32ToWord(field, record);
+            jit.lshift64(TrustedImm32(fieldSizeShift), record);
+            jit.addPtr(layout, record);
+            goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToRunTime)));
+        }
 
         const FieldReadRegisters registers {
             .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T12 },
@@ -483,14 +495,21 @@ void generatePrivateGet(StubAssembler& jit)
             .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
         };
         FieldReadExits exits;
-        jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), registers.field.slotData);
-        computeFieldAddress(jit, registers.field, false, exits.isAbsent);
-        readFieldAndReturn(jit, registers, exits);
+        if (knownRepresentation) {
+            jit.urshift32(field, TrustedImm32(bitsOfFieldInPrivateGet), registers.field.address);
+            jit.addPtr(object, registers.field.address);
+        } else {
+            jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), registers.field.slotData);
+            computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+        }
+        readFieldAndReturn(jit, registers, exits, knownRepresentation);
         goesToRunTime.append(exits.isAbsent);
         goesToRunTime.append(exits.cannot);
     }
 
     isNotCompiledObject.link(&jit);
+    if (knownRepresentation)
+        jit.and32(TrustedImm32((1 << bitsOfFieldInPrivateGet) - 1), field);
     {
         const GPRReg records = T12;
         const GPRReg location = T11;
@@ -519,6 +538,8 @@ void generatePrivateGet(StubAssembler& jit)
     }
 
     goesToRunTime.link(&jit);
+    if (knownRepresentation)
+        jit.and32(TrustedImm32((1 << bitsOfFieldInPrivateGet) - 1), field);
     jit.callOperationAndReturn(Entry::operationAOTPrivateGet, {
         .returns = OperationCall::Returns::Value,
         .firstArgument = OperationCall::FirstArgument::Instance,
@@ -527,6 +548,57 @@ void generatePrivateGet(StubAssembler& jit)
         .thirdArgumentIn = token,
         .fourthArgumentIn = field,
     });
+}
+
+// The usual store under a private name on an object that is no compiled object, found as generatePrivateGet() finds it.
+PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
+{
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::None)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg object = operationArgumentGPR(1);
+    constexpr GPRReg token = operationArgumentGPR(2);
+    constexpr GPRReg field = operationArgumentGPR(3);
+    constexpr GPRReg value = operationArgumentGPR(4);
+    const GPRReg records = jit.allocateScratch(StubRegister::T13);
+    const GPRReg location = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg owner = jit.allocateScratch(firstStubOperandRegister);
+    RELEASE_ASSERT(noOverlap(object, token, field, value, records, location, storage));
+    constexpr unsigned bytesOfRecord = ClassToken::slotsPerRecord * sizeof(EncodedJSValue);
+    static_assert(ClassToken::recordsProbedByCompiledCode == 2);
+    JumpList callsOperation;
+
+    callsOperation.append(jit.branchIfNotCell(object));
+    jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), records);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, records));
+    jit.zeroExtend32ToWord(field, location);
+    jit.lshift64(TrustedImm32(shiftOfRecordsOfField), location);
+    jit.addPtr(location, records);
+    jit.load32(Address(object, JSCell::structureIDOffset()), storage);
+    Jump isFirst = jit.branch32(CCallHelpers::Equal, storage, slotOfButterfly(records, ClassToken::StructureNumber));
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, slotOfButterfly(records, ClassToken::slotsPerRecord + ClassToken::StructureNumber)));
+    jit.addPtr(TrustedImm32(bytesOfRecord), records);
+    isFirst.link(&jit);
+
+    jit.load32(slotOfButterfly(records, ClassToken::LocationOfBrand), location);
+    Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, location);
+    loadAtLocation(jit, object, location, storage, location);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, location, token));
+    needsNoBrand.link(&jit);
+
+    jit.load32(slotOfButterfly(records, ClassToken::LocationOfValue), location);
+    jit.signExtend32ToPtr(location, location);
+    jit.move(object, storage);
+    Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, location, CCallHelpers::TrustedImmPtr(nullptr));
+    jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
+    isInObject.link(&jit);
+    jit.store64(value, BaseIndex(storage, location, CCallHelpers::TimesOne));
+    jit.move(object, owner);
+    jit.jumpToStub(writeBarrier());
+
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
 }
 
 // The usual definition of a private name on an object that is no compiled object: an object of the same Structure has taken the name before. No record names the Structure of a compiled object.

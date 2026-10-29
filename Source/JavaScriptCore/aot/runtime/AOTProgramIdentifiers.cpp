@@ -260,7 +260,23 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
     });
 }
 
+// Every new atom comes through here, a thousand of them while a VM is created. The common answers need no frame: no name has the hash, or an 8-bit name is the text.
 AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
+{
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    if (const Image* image = Image::sharedByAllThreads(); image && !characters.isEmpty()) [[likely]] {
+        std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
+        if (!number)
+            return nullptr;
+        UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
+        if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
+            return static_cast<AtomStringImpl*>(&atom);
+    }
+#endif
+    return findAtomSlow(characters, hash);
+}
+
+NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView characters, unsigned hash)
 {
     const Image* imageOfThread = Image::current();
     if (characters.isEmpty() || !imageOfThread)

@@ -191,13 +191,17 @@ struct ClassData {
     uint32_t numberOfMethods;
     uint32_t numberOfStaticMethods;
     uint32_t numberOfStaticFields;
-    uint32_t numberOfMemberGuards : 30;
+    uint32_t numberOfMemberGuards : 29;
+    // Objects of the class are cells of a built-in class, and their Structures identify the program class they were created for.
+    uint32_t instancesCarryBrand : 1;
     uint32_t hasMemberGuardAggregates : 1;
     // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above.
     uint32_t guardsHoldWhileClear : 1;
     uint32_t guardWordsOffset[numberOfClassSides];
     // In the program tables: how many classes have this one as their assumed base, then their indexes, ascending. 0 where there is none.
     uint32_t subclassesOffset;
+    // In the program tables, for a class whose objects carry its brand: the number of fields, then their name numbers in ascending order. 0 if a field has no name known at build time.
+    uint32_t namesOfFieldsOffset;
 
     std::optional<uint32_t> guardWordsOffsetFor(ClassSide side) const
     {
@@ -207,7 +211,7 @@ struct ClassData {
         return offset;
     }
 };
-static_assert(sizeof(ClassData) == 48 && isImageRecord<ClassData>);
+static_assert(sizeof(ClassData) == 52 && isImageRecord<ClassData>);
 
 struct ExtensionLayoutData {
     SlotData extension;

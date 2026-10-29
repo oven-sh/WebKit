@@ -99,8 +99,8 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # HOT-NOT: Writes:
 # HOT-NOT: $55296(
 # HOT-LABEL: end of loop
-# A turn also shifts the position by the width.
-# X64: instructions: 9, patchpoints: 2
-# X64: instructions: 40, patchpoints: 8
-# ARM64: instructions: 9, patchpoints: 2
-# ARM64: instructions: 39, patchpoints: 8
+# The single turns, and eight turns written out.
+# X64: instructions: 6, patchpoints: 2
+# X64: instructions: 27, patchpoints: 16
+# ARM64: instructions: 7, patchpoints: 2
+# ARM64: instructions: 41, patchpoints: 16

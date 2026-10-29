@@ -77,12 +77,16 @@ function f1 name="checksum" module=m0 flags=[HasExplicitName] length=1 thisType=
 # CHECK: Int32 b@[[unit]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
 # CHECK: Int32 b@{{*}} = Add(b@[[unit]], b@{{*}}:Add)
 # CHECK-LABEL: end of loop
-# A rare path of that loop comes back into it, so it polls on every turn. It calls nothing, tests no type of the text and reads neither its length nor its characters' address again. The counter is the one thing it checks: that it stays a 31-bit integer.
+# It calls nothing, tests no type of the text and reads neither its length nor its characters' address again. A counter under the length is an int32 one step on: the step is not tested, the turns are counted and eight are written out
 # HOT-LABEL: loop #
 # HOT-NOT: Reads:StringImpl
 # HOT-NOT: Reads:JSRopeString
 # HOT-NOT: Reads:JSCell
 # HOT-NOT: IToD
+# HOT-NOT: :TypeTest)
+# HOT-NOT: isLoopPoll
 # HOT-LABEL: end of loop
-# X64: instructions: 6, patchpoints: 2
-# ARM64: instructions: 6, patchpoints: 2
+# X64: instructions: 4, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

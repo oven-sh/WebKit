@@ -224,8 +224,61 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
 
     isRope.link(&jit);
     isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(length)));
+    Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
     load8BitCharactersOfSubstring(jit, subject, characters, offsetInBase, slowCases);
     jit.jump().linkTo(hasCharacters, &jit);
+
+    // `head + tail`: a rope of flat 8-bit strings. Its characters are packed from the last to the first, and the rope stays a rope.
+    hasPieces.link(&jit);
+    const GPRReg count = gprOf(StubRegister::T10);
+    const GPRReg unit = gprOf(StubRegister::T14);
+    RELEASE_ASSERT(noOverlap(subject, text, fiber, packed, count, unit));
+    jit.preserving({ count, unit }, [&] {
+        JumpList hasOtherPiece;
+        auto packPiece = [&] {
+            jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+            hasOtherPiece.append(jit.branchIfRopeStringImpl(fiber));
+            hasOtherPiece.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+            jit.load32(Address(fiber, StringImpl::lengthMemoryOffset()), count);
+            jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+            Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
+            Label packsUnit = jit.label();
+            jit.sub32(TrustedImm32(1), count);
+            jit.load8(BaseIndex(fiber, count, CCallHelpers::TimesOne), unit);
+            jit.lshift64(TrustedImm32(8), packed);
+            jit.or64(unit, packed);
+            jit.branchTest32(CCallHelpers::NonZero, count).linkTo(packsUnit, &jit);
+            isEmpty.link(&jit);
+        };
+        jit.move(TrustedImm32(0), packed);
+        jit.load64(Address(subject, JSRopeString::offsetOfFiber2()), fiber);
+        jit.urshift64(TrustedImm32(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord), fiber);
+        Jump hasTwoPieces = jit.branchTestPtr(CCallHelpers::Zero, fiber);
+        packPiece();
+        hasTwoPieces.link(&jit);
+        loadSubstringBaseAndOffset(jit, subject, fiber, unit);
+        packPiece();
+        jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
+        jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), fiber);
+        packPiece();
+        jit.move(TrustedImm32(0), fiber);
+        Jump isPacked = jit.jump();
+        hasOtherPiece.link(&jit);
+        jit.move(TrustedImm32(1), fiber);
+        isPacked.link(&jit);
+    });
+    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, fiber));
+    if (length == 7) {
+        jit.move(packed, fiber);
+        jit.urshift64(TrustedImm32(24), fiber);
+        jit.lshift64(TrustedImm32(32), fiber);
+        jit.zeroExtend32ToWord(packed, packed);
+        jit.or64(fiber, packed);
+    }
+    if (length > 4)
+        jit.returnFlags64(CCallHelpers::Equal, packed, text);
+    else
+        jit.returnFlags32(CCallHelpers::Equal, packed, text);
 
     isNotEqual.link(&jit);
     jit.returnFlagsConstant(false);
@@ -332,8 +385,10 @@ void generateToLiteralString(StubAssembler& jit)
     JumpList returnsOperand;
     JumpList isNotCached;
 
-    returnsOperand.append(jit.branchIfNotCell(value));
-    returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    if (jit.key() == toLiteralString(ComparedOperand::Value)) {
+        returnsOperand.append(jit.branchIfNotCell(value));
+        returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    }
     findLiteralStringWord(jit, { .string = value, .impl = impl, .entry = word, .tables = tables, .maxLength = result }, isEmpty, returnsOperand, isNotCached);
     returnResult(jit, word);
 

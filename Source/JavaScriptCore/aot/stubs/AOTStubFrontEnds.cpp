@@ -44,6 +44,7 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude },
         { Entry::operationAOTJSONAppendValue, emitJSONAppendValuePrelude },
         { Entry::operationAOTPrivateDefine, emitPrivateDefinePrelude },
+        { Entry::operationAOTPrivateSet, emitPrivateSetPrelude },
         { Entry::operationAOTStringToLowerCase, emitToLowerCasePrelude },
         { Entry::operationAOTStringToUpperCase, emitToUpperCasePrelude },
         { Entry::operationAOTThrow, emitThrowPrelude },

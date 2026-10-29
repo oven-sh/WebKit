@@ -18,8 +18,8 @@ operation HasLayoutPrototype (object: Object/inspects, guard?: Guard/inspects) -
 operation BelongsToInstance (object: Object/inspects) -> natural(boolean) ; reads(ShapeWords) ; proves = OwnInstance
 operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin
 operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage
-operation IsInBounds (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds
-operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage) [keyIsIntegral] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array
+operation IsInBounds (array: Array/inspects, position: Integer/inspects) [| engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds
+operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array
 operation IsInsideView (view: Object/inspects, position: Number/inspects, typedArrayType: TypedArrayType) [keyIsIntegral] -> natural(boolean) ; reads(TypedArrayStorage) ; proves = InBounds
 operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise
 operation AreMembersUnchanged (conditions: List<MemberConditionRecord>, from Placed guardBit?: GuardBit) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged
@@ -75,6 +75,9 @@ operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArray
 operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> natural(number | bigint | undefined) ; Allocates reads(TypedArrayStorage, TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemGet ; accessClass = Slot
 operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot
 operation HasFixedBytes (view: Object/inspects) -> natural(boolean) ; reads(TypedArrayStorage)
+operation GetEnumeratorIndexedLength (enumerator: Enumerator/inspects) -> natural(uint32) ; none
+operation IsElementInStorage (object: Any/inspects, position: Number/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; branches = May
+operation ToEnumeratorPosition (position: Number/inspects) -> natural(uint32) ; none
 operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true
 operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read
@@ -88,11 +91,13 @@ operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstAr
 operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
 
 family Environment Prepared..Placed
-operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; interpreted = Read
+operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; AsRead..Placed ; interpreted = Read ; flow = Copies ; flowsWithoutRule = true
 operation MaterializeEnvironment (environment: Environment/inspects+returns, layout: Layout, from Placed allocation?: Allocation) -> natural(same(environment)) ; Allocates reads(EnvironmentFields) ; runtime = MaterializeEnvironment ; allocatesInline = true ; boundTo = Frame
 operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame
+operation KeepCalleeInFrame (closure: Callable/inspects) -> none ; writes(CalleesInFrames) ; boundTo = Function
+operation KeepEnvironmentOfCalleeInFrame (environment: Layout/inspects, layout: Layout, field: Field) -> none ; reads(EnvironmentFields[layout, field]) writes(CalleesInFrames) ; boundTo = Function
 operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
 
 family BuiltinCall Prepared..Placed

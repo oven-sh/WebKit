@@ -425,6 +425,7 @@ static constexpr bool looksIntoObject(ValueFlowNameKind kind)
     case ValueFlowNameKind::MemberWritten:
     case ValueFlowNameKind::EveryMemberWritten:
     case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::AddedNames:
         return true;
     case ValueFlowNameKind::Slot:
     case ValueFlowNameKind::HiddenSlot:
@@ -437,7 +438,6 @@ static constexpr bool looksIntoObject(ValueFlowNameKind kind)
     case ValueFlowNameKind::RejectedPromises:
     case ValueFlowNameKind::AllocatedAs:
     case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
     case ValueFlowNameKind::NamesOfMethods:
         return false;

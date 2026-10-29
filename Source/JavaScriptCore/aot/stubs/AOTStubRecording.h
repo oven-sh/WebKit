@@ -49,7 +49,7 @@ constexpr Typed::Effects effectsOf(Entry entry)
 }
 
 struct StubReference {
-    enum class Kind : uint8_t { Call, Jump, Address, ReturnedAddress };
+    enum class Kind : uint8_t { Call, PollAfterOperation, Jump, Address, ReturnedAddress };
 
     StubKey target;
     Kind kind;

@@ -15,9 +15,11 @@
 #include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTExpandOwnKeysInternal.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
 #include "AOTNaturalLoops.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestReport.h"
@@ -108,6 +110,9 @@ Value TestConditions::canonicalize(const Value& test) const
         else if (ValueID operand = canonical.operand(operandIndex))
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
+    // The origin of a test does not change its result: a test written by the program proves what a test placed before an access proves.
+    if (Value::opcodesWithIsFromProgram.contains(canonical.opcode))
+        canonical.setIsFromProgram(false);
     canonical.type = TypeID();
     canonical.setExpected({ });
     canonical.representation = Representation::Unchosen;
@@ -152,6 +157,20 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
         return removedByOf(value.opcode) == PassID::ExpandIteration;
     };
     const Function& function = context.function;
+    // A list of names that ExpandOwnKeys expands later in the same round is a literal by then, and reads of a literal need no test.
+    if (Vector<ValueID, 4> lists = findKeyListsToExpand(context); !lists.isEmpty()) {
+        for (BlockID block : analyses().cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    for (ValueID read : CastChain(function, operand)) {
+                        if (lists.contains(read))
+                            m_awaitsExpansion.set(id.index());
+                    }
+                });
+            }
+        }
+        m_context.hasUsesAwaitingExpansion = !m_awaitsExpansion.isEmpty();
+    }
     if (!function.values.containsIf(isUnexpanded))
         return;
 
@@ -235,6 +254,26 @@ bool TestSiteReporter::takesAwaySitesInColdCode()
 }
 
 // A catch clause counts as rare because a throw leads to it. It is code of the program all the same, no arm of a failed test, and a program that throws to leave a loop runs it as often as the loop.
+auto TestSiteReporter::candidates() -> std::span<const Candidate>
+{
+    if (m_candidates)
+        return m_candidates->span();
+    m_candidates.emplace();
+    const Function& function = m_context.function;
+    const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
+    for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
+        if (frequencies.classOf(block).predicted() == BlockFrequency::Rare && !isWrittenInCatchClause(block))
+            continue;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            Opcode operation = function.at(values[index]).opcode;
+            if (testSiteOpcodes.contains(operation) && !m_awaitsExpansion.quickGet(values[index].index()))
+                m_candidates->append(Candidate { values[index], { block, index }, operation });
+        }
+    }
+    return m_candidates->span();
+}
+
 bool TestSiteReporter::isWrittenInCatchClause(BlockID block)
 {
     if (!m_blocksOfCatchClauses) {
@@ -498,7 +537,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
 {
     HashMap<SubjectAndType, unsigned> numberOfTests;
     BitVector canBeDecided;
-    reporter.forEachCandidate([&](const Value& test) {
+    reporter.forEachCandidate({ Opcode::TypeTest }, [&](const Value& test) {
         if (!canBeDecidedEarlier(reporter, test))
             return;
         canBeDecided.set(reporter.use().index());
@@ -507,7 +546,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
     if (canBeDecided.isEmpty())
         return;
 
-    reporter.forEachCandidate([&](const Value& test) {
+    reporter.forEachCandidate({ Opcode::TypeTest }, [&](const Value& test) {
         if (!canBeDecided.get(reporter.use().index()))
             return;
         SubjectAndType tested = subjectAndTypeOf(reporter, test);

@@ -11,7 +11,13 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized loops f1
+# REQUIRES(NONE): unsanitized-code
 # RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -93,16 +99,42 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Jump -> next b2(v13)
 }
 
-# `for (const key in list) sum += list[key]`: the keys of a list are its indexes as texts. A turn takes the next key from the enumerator and, while the list is as the enumerator saw it, reads the element under that key by the stub for a cell as the key.
-# CHECK-LABEL: loop #
-# CHECK: Reads:JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, {{*}}:ForInStep)
-# CHECK: Int64 b@{{*}} = Patchpoint(b@[[list]]:Register({{*}}), b@[[key]]:Register({{*}}), resultConstraints = Register(
-# CHECK: Patchpoint(b@[[list]]:ColdAny, {{*}}:EnumeratorGetByVal)
-# CHECK: Int64 b@{{*}} = Patchpoint(b@[[list]]:Register({{*}}), b@[[key]]:Register({{*}}), resultConstraints = Register({{*}}:ElemGet)
+# `for (const key in list) sum += list[key]`: the keys of a list are its indexes as texts. While the enumerator is in its indexed part the key is an integer: a turn asks whether the element is in the
+# storage and reads it. Eight turns are written out, and a loop of single turns takes the rest.
+# CHECK-LABEL: steps by 8
 # CHECK-LABEL: end of loop
-# The enumerator is made once, and the run time is asked for a key only where the enumerator's own list of names has none.
+# CHECK-LABEL: steps by 1
+# CHECK: Int64 b@[[word]] = Load(b@[[address]], ControlDependent|Reads:Elements{{*}}, {{*}}:IsElementInStorage)
+# CHECK: = NotEqual(b@[[word]], 
+# CHECK: Double b@[[element]] = Load(b@[[address]], ControlDependent|Reads:indexedDoubleProperties, {{*}}:GetArrayElement)
+# CHECK: Double b@{{*}} = Add(b@[[element]], 
+# CHECK-LABEL: end of loop
+# No text is made, nothing is looked up, nothing is called, and neither the kind of the storage nor its length is asked for again.
+# NONE-LABEL: steps by 8
+# NONE-NOT: :ToString)
+# NONE-NOT: :ForInStep)
+# NONE-NOT: :ElemGet)
+# NONE-NOT: Register(
+# NONE-NOT: JSCell_indexingTypeAndMisc
+# NONE-NOT: Butterfly_publicLength
+# NONE-LABEL: end of loop
+# NONE-LABEL: steps by 1
+# NONE-NOT: :ToString)
+# NONE-NOT: :ForInStep)
+# NONE-NOT: :ElemGet)
+# NONE-NOT: Register(
+# NONE-NOT: JSCell_indexingTypeAndMisc
+# NONE-NOT: Butterfly_publicLength
+# NONE-LABEL: end of loop
+# The enumerator is made once. The loop as written stands behind the copy, for the names and for a list that the body of the loop has changed.
 # CALLS-LABEL: f1: size=
+# CALLS-NEXT: operation operationAOTConvertToDoubleStorage x1
 # CALLS-NEXT: operation operationAOTEnumeratorNext x1
 # CALLS-NEXT: operation operationAOTGetPropertyEnumerator x1
-# CALLS: stub GetByValCachedCells x2
+# CALLS: stub GetByValAtIndex x1
+# CALLS-NEXT: stub GetByValCachedCells x2
 # CALLS-NEXT: f{{*}}: size=
+# X64: instructions: 35, patchpoints: 8, rare instructions: 12, {{*}} steps by 8
+# X64: instructions: 7, patchpoints: 1, {{*}} steps by 1
+# ARM64: instructions: 35, patchpoints: 8, rare instructions: 12, {{*}} steps by 8
+# ARM64: instructions: 6, patchpoints: 1, {{*}} steps by 1

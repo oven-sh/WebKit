@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
@@ -21,13 +22,17 @@
 #include "AOTMembersLeftOut.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
+#include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
+#include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTThreshold.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "FunctionRareData.h"
+#include "HeapUtil.h"
+#include "MarkedBlockCage.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
@@ -199,39 +204,46 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
 // So is a frame without a record of a function that records its callees only once one of them was renamed.
 static bool isNamedInFramesByFunction(FunctionID closureFunction)
 {
-    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !FunctionDescription(closureFunction).recordsCallee();
+    FunctionDescription description(closureFunction);
+    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !description.recordsCallee() && !description.recordsCalleeOnceRenamed();
+}
+
+// functionName() can run at the end of a GC, where of() cannot create the tables.
+static FunctionTables* existingTables(VM& vm)
+{
+    return vm.aotState().functionTables.get();
 }
 
 static String nameSetAtRunTime(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
-    Locker locker { tables.namesLock };
-    if (String name = tables.namesShownUntilLookedFor.get(sourceFunction); !name.isNull())
+    Locker locker { tables->namesLock };
+    if (String name = tables->namesShownUntilLookedFor.get(sourceFunction); !name.isNull())
         return name;
-    return tables.namesSetAtRunTime.get(sourceFunction);
+    return tables->namesSetAtRunTime.get(sourceFunction);
 }
 
 static String nameShownUntilLookedFor(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
         return String();
-    Locker locker { tables.namesLock };
-    return tables.namesShownUntilLookedFor.get(sourceFunctionOf(function));
+    Locker locker { tables->namesLock };
+    return tables->namesShownUntilLookedFor.get(sourceFunctionOf(function));
 }
 
 static String nameLookedFor(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesLookedFor.load(std::memory_order_acquire)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasNamesLookedFor.load(std::memory_order_acquire)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
     {
-        Locker locker { tables.namesLock };
-        if (!tables.namesLookedFor.contains(sourceFunction.index()))
+        Locker locker { tables->namesLock };
+        if (!tables->namesLookedFor.contains(sourceFunction.index()))
             return String();
     }
     String name = initialNameProperty(sourceFunction);
@@ -301,26 +313,28 @@ bool FunctionTables::framesAreNamedByCallee(FunctionID function)
     return recordsCalleesOf(function) || FunctionDescription(function).recordsCallee();
 }
 
-void FunctionTables::recordCalleesOf(VM& vm, FunctionID sourceFunction)
+void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
 {
-    if (recordsCalleesOf(sourceFunction))
+    if (recordsCalleesOf(closureFunction))
         return;
     {
         Locker locker { namesLock };
-        size_t numberOfFunctions = programTables().numberOfFunctions();
-        if (functionsRenamedAtRunTime.isEmpty())
-            functionsRenamedAtRunTime.fill(0, numberOfFunctions);
-        for (size_t index = 0; index < numberOfFunctions; ++index) {
-            if (sourceFunctionOf(FunctionID(index)) == sourceFunction)
-                functionsRenamedAtRunTime[index] = 1;
-        }
-        if (isRenamedAtRunTime.exchange(functionsRenamedAtRunTime.span().data(), std::memory_order_release))
+        const ProgramTables& tables = programTables();
+        if (!functionsRenamedAtRunTime)
+            functionsRenamedAtRunTime = MallocSpan<uint8_t>::zeroedMalloc(tables.numberOfFunctions());
+        std::span<uint8_t> isRenamed = functionsRenamedAtRunTime.mutableSpan();
+        uint32_t sourceFunction = tables.sourceFunctionOf(closureFunction.index());
+        isRenamed[closureFunction.index()] = 1;
+        for (Number24 form : tables.closureFormsOf(sourceFunction))
+            isRenamed[form] = 1;
+        isRenamed[sourceFunction] = 1;
+        if (isRenamedAtRunTime.exchange(isRenamed.data(), std::memory_order_release))
             return;
     }
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances)
-        makeCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+        makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
 }
 
 // In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
@@ -346,16 +360,6 @@ static FunctionID sourceFunctionOf(const RecordedCallee& entry)
     return sourceFunctionOf(*functionOf(closureOnHeapOf(entry)));
 }
 
-void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer, JSObject* closure)
-{
-    std::optional<FunctionID> function = functionOf(closure);
-    if (!function || !recordsCalleesOf(*function))
-        return;
-    if (Thread::currentSingleton().stack().contains(closure))
-        closure = std::bit_cast<JSObject*>(static_cast<uintptr_t>(sourceFunctionOf(*function).index()) << numberOfMarks | markOfClosureInFrame);
-    recordCallee(vm, stackPointer, closure);
-}
-
 std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer, FunctionID sourceFunction)
 {
     if (!hasRecordedCallees())
@@ -365,6 +369,28 @@ std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* st
     if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
         return std::nullopt;
     return closureOnHeapOf(entry);
+}
+
+SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm, const void* frameRecordOfCaller, CalleeOfSite site, FunctionID sourceFunction)
+{
+    if (!framesAreNamedByCallee(sourceFunction))
+        return std::nullopt;
+    auto isFunctionObjectOfFunction = [&](JSCell* cell) {
+        std::optional<FunctionID> function = functionOf(cell);
+        return function && sourceFunctionOf(*function) == sourceFunction;
+    };
+    auto* kept = static_cast<JSCell* const*>(frameRecordOfCaller)[site.wordInFrame()];
+    bool liesInFrame = Thread::currentSingleton().stack().contains(kept) || CheckedFrameCells::isInRange(kept);
+    if (!liesInFrame && (!kept || kept->isPreciseAllocation() || !HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), kept)))
+        return std::nullopt;
+    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && kept->type() == CompiledEnvironmentType) {
+        SlotData slot = SlotData::decode(*field);
+        JSCell* closure = cellInSlot(slot.representation(), reinterpret_cast<const uint8_t*>(kept) + slot.offset, vm.heap.cage().base());
+        return closure && isFunctionObjectOfFunction(closure) ? asObject(closure) : nullptr;
+    }
+    if (liesInFrame)
+        return nullptr;
+    return isFunctionObjectOfFunction(kept) ? std::optional(asObject(kept)) : std::nullopt;
 }
 
 // How far the stack of the program reaches is not asked during a collection. A call has returned for sure once the program has returned to whoever entered it from outside.
@@ -433,19 +459,6 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
         setRecordedCalleeStorage(vm, *this, { });
 }
 
-static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)
-{
-    if (auto* classObject = dynamicDowncast<Closure>(closure)) {
-        const FieldData* field = StaticFields::findOwnField(*classObject, uid);
-        if (field && StaticFields::isInVariable(*classObject, *field))
-            return classObject->state().objects->classes.readStaticField(*field);
-    }
-    unsigned attributes;
-    PropertyOffset offset = closure->structure()->getConcurrently(uid, attributes);
-    if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
-        return JSValue();
-    return closure->getDirect(offset);
-}
 
 static String nullIfEmpty(const String& text)
 {
@@ -454,7 +467,16 @@ static String nullIfEmpty(const String& text)
 
 static String ownStringProperty(JSObject* closure, const Identifier& name)
 {
-    JSValue value = ownDataProperty(closure, name.impl());
+    if (auto* classObject = dynamicDowncast<Closure>(closure)) {
+        const FieldData* field = StaticFields::findOwnField(*classObject, name.impl());
+        if (String string = field ? ProgramStatics::readStringWithoutAllocating(classObject->state().instance, field->slot) : String(); !string.isNull())
+            return string;
+    }
+    unsigned attributes;
+    PropertyOffset offset = closure->structure()->getConcurrently(name.impl(), attributes);
+    if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+        return String();
+    JSValue value = closure->getDirect(offset);
     return value && value.isString() ? asString(value)->tryGetValueWithoutGC() : String();
 }
 
@@ -475,13 +497,23 @@ static bool hasInitialNameWithoutProperty(JSObject* callee)
     return !rareData || !rareData->hasReifiedName();
 }
 
+static void markRenamed(JSObject* closure)
+{
+    if (auto* full = dynamicDowncast<Closure>(closure))
+        full->markRenamed();
+    else
+        uncheckedDowncast<ReifiedSlimClosure>(closure)->markRenamed();
+}
+
 void didChangeDisplayName(VM& vm, JSObject* closure)
 {
     FunctionID closureFunction = *functionOf(closure);
     FunctionTables& tables = FunctionTables::of(vm);
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
-    if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed())
-        tables.recordCalleesOf(vm, sourceFunction);
+    if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed()) {
+        tables.recordCalleesOf(vm, closureFunction);
+        markRenamed(closure);
+    }
     if (!isNamedInFramesByFunction(closureFunction))
         return;
     if (hasInitialNameWithoutProperty(closure))
@@ -490,6 +522,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
+    State* state = &State::of(closure->structure()->realm());
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
         return;
@@ -497,34 +530,39 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     if (entry.isOneOfSeveral)
         return;
     if (entry.functionObject && entry.functionObject != closure) {
-        if (mayHaveDisplayName) {
-            entry = { };
-            entry.isOneOfSeveral = true;
-        }
+        if (mayHaveDisplayName)
+            entry = { .state = entry.state == state ? state : nullptr, .isOneOfSeveral = true };
         return;
     }
     entry.functionObject = closure;
     entry.text = WTF::move(text);
-    if (isClassObject) {
-        entry.stateOfClassObject = &classObject->state();
+    entry.state = state;
+    if (isClassObject)
         entry.constructorOfClass = closureFunction;
-    }
     tables.hasDisplayNames.store(true, std::memory_order_relaxed);
+}
+
+void FunctionTables::forgetDisplayNamesOf(const State& state)
+{
+    Locker locker { namesLock };
+    displayNames.removeIf([&](auto& entry) {
+        return entry.value.state == &state;
+    });
 }
 
 static String displayNameInFrames(VM& vm, FunctionID function)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
+    FunctionTables* tables = existingTables(vm);
+    if (!tables || !tables->hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
-    Locker locker { tables.namesLock };
-    auto entry = tables.displayNames.find(sourceFunction);
-    if (entry == tables.displayNames.end() || entry->value.isOneOfSeveral)
+    Locker locker { tables->namesLock };
+    auto entry = tables->displayNames.find(sourceFunction);
+    if (entry == tables->displayNames.end() || entry->value.isOneOfSeveral)
         return String();
-    if (!entry->value.stateOfClassObject)
+    if (!entry->value.constructorOfClass)
         return entry->value.text;
-    JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
+    JSCell* classObject = entry->value.state->objects->closures.closureIfCreated(entry->value.constructorOfClass);
     return classObject == entry->value.functionObject ? ownStringProperty(asObject(classObject), vm.propertyNames->displayName) : String();
 }
 
@@ -651,8 +689,10 @@ static void nameFramesOfFunction(VM& vm, JSObject* closure, const String& name)
 void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
-    if (FunctionDescription(function).recordsCalleeOnceRenamed())
-        FunctionTables::of(vm).recordCalleesOf(vm, sourceFunctionOf(function));
+    if (FunctionDescription(function).recordsCalleeOnceRenamed()) {
+        FunctionTables::of(vm).recordCalleesOf(vm, function);
+        markRenamed(closure);
+    }
     nameFramesOfFunction(vm, closure, name);
 }
 
@@ -668,6 +708,12 @@ void didLookForNameProperty(VM& vm, JSObject* closure)
     if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator)
         return;
     FunctionTables& tables = FunctionTables::of(vm);
+    // Other function objects of the accessor keep the name without "get " or "set " in their frames.
+    if (functionKindData(function).accessor() != MethodKind::Method && FunctionDescription(function).recordsCalleeOnceRenamed() && !dynamicDowncast<SlimClosure>(closure)) {
+        tables.recordCalleesOf(vm, function);
+        markRenamed(closure);
+        return;
+    }
     Locker locker { tables.namesLock };
     if (!tables.namesLookedFor.add(sourceFunction.index()))
         return;
@@ -806,6 +852,17 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     if (isProgramFunction && callableKind == CallableKind::Method)
         RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s));
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+}
+
+JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
+{
+    FunctionID function = checkedFunctionOf(callee);
+    FunctionKindData kindData = functionKindData(function);
+    if (kindData.isBound() || kindData.isInRuntimeModule)
+        return nullptr;
+    const FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    auto found = answered.find(function);
+    return found == answered.end() ? nullptr : found->value.get();
 }
 
 bool isBoundFunction(JSObject* callee)
@@ -967,11 +1024,9 @@ bool isClosureOf(JSCell* cell, FunctionID function)
     JSObject* object = cell->getObject();
     if (!implemented || !object)
         return false;
+    // A stack walk asks, and allocates nothing. A function object that is yet to be created is not this one.
     JSGlobalObject* realm = object->realmMayBeNull();
-    if (!realm)
-        return false;
-    auto found = findInRealm(realm, BuiltinCellKey::object(BuiltinID(*implemented)));
-    return found && *found == cell;
+    return realm && findExistingBuiltin(realm, BuiltinID(*implemented)) == object;
 }
 
 } } // namespace JSC::AOT

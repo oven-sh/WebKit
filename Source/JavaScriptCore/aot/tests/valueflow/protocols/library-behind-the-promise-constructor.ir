@@ -8,8 +8,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=0 function=f2
-runtimefunction id=93 function=f3
+runtimefunction id=PromiseConstructorPromise function=f2
+runtimefunction id=PromiseConstructorTry function=f3
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Promise
     v1 = NewClosure function=f1
@@ -21,9 +21,9 @@ function f1 name="executor" kind=Arrow parameters=[{type=anything}] results=[{ty
     v2 = Call v0, -, v1
     Return
 }
-function f2 name="Promise" role=Library flags=[HasThis, HasNewTarget] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="Promise" role=Library flags=[HasThis, HasNewTarget] enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-function f3 name="try" role=Library flags=[HasThis] enclosingRuntimeFunction=93 parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="try" role=Library flags=[HasThis] enclosingRuntimeFunction=PromiseConstructorTry parameters=[{type=anything}] results=[{type=anything}] {
     Return v1
 }

@@ -8,21 +8,21 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=32 function=f1
-runtimefunction id=64 function=f2
-runtimefunction id=131091 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeFilter function=f1
+runtimefunction id=ArrayPrototypeMap function=f2
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
-function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3

@@ -240,6 +240,7 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
       ),
     ],
     ["keepsStringsOfStoredValues", object.keepsStringsOfStoredValues ? "true" : null],
+    ["nativeAccessors", formatNames(context, object.nativeAccessors)],
   ]);
 }
 

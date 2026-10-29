@@ -302,6 +302,8 @@ static void checkClassRecord(const TableCheck& check, const LayoutData& layout, 
         if (check.expect(areClasses, ProgramTableRule::TableOutOfBounds, id))
             check.expect(isStrictlyAscending(subclasses, std::identity { }), ProgramTableRule::TableNotSorted, id);
     }
+    if (uint32_t offset = layout.classData().namesOfFieldsOffset)
+        check.expect(layout.classData().instancesCarryBrand && check.tryGetCountedWords(offset).size() == check.program.at(id).fields.size(), ProgramTableRule::TableOutOfBounds, id);
     bool guardsAreSorted = isStrictlyAscending(layout.memberGuards(), [](const MemberGuardData& guard) {
         return std::tuple { guard.side(), guard.kind(), static_cast<uint32_t>(guard.name) };
     });
@@ -374,8 +376,8 @@ static void checkFieldTable(const TableCheck& check)
 {
     const uint32_t highestObjectShape = check.tables.firstEnvironmentShape - 1;
     const uint32_t typeOfAnyValue = check.encoder.typeOffset(TypeTable::anything);
-    const auto numberOfColumns = static_cast<uint32_t>(std::min<uint64_t>(check.encoder.identifiers.count(), FieldTableEntry::maxName + 1));
-    if (!check.expect(check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
+    const uint32_t numberOfColumns = check.encoder.identifiers.countWithFieldTableColumn();
+    if (!check.expect(check.tables.numberOfFieldTableColumns == numberOfColumns && numberOfColumns <= FieldTableEntry::maxName + 1 && check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
         return;
     auto entries = check.tables.fieldTableEntries();
     auto isRowInBounds = [&](uint32_t row) {
@@ -400,7 +402,7 @@ static void checkFieldTable(const TableCheck& check)
         if (check.tables.hasLayoutForShape(shape)) {
             const LayoutData& layout = check.tables.layoutForShape(shape);
             for (const FieldData& field : layout.fields()) {
-                if (!FieldTableEntry::hasColumn(field.name))
+                if (!check.tables.hasFieldTableColumn(field.name))
                     continue;
                 ++numberOfFieldsFound;
                 uint32_t index = row + field.name;
@@ -451,8 +453,10 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
     case TypeTestVerdict::NeverPasses:
         return { .id = id };
     case TypeTestVerdict::NeedsTest:
-        // A function without a generic entrypoint has no closures, so its test has no record.
+        // A function without a generic entrypoint has no closures, and a class without a rank has no instances, so their tests have no record.
         plan.cellTests.removeAllMatching([&](const CellTest& test) {
+            if (test.kind == CellTestKind::CarriesBrandOfClass)
+                return !encoder.placement.rankOfClass(test.classLayout);
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
         });
         // In a plan, String says that some string passes. In a record it says that every string passes.
@@ -496,6 +500,8 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeCellTest& encoded
         return encoded.operand == static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return encoded.module() == test.module;
+    case CellTestKind::CarriesBrandOfClass:
+        return check.encoder.placement.rankOfClass(test.classLayout) == encoded.rankOfClass();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

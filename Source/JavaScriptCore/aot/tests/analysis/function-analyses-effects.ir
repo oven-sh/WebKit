@@ -71,8 +71,8 @@ function f4 name="callsInLoop" parameters=[{type=boolean}, {type=number}] result
 }
 # CHECK-LABEL: function f4
 # CHECK-NEXT: effects:
-# CHECK: v3 effects: none
-# CHECK-NEXT: v4 effects: writes(ModuleVariables/1)
+# CHECK: v3 effects: throwsForLackOfStack
+# CHECK-NEXT: v4 effects: writes(ModuleVariables/1) throwsForLackOfStack
 # NOFLOW-LABEL: function f4
 # NOFLOW-NEXT: effects:
 # NOFLOW: v3 effects: unknownCode

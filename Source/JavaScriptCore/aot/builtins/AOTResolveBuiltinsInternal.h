@@ -104,6 +104,7 @@ struct ForwardedTailCall {
 struct CalledOperandTest {
     ValueSite site;
     uint32_t operandIndex { 0 };
+    TypeID testedType { TypeTable::function };
 };
 
 Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext&);

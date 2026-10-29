@@ -53,7 +53,6 @@ static JSCell* newTypedArrayView(Instance* instance, JSGlobalObject* globalObjec
 JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedArray, JSCell*, (Instance* instance, uint32_t type, double length))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewTypedArray);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     // As the constructor converts its operand. A length that no memory holds is refused by the allocation.
     size_t elementCount = jsNumber(purifyNaN(length)).toIndex(globalObject, "length"_s);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -275,10 +274,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (I
     JSValue receiver = JSValue::decode(encodedReceiver);
     JSValue given = JSValue::decode(encodedSource);
     JSValue offset = JSValue::decode(encodedOffset);
-    if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && (offset.isUndefined() || (offset.isInt32() && offset.asInt32() >= 0))) [[likely]] {
+    // A fractional part is truncated.
+    bool isPlace = offset.isUndefined() || (offset.isInt32() ? offset.asInt32() >= 0 : offset.isDouble() && offset.asDouble() > -1 && offset.asDouble() <= static_cast<double>(MAX_ARRAY_BUFFER_SIZE));
+    if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && isPlace) [[likely]] {
         auto* target = uncheckedDowncast<JSArrayBufferView>(receiver.asCell());
         auto* source = uncheckedDowncast<JSArrayBufferView>(given.asCell());
-        size_t position = offset.isUndefined() ? 0 : offset.asInt32();
+        size_t position = offset.isUndefined() ? 0 : offset.isInt32() ? offset.asInt32() : static_cast<size_t>(offset.asDouble());
         size_t count = source->lengthRaw();
         size_t room = target->lengthRaw();
         if (isFixed(target) && isFixed(source) && position <= room && count <= room - position) [[likely]] {
@@ -315,6 +316,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValu
         }
     }
     OPERATION_RETURN(scope, encodedJSValue());
+}
+
+// The ranges may overlap.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveBytes, void, (uint8_t* target, const uint8_t* source, uint64_t count))
+{
+    memmove(target, source, count);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayLength, uint64_t, (JSCell* view))

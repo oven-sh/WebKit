@@ -12,6 +12,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTCodeShapes.h"
@@ -429,7 +430,7 @@ static bool hasManyCallers(const Program& program, const FlowResults& flow, cons
     return callers >= HeatModel::callersOfFunctionThatRunsOften;
 }
 
-// The callers of a function are seen at the entry that the engine has put in front of it, which tests or unpacks a parameter, packs a result or binds arguments.
+// A function's callers are seen at the entry that the engine put before it, which tests or unpacks a parameter, packs a result, binds arguments or starts an async function or a generator.
 static void followEntriesMadeByEngine(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, Vector<uint8_t>& runsOften)
 {
     Vector<uint32_t> worklist;
@@ -444,7 +445,7 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
             FunctionID callee = graph.functionOf(callees[index]);
             if (!callee || runsOften[callee.index()] || graph.multiplierOf(entry, index) < HeatModel::minWeightOfNearlyCertainCall)
                 continue;
-            if (flow.runsAtMostOnce(program, callee) || program.at(callee).has(FunctionFlags::IsAsync))
+            if (flow.runsAtMostOnce(program, callee))
                 continue;
             runsOften[callee.index()] = 1;
             if (leadsToBody(program.at(callee)))
@@ -454,10 +455,10 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
 }
 
 // The structure of a very large program does not tell which of its cold functions run, but it tells which hardly do.
-static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, const Vector<uint8_t>& isExpectedToRun)
+static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowResults& flow, const ParallelLoops& loops, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, const Vector<uint8_t>& isExpectedToRun)
 {
-    Vector<uint32_t> worklist;
     auto findWhatBusyCodeReaches = [&](double minWeight) {
+        Vector<uint32_t> worklist;
         Vector<uint8_t> isReached = isExpectedToRun;
         for (uint32_t index : functionsWithBody) {
             if (isExpectedToRun[index])
@@ -471,9 +472,14 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
         followCallsFromWorklist(graph, minWeight, isReached, worklist);
         return isReached;
     };
-    Vector<uint8_t> isNearBusyCode = findWhatBusyCodeReaches(HeatModel::minWeightOfCallNearBusyCode);
-    Vector<uint8_t> mayRun = findWhatBusyCodeReaches(HeatModel::minWeightOfCallToFollow);
+    Vector<uint8_t> isNearBusyCode;
+    Vector<uint8_t> mayRun;
+    runTasksInParallel(loops, {
+        [&] { isNearBusyCode = findWhatBusyCodeReaches(HeatModel::minWeightOfCallNearBusyCode); },
+        [&] { mayRun = findWhatBusyCodeReaches(HeatModel::minWeightOfCallToFollow); },
+    });
 
+    Vector<uint32_t> worklist;
     for (uint32_t index : functionsWithBody) {
         FunctionID id(index);
         if (mayRun[index] || flow.runsAtMostOnce(program, id))
@@ -508,6 +514,26 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
 // A value that may be one of more layouts than this tells nothing about what lies under the name.
 AOT_THRESHOLD(size_t, maxLayoutsOfStoredValue, 4);
 
+// `Object.create(null)`, before and after the call is resolved.
+static bool makesDictionary(const Program& program, const Function& function, ValueID id)
+{
+    const Value* value = &function.at(id);
+    while (isCast(value->opcode))
+        value = &function.at(value->operand(0));
+    if (value->opcode == Opcode::NewDictionary)
+        return true;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID callee;
+    if (value->opcode == Opcode::Call)
+        callee = singleBuiltinCalleeOf(program, function, *value);
+    else if (value->opcode == Opcode::CallBuiltin)
+        callee = builtins.canonicalID(builtins.at(value->overload()).builtin);
+    if (callee != Builtins::ObjectCreate)
+        return false;
+    std::span<const ValueID> arguments = value->argumentsOperands();
+    return arguments.size() == 1 && program.typeOf(function, arguments[0]).hasOnlyPrimitives(Primitive::Null);
+}
+
 static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, const ParallelLoops& loops, std::span<const uint32_t> functionsWithBody)
 {
     Vector<uint64_t> allStored = collectInParallel<uint64_t>(loops, functionsWithBody.size(), [&](unsigned k, Vector<uint64_t>& stored) {
@@ -515,6 +541,10 @@ static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, c
         auto add = [&](PropertyKeyID name, ValueID value) {
             if (!name || !value)
                 return;
+            if (makesDictionary(program, function, value)) {
+                stored.append(packedKeyOf(name, LayoutID()));
+                return;
+            }
             LayoutSetID layouts = program.typeOf(function, value).layouts;
             if (!layouts || program.at(layouts).written().size() > maxLayoutsOfStoredValue)
                 return;
@@ -600,21 +630,26 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
             if (heat.m_hasWeights)
                 heat.m_layoutsStoredUnderNames = collectLayoutsStoredUnderNames(program, loops, functionsWithBody.span());
             isCalledInLoop = findFunctionsCalledInLoops(loops, graph, functionsWithBody.span());
-            runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop);
-            isCalledPerEvent = findFunctionsCalledPerEvent(program, graph);
-            if (!isVeryLargeProgram)
-                return;
-            functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
-            forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
-                FunctionID id(functionsWithBody[k]);
-                functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
+            // Each follows calls on one thread, and none depends on another's results.
+            runTasksInParallel(loops, {
+                [&] { runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop); },
+                [&] { isCalledPerEvent = findFunctionsCalledPerEvent(program, graph); },
+                [&] {
+                    if (!isVeryLargeProgram)
+                        return;
+                    functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
+                    forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
+                        FunctionID id(functionsWithBody[k]);
+                        functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
+                    });
+                    followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
+                    // A function called by a loop and few others is entered no more often than cold code. It may still run.
+                    Vector<uint8_t> functionsExpectedToRun = functionsThatRunOften;
+                    for (uint32_t index : functionsWithBody)
+                        functionsExpectedToRun[index] |= isCalledInLoop[index];
+                    isCompact = findCompactFunctions(program, flow, loops, graph, functionsWithBody.span(), functionsExpectedToRun);
+                },
             });
-            followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
-            // What a loop calls and few others is entered no more often than cold code is. It may run all the same.
-            Vector<uint8_t> functionsExpectedToRun = functionsThatRunOften;
-            for (uint32_t index : functionsWithBody)
-                functionsExpectedToRun[index] |= isCalledInLoop[index];
-            isCompact = findCompactFunctions(program, flow, graph, functionsWithBody.span(), functionsExpectedToRun);
         },
     });
     times.didFinish("estimateActivations"_s);
@@ -1450,6 +1485,9 @@ struct OutliningScan {
             return false;
         // Only the body of a coroutine may hold it.
         if (value.opcode == Opcode::TakeGeneratorPrototype)
+            return false;
+        // The function object that it calls is in this frame.
+        if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
             return false;
         const Terminator& terminator = function.at(useLists.blockOf(id)).terminator;
         if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)

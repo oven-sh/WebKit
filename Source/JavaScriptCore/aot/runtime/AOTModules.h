@@ -120,7 +120,9 @@ public:
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: capturedValue() reads that one.
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
-    JSObject* moduleNamespace(ModuleID, ModulePhase);
+    // As AbstractModuleRecord::getModuleNamespace(): the caller that creates the object decides whether it is extensible.
+    JSObject* moduleNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions = true);
+    bool mayExport(ModuleID, UniquedStringImpl* name) const;
     JSObject* importMeta(ModuleID);
     JSCell* builtinCell(BuiltinID, ModuleID);
     JSString* pathString(ModuleID);
@@ -202,9 +204,9 @@ public:
     bool hasNotBegunAsFile(ModuleID) const;
     void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
-    enum class LoadOfFile : bool { IsAskedFor, HasComeToFile };
+    enum class LoadOfFile : uint8_t { IsAskedFor, HasComeToFile, IsRootOfImport };
     ModuleRecord* recordOfCommonJSFile(ModuleID, LoadOfFile = LoadOfFile::HasComeToFile);
-    void noteLoadOfFile(ModuleID fileOrFace);
+    void noteLoadOfFile(ModuleID fileOrFace, LoadOfFile = LoadOfFile::HasComeToFile);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
@@ -301,12 +303,15 @@ private:
         bool wasLoadedWhileItRan { false };
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
+        bool didDropError { false };
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
         unsigned numberOfChildrenShown { 0 };
         std::optional<ModuleID> firstRequirer;
+        // Of a CommonJS file whose body the run time called: m_synchronousLoadCount at that call.
+        std::optional<uint32_t> synchronousLoadCountAtStart;
     };
 
     struct DynamicExport {
@@ -332,7 +337,7 @@ private:
     Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
-    JSObject* createNamespace(ModuleID, ModulePhase);
+    JSObject* createNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions);
     JSObject* createTableOfExports();
     JSModuleLoader* loader() const;
 
@@ -344,6 +349,7 @@ private:
     void didLinkEntryPoint();
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
+    void copyExportsOfFinishedFile(ModuleID face);
     bool isNativeModule(ModuleID) const;
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);
@@ -367,6 +373,7 @@ private:
     void evaluateWithOwnStack(ModuleID root);
     size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
     void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
+    bool hasQueuedTicks() const { return host().hasQueuedTicks && host().hasQueuedTicks(m_instance.globalObject); }
     struct LevelOfLoad;
     struct PlanOfLoad;
     bool planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay = nullptr);
@@ -400,11 +407,15 @@ private:
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue answerRequire(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
+    void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
     std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
+    Identifier keyWithoutForm(ModuleID file);
+    std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
+    void noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters&, ModuleID file);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     bool isAnythingBeingLoaded() const;
@@ -438,7 +449,11 @@ private:
     // Compared, never followed: its job holds the promise.
     JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
+    // Each load of evaluateSynchronously() has a number. The innermost one that has not returned is the active one.
+    uint32_t m_synchronousLoadCount { 0 };
+    uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
+    Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen.
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
@@ -468,7 +483,7 @@ private:
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
     };
-    void handGraphToLoader(FilesBeingRun&);
+    void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
     void runStepsOfLoaderInFrontOf(ModuleID file);
     void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
@@ -479,6 +494,7 @@ private:
     bool hasReachedLevelOf(FilesBeingRun&, ModuleID file);
     void findDistanceOfFiles(FilesBeingRun&);
     BitVector m_modulesWithMarkOfRequire;
+    BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
@@ -494,6 +510,7 @@ private:
     bool m_loadsModulesByName;
     const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
+    bool m_hasAskedEveryClass { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {
         Strong<JSPromise> promise;

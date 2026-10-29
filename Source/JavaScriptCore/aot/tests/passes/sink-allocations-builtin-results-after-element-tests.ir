@@ -1,0 +1,58 @@
+# const match = pattern.exec(text); return match && match[1];
+# An element read is guarded by a storage test and a presence test, and `1 in list` asks the same presence test and shows its answer.
+# A list of substrings has no holes, so its presence test is `index < length` and the list is not allocated. A list that may have holes is allocated.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="firstGroup" parameters=[{type=RegExp}, {type=string}] results=[{type=undefined|null|string}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = AssumeType v2 provenType=null|Array<undefined|string, proven, pristine[Storage, Names]>
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5: Array<undefined|string, proven, pristine[Storage, Names]>):
+    v6 = Integer integer=1
+    v7 = HasArrayStorage v5 arrayStorage=Contiguous
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8: guard):
+    v9 = IsElementPresent v5, v6, v8 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10: guard):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayElement v5, v6, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Jump -> next b6(v12)
+  b4() frequency=Unlikely:
+    v13 = ElemGet v5, v6 [keyIsIntegral]
+    Jump -> next b6(v13)
+  b5():
+    v14 = Null
+    Jump -> next b6(v14)
+  b6(v15: undefined|null|string):
+    Return v15
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: IsElementPresent
+# CHECK: = Less
+}
+
+function f1 name="asked" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}, {type=int[0, 2]}] results=[{type=boolean}] {
+    v2 = Integer integer=0
+    v3 = CallBuiltin v0, v2, v1 overload=ArrayPrototypeSplice/0
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+    v5 = Integer integer=1
+    v6 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7: guard):
+    v8 = IsElementPresent v4, v5, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: guard):
+    v10 = Boolean boolean=true
+    Jump -> next b4(v10)
+  b3() frequency=Unlikely:
+    v11 = ElemHas v4, v5 [keyIsIntegral]
+    Jump -> next b4(v11)
+  b4(v12: boolean):
+    Return v12
+# CHECK-NOT: builtinCallForm=Prefix
+# CHECK: = IsElementPresent v4, v5,
+}

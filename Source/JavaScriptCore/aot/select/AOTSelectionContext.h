@@ -80,6 +80,9 @@ public:
 
     bool didRewrite() const { return m_didRewrite; }
     bool needsCompaction() const { return m_needsCompaction; }
+    // An allocation under a handler was hoisted out of its loop or removed, so the loop may no longer need the handler.
+    bool removedAllocationUnderHandler() const { return m_removedAllocationUnderHandler; }
+    void noteRemovedAllocationUnderHandler() { m_removedAllocationUnderHandler = true; }
     std::span<const ValueID> narrowedValues() const LIFETIME_BOUND { return m_narrowedValues.span(); }
     bool hasWidenedValue() const { return m_hasWidenedValue; }
     void didRestoreTypes();
@@ -128,6 +131,7 @@ private:
     bool m_hasWidenedValue { false };
     bool m_didRewrite { false };
     bool m_needsCompaction { false };
+    bool m_removedAllocationUnderHandler { false };
     std::array<uint32_t, numberOfClaimResults> m_claimCounts { };
 };
 

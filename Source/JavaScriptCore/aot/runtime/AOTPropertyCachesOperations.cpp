@@ -16,6 +16,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFrameArrays.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
@@ -54,8 +55,17 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
             return;
         }
     }
+    bool isFoundAbove = (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::Accessor) && answer.holder;
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
+    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr)
+        instance->state->objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+}
+
+// The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
+static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
+{
+    return after != before && (before->isDictionary() || after->isDictionary());
 }
 
 static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode, SiteCache site = nullptr)
@@ -206,6 +216,51 @@ static bool tryStoreExtraPropertyAndCache(Instance* instance, Object& object, co
     return true;
 }
 
+// branchUnlessTypeAccepts() leaves these to the runtime. Null where the stub decides by itself.
+static ASCIILiteral whyStubCannotTestType(const RuntimeLayoutTable& layouts, const RuntimeType& type, JSValue value)
+{
+    constexpr OptionSet<PrimitiveSet> everyNumber { PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber };
+    if (value.isInt32() || !value.isCell()) {
+        bool isDecided = !value.isDouble() || (!type.integerRange() && (!type.primitiveSet().containsAny(everyNumber) || type.primitiveSet().containsAll(everyNumber)));
+        return isDecided ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: a double where the type takes some numbers"_s;
+    }
+    JSCell* cell = value.asCell();
+    if (cell->isString())
+        return type.numberOfLiteralStrings ? "field store left the stub: absent, the stub cannot test the type: a string where the type lists strings"_s : ASCIILiteral();
+    if (cell->isSymbol())
+        return type.primitiveSet().contains(PrimitiveSet::Symbol) || type.cellTests().empty() ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: a symbol where the type lists symbols"_s;
+    if (!cell->isObject())
+        return { };
+    for (const RuntimeCellTest& test : type.cellTests()) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+            return { };
+        case CellTestKind::CellTypeIs:
+        case CellTestKind::ShapeIn:
+            break;
+        case CellTestKind::IsCallable:
+            return isFunctionType(cell->type()) ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: callable"_s;
+        case CellTestKind::IsClosureOf:
+            if (cell->type() == SlimClosureWithPropertiesType)
+                return "field store left the stub: absent, the stub cannot test the type: a slim closure with properties where the type lists functions"_s;
+            if (layouts.cellPassesTest(test, cell))
+                return { };
+            break;
+        case CellTestKind::InheritsClassInfo:
+        case CellTestKind::IsPristine:
+            return "field store left the stub: absent, the stub cannot test the type: an object of a built-in class"_s;
+        case CellTestKind::IsBuiltinCell:
+            return "field store left the stub: absent, the stub cannot test the type: one built-in object"_s;
+        case CellTestKind::IsSymbol:
+        case CellTestKind::SharingModeIs:
+        case CellTestKind::IsNamespaceOf:
+        case CellTestKind::CarriesBrandOfClass:
+            return "field store left the stub: absent, the stub cannot test the type: another test of a cell"_s;
+        }
+    }
+    return { };
+}
+
 // For the counts alone: why a store or a definition under the name of a field got as far as the run time. The tests are those of the stub that stores by the table of fields, in its order.
 static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& object, const FieldData& field, JSValue value, PutMode mode)
 {
@@ -222,6 +277,9 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
     }
     if (!admits)
         return "field store left the stub: absent, the slot does not admit the value"_s;
+    const RuntimeLayoutTable& layouts = object.state().objects->layouts;
+    if (ASCIILiteral why = whyStubCannotTestType(layouts, layouts.typeOf(field), value); !why.isNull())
+        return why;
     if (field.slot.representation() == SlotRepresentation::DeferredClosure)
         return "field store left the stub: absent, the slot defers a closure"_s;
     if (orderWord & orderWordHasFieldOutsideSlot)
@@ -231,18 +289,24 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
         return "field store left the stub: absent, the object may be a prototype"_s;
     if (slotKeyFor(field.slot.offset, field.isOutOfLine()) == noSlotKey)
         return "field store left the stub: absent, the slot has no key"_s;
+    if (!access.instance->image.tables->hasFieldTableColumn(field.name))
+        return "field store left the stub: absent, the name has no column"_s;
     if (mode == PutMode::Define)
         return "field store left the stub: absent, a definition: NOTHING STOOD IN THE WAY"_s;
-    if (!FieldTableEntry::hasColumn(field.name))
-        return "field store left the stub: absent, the name has no column"_s;
-    if (field.hasGuardOfStores)
-        return "field store left the stub: absent, the field has a guard of stores (one in 16 leaves on purpose)"_s;
+    const VMPropertyCaches& tables = access.caches().tables();
+    ASCIILiteral nothingElse = field.hasGuardOfStores ? "field store left the stub: absent, the field has a guard of stores (one in 16 leaves on purpose)"_s : "field store left the stub: absent: NOTHING STOOD IN THE WAY"_s;
     if (structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
-        return access.caches().tables().mayBeNameOfObjectPrototype(field.name) ? "field store left the stub: absent, a name of Object.prototype"_s : "field store left the stub: absent, below Object.prototype: NOTHING STOOD IN THE WAY"_s;
-    const AbsenceFilter& filter = access.caches().tables().absenceFilterFor(object.structureID());
+        return tables.mayBeNameOfObjectPrototype(field.name) ? "field store left the stub: absent, a name of Object.prototype"_s : nothingElse;
+    const AbsenceFilter& filter = tables.absenceFilterFor(object.structureID());
     if (filter.structureID != object.structureID().bits())
         return "field store left the stub: absent, no filter of absent names for the Structure"_s;
-    return "field store left the stub: absent, the filter is out of date or does not let the name pass"_s;
+    if (!filter.generationForStores)
+        return "field store left the stub: absent, an object above has a put or a prototype of its own"_s;
+    if (filter.generationForStores != tables.absenceFilterGenerationForStores())
+        return "field store left the stub: absent, the filter is out of date"_s;
+    if (!filter.letsStoresPass(field.name))
+        return "field store left the stub: absent, the filter does not let the name pass"_s;
+    return tables.storeCreatesOwnField(object, field.name) ? nothingElse : "field store left the stub: absent, something changed under the name since the filter was made"_s;
 }
 
 static bool takesAnyValue(const ProgramTables& tables, const LayoutData& layout, const FieldData& field)
@@ -251,6 +315,17 @@ static bool takesAnyValue(const ProgramTables& tables, const LayoutData& layout,
         return false;
     uint32_t index = tables.fieldTableRowOf(layout.shape) + field.name;
     return index < tables.fieldRecordIndices().size() && FieldTableEntry { tables.fieldTableEntries()[index] }.name() == field.name && tables.fieldRecordIndices()[index] & FieldRecordIndex::isStoredWithoutTypeTest;
+}
+
+// An empty slot means the object has no such property, unless the field has moved to the extra properties or exists without storage, which the key order says. An extensible object without the property gets a plain data property by filling the slot.
+static bool canCreateFieldInSlot(VM& vm, const Object& object, const FieldData& field)
+{
+    constexpr uint16_t flagsLeftToSlowPath = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand;
+    if (field.flags & flagsLeftToSlowPath || object.orderWord() & orderWordIntegrityBits)
+        return false;
+    if (field.flags & fieldMayExistWithoutStorage && object.isInKeyOrder(object.state(), field))
+        return false;
+    return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !livesInExtraProperties(vm, object, field);
 }
 
 static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& closure, JSValue value, PutMode mode)
@@ -298,10 +373,16 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     const FieldData* field = object ? object->fieldNamed(object->state(), ident) : nullptr;
     if (field && access.caches().countsNames()) [[unlikely]]
         access.caches().countNamed(whyStubLeftFieldStore(access, *object, *field, value, mode), uid);
-    // The filter is for all the names of a Structure, so the second field that an object is given here lets the stubs create the ones behind it.
-    if (field && mode != PutMode::Define && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype) && (shouldFile || (!object->isInSlot(*field) && access.caches().createsFieldOutsideStubsAgain(cell->structureID()))))
+    bool chainLetsStoresPass = false;
+    if (field && mode != PutMode::Define && !object->isInSlot(*field))
+        chainLetsStoresPass = access.caches().tables().addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
+    else if (field && mode != PutMode::Define && shouldFile && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
         access.caches().tables().fileAbsenceFilterForStores(globalObject, object);
     if (object && !field && tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), access.site, value, mode, slot))
+        return;
+    // Nothing is cached at the first miss, so the field is created without the descriptor, chain walk and classification that caching needs. A validating run keeps the walk.
+    bool createsOwnField = field && !shouldFile && !object->isInSlot(*field) && (mode == PutMode::Define || (chainLetsStoresPass && !vm.aotState().validatesRuntime));
+    if (createsOwnField && !uid->isSymbol() && canCreateFieldInSlot(vm, *object, *field) && tryCreateField(vm, object->state(), *object, *field, value))
         return;
 
     if (shouldFile)
@@ -313,13 +394,17 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     if (mode == PutMode::Define && cell->isObject())
         defineDataProperty(access.instance, asObject(cell), ident, value, slot);
     else if (object)
-        Object::putWithKnownField(cell, globalObject, ident, value, slot, field);
+        Object::putWithKnownField(cell, globalObject, ident, value, slot, field, chainLetsStoresPass);
     else
         base.putInline(globalObject, ident, value, slot);
     RETURN_IF_EXCEPTION(scope, void());
     if (!cell->isObject())
         return;
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
+    if (beganOrEndedAsDictionary(structureBefore, cell->structure())) {
+        access.caches().didFileNothing();
+        return;
+    }
     if (!shouldFile || (isAddition && !repeatsAddition)) {
         if (isAddition)
             access.caches().didAddProperty(structureBefore, cell->structure());
@@ -338,17 +423,6 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     ensureStillAliveHere(structureBefore);
 }
 
-// As branchIfChainMayHaveName() of the stubs: no object above has an accessor or a property that cannot be written under the name.
-static bool storeCreatesOwnField(const VMPropertyCaches& tables, const Object& object, uint32_t name)
-{
-    if (!FieldTableEntry::hasColumn(name))
-        return false;
-    if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
-        return !tables.mayBeNameOfObjectPrototype(name);
-    const AbsenceFilter& filter = tables.absenceFilterFor(object.structureID());
-    return filter.structureID == object.structureID().bits() && filter.generationForStores == tables.absenceFilterGenerationForStores() && filter.letsStoresPass(name) && !tables.wasChangedOnSomeChain(name);
-}
-
 static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, JSValue value, PutMode mode)
 {
     if (!base.isCell())
@@ -360,7 +434,7 @@ static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, J
     auto* object = uncheckedDowncast<Object>(base.asCell());
     // A definition asks nothing of what is above the object.
     if (!exit->wasInSlot && mode != PutMode::Define) {
-        if (!storeCreatesOwnField(caches.tables(), *object, key))
+        if (!caches.tables().storeCreatesOwnField(*object, key))
             return false;
         exit->generationForStores = caches.tables().absenceFilterGenerationForStores();
     }
@@ -718,7 +792,9 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
         base.put(globalObject, *name, value, slot);
     RETURN_IF_EXCEPTION(scope, void());
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
-    if (shouldFile && (!isAddition || repeatsAddition))
+    if (beganOrEndedAsDictionary(structureBefore, object->structure()))
+        caches.didFileNothing();
+    else if (shouldFile && (!isAddition || repeatsAddition))
         fileStore(instance, object, structureBefore, cachedName, slot, mode);
     else if (isAddition)
         caches.didAddProperty(structureBefore, object->structure());

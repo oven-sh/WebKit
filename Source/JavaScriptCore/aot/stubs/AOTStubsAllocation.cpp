@@ -320,6 +320,7 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
         jit.callOperation(Entry::operationAOTSetConstructPrototype, jit.reuseScratch(StubRegister::Operation));
         isMade.link(&jit);
     });
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 }
 
@@ -344,7 +345,7 @@ void generateCopyObject(StubAssembler& jit)
 #endif
 
     // The loop moves two chunks at a time, from the last field down. With an odd number of chunks it also copies the source's header and words.
-    auto initializeCopyAndReturn = [&] {
+    auto initializeCopyAndReturn = [&](bool hasCalledOperation) {
         for (unsigned offset = copyChunkBytes; offset <= copiedFieldBytes; offset += copyChunkBytes)
             copyChunk(jit, Address(source, offset), Address(cell, offset), firstScratch, secondScratch);
         if (!copiedFieldBytes) {
@@ -371,13 +372,15 @@ void generateCopyObject(StubAssembler& jit)
         jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), words);
         jit.storePair64(header, words, cell, TrustedImm32(0));
         fenceAfterAllocation(jit);
+        if (hasCalledOperation)
+            jit.pollBeforeReturningFromNativeCode();
         jit.returnToCaller();
     };
 
     JumpList slowPath;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, site, slowPath);
     jit.load64(Address(site.record, AllocationSiteRecord::offsetOfHeader()), header);
-    initializeCopyAndReturn();
+    initializeCopyAndReturn(false);
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
@@ -392,7 +395,7 @@ void generateCopyObject(StubAssembler& jit)
         jit.callOperation(Entry::operationAOTAllocateSlow, jit.reuseScratch(StubRegister::Operation));
     });
     jit.load64(Address(cell), header);
-    initializeCopyAndReturn();
+    initializeCopyAndReturn(true);
 }
 
 StubSignature signatureOfAllocateExtension(StubKey)
@@ -502,6 +505,36 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.or64(granuleBits, remaining);
         jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
         cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionReplacedByStub)));
+
+        // One granule becomes two, which is nearly half of all growth: no counting and no loops.
+        JumpList isFilled;
+        {
+            static_assert(extensionCapacityFor(1) == 1 && extensionCapacityFor(2) == 3 && extensionCellSizeFor(2) == offsetOfFirstExtensionSlot + 3 * extensionGranuleSize);
+            JumpList isOtherGrowth;
+            isOtherGrowth.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(2)));
+            isOtherGrowth.append(jit.branchTest64(CCallHelpers::Zero, held));
+            jit.move(held, scratch);
+            jit.sub64(TrustedImm32(1), scratch);
+            isOtherGrowth.append(jit.branchTest64(CCallHelpers::NonZero, scratch, held));
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
+            jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(extensionCellSizeFor(2)) * sizeof(Allocator)), allocator);
+            cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+            allocateCell(jit, replacement, allocator, scratch, cannot);
+            jit.store64(remaining, Address(replacement, offsetOfExtensionGranuleBits));
+            jit.load64(Address(from, offsetOfFirstExtensionSlot), scratch);
+            jit.xor64(held, remaining);
+            Jump isAboveHeld = jit.branch64(CCallHelpers::Above, remaining, held);
+            jit.store64(TrustedImm32(0), Address(replacement, offsetOfFirstExtensionSlot));
+            jit.store64(scratch, Address(replacement, offsetOfFirstExtensionSlot + extensionGranuleSize));
+            Jump isPlaced = jit.jump();
+            isAboveHeld.link(&jit);
+            jit.store64(scratch, Address(replacement, offsetOfFirstExtensionSlot));
+            jit.store64(TrustedImm32(0), Address(replacement, offsetOfFirstExtensionSlot + extensionGranuleSize));
+            isPlaced.link(&jit);
+            jit.store64(TrustedImm32(0), Address(replacement, offsetOfFirstExtensionSlot + 2 * extensionGranuleSize));
+            isFilled.append(jit.jump());
+            isOtherGrowth.link(&jit);
+        }
         loadUnitsOfExtensionWith(jit, remaining, allocator, scratch);
         loadUnitsOfExtensionWith(jit, held, replacement, scratch);
         Jump hasNoRoom = jit.branch32(CCallHelpers::NotEqual, allocator, replacement);
@@ -591,6 +624,7 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.and64(scratch, remaining);
         jit.branchTest64(CCallHelpers::NonZero, remaining).linkTo(places, &jit);
 
+        isFilled.link(&jit);
         fenceAfterAllocation(jit);
         loadExtensionWordOffset(jit, owner, scratch);
         encodeCell32(jit, replacement, replacement);

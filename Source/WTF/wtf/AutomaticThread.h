@@ -135,6 +135,8 @@ public:
 #if ENABLE(AOT)
     // Starts the underlying thread if there is none. False where Thread::survivesFailedCreation() and the system refuses a thread.
     WTF_EXPORT_PRIVATE bool tryEnsureUnderlyingThread(const AbstractLocker&);
+    // Returns once the underlying thread, if there is one, has allocated what it needs to wait for work. Does not wait for work it has taken.
+    WTF_EXPORT_PRIVATE void waitUntilIsUp(const AbstractLocker&);
 #endif
 
     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
@@ -223,6 +225,10 @@ protected:
     bool m_hasUnderlyingThread { false };
     Condition m_waitCondition;
     Condition m_isRunningCondition;
+#if ENABLE(AOT)
+    bool m_isUp { false };
+    Condition m_isUpCondition;
+#endif
 };
 
 } // namespace WTF

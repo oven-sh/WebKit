@@ -224,6 +224,13 @@ constexpr const StubDescriptor& descriptorOf(StubFamily family)
     return StubFamilyTokens::descriptors[static_cast<size_t>(family)];
 }
 
+// See StubAddressInImage. The run time finds every other handler by its place in ImageSection::SlotHandlers.
+constexpr bool isFoundByKey(StubFamily family)
+{
+    StubLinkage linkage = descriptorOf(family).linkage;
+    return linkage == StubLinkage::EnteredByRuntime || linkage == StubLinkage::FrontEnd || family == StubFamily::CallBoxedBuiltin;
+}
+
 constexpr bool hasConsistentColumns(const StubDescriptor& descriptor)
 {
     OptionSet<StubAxis> axes = descriptor.axes;

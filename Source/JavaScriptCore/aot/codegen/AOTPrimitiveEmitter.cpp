@@ -201,6 +201,7 @@ void PrimitiveEmitter::ensureStillAliveHere(CellPointer cell)
     patchpoint->effects.reads = B3::HeapRange::top();
     patchpoint->append(cell.value(), B3::ValueRep::ColdAny);
     patchpoint->setRunsWithoutFrame(true);
+    patchpoint->onlyKeepsChildrenAlive = true;
     patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }
 

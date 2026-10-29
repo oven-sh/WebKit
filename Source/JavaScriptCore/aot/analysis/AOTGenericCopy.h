@@ -23,7 +23,8 @@ class FunctionAnalyses;
 class SSARepair;
 struct FunctionPassContext;
 
-Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
+// With requestedBlocks, returns only the points inside those blocks, and may omit points at block heads.
+Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks = nullptr);
 
 Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 

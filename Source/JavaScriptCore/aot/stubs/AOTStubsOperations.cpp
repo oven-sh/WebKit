@@ -23,7 +23,7 @@ namespace JSC { namespace AOT {
 
 static constexpr OperationCall operationCallOf(const OperationCallShape& shape)
 {
-    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException };
+    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException, .pollsBeforeReturning = shape.pollsBeforeReturning };
 }
 
 static constexpr bool savesAtLeast(OperationCall::Saves saves, OperationCall::Saves requested)
@@ -34,7 +34,8 @@ static constexpr bool savesAtLeast(OperationCall::Saves saves, OperationCall::Sa
 static consteval bool factoriesRoundTrip()
 {
     for (uint8_t form = 0; form < std::size(operationCallShapes); ++form) {
-        if (callOperation(operationCallShapes[form].returns, operationCallShapes[form].firstArgument).form() != form)
+        const OperationCallShape& shape = operationCallShapes[form];
+        if ((shape.checksException ? callOperation(shape.returns, shape.firstArgument, shape.pollsBeforeReturning) : callOperationThatMayFailToAllocate(shape.returns)).form() != form)
             return false;
     }
     for (uint8_t form = 0; form < std::size(preservingCallShapes); ++form) {
@@ -79,7 +80,8 @@ static_assert(shapesCoverPreservingCalls());
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .fourthArgumentIn = GPRInfo::returnValueGPR }));
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .valueDestination = GPRInfo::returnValueGPR }));
 static_assert(!tryCallOperationPreservingRegisters({ }));
-static_assert(callOperationFor(Entry::operationAOTAllocateSlow, OperationCall::Returns::Value, OperationCall::FirstArgument::Instance).family() == StubFamily::TailCallOperation);
+static_assert(callOperationFor(Entry::operationAOTAllocateSlow, OperationCall::Returns::Value, OperationCall::FirstArgument::Instance) == callOperationThatMayFailToAllocate(OperationCall::Returns::Value));
+static_assert(callOperationFor(Entry::operationAOTBarrierSlow, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).family() == StubFamily::TailCallOperation);
 static_assert(callOperationFor(Entry::operationAOTThrow, OperationCall::Returns::Void, OperationCall::FirstArgument::Instance).family() == StubFamily::CallOperation);
 
 RegisterSet registersClobberedByPreservingCall(const StubCatalog& stubs, OperationCall call)

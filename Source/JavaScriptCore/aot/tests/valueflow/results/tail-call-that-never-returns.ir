@@ -1,0 +1,27 @@
+# function leaves(g) { return g(); }  function stays(g) { g(); return 1; }  leaves(1); stays(1)
+# Nothing callable reaches either call, so neither returns and its block is cut after it. The tail call stays in tail position: a stack trace lists its frame as one at a failed tail call.
+# RUN: valueflow-apply
+# CHECK: function f1 name="leaves"
+# CHECK: never = Call {{*}}@10 tail
+# CHECK-NEXT: Unreachable
+# CHECK: function f2 name="stays"
+# CHECK: never = Call {{*}}@20
+# CHECK-NEXT: Unreachable
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f2
+    Return
+}
+function f1 name="leaves" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0 @10
+    ReturnCall v1 @10
+}
+function f2 name="stays" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0 @20
+    v2 = Integer integer=1
+    Return v2
+}

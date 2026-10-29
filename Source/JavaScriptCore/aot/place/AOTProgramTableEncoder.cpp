@@ -370,6 +370,10 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
         return RuntimeCellTest::sharingModeIs(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return RuntimeCellTest::isNamespaceOf(test.module);
+    case CellTestKind::CarriesBrandOfClass:
+        if (std::optional<uint32_t> rank = encoder.placement.rankOfClass(test.classLayout))
+            return RuntimeCellTest::carriesBrandOfClass(*rank);
+        return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1215,6 +1219,12 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
         data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     }
+    bool listsNamesOfFields = hasTestForOtherNames(program, id);
+    Vector<uint32_t, 8> namesOfFields;
+    if (listsNamesOfFields) {
+        for (const Field& field : layout.fields)
+            namesOfFields.append(encoder.identifierNumber(field.key, "a field of a class below a built-in class"_s, id));
+    }
     PartWithoutNames rest(encoder);
     if (!rest.isWritten())
         return parts;
@@ -1242,6 +1252,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     data.base = hasProvenBase ? expectedBaseOf(layout).index() : LayoutData::noBase;
     data.expectedBase = hasProvenBase ? LayoutData::noBase : indexOrNone(expectedBaseOf(layout));
     data.builtinBase = indexOrNone(builtinParentNamedByClassRecord(program, layout));
+    data.instancesCarryBrand = carriesBrandOfClass(program, id);
     data.classConstructor = indexOrNone(classConstructor);
     data.environment = indexOrNone(environment);
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());
@@ -1251,6 +1262,11 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         Vector<uint32_t, 8> list { static_cast<uint32_t>(subclasses.size()) };
         list.appendVector(subclasses);
         data.subclassesOffset = encoder.writer.append(list);
+    }
+    if (listsNamesOfFields) {
+        AOT::sort(namesOfFields);
+        namesOfFields.insert(0, static_cast<uint32_t>(namesOfFields.size()));
+        data.namesOfFieldsOffset = encoder.writer.append(namesOfFields);
     }
     return parts;
 }
@@ -1486,6 +1502,12 @@ static void encodeRemovedFields(TableEncoder& encoder)
     setSortedTable(encoder, ProgramTableIndex::removedFields, removedFields);
 }
 
+// The runtime checks what happens to an object against these lists. They are data only; no code depends on them.
+static bool encodesAddedNames(const BuildContext& build)
+{
+    return build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
+}
+
 static void encodeAddedNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -1498,7 +1520,7 @@ static void encodeAddedNames(TableEncoder& encoder)
     const Vector<PropertyKeyID>* sharedKeys = program.keysStoredThroughUnknownReceivers();
     bool canListSharedKeys = sharedKeys && haveNumbers(*sharedKeys);
     bool listsSharedKeys = false;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const LayoutFlow& flow = program.at(id).flow;
         if (!flow.addedKeysAreComplete || encoder.slots.storageOf(id) != LayoutStorage::CompiledObject)
@@ -1524,7 +1546,7 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     Vector<AddedNameData> names;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         const ClassFlow& flow = program.layouts[index].classFlow;
         if (!flow.prototypeNamesAreComplete)
             continue;
@@ -1720,7 +1742,7 @@ private:
 
 static uint32_t numberOfFieldTableColumns(const TableEncoder& encoder)
 {
-    return static_cast<uint32_t>(std::min<uint64_t>(encoder.identifiers.count(), FieldTableEntry::maxName + 1));
+    return encoder.identifiers.countWithFieldTableColumn();
 }
 
 static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& encoder)
@@ -1752,7 +1774,7 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
         uint32_t cell = cellOf(method.function);
         if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition) || !cell)
             return std::nullopt;
-        if (FieldTableEntry::hasColumn(method.name))
+        if (encoder.identifiers.hasFieldTableColumn(method.name))
             definitions.append(Definition { method.name, method.kind(), cell });
     }
     // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
@@ -1807,7 +1829,7 @@ void encodeFieldTable(TableEncoder& encoder)
         const LayoutData& layout = writer.at<LayoutData>(offset);
         size_t begin = named.fields.size();
         for (const FieldData& field : layout.fields()) {
-            if (FieldTableEntry::hasColumn(field.name))
+            if (encoder.identifiers.hasFieldTableColumn(field.name))
                 named.fields.append({ field.name, FieldTableEntry::forField(layout, field).bits, FieldRecordIndex::create(field, layout.indexOf(field), writer.at<RuntimeType>(field.type), typeOfAnyValue).bits });
         }
         AOT::sort(named.fields.mutableSpan().subspan(begin));
@@ -1899,6 +1921,7 @@ void encodeFieldTable(TableEncoder& encoder)
         }
     }
     encoder.header.numberOfFieldTableRows = highestObjectShape;
+    encoder.header.numberOfFieldTableColumns = numberOfFieldTableColumns(encoder);
     encoder.setTable(ProgramTableIndex::fieldTable, table);
     encoder.setTable(ProgramTableIndex::fieldRecordIndices, recordIndices);
     encoder.setTable(ProgramTableIndex::classMemberRows, firstEntryOfClass);
@@ -2199,6 +2222,9 @@ void encodeFunctionTables(TableEncoder& encoder)
     encoder.setTableFrom<Number24>(ProgramTableIndex::functionSources, traces.span().subspan(firstDerived), [](const FunctionTraceRecord& trace) {
         return Number24(trace.sourceFunctionIndex);
     });
+    encoder.setTableFrom<Number24>(ProgramTableIndex::closureFormsBySource, encoder.placement.closureFormsBySource(), [](FunctionID form) {
+        return Number24(form.index());
+    });
     Vector<ImplementedBuiltinData> implementedBuiltins;
     for (uint32_t index = 0; index < traces.size(); ++index) {
         if (std::optional<BuiltinID> builtin = traces[index].implements())
@@ -2366,7 +2392,8 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
-    entry.importedWhileItRuns = module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns);
+    entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : ModuleFlags::IsImportedAsNamespace);
+    entry.bodyRunsAtMostOnce = module.kind == ModuleKind::RuntimeSource && module.body && encoder.flow.runsAtMostOnce(program, module.body);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;
@@ -2834,15 +2861,20 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
             // The call takes every function from the stack that was copied in around it. The code was entered for the outermost of them that is shown.
             const Value& call = function.at(block.terminator.callOperand());
             std::optional<WrittenTailCall> place;
+            FunctionID callee = call.opcode == Opcode::CallDirect ? call.function() : FunctionID();
             for (Origin origin = call.origin();;) {
                 FunctionID standing = origin.inlineFrame ? function.inlineFrames[origin.inlineFrame].callee : FunctionID(index);
                 if (standing && !program.at(standing).isHiddenInStackTraces() && firstSourceOf(program, standing) == source) {
+                    // The tests at the head of a function hand on to its body at the position of the function. Nobody wrote that call.
+                    bool handsOnToOwnBody = callee && origin.position == program.at(callee).position && firstSourceOf(program, callee) == source;
                     bool isCallOfFunction = origin.inlineFrame == call.origin().inlineFrame;
-                    place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
+                    if (!handsOnToOwnBody)
+                        place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
                 }
                 if (!origin.inlineFrame)
                     break;
                 const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+                callee = frame.callee;
                 origin.position = frame.callPosition;
                 origin.inlineFrame = frame.parent;
             }
@@ -2944,7 +2976,8 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     const ShapeTable& shapes = encoder.placement.shapes();
     ClosureFunctionRange closureFunctions = encoder.placement.closureFunctions();
     header.magic = ProgramTables::expectedMagic;
-    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics);
+    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics)
+        | (std::ranges::any_of(encoder.program.functions, [](const Function& function) { return function.has(FunctionCapabilities::MakesNoTailCall); }) ? ProgramTables::callersKeepCallees : 0);
     header.instanceSizes = inputs.instanceSizes;
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();

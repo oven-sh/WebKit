@@ -18,9 +18,11 @@
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
+#include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <numeric>
 #include <utility>
 
@@ -158,16 +160,6 @@ static uint64_t sortKeyOf(const SummaryNode& node)
     return static_cast<uint64_t>(static_cast<uint32_t>(node.function.index() + 1)) << 32 | static_cast<uint64_t>(node.part) << 30 | node.parameter;
 }
 
-static void removeRepeatedDependencies(Vector<SummaryDependency>& dependencies)
-{
-    AOT::sort(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
-        return std::pair(sortKeyOf(a.source), sortKeyOf(a.target)) < std::pair(sortKeyOf(b.source), sortKeyOf(b.target));
-    });
-    removeRepeatedElements(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
-        return a.source == b.source && a.target == b.target;
-    });
-}
-
 static std::optional<uint32_t> mappedEntryParameter(const Function& callee, const Value& call, uint32_t operandIndex)
 {
     if (Value::opcodesWithCallees.contains(call.opcode))
@@ -203,16 +195,46 @@ static bool hasEmptyDescription(TerminatorKind kind)
     return kinds.contains(kind);
 }
 
+// A set of locations without a heap has no mask either, so the words after the heaps need not be read.
+static ALWAYS_INLINE bool isPure(const Effects& effects)
+{
+    return effects.reads.isEmpty() && effects.writes.isEmpty() && effects.mayThrow == ThrowEffect(false) && !effects.mayCollect && !effects.mayCallUnknownCode && !effects.maySuspend && !effects.mayBeTerminated;
+}
+
 static bool isEmpty(const EffectDescription& description)
 {
     return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
+}
+
+static FunctionID genericVersionEnteredWithOwnParameters(const Program& program, const Function& function)
+{
+    if (function.role != FunctionRole::Source || !function.derivation.source || function.blocks.isEmpty())
+        return { };
+    const auto* record = program.at(function.derivation.source).creator.tryAs<CreatorRecord::EntryChecks>();
+    if (!record || &program.at(record->body) != &function)
+        return { };
+    const Function& generic = program.at(record->fallback);
+    if (generic.role != FunctionRole::GenericVersion || generic.blocks.isEmpty())
+        return { };
+    std::span<const ValueID> parameters = function.at(entryBlock).parameters.span();
+    if (parameters.size() != generic.at(entryBlock).parameters.size())
+        return { };
+    bool isEntered = std::ranges::any_of(function.blocks, [&](const Block& block) {
+        if (block.values.size() != 1 || block.handler || block.terminator.kind != TerminatorKind::ReturnCall)
+            return false;
+        const Value& call = function.at(block.values[0]);
+        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && std::ranges::equal(call.variadicOperands(), parameters);
+    });
+    return isEntered ? record->fallback : FunctionID();
 }
 
 namespace {
 
 class BodySummarizer {
 public:
-    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
+    enum class ReadAs : uint8_t { Itself, ItselfAndCalleesByOperandTypes, GenericVersionGivenTypes, OutlinedBodyGivenTypes };
+
+    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, ReadAs readAs)
         : m_context(context)
         , m_id(id)
         , m_analyses(analyses)
@@ -220,6 +242,10 @@ public:
         , m_function(analyses.function())
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
+        , m_readAs(readAs)
+        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
+        , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
+        , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
     }
 
@@ -229,11 +255,13 @@ public:
         m_summary.parameters.reserveInitialCapacity(numberOfParameters);
         for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
             m_summary.parameters.append(ParameterSummary { summarizeEntryParameter(m_analyses, parameter), OperandMemory::none() });
-            if (mayBeReadOutOfMemory(parameter))
+            if (mayBeReadOutOfMemory(parameter)) {
                 m_parametersInMemory.append(parameter);
+                setBitOfParameter(m_parametersInMemoryAsTargets.mutableSpan(), parameter);
+            }
         }
         if (m_function.isUnsplitCoroutine())
-            addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
+            addDependencyToExitBits(SummaryNode::onThrow(m_id), bitOfReturn);
         for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
             BlockID block(index);
             if (const std::optional<Target>& handler = m_function.at(block).handler)
@@ -244,12 +272,13 @@ public:
         }
         handOverToExits();
         if (m_function.role == FunctionRole::CoroutineBody && m_function.creator.as<CreatorRecord::Coroutine>().kind == CoroutineKind::AsyncFunction) {
-            if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_summary.dependencies.isEmpty())
+            if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_sources.isEmpty())
                 m_summary.onReturn.merge(declaredBoundOf(Opcode::RejectPromise));
-            addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
+            addDependencyToExitBits(SummaryNode::onThrow(m_id), bitOfReturn);
         }
-        removeRepeatedDependencies(m_summary.dependencies);
-        moveToExactBuffer(m_summary.dependencies);
+        // A stack overflow on entry is a RangeError at the call.
+        m_summary.onReturn.mayThrow |= ThrowEffect::onlyStackOverflow();
+        listDependencies();
         return WTF::move(m_summary);
     }
 
@@ -271,7 +300,7 @@ private:
     void addToExits(BlockID block, const Effects& normal, const Effects& handler)
     {
         m_gatheredForExits[exitsOf(block)].merge(normal);
-        if (handler.isPure())
+        if (isPure(handler))
             return;
         if (const std::optional<Target>& target = m_function.at(block).handler)
             m_gatheredForExits[exitsOf(target->block)].merge(handler);
@@ -300,44 +329,98 @@ private:
             m_summary.parameters[parameter].memory.merge(memory);
     }
 
-    void addDependency(SummaryNode source, SummaryNode target)
+    // Every target is a node of the function itself, so the targets of a source are a row of bits: on return, on throw, then the entry parameters.
+    static constexpr uint32_t bitsInWord = 64;
+    static constexpr uint64_t bitOfReturn = 1;
+    static constexpr uint64_t bitOfThrow = 2;
+    static constexpr uint32_t firstBitOfParameters = 2;
+
+    static void setBitOfParameter(std::span<uint64_t> row, uint32_t entryParameter)
     {
-        SummaryDependency dependency { source, target };
-        uint64_t mixed = (sortKeyOf(source) * 0x9e3779b97f4a7c15ull ^ sortKeyOf(target)) * 0xff51afd7ed558ccdull;
-        uint32_t hash = static_cast<uint32_t>(mixed >> 32);
-        bool isKnown = !!m_indexOfDependencies.find(hash, [&](uint32_t position) {
-            return m_summary.dependencies[position] == dependency;
-        });
-        if (isKnown)
-            return;
-        m_indexOfDependencies.add(hash, m_summary.dependencies.size());
-        m_summary.dependencies.append(dependency);
+        uint32_t bit = firstBitOfParameters + entryParameter;
+        row[bit / bitsInWord] |= uint64_t { 1 } << bit % bitsInWord;
     }
 
-    void addDependencyToExitsOf(BlockID block, SummaryNode source)
+    std::span<uint64_t> targetsOf(SummaryNode source)
+    {
+        if (m_sources.isEmpty() || m_sources[m_positionOfLatestSource] != source) {
+            uint32_t hash = static_cast<uint32_t>(sortKeyOf(source) * 0x9e3779b97f4a7c15ull >> 32);
+            std::optional<uint32_t> position = m_indexOfSources.find(hash, [&](uint32_t candidate) {
+                return m_sources[candidate] == source;
+            });
+            if (!position) {
+                position = m_sources.size();
+                m_indexOfSources.add(hash, *position);
+                m_sources.append(source);
+                m_targets.grow(m_targets.size() + m_wordsInRow);
+                zeroSpan(m_targets.mutableSpan().last(m_wordsInRow));
+            }
+            m_positionOfLatestSource = *position;
+        }
+        return m_targets.mutableSpan().subspan(size_t { m_positionOfLatestSource } * m_wordsInRow, m_wordsInRow);
+    }
+
+    void addDependencyToExitBits(SummaryNode source, uint64_t exitBits)
+    {
+        targetsOf(source)[0] |= exitBits;
+    }
+
+    void addDependencyToParameter(SummaryNode source, uint32_t entryParameter)
+    {
+        setBitOfParameter(targetsOf(source), entryParameter);
+    }
+
+    uint64_t exitBitsOf(BlockID block) const
     {
         bool reachesThrow = m_exits.reachesThrow.get(block.index());
-        if (m_exits.reachesReturn.get(block.index()) || !reachesThrow)
-            addDependency(source, SummaryNode::onReturn(m_id));
-        if (reachesThrow)
-            addDependency(source, SummaryNode::onThrow(m_id));
+        return (m_exits.reachesReturn.get(block.index()) || !reachesThrow ? bitOfReturn : 0) | (reachesThrow ? bitOfThrow : 0);
     }
 
     void addDependencyToParametersInMemory(SummaryNode source)
     {
-        for (uint32_t parameter : m_parametersInMemory)
-            addDependency(source, SummaryNode::parameterOf(m_id, parameter));
+        if (!m_parametersInMemory.isEmpty())
+            addDependencyToParametersInMemoryAnd(source, 0);
+    }
+
+    void addDependencyToParametersInMemoryAnd(SummaryNode source, uint64_t exitBits)
+    {
+        std::span<uint64_t> row = targetsOf(source);
+        for (uint32_t word = 0; word < m_wordsInRow; ++word)
+            row[word] |= m_parametersInMemoryAsTargets[word];
+        row[0] |= exitBits;
     }
 
     void addDependencyToExits(BlockID block, SummaryNode normalSource, SummaryNode handlerSource)
     {
-        addDependencyToParametersInMemory(normalSource);
-        addDependencyToParametersInMemory(handlerSource);
-        addDependencyToExitsOf(block, normalSource);
-        if (const std::optional<Target>& target = m_function.at(block).handler)
-            addDependencyToExitsOf(target->block, handlerSource);
-        else
-            addDependency(handlerSource, SummaryNode::onThrow(m_id));
+        const std::optional<Target>& handler = m_function.at(block).handler;
+        addDependencyToParametersInMemoryAnd(normalSource, exitBitsOf(block));
+        addDependencyToParametersInMemoryAnd(handlerSource, handler ? exitBitsOf(handler->block) : bitOfThrow);
+    }
+
+    // Sorted by source, then by target.
+    void listDependencies()
+    {
+        Vector<uint32_t, 32> positions(m_sources.size(), [](size_t position) {
+            return static_cast<uint32_t>(position);
+        });
+        AOT::sort(positions, std::ranges::less { }, [&](uint32_t position) {
+            return sortKeyOf(m_sources[position]);
+        });
+        size_t numberOfDependencies = 0;
+        for (uint64_t word : m_targets)
+            numberOfDependencies += std::popcount(word);
+        m_summary.dependencies.reserveInitialCapacity(numberOfDependencies);
+        for (uint32_t position : positions) {
+            SummaryNode source = m_sources[position];
+            std::span<const uint64_t> row = m_targets.span().subspan(size_t { position } * m_wordsInRow, m_wordsInRow);
+            for (uint32_t index = 0; index < m_wordsInRow; ++index) {
+                for (uint64_t word = row[index]; word; word &= word - 1) {
+                    uint32_t bit = index * bitsInWord + std::countr_zero(word);
+                    SummaryNode target = bit >= firstBitOfParameters ? SummaryNode::parameterOf(m_id, bit - firstBitOfParameters) : bit ? SummaryNode::onThrow(m_id) : SummaryNode::onReturn(m_id);
+                    m_summary.dependencies.append(SummaryDependency { source, target });
+                }
+            }
+        }
     }
 
     uint32_t exitsOf(BlockID block) const
@@ -410,7 +493,7 @@ private:
                 addDependencyToParametersInMemory(calleeParameter);
                 return;
             case BaseObject::Kind::EntryParameter:
-                addDependency(calleeParameter, SummaryNode::parameterOf(m_id, object.entryParameter));
+                addDependencyToParameter(calleeParameter, object.entryParameter);
                 return;
             case BaseObject::Kind::Untracked:
                 addDependencyToExits(block, calleeParameter, calleeParameter);
@@ -439,16 +522,15 @@ private:
         OperandMemory memory { own.reads.restrictedTo(perObjectHeaps), own.writes.restrictedTo(perObjectHeaps) };
         entry.forEachOperand([&](ValueID operand, uint32_t) {
             forEachEntryParameterOf(operand, [&](uint32_t entryParameter) {
-                SummaryNode target = SummaryNode::parameterOf(m_id, entryParameter);
                 m_summary.parameters[entryParameter].memory.merge(memory);
                 if (!isFirstToRunAt(placeOfParameter(entryParameter), description))
                     return;
                 if (description.callsUnknownCode)
-                    addDependency(SummaryNode::unknownCode(), target);
+                    addDependencyToParameter(SummaryNode::unknownCode(), entryParameter);
                 for (FunctionID id : description.functions) {
                     uint32_t numberOfParameters = m_context.program.at(id).numberOfEntryParameters();
                     for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter)
-                        addDependency(SummaryNode::parameterOf(id, parameter), target);
+                        addDependencyToParameter(SummaryNode::parameterOf(id, parameter), entryParameter);
                 }
             });
         });
@@ -457,8 +539,8 @@ private:
     void addArgumentWithoutParameter(ValueID argument, FunctionID callee)
     {
         forEachEntryParameterOf(argument, [&](uint32_t entryParameter) {
-            addDependency(SummaryNode::onReturn(callee), SummaryNode::parameterOf(m_id, entryParameter));
-            addDependency(SummaryNode::onThrow(callee), SummaryNode::parameterOf(m_id, entryParameter));
+            addDependencyToParameter(SummaryNode::onReturn(callee), entryParameter);
+            addDependencyToParameter(SummaryNode::onThrow(callee), entryParameter);
         });
     }
 
@@ -494,6 +576,94 @@ private:
             for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
                 if (!mapped.quickGet(parameter))
                     addDependencyToExits(block, SummaryNode::parameterOf(id, parameter), SummaryNode::parameterOf(id, parameter));
+            }
+        }
+    }
+
+    // A callee that accepts more kinds of values than it is passed here does what its operations do to values of the passed types.
+    // So does the generic version in which this body restarts with its own parameters, and code outlined from that version.
+    bool isReadWithOperandTypes(BlockID block, const Value& value) const
+    {
+        if (m_readAs == ReadAs::Itself || value.opcode != Opcode::CallDirect)
+            return false;
+        const Program& program = m_context.program;
+        const Function& callee = program.at(value.function());
+        std::span<const ValueID> operands = value.variadicOperands();
+        if (callee.blocks.isEmpty() || operands.size() != callee.numberOfEntryParameters() || operands.size() != value.numberOfOperands())
+            return false;
+        switch (m_readAs) {
+        case ReadAs::Itself:
+            return false;
+        case ReadAs::ItselfAndCalleesByOperandTypes:
+            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall
+                && std::ranges::equal(operands, m_function.at(entryBlock).parameters.span());
+        case ReadAs::GenericVersionGivenTypes:
+            return callee.role == FunctionRole::OutlinedBody;
+        case ReadAs::OutlinedBodyGivenTypes:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    void addDependencyOnNormalEdge(BlockID block, SummaryNode source)
+    {
+        addDependencyToParametersInMemoryAnd(source, exitBitsOf(block));
+    }
+
+    void addDependencyOnHandlerEdge(BlockID block, SummaryNode source)
+    {
+        const std::optional<Target>& handler = m_function.at(block).handler;
+        addDependencyToParametersInMemoryAnd(source, handler ? exitBitsOf(handler->block) : bitOfThrow);
+    }
+
+    void summarizeCalleeWithOperandTypes(BlockID block, ValueID call, const EffectDescription& description)
+    {
+        const Program& program = m_context.program;
+        const Value& value = m_function.at(call);
+        std::span<const ValueID> operands = value.variadicOperands();
+        Function callee(program.at(value.function()));
+        Vector<ValueID, 4> narrowedParameters;
+        for (uint32_t index = 0; index < operands.size(); ++index) {
+            ValueID parameter = callee.at(entryBlock).parameters[index];
+            TypeID given = m_function.at(operands[index]).type;
+            if (given == callee.at(parameter).type || !program.at(given).isSubsetOf(program.at(callee.at(parameter).type), program))
+                continue;
+            Value& narrowed = callee.edit(parameter);
+            narrowed.type = given;
+            narrowed.setExpected({ });
+            if (DeclaredType* declared = callee.declaredEntryParameter(index))
+                declared->establish(Proven::byPosition(given));
+            narrowedParameters.append(parameter);
+        }
+        AnalysisContext context = m_analyses.context();
+        context.id = value.function();
+        FunctionAnalyses analyses(context, callee);
+        // Values derived from a parameter follow it: a narrowed copy after a test, a join of two paths.
+        ScratchTypeArena types(program.types);
+        if (!narrowedParameters.isEmpty())
+            narrowValueTypesBehindChanges(TypePropagationInputs { program, value.function(), callee, analyses, types, context.build }, narrowedParameters.span());
+        BodySummary entered = BodySummarizer(m_context, value.function(), analyses, nullptr, m_readAs == ReadAs::ItselfAndCalleesByOperandTypes ? ReadAs::GenericVersionGivenTypes : ReadAs::OutlinedBodyGivenTypes).run();
+
+        addToExits(block, description.own.normal, description.own.handler);
+        addToExits(block, entered.onReturn, entered.onThrow);
+        m_summary.followsFieldsOfOperands |= entered.followsFieldsOfOperands;
+        if (entered.unknownCodeWitness && !m_summary.unknownCodeWitness)
+            m_summary.unknownCodeWitness = { m_id, call };
+        for (uint32_t index = 0; index < operands.size(); ++index)
+            addMemoryOfBase(block, operands[index], entered.parameters[index].memory, true);
+        for (const SummaryDependency& dependency : entered.dependencies) {
+            switch (dependency.target.part) {
+            case SummaryPart::OnReturn:
+                addDependencyOnNormalEdge(block, dependency.source);
+                break;
+            case SummaryPart::OnThrow:
+                addDependencyOnHandlerEdge(block, dependency.source);
+                break;
+            case SummaryPart::Parameter:
+                addBaseDependency(block, operands[dependency.target.parameter], dependency.source);
+                break;
+            case SummaryPart::UnknownCode:
+                RELEASE_ASSERT_NOT_REACHED();
             }
         }
     }
@@ -545,7 +715,9 @@ private:
                 m_references->read(value, m_emptyDescription);
             return;
         }
-        EffectDescription description = describeEffects(program, m_function, value);
+        bool isGivenTypes = m_readAs == ReadAs::GenericVersionGivenTypes || m_readAs == ReadAs::OutlinedBodyGivenTypes;
+        bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
+        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
@@ -556,6 +728,10 @@ private:
             description.functions.clear();
             description.callsUnknownCode = true;
             description.addOwn(Effects::unknownCode());
+        }
+        if (isReadWithOperandTypes(block, value)) [[unlikely]] {
+            summarizeCalleeWithOperandTypes(block, id, description);
+            return;
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
@@ -571,7 +747,7 @@ private:
             addMemoryOfOperands(value, description);
             return;
         }
-        if (own != EffectsOnEdges::none())
+        if (!isPure(own.normal) || !isPure(own.handler))
             addConfinedEffects(block, value, own);
     }
 
@@ -606,12 +782,19 @@ private:
 
     ExitReachability m_exits;
     bool m_maySuspend;
+    ReadAs m_readAs;
+    FunctionID m_genericVersionEntered;
     const EffectDescription m_emptyDescription;
     BodySummary m_summary;
     Vector<uint32_t, 4> m_parametersInMemory;
     std::array<Effects, 4> m_gatheredForExits { Effects::none(), Effects::none(), Effects::none(), Effects::none() };
     Effects m_gatheredForThrowAlone { Effects::none() };
-    HashedIndex m_indexOfDependencies;
+    const uint32_t m_wordsInRow;
+    Vector<uint64_t, 1> m_parametersInMemoryAsTargets;
+    Vector<SummaryNode, 32> m_sources;
+    Vector<uint64_t, 32> m_targets;
+    uint32_t m_positionOfLatestSource { 0 };
+    HashedIndex m_indexOfSources;
     Vector<CodeRunAtPlace> m_codeRunAtPlaces;
     HashedIndex m_indexOfCodeRunAtPlaces;
 };
@@ -653,7 +836,7 @@ static BodySummary summarizeDescription(const Program& program, FunctionID id, c
     return summary;
 }
 
-BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
+BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, CalleesAreRead calleesAreRead)
 {
     const Function& function = analyses.function();
     if (isSummarizedByRole(function.role)) {
@@ -662,7 +845,7 @@ BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, Fu
             return summarizeDescription(context.program, id, function, description);
     }
     if (function.hasBody())
-        return BodySummarizer(context, id, analyses, references).run();
+        return BodySummarizer(context, id, analyses, references, calleesAreRead == CalleesAreRead::AsTheyAre ? BodySummarizer::ReadAs::Itself : BodySummarizer::ReadAs::ItselfAndCalleesByOperandTypes).run();
 
     BodySummary summary;
     summary.onReturn = Effects::unknownCode();

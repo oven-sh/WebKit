@@ -293,7 +293,8 @@ FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
     if (flow.hasResults())
         return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
     Vector<Wire::UnseenCodeRecord> unseenCode(flow.unseenCode());
-    unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
+    if (unseenCode.isEmpty())
+        unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
     return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
 }
 
@@ -319,6 +320,7 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.typeTests = WTF::move(bodyRecords.typeTests);
     report.accesses = buildAccessRecords(program, flow, sites.levels.span(), build);
     report.accesses.appendVector(sites.generalOperations);
+    report.otherOrigins = Vector<Wire::OtherOriginsRecord>(flow.otherOrigins());
     if (program.form() == IRForm::AsRead)
         report.remainingChecks = WTF::move(bodyRecords.remainingChecks);
     else if (collectsRecords)

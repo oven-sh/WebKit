@@ -218,12 +218,8 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
             return;
         }
     }
-    if (value.opcode == Opcode::IsElementPresent && !hasArrayStorageForm(value.arrayStorage())) {
-        fail(InternalErrorKind::PayloadOutOfRange, block, id);
-        return;
-    }
     if (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent()) {
-        if (value.isInBounds() || !hasArrayStorageForm(value.arrayStorage())) {
+        if (value.isInBounds()) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
             return;
         }

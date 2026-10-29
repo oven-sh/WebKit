@@ -140,11 +140,6 @@ static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, Eff
         description.addOwn(declaredBoundOf(Opcode::AreFunctionNamesUnchanged));
 }
 
-static bool takesThisFromConstruction(const Function& callee)
-{
-    return callee.constructorForm() != ConstructorForm::NotConstructor && !isClassConstructor(callee);
-}
-
 static void describeReadOfConstructPrototype(const Program& program, const Type& newTarget, EffectDescription& description)
 {
     description.addOwn(declaredBoundOf(Opcode::GetConstructPrototype));
@@ -153,7 +148,7 @@ static void describeReadOfConstructPrototype(const Program& program, const Type&
 
 static void describeCreationOfThis(const Program& program, FunctionID callee, const EnteringOperands& operands, EffectDescription& description)
 {
-    if (!takesThisFromConstruction(program.at(callee)))
+    if (!program.at(callee).takesThisFromConstruction())
         return;
     describeReadOfConstructPrototype(program, operands.newTarget ? program.at(operands.newTarget) : Type::forFunction(callee), description);
     // new.target selects the class of the object.

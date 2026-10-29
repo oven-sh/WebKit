@@ -1,0 +1,228 @@
+# interface Point { x: number; y: number }
+# let calls = 0;
+# const log: string[] = [];
+# function sum(point: Point): number { return point.x + point.y; }
+# function countThenSum(point: Point): number { calls++; return point.x + point.y + calls * 100; }
+# function sumThenCount(point: Point): number { const total = point.x + point.y; calls++; return total + calls * 100; }
+# function between(point: Point): number { const x = point.x; log.push("between"); return x + point.y + log.length * 100; }
+# function made(point: Point): Point { const copy: Point = { x: point.x, y: 0 }; copy.y = point.y; return copy; }
+# function both(a: Point, b: Point): number { return a.x + a.y + b.x + b.y; }
+# function stored(point: Point, other: Point): number { point.x = other.y; return point.x + point.y; }
+# function storedLate(point: Point, other: Point): number { const y = other.y; point.x = y; return point.x + other.x; }
+# register(sum, countThenSum, sumThenCount, between, made, both, stored, storedLate);
+# Code that nobody knows calls these, so each has a typed body behind tests at its entrance and a generic version. A test that fails in the typed body before anything can be seen begins the call again in the generic version.
+# The shell hands each function 15 points (a field outside its slot, getters that log, a proxy that logs, members from above) and runs the same text itself: the answers, the counters and the order of what the getters logged are the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const seen = []; let calls = 0; const log = []; globalThis.register = (...compiled) => { const twins = [function sum(point) { return point.x + point.y; }, function countThenSum(point) { calls++; return point.x + point.y + calls * 100; }, function sumThenCount(point) { const total = point.x + point.y; calls++; return total + calls * 100; }, function between(point) { const x = point.x; log.push("between"); return x + point.y + log.length * 100; }, function made(point) { const copy = { x: point.x, y: 0 }; copy.y = point.y; return copy; }, function both(a, b) { return a.x + a.y + b.x + b.y; }, function stored(point, other) { point.x = other.y; return point.x + point.y; }, function storedLate(point, other) { const y = other.y; point.x = y; return point.x + other.x; }]; const inputs = [() => ({ x: 1, y: 2 }), () => ({ x: 1.5, y: 2.5 }), () => ({ y: 2, x: 1 }), () => { const point = { x: 3, y: 4 }; delete point.y; point.y = 4; return point; }, () => { const point = { x: 3, y: 4 }; delete point.x; point.x = 3; return point; }, () => { const point = { x: 3, y: 4 }; delete point.x; delete point.y; point.y = 4; point.x = 3; return point; }, () => ({ x: 1, y: 2, z: 3 }), () => ({ get x() { seen.push("x"); return 5; }, y: 2 }), () => ({ x: 1, get y() { seen.push("y"); return 6; } }), () => ({ get x() { seen.push("x"); return 5; }, get y() { seen.push("y"); return 6; } }), () => Object.create({ x: 1, y: 2 }), () => Object.assign(Object.create({ y: 2 }), { x: 1 }), () => new Proxy({ x: 1, y: 2 }, { get(target, key) { seen.push(String(key)); return target[key]; } }), () => Object.freeze({ x: 1, y: 2 }), () => new (class { x = 1; y = 2; })()]; const show = (value, depth = 0) => { if (typeof value === "string") return JSON.stringify(value); if (typeof value === "symbol") return "symbol"; if (typeof value === "bigint") return value + "n"; if (typeof value === "function") return "function"; if (Object.is(value, -0)) return "-0"; if (typeof value !== "object" || value === null || depth > 2) return String(value); let text = Array.isArray(value) ? "[" : "{"; const keys = Reflect.ownKeys(value); for (let i = 0; i < keys.length; i++) { const described = Reflect.getOwnPropertyDescriptor(value, keys[i]); text += String(keys[i]) + ":" + ("value" in described ? show(described.value, depth + 1) : "accessor") + ","; } return text + "}"; }; const tell = (run, operand, other) => { seen.length = 0; try { return show(run(operand, other)) + " " + seen.join() + " " + show(operand); } catch (error) { return "throws " + error.name + " " + seen.join() + " " + show(operand); } }; for (let k = 0; k < compiled.length; k++) { let same = 0; for (let n = 0; n < inputs.length; n++) { const next = inputs[(n + 1) % inputs.length]; const got = tell(compiled[k], inputs[n](), next()), expected = tell(twins[k], inputs[n](), next()); if (got === expected) same++; else print(twins[k].name + " of " + inputs[n] + ": " + got.slice(0, 90) + " and not " + expected.slice(0, 90)); } print(twins[k].name + ": " + same + " of " + inputs.length); } }; })();
+# CHECK: sum: 15 of 15
+# CHECK-NEXT: countThenSum: 15 of 15
+# CHECK-NEXT: sumThenCount: 15 of 15
+# CHECK-NEXT: between: 15 of 15
+# CHECK-NEXT: made: 15 of 15
+# CHECK-NEXT: both: 15 of 15
+# CHECK-NEXT: stored: 15 of 15
+# CHECK-NEXT: storedLate: 15 of 15
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=97 kind=Variable
+typesite w1 module=m0 position=114 kind=Variable
+typesite w2 module=m0 position=147 kind=Parameter
+typesite w3 module=m0 position=134 kind=Result
+typesite w4 module=m0 position=221 kind=Parameter
+typesite w5 module=m0 position=199 kind=Result
+typesite w6 module=m0 position=318 kind=Parameter
+typesite w7 module=m0 position=296 kind=Result
+typesite w8 module=m0 position=431 kind=Parameter
+typesite w9 module=m0 position=414 kind=Result
+typesite w10 module=m0 position=550 kind=Parameter
+typesite w11 module=m0 position=536 kind=Result
+typesite w12 module=m0 position=662 kind=Parameter
+typesite w13 module=m0 position=672 kind=Parameter
+typesite w14 module=m0 position=648 kind=Result
+typesite w15 module=m0 position=740 kind=Parameter
+typesite w16 module=m0 position=754 kind=Parameter
+typesite w17 module=m0 position=724 kind=Result
+typesite w18 module=m0 position=845 kind=Parameter
+typesite w19 module=m0 position=859 kind=Parameter
+typesite w20 module=m0 position=825 kind=Result
+typesite w21 module=m0 position=348 kind=Variable
+typesite w22 module=m0 position=461 kind=Variable
+typesite w23 module=m0 position=474 kind=CallResult
+typesite w24 module=m0 position=516 kind=PropertyRead
+typesite w25 module=m0 position=579 kind=Variable
+typesite w26 module=m0 position=615 kind=Field
+typesite w27 module=m0 position=778 kind=Field
+typesite w28 module=m0 position=889 kind=Variable
+layout L0 name="Point" module=m0 position=62 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="calls" module=m0 declared={type=number|absent site=w0}
+variable g1 name="log" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = Integer @105
+    v17 = Convert v16 declared={type=number site=w0} @105
+    PutModuleVariable v17 variable=g0 @97
+    v19 = Data data=d0 @130
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]} @130
+    PutModuleVariable v20 variable=g1 @114
+    v22 = Builtin builtin=GlobalThis @943
+    v23 = PropGet v22 key="register" [isFreeName] @943
+    v24 = Call v23, -, v1, v3, v5, v7, v9, v11, v13, v15 calleeName="register" @943
+    v25 = Undefined @943
+    Return v25 @943
+}
+function f1 name="sum" module=m0 position=134 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @134
+  b1():
+    v1 = PropGet v0 key="x" @178
+    v2 = PropGet v0 key="y" @188
+    v3 = Add v1, v2 @178
+    v4 = Convert v3 declared={type=number site=w3} @178
+    Return v4 @178
+}
+function f2 name="countThenSum" module=m0 position=199 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @199
+  b1():
+    v1 = GetModuleVariable variable=g0 @245
+    v2 = CheckInitialized v1 name="calls" @245
+    v3 = Increment v2 @245
+    v4 = Convert v3 declared={type=number site=w0} @245
+    v5 = GetModuleVariable variable=g0 @245
+    v6 = CheckInitialized v5 name="calls" @245
+    PutModuleVariable v4 variable=g0 @245
+    v8 = PropGet v0 key="x" @261
+    v9 = PropGet v0 key="y" @271
+    v10 = Add v8, v9 @261
+    v11 = GetModuleVariable variable=g0 @281
+    v12 = CheckInitialized v11 name="calls" @281
+    v13 = Integer integer=100 @289
+    v14 = Mul v12, v13 @261
+    v15 = Add v10, v14 @261
+    v16 = Convert v15 declared={type=number site=w5} @261
+    Return v16 @261
+}
+function f3 name="sumThenCount" module=m0 position=296 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @296
+  b1():
+    v1 = PropGet v0 key="x" @356
+    v2 = PropGet v0 key="y" @366
+    v3 = Add v1, v2 @356
+    v4 = Convert v3 declared={type=number site=w21} @356
+    v5 = GetModuleVariable variable=g0 @375
+    v6 = CheckInitialized v5 name="calls" @375
+    v7 = Increment v6 @375
+    v8 = Convert v7 declared={type=number site=w0} @375
+    v9 = GetModuleVariable variable=g0 @375
+    v10 = CheckInitialized v9 name="calls" @375
+    PutModuleVariable v8 variable=g0 @375
+    v12 = GetModuleVariable variable=g0 @399
+    v13 = CheckInitialized v12 name="calls" @399
+    v14 = Integer integer=100 @407
+    v15 = Mul v13, v14 @391
+    v16 = Add v4, v15 @391
+    v17 = Convert v16 declared={type=number site=w7} @391
+    Return v17 @391
+}
+function f4 name="between" module=m0 position=414 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @414
+  b1():
+    v1 = PropGet v0 key="x" @465
+    v2 = Convert v1 declared={type=number site=w22} @465
+    v3 = GetModuleVariable variable=g1 @474
+    v4 = CheckInitialized v3 name="log" @474
+    v5 = PropGet v4 key="push" @474
+    v6 = String string="between" @483
+    v7 = Call v5, v4, v6 calleeKey="push" calleeName="log.push" @478
+    v8 = Convert v7 declared={type=number site=w23} illTypedCause=DeclarationWithoutBody @474
+    v9 = PropGet v0 key="y" @506
+    v10 = Add v2, v9 @502
+    v11 = GetModuleVariable variable=g1 @516
+    v12 = CheckInitialized v11 name="log" @516
+    v13 = PropGet v12 key="length" @516
+    v14 = Convert v13 declared={type=number site=w24} illTypedCause=Assertion @516
+    v15 = Integer integer=100 @529
+    v16 = Mul v14, v15 @502
+    v17 = Add v10, v16 @502
+    v18 = Convert v17 declared={type=number site=w9} @502
+    Return v18 @502
+}
+function f5 name="made" module=m0 position=536 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1() @536
+  b1():
+    v1 = PropGet v0 key="x" @598
+    v2 = Convert v1 declared={type=number} @598
+    v3 = Integer @610
+    v4 = Convert v3 declared={type=number} @610
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1] @593
+    v6 = FinishObject v5 @593
+    v7 = Convert v6 declared={type=undefined|null|L0 site=w25 flags=[OmitsNull, OmitsUndefined]} @593
+    v8 = PropGet v0 key="y" @624
+    v9 = Convert v8 declared={type=number site=w26} @615
+    PropSet v7, v9 key="y" @615
+    Return v7 @640
+}
+function f6 name="both" module=m0 position=648 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w14}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1() @648
+  b1():
+    v2 = PropGet v0 key="x" @699
+    v3 = PropGet v0 key="y" @705
+    v4 = Add v2, v3 @699
+    v5 = PropGet v1 key="x" @711
+    v6 = Add v4, v5 @699
+    v7 = PropGet v1 key="y" @717
+    v8 = Add v6, v7 @699
+    v9 = Convert v8 declared={type=number site=w14} @699
+    Return v9 @699
+}
+function f7 name="stored" module=m0 position=724 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w17}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1() @724
+  b1():
+    v2 = PropGet v1 key="y" @788
+    v3 = Convert v2 declared={type=number site=w27} @778
+    PropSet v0, v3 key="x" @778
+    v5 = PropGet v0 key="x" @804
+    v6 = PropGet v0 key="y" @814
+    v7 = Add v5, v6 @804
+    v8 = Convert v7 declared={type=number site=w17} @804
+    Return v8 @804
+}
+function f8 name="storedLate" module=m0 position=825 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w20}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1() @825
+  b1():
+    v2 = PropGet v1 key="y" @893
+    v3 = Convert v2 declared={type=number site=w28} @893
+    PropSet v0, v3 key="x" @902
+    v5 = PropGet v0 key="x" @922
+    v6 = PropGet v1 key="x" @932
+    v7 = Add v5, v6 @922
+    v8 = Convert v7 declared={type=number site=w20} @922
+    Return v8 @922
+}

@@ -78,6 +78,17 @@ inline constexpr auto representationsReadOneByOne = [] {
     return rest;
 }();
 
+constexpr SlotRepresentation representationWithCodeForRead(SlotRepresentation representation)
+{
+    if (representation <= representationsReadAsEncodedValues.back())
+        return SlotRepresentation::JSValue;
+    if (representation <= representationsReadAsNarrowReferences.back())
+        return SlotRepresentation::OptionalCell32;
+    if (representation <= representationsReadAsInt32.back())
+        return SlotRepresentation::OptionalInt32;
+    return representation;
+}
+
 // emitBody is given the member of a pair whose code reads both.
 template<typename EmitBody>
 void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representation, const EmitBody& emitBody)
@@ -161,7 +172,8 @@ struct FieldOfLayout {
 void loadExtensionWordOffset(StubAssembler&, GPRReg object, GPRReg result);
 // Keeps object and slotData, at hasNoStorage too. Out of line it also takes the scratch register of the assembler and fpTempRegister.
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage);
-void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&);
+// With a known representation, field.representation is a scratch register.
+void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&, std::optional<SlotRepresentation> known = std::nullopt);
 // The slot of an accessor field holds its GetterSetter, as a boxed value, a cell or a narrow reference. address and representation are what computeFieldAddress gave. result may be either.
 void loadGetterSetterInField(StubAssembler&, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent);
 // Nothing falls through. Keeps address and representation.
@@ -179,6 +191,7 @@ void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg 
 // Gives the field of slotData its granule, in the stub or by the run time, and goes on at findStorage. Writes address, representation and secondScratch.
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const ScopedLambda<void()>& loadOffsetOfExtensionWord, Label findStorage);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
+PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 

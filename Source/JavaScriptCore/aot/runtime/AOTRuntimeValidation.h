@@ -12,6 +12,7 @@
 #include "JSCJSValue.h"
 #include "VM.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <tuple>
 
@@ -97,6 +98,13 @@ JS_EXPORT_PRIVATE std::optional<SlotOutsideType> findSlotOutsideType(VM&, const 
 JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
 
 ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
+
+// True once an image built with --aot-testing=CheckProofsAtRunTime is attached. Its code is identical to a production build's.
+JS_EXPORT_PRIVATE extern std::atomic<bool> imageChecksProofs;
+// The compiler's claims about the objects of a layout (which changes never happen to them, which names they ever get, what their slots hold)
+// are rechecked whenever the runtime changes an object, and for every object that survives a garbage collection.
+// The check changes nothing that the program or compiled code can observe, so it also runs against production code.
+ALWAYS_INLINE bool checksClaimsAboutObjects(VM& vm) { return vm.aotState().validatesRuntime || imageChecksProofs.load(std::memory_order_relaxed); }
 
 struct OperationPermissions {
     bool mayEnterVM { true };

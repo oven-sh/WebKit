@@ -35,10 +35,20 @@ struct CalleeOfSite {
     friend auto operator<=>(const CalleeOfSite&, const CalleeOfSite&) = default;
 };
 
+struct CalleeListOfSite {
+    AccessSiteID site;
+    uint32_t list { 0 };
+
+    friend auto operator<=>(const CalleeListOfSite&, const CalleeListOfSite&) = default;
+};
+
 // What the call by value at each site may find, as flow left it. The lists are sorted.
 struct CalleesOfSites {
     Vector<CalleeSetOfSite> calleeSets;
     Vector<CalleeOfSite> typedCallees;
+    // Many typed callees of one site are a list that all sites with the same callees share.
+    Vector<CalleeListOfSite> typedCalleeLists;
+    Vector<Vector<FunctionID>> lists;
     BitVector hadCallByValue;
     bool wasTaken { false };
 };

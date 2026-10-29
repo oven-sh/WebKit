@@ -151,6 +151,10 @@ private:
     JSGlobalObject* m_globalObject;
     std::unique_ptr<Storage> m_storage;
     CacheRegistry m_registry;
+    static constexpr size_t arenaCapacity = 256 * KB;
+    PagesOfVM m_pagesOfVM { arenaCapacity };
+    ZeroedPages m_pages { m_pagesOfVM };
+    ZeroedTableArena m_arena { m_pages, arenaCapacity };
     std::optional<JSONRuntime> m_runtime;
 };
 
@@ -162,7 +166,7 @@ inline DetachedInstance::DetachedInstance(TestRealm realm)
     zeroBytes(*m_storage);
     instance().vm = &vm();
     instance().globalObject = m_globalObject;
-    m_runtime.emplace(instance(), m_registry);
+    m_runtime.emplace(instance(), m_registry, m_arena);
     AOT_TEST_CHECK(words().runtime == &*m_runtime);
 
     vm().aotState().stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm(), nullptr, jsNull()));

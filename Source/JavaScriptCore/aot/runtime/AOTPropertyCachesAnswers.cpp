@@ -379,18 +379,24 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable };
 }
 
-static bool findsLengthGetterOfTypedArrays(Structure* receiverStructure, const ChainWalk& walk)
+enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
+
+// The typed array getters that return a word of the view unchanged.
+static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, const ChainWalk& walk)
 {
     JSType type = receiverStructure->typeInfo().type();
     if (!isTypedArrayType(type) || !isValidOffset(walk.offset))
-        return false;
+        return WordOfTypedArray::None;
     auto* accessors = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
     auto* getter = dynamicDowncast<JSFunction>(accessors->getter());
     if (!getter || !getter->isHostFunction())
-        return false;
+        return WordOfTypedArray::None;
     if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncLength)))
-        return true;
-    return elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
+        return WordOfTypedArray::Length;
+    if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteOffset)))
+        return WordOfTypedArray::ByteOffset;
+    bool returnsLength = elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
+    return returnsLength ? WordOfTypedArray::Length : WordOfTypedArray::None;
 }
 
 static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
@@ -400,6 +406,7 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         return classifyCustomGetter(query);
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, query.base.getObject(), query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     PropertyAnswerKind kind = PropertyAnswerKind::Uncacheable;
+    WordOfTypedArray wordOfTypedArray = WordOfTypedArray::None;
     const FieldData* staticField = nullptr;
     if (walk.result != ChainWalkResult::Unknown && walk.firstObjectWithEmptySlot) {
         walk.holder = walk.firstObjectWithEmptySlot;
@@ -414,14 +421,17 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         bool isGetter = slot.isCacheableGetter() || (slot.isAccessor() && isOwnedByCompiledObject);
         if (isValue && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             kind = isValidOffset(walk.offset) ? PropertyAnswerKind::Value : PropertyAnswerKind::InheritedField;
-        else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor))
-            kind = findsLengthGetterOfTypedArrays(query.structureBefore, walk) ? PropertyAnswerKind::TypedArrayLength : PropertyAnswerKind::Accessor;
+        else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor)) {
+            wordOfTypedArray = findWordReturnedByGetter(query.structureBefore, walk);
+            kind = wordOfTypedArray == WordOfTypedArray::None ? PropertyAnswerKind::Accessor : PropertyAnswerKind::TypedArrayLength;
+        }
         else if (query.mode == ChainWalkMode::MayAllocate && (staticField = StaticFields::findFieldForCache(query.globalObject->vm(), walk.holder, query.uid)))
             kind = PropertyAnswerKind::Variable;
     }
     if (kind == PropertyAnswerKind::Uncacheable)
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
     PropertyAnswer answer = PropertyAnswer::above(kind, SlotAccess::Read, WTF::move(walk));
+    answer.readsByteOffset = wordOfTypedArray == WordOfTypedArray::ByteOffset;
     if (staticField) {
         answer.field = staticField;
         answer.variable = staticField->slot;
@@ -1122,7 +1132,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     case PropertyAnswerKind::ArrayLength:
         return Slot::createWithoutPayload(id, Kind::ArrayLength, flags);
     case PropertyAnswerKind::TypedArrayLength:
-        return Slot::createWithoutPayload(id, Kind::TypedArrayLength, flags);
+        return Slot::createWithoutPayload(id, Kind::TypedArrayLength, answer.readsByteOffset ? flags | Slot::readsByteOffset : flags);
     case PropertyAnswerKind::StringLength:
         return Slot::createWithoutPayload(id, Kind::StringLength, flags);
     case PropertyAnswerKind::ClosureLength:

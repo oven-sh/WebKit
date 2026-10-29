@@ -479,8 +479,8 @@ private:
         return answer;
     }
 
-    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure,
-    // or behind it in the same block where every operation in between completes: until the store runs, the function holds what it is about to store.
+    // A value stored once into its holder's own field lives as long as the holder: an environment wherever the store is, anything else if the holder is an environment whose field is kept and is filled before the holder is passed the closure,
+    // or after that in the same block if every operation in between completes: until the store runs, the function holds what it is about to store.
     bool isHeldBy(ValueID holder, ValueID held, ValueID closure)
     {
         if (!holder)
@@ -512,11 +512,25 @@ private:
             return false;
         if (found->value == holder || m_program.typeOf(m_function, held).environment)
             return true;
+        ValueID given = findProvidingOperation(holder, closure);
         ValueLocation store = useLists().locationOf(found->value);
-        ValueLocation made = useLists().locationOf(closure);
+        ValueLocation made = useLists().locationOf(given);
         if (store.placement != ValuePlacement::InBlock || made.placement != ValuePlacement::InBlock || store.block != made.block)
             return false;
-        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(closure);
+        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(given);
+    }
+
+    // Until it is passed to its holder, a closure with no other use is only reachable from the function, which also holds what it is about to store.
+    ValueID findProvidingOperation(ValueID holder, ValueID closure)
+    {
+        std::span<const Use> uses = useLists().usesOf(closure);
+        if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+            return closure;
+        const Value& user = m_function.at(uses[0].user);
+        if (user.opcode == Opcode::NewObject)
+            return uses[0].user == holder ? holder : closure;
+        bool isStoreToHolder = user.opcode == Opcode::PutEnvironmentField && uses[0].operandIndex == OperandIndex::PutEnvironmentField::value && user.operand(OperandIndex::PutEnvironmentField::environment) == holder;
+        return isStoreToHolder ? uses[0].user : closure;
     }
 
     // How many of the operations that stand in front of a value in its block may leave the block.
@@ -814,10 +828,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 // Most keys are the key of no candidate, and then no member has a candidate under the key.
                 if (!keysOfCandidates.get(key.index()))
                     return;
-                // Nothing says which objects arrive here. On one without the field the store would create a property.
-                if (mayReachAnyLayout && createsPropertyByName(opcode)) {
-                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first))
-                        markLive(candidate);
+                // Nothing says which objects arrive here. On one without the field a store would create a property. A read may be one of those whose value flow saw only called.
+                if (mayReachAnyLayout) {
+                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first)) {
+                        if (createsPropertyByName(opcode) || fieldAt(program, fields[candidate]).flow.location.reads == ReadState::OnlyCalled)
+                            markLive(candidate);
+                    }
                     return;
                 }
 

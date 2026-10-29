@@ -174,8 +174,10 @@ public:
     bool isInSlot(const FieldData&) const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
+    // stringForWordInSlot() also reads a literal-string word here.
+    JSValue readInline(const FieldData&, const auto* strings) const;
     // Calls the functor with an int32_t, a bool or a double where the slot holds one, and with a JSValue otherwise, which is empty for an absent field.
-    template<typename Functor> auto readInlineUnboxed(const FieldData&, const Functor&) const;
+    template<typename Functor, typename Strings = std::nullptr_t> auto readInlineUnboxed(const FieldData&, const Functor&, Strings = nullptr) const;
     bool tryStore(VM&, const FieldData&, JSValue);
     bool tryInitialize(VM&, const FieldData&, JSValue);
     bool store(VM&, const FieldData&, AcceptedValue);
@@ -208,13 +210,25 @@ public:
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
 
-    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
+    // The caller may know that no object on the prototype chain has an accessor or a read-only property with this name.
+    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*, bool chainLetsStoresPass = false);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
     // The same, but a property that exists keeps its attributes.
     bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    // The caller has already looked up the name: `field` is fieldNamed(name).
+    bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    // What the properties that no field holds say of a name that is the name of no field.
+    struct ExtraPropertyFound {
+        enum class Kind : uint8_t { Absent, MayBeRedefinedInEveryWay, Other };
+        Kind kind;
+        LeavingProperty property;
+    };
+    ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
@@ -407,8 +421,8 @@ inline Extension* Object::extension() const
     return reinterpret_cast<Extension*>(const_cast<uint8_t*>(extensionStorageOrNull(this, *slot)));
 }
 
-template<typename Functor>
-ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Functor& functor) const
+template<typename Functor, typename Strings>
+ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Functor& functor, Strings strings) const
 {
     if (field.isOutOfLine()) [[unlikely]]
         return functor(read(field));
@@ -451,27 +465,40 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::Float:
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalDouble:
+    case SlotRepresentation::DeferredClosure:
+        return functor(read(field));
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
-    case SlotRepresentation::DeferredClosure:
+        if constexpr (!std::is_null_pointer_v<Strings>) {
+            uint64_t word = field.slot.representation() == SlotRepresentation::LiteralString ? at<uint64_t>(field.slot.offset) : at<uint32_t>(field.slot.offset);
+            if (auto* string = strings->stringForWordInSlot(word)) [[likely]]
+                return functor(JSValue(string));
+        }
         return functor(read(field));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+inline constexpr auto boxValueOfSlot = [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
+    using Unboxed = decltype(value);
+    if constexpr (std::same_as<Unboxed, bool>)
+        return jsBoolean(value);
+    else if constexpr (std::same_as<Unboxed, double>)
+        return jsNumber(withoutPayload(value));
+    else if constexpr (std::same_as<Unboxed, int32_t>)
+        return jsNumber(value);
+    else
+        return value;
+};
+
 ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
 {
-    return readInlineUnboxed(field, [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
-        using Unboxed = decltype(value);
-        if constexpr (std::same_as<Unboxed, bool>)
-            return jsBoolean(value);
-        else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(withoutPayload(value));
-        else if constexpr (std::same_as<Unboxed, int32_t>)
-            return jsNumber(value);
-        else
-            return value;
-    });
+    return readInlineUnboxed(field, boxValueOfSlot);
+}
+
+ALWAYS_INLINE JSValue Object::readInline(const FieldData& field, const auto* strings) const
+{
+    return readInlineUnboxed(field, boxValueOfSlot, strings);
 }
 
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrder() const

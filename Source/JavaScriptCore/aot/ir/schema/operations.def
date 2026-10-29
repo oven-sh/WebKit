@@ -115,7 +115,7 @@ operation LogicalNot (value: Boolean/inspects) -> natural(boolean) ; none ; flow
 operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves
 operation ToString (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves ; hasOwnFoldingRule = true
 operation Strcat (parts...: Any/Converted) [| engine isLikelyKey] -> natural(string) ; CreatesString ; runtime = Concatenate ; flow = TableProves
-operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
+operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
 operation ToObject (value: Any/returns, message?: String, engine calledBuiltin?: Builtin) -> natural(object) ; Allocates throws ; runtime = ToObject ; flow = Copies ; flowRule = ConversionToObject
 operation ToThis (value: Any/returns) -> natural(object) ; Allocates ; runtime = ToThis ; flow = Copies ; flowRule = ConversionToObject
 
@@ -135,9 +135,9 @@ operation TypeTest (value: Any/inspects, testedType: Type) -> natural(boolean) ;
 family Call AsRead..Placed
 operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, calledBuiltin?: Builtin, callNumber?: UInt32, with CallStamp) [isAnnotatedPure isNeverInlined isDoneInPlace | engine isAlwaysInlined] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
 operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) [isAnnotatedPure] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runtime = Construct ; flow = TableProves ; flowRule = Call
-operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
+operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, engine calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
 operation ConstructList (callee: Any/calls, newTarget?: Any/retains, list: Array/Listed, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = ConstructWithArray ; flow = TableProves ; flowRule = Call
-operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin) [| engine isNeverInlined isAlwaysInlined isAfterInlinedHead isConstruction callsOwnFunctionObject calleeIsPredicted] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; flowsWithoutRule = true
+operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin) [| engine isNeverInlined isAlwaysInlined isAfterInlinedHead isConstruction callsOwnFunctionObject calleeIsKeptInFrame calleeIsPredicted] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; flowsWithoutRule = true
 engine operation CallTable (function: Function(Call), arguments...: Declared/retains, key: PropertyKey, receivers: LayoutSet, entrypoints: List<Function(Call)>, with CallStamp) -> declared(function) ; unknownCode by Call ; Prepared..Placed ; accessClass = IndirectCall
 operation Results (values...: Declared/returns) -> results(..) ; none ; flow = Copies ; flowsWithoutRule = true
 operation ResultAt (results: Results/inspects, index: UInt32) -> declared(results) ; none ; interpreted = List ; flow = Copies ; flowsWithoutRule = true
@@ -147,7 +147,7 @@ operation CatchValue () -> unknown ; UsesRuntime collects ; runtime = Catch ; bo
 operation CatchException () -> natural(Exception) ; UsesRuntime collects ; runtime = CatchException ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
 
 family Hint AsRead..Placed
-operation LoopHint () [| engine isVersioned replacesTailCalls] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
+operation LoopHint () [| engine isVersioned replacesTailCalls followsStores] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none ; canEndInteriorBlock = true ; canEndHeadBlock = true ; canEndBlockOfHead = true
@@ -158,4 +158,4 @@ terminator Return (value?: Declared/returns) -> none ; none ; canEndHeadBlock = 
 terminator ReturnCall (call: Any/returns, casts: List<TailCast>, engine requirement: TailCallRequirement) -> none ; none
 terminator Throw (value: Any/retains) -> none ; throws ; canEndInteriorBlock = true
 terminator Rethrow (exception: Exception/retains) -> none ; throws
-terminator Unreachable () -> none ; none ; canEndInteriorBlock = true
+terminator Unreachable (engine cutBy: PassID) -> none ; none ; canEndInteriorBlock = true

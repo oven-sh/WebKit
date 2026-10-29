@@ -112,6 +112,62 @@ struct ObjectUse {
     friend bool operator==(const ObjectUse&, const ObjectUse&) = default;
 };
 
+// The uses of one object, in function order. Objects that reach the same use share its entry.
+class ObjectUses {
+public:
+    class Iterator {
+    public:
+        using value_type = ObjectUse;
+        using difference_type = std::ptrdiff_t;
+        using reference = const ObjectUse&;
+        using pointer = const ObjectUse*;
+        using iterator_category = std::forward_iterator_tag;
+
+        Iterator() = default;
+        Iterator(const uint32_t* index, const ObjectUse* entries)
+            : m_index(index)
+            , m_entries(entries)
+        {
+        }
+
+        const ObjectUse& operator*() const { return m_entries[*m_index]; }
+        const ObjectUse* operator->() const { return &m_entries[*m_index]; }
+        Iterator& operator++()
+        {
+            ++m_index;
+            return *this;
+        }
+        Iterator operator++(int)
+        {
+            Iterator before = *this;
+            ++m_index;
+            return before;
+        }
+        friend bool operator==(const Iterator&, const Iterator&) = default;
+
+    private:
+        const uint32_t* m_index { nullptr };
+        const ObjectUse* m_entries { nullptr };
+    };
+
+    ObjectUses(std::span<const uint32_t> indices, const ObjectUse* entries)
+        : m_indices(indices)
+        , m_entries(entries)
+    {
+    }
+
+    Iterator begin() const { return { m_indices.data(), m_entries }; }
+    Iterator end() const { return { m_indices.data() + m_indices.size(), m_entries }; }
+    size_t size() const { return m_indices.size(); }
+    bool empty() const { return m_indices.empty(); }
+    const ObjectUse& operator[](size_t index) const { return m_entries[m_indices[index]]; }
+    const ObjectUse& front() const { return (*this)[0]; }
+
+private:
+    std::span<const uint32_t> m_indices;
+    const ObjectUse* m_entries;
+};
+
 // What the solver has taken from types: from those of the value or of the terminator that the question is about, and from those of its operands. It reads a type nowhere else.
 struct AnswerFromTypes {
     enum class Question : uint8_t {
@@ -172,11 +228,11 @@ public:
     bool isOnlyOperandHolding(ObjectID, const Use&) const;
 
     std::span<const ValueID> aliasesOf(ObjectID) const LIFETIME_BOUND;
-    std::span<const ObjectUse> usesOf(ObjectID object) const LIFETIME_BOUND
+    ObjectUses usesOf(ObjectID object) const LIFETIME_BOUND
     {
         if (!m_hasListedUses) [[unlikely]]
             listUses();
-        return entriesOf(object, m_uses, m_firstUse);
+        return { entriesOf(object, m_uses, m_firstUse), m_sharedUses.span().data() };
     }
     std::span<const ObjectID> contentsOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_contents, m_firstContent); }
     std::span<const ObjectID> containersOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_containers, m_firstContainer); }
@@ -271,14 +327,20 @@ private:
     BitVector m_noObjects;
     mutable Vector<ValueID> m_aliases;
     mutable Vector<uint32_t> m_firstAlias;
-    // The lists are made for the first who asks for one. Until then their entries lie in the order in which the solver found them.
+    // Two entries per use that the solver recorded: not an escape, then an escape. That is all that differs between the objects of one use.
+    Vector<ObjectUse> m_sharedUses;
+    // The lists are built on the first call of usesOf(). Until then the uses stay in the order in which the solver found them.
     struct UnlistedUse {
-        ObjectID object;
-        ObjectUse use;
+        uint32_t sharedUse;
+        uint32_t firstObject;
+        uint32_t numberOfObjects;
     };
     mutable bool m_hasListedUses { false };
     mutable Vector<UnlistedUse> m_unlistedUses;
-    mutable Vector<ObjectUse> m_uses;
+    mutable Vector<ObjectID> m_objectsOfUnlistedUses;
+    mutable BitVector m_isEscapeOfUnlistedUse;
+    // Indices into m_sharedUses.
+    mutable Vector<uint32_t> m_uses;
     Vector<uint32_t> m_firstUse;
     Vector<ObjectID> m_contents;
     Vector<uint32_t> m_firstContent;

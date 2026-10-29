@@ -128,7 +128,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
 
     // The orders of a base are those of objects allocated as the base, so they are no proof about what its constructor does for a subclass.
     bool coversEveryObject = isComplete && !numberOfOrdersLeftOut && !orders.isEmpty()
-        && layout.flow.baseState == BaseState::None && layout.flow.fieldCreation == FieldCreation::OnlyAtConstruction;
+        && layout.flow.baseState == BaseState::None && layout.flow.fieldCreation != FieldCreation::Unknown;
     return { id, WTF::move(orders), coversEveryObject, static_cast<uint32_t>(saturateToUInt32(numberOfOrdersLeftOut)) };
 }
 
@@ -704,14 +704,26 @@ static bool planAssign(FunctionPassContext& context, const UnchangedAllocations&
     return true;
 }
 
-// The built-in copies the list that the run time keeps for the order, which is the cheaper way to a list that lives on.
+// The built-in copies the list that the runtime keeps for the order, which is the cheaper way to get a list that stays alive. A list that only rare code passes on is created there.
 static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Keys)
         return false;
+    const Function& function = context.function;
+    // The list is new, dense and holds strings: reading an element or its length does not let it escape, whether or not the read has been resolved yet.
+    auto readsAtPosition = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode == Opcode::CallBuiltin)
+            return context.program.builtins().at(user.overload()).builtin == Builtins::ArrayPrototypeLength;
+        return user.opcode == Opcode::ElemGet && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
+    };
     const EscapeAnalysis& escape = context.analyses.escape();
     std::optional<ObjectID> list = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(site.value);
-    return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
+    return !list || std::ranges::any_of(escape.usesOf(*list), [&](const ObjectUse& use) {
+        return use.isEscape && !readsAtPosition(use.use) && function.at(use.use.block).frequency.predicted() != BlockFrequency::Rare;
+    });
 }
 
 // `{ ...source, ..`: the first thing that a new object without a property gets.
@@ -737,20 +749,54 @@ static bool walksWithoutTests(const OwnKeyWalkPlan& plan)
     return plan.arms.size() == 1 && !plan.needsShapeTest && !plan.needsKeyOrderTest && !plan.needsOriginalCall;
 }
 
+// The only test is a validating build's, which checks the proven order against the object.
+static bool walksOneProvenOrder(FunctionPassContext& context, const OwnKeyWalkPlan& plan)
+{
+    if (plan.arms.size() != 1 || plan.needsShapeTest || plan.needsOriginalCall || plan.arms[0].copiesFieldsAtOnce)
+        return false;
+    return !plan.needsKeyOrderTest || (context.build.validates() && hasOnlyFilledFields(context.program, plan.arms[0]));
+}
+
+// The first copy between two shapes costs the runtime thousands of instructions to plan, and most sites outside hot code see each pair only a few times. A guard, a load and a store per field cost less than the plan from the first run on.
+AOT_THRESHOLD(size_t, maxArmsOfGuardedCopyOutsideHotCode, 2);
+AOT_THRESHOLD(size_t, maxFieldsOfGuardedCopyOutsideHotCode, 12);
+
+static bool isSmallGuardedCopy(const Program& program, const OwnKeyWalkPlan& plan)
+{
+    return plan.arms.size() <= maxArmsOfGuardedCopyOutsideHotCode && std::ranges::all_of(plan.arms, [&](const OwnKeyWalkArm& arm) {
+        if (arm.order.size() > maxFieldsOfGuardedCopyOutsideHotCode)
+            return false;
+        // A number stored over a function stays in the slot, where the read by slot takes it for a closure that is not made yet.
+        bool keepsTypesOfFields = receiverStateOf(program, arm.layout).impossibleMutations.contains(ObjectMutation::StoreOfOtherType);
+        return keepsTypesOfFields || std::ranges::none_of(arm.order, [&](uint32_t field) {
+            return program.at(program.at(arm.layout).fields[field].declared.written()).mayBeFunction();
+        });
+    });
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
-static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
+static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std::optional<OwnKeyWalk> onlyWalk = std::nullopt)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
     Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
+    // The operation discovers the source's names at run time and reuses that for the next run. Code that runs once, or rarely, pays for that and gets nothing back.
+    BitVector rarelyRunCopies;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
-            if (!site || context.runsAtMostOnce(block))
+            if (!site || (onlyWalk && site->walk != *onlyWalk))
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
+            if (context.isShortSchedule || context.runsAtMostOnce(block) || isCold(heat).predicted()) {
+                if (site->walk == OwnKeyWalk::Spread || site->walk == OwnKeyWalk::Assign) {
+                    rarelyRunCopies.set(site->value.index());
+                    sites.append(WTF::move(*site));
+                }
+                continue;
+            }
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
             if (!isCold(heat).predicted() && (site->walk != OwnKeyWalk::Copy || isHot(heat).predicted()) && !isListThatLivesOn(context, *site)) {
                 if (!isHot(heat).predicted() && fillsEmptyLiteral(function, *site))
@@ -764,15 +810,18 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
     Vector<PlannedWalk, 4> walks;
     for (OwnKeyWalkSite& site : sites) {
         PlannedWalk walk { WTF::move(site), { }, { } };
+        bool seldomRuns = rarelyRunCopies.get(walk.site.value.index());
         if (walk.site.walk == OwnKeyWalk::Assign) {
             if (!planAssign(context, unchanged, walk))
                 continue;
+            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan) || isSmallGuardedCopy(context.program, source.plan); })))
+                continue;
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
-            if (!plan)
+            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan) && !isSmallGuardedCopy(context.program, *plan)))
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
-            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isSmallGuardedCopy(context.program, *plan) && !isKeptByNobody(context, walk.site.target)) {
                 // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
                 if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
                     continue;
@@ -782,6 +831,27 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
         walks.append(WTF::move(walk));
     }
     return walks;
+}
+
+static bool expandsKeyListWithoutTests(const PlannedWalk& walk)
+{
+    return walk.site.walk == OwnKeyWalk::Keys && walk.walkedSources.size() == 1 && !walk.remainingSourcesCall && walksWithoutTests(walk.walkedSources[0].plan);
+}
+
+Vector<ValueID, 4> findKeyListsToExpand(FunctionPassContext& context)
+{
+    Vector<ValueID, 4> lists;
+    const Function& function = context.function;
+    bool listsKeys = function.values.containsIf([&](const Value& value) {
+        return value.opcode == Opcode::CallBuiltin && ownKeyWalkOf(context.program, value) == OwnKeyWalk::Keys;
+    });
+    if (!listsKeys)
+        return lists;
+    for (const PlannedWalk& walk : planOwnKeyWalks(context, OwnKeyWalk::Keys)) {
+        if (expandsKeyListWithoutTests(walk))
+            lists.append(walk.site.value);
+    }
+    return lists;
 }
 
 // The list a walk makes is new, so an earlier pass may have named the call as the guard for what holds of a new array, and a value that was named as a guard has to stay one.
@@ -896,10 +966,17 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     auto appendArray = [&](TypeID contents, std::span<const ValueID> elements) {
         return builder.append(Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements));
     };
+    // An array that holds a string is created with storage for any value.
+    auto appendArrayOfCells = [&](TypeID contents, std::span<const ValueID> elements) {
+        Value list = Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements);
+        if (!elements.empty())
+            list.setArrayStorage(ArrayStorage::Contiguous);
+        return builder.append(WTF::move(list));
+    };
 
     switch (site.walk) {
     case OwnKeyWalk::Keys:
-        return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendName).span());
+        return appendArrayOfCells(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendName).span());
     case OwnKeyWalk::Values:
         return appendArray(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendRead).span());
     case OwnKeyWalk::Entries: {
@@ -914,6 +991,21 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     case OwnKeyWalk::Assign:
     case OwnKeyWalk::Spread: {
         Values values = walkedFields.map<Values>(appendRead);
+        // A read by layout knows what any object of the layout holds. What flow analysis proved about the target's fields also holds for this copy.
+        std::span<const LayoutID> layoutsOfTarget = membersOf(program, emission.typeOf(site.target));
+        if (!isAssign && emission.typeOf(site.target).hasOnlyLayouts() && layoutsOfTarget.size() == 1 && program.at(layoutsOfTarget[0]).flow.impossibleMutations.contains(ObjectMutation::StoreOfOtherType)) {
+            const Layout& layoutOfTarget = program.at(layoutsOfTarget[0]);
+            for (size_t index = 0; index < values.size(); ++index) {
+                std::optional<uint32_t> field = layoutOfTarget.findField(fields[walkedFields[index]].key);
+                std::optional<ProvenInEveryVersion> established = field ? layoutOfTarget.fields[*field].declared.established() : std::nullopt;
+                if (!established)
+                    continue;
+                TypeID read = builder.function().at(values[index]).type;
+                TypeID held = emission.inputs().types.intersectionOf(read, *established);
+                if (held != read && held != TypeTable::never)
+                    values[index] = builder.append(makeAssumeType(values[index], Proven::byFlowOfPosition(held)));
+            }
+        }
         for (size_t index = 0; index < values.size(); ++index) {
             Value store = IRBuilder::make(isAssign ? Opcode::PropSet : Opcode::PropDefine, { site.target, values[index] });
             store.setKey(fields[walkedFields[index]].key);
@@ -996,7 +1088,26 @@ static void emitArms(Emission& emission, const OwnKeyWalkSite& site, const Walke
         builder.emitUnreachable();
 }
 
-static void expandWalk(Emission& emission, const PlannedWalk& walk)
+// One arm without a test: the walk's result is the result itself, and its readers see what it is in the same round.
+static void nameResultsOfOnlyArm(FunctionPassContext& context, IRBuilder& builder, BlockID arm, BlockID continuation)
+{
+    Function& function = context.function;
+    const Terminator& jump = function.at(arm).terminator;
+    if (jump.kind != TerminatorKind::Jump || jump.targets[0].block != continuation)
+        return;
+    const auto& parameters = function.at(continuation).parameters;
+    RELEASE_ASSERT(parameters.size() == jump.targets[0].arguments.size());
+    ValueSubstitution substitution(function);
+    BitVector named;
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        substitution.replace(parameters[index], jump.targets[0].arguments[index]);
+        named.set(index);
+    }
+    substitution.apply(function, &context.analyses);
+    builder.removeParameters(continuation, named);
+}
+
+static void expandWalk(FunctionPassContext& context, Emission& emission, const PlannedWalk& walk)
 {
     IRBuilder& builder = emission.builder();
     const OwnKeyWalkSite& site = walk.site;
@@ -1014,6 +1125,8 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
     }
     if (walk.remainingSourcesCall)
         builder.endExpansion(expansion, appendOriginalOperation(builder, *walk.remainingSourcesCall));
+    else if (expandsKeyListWithoutTests(walk))
+        nameResultsOfOnlyArm(context, builder, site.block, expansion.continuation);
 }
 
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
@@ -1206,6 +1319,140 @@ static PassOutcome editLoopsOneAtATime(FunctionPassContext& context, NOESCAPE co
     }
 }
 
+namespace {
+
+struct ForInLoop {
+    BlockID header;
+    BlockID entry;
+    ValueID step;
+    ValueID open;
+    ValueID source;
+    std::span<const BlockID> region;
+};
+
+} // anonymous namespace
+
+static bool isExpectedToBeList(const Program& program, const Function& function, ValueID source)
+{
+    return program.expectedOrTypeOf(function, source).predicted().findClassPart(BuiltinClasses::Array);
+}
+
+// `list[key]` with an index string as the key is `list[index]`, whatever the object is.
+static void readByIndexInsteadOfString(Function& function, std::span<const BlockID> blocks, ValueID text, ValueID index)
+{
+    auto isText = [&](ValueID key) {
+        while (key != text && isCastWithoutTest(function.at(key).opcode))
+            key = function.at(key).operand(0);
+        return key == text;
+    };
+    for (BlockID block : blocks) {
+        for (ValueID id : function.at(block).values) {
+            const Value& access = function.at(id);
+            if (elementAccessOf(access.opcode) && isText(access.propertyOperand()))
+                function.edit(id).setPropertyOperand(index);
+        }
+    }
+}
+
+// A for-in loop over an array gets a copy of its body for the indexed part of the enumerator. There the key is an integer, a read with it is an element read, and its string is only created for
+// other uses. An iteration that finds no element in the storage, and the iteration after the last index, continue in the original loop from the same position.
+static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emission& emission, const ForInLoop& loop)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    IRBuilder& builder = emission.builder();
+    // The copy doubles the loop's code size.
+    if (!isHot(heatClassOf(context, loop.header)).predicted())
+        return PassOutcome::Unchanged;
+    uint64_t bytesOfRegion = 0;
+    for (BlockID block : loop.region)
+        bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
+    if (context.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfRegion, loop.open))
+        return PassOutcome::Unchanged;
+
+    builder.setOrigin(function.at(loop.open).origin());
+    Vector<std::unique_ptr<RegionCloner>, 1> cloners;
+    cloners.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+    RegionCloner& cloner = *cloners.first();
+    cloner.cloneBlocks(loop.region, [](ValueID, Value&) { });
+    BlockID header = cloner.cloneOf(loop.header);
+    ValueID step = cloner.cloneOf(loop.step);
+
+    // The region may contain a cycle with its own step, which moves to any position. The original loop handles them all.
+    size_t positionIndex = function.at(header).parameters.find(function.at(step).positionOperand());
+    auto isPositionAfterStep = [&](ValueID position) {
+        const Value& next = function.at(definitionThroughUpcasts(function, position));
+        if (next.opcode != Opcode::Add)
+            return false;
+        const Value& found = function.at(next.operand(0));
+        const Value& distance = function.at(next.operand(1));
+        return found.opcode == Opcode::ResultAt && found.operand(OperandIndex::ResultAt::results) == step && found.index() == static_cast<uint32_t>(ForInStepResult::Position)
+            && distance.opcode == Opcode::Integer && distance.integer() == 1;
+    };
+    for (BlockID block : cloner.clonedBlocks()) {
+        for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
+            if (target.block == header && !(positionIndex < target.arguments.size() && isPositionAfterStep(target.arguments[positionIndex])))
+                target.block = loop.header;
+        }
+    }
+    context.analyses.didChangeControlFlow();
+
+    // An enumerator without an indexed part goes straight to the original loop.
+    Target toLoop = function.at(loop.entry).terminator.targets[0];
+    RELEASE_ASSERT(positionIndex < toLoop.arguments.size());
+    function.edit(loop.entry, editsOfTargets).terminator = Terminator();
+    context.analyses.didChangeControlFlow();
+    builder.setHandler(function.at(loop.entry).handler);
+    builder.moveToEndOf(loop.entry);
+    ValueID indexedLength = builder.append(Opcode::GetEnumeratorIndexedLength, { loop.open });
+    ValueID hasIndexedPart = builder.append(Opcode::Less, { toLoop.arguments[positionIndex], indexedLength });
+    builder.emitBranch(hasIndexedPart, Target { header, Arguments(toLoop.arguments), { } }, Target { loop.header, Arguments(toLoop.arguments), { } });
+    RegionCloner::repairSSA(context.analyses, cloners.span());
+
+    // The repair splits a block that has a handler after each value that other blocks read, so the step may no longer be in the header.
+    ValueLocation placeOfStep = context.analyses.useLists().locationOf(step);
+    RELEASE_ASSERT(placeOfStep.placement == ValuePlacement::InBlock);
+
+    Arguments carriedValues(function.at(header).parameters);
+    ValueID object = function.at(step).objectOperand();
+    ValueID position = function.at(step).positionOperand();
+    Expected<BlockFrequency> frequency = function.at(header).frequency;
+    Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+    builder.setOrigin(function.at(step).origin());
+    IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
+    // A later copy of these blocks without their proofs treats the position as any number. What continues to a step is an integer because of the operation that produces it.
+    auto continueInOriginalLoop = [&] {
+        Arguments arguments(carriedValues);
+        arguments[positionIndex] = builder.append(Opcode::ToEnumeratorPosition, { position });
+        builder.emitJump(loop.header, WTF::move(arguments));
+    };
+    if (BlockID failedUnasked = builder.beginPrediction()) {
+        BlockID tests = builder.currentBlock();
+        builder.moveToEndOf(failedUnasked);
+        continueInOriginalLoop();
+        builder.moveToEndOf(tests);
+    }
+    IRBuilder::ProvenBranch isIndex = builder.emitBranchWithProof(builder.append(Opcode::Less, { position, indexedLength }), 0, frequency, unlikely);
+    builder.moveToEndOf(isIndex.notTaken);
+    continueInOriginalLoop();
+    builder.moveToEndOf(isIndex.taken);
+    ValueID index = isIndex.provenOnTaken;
+    IRBuilder::BranchBlocks isThere = builder.emitBranch(builder.append(Opcode::IsElementInStorage, { object, index }), frequency, unlikely);
+    builder.moveToEndOf(isThere.notTaken);
+    continueInOriginalLoop();
+    builder.moveToEndOf(isThere.taken);
+    ValueID key = builder.append(Opcode::ToString, { index });
+    std::array<ValueID, 3> results { builder.appendBoolean(false), key, index };
+    builder.endExpansion(expansion, results);
+
+    Vector<BlockID> blocksOfCopy(cloner.clonedBlocks());
+    blocksOfCopy.append(expansion.continuation);
+    readByIndexInsteadOfString(function, blocksOfCopy.span(), expansion.results[static_cast<size_t>(ForInStepResult::Key)], index);
+    context.analyses.didChangeValues();
+    context.build.statistics().count(StatisticID::OwnKeyWalksExpanded);
+    return PassOutcome::Changed;
+}
+
 // A for-in loop over an object of a few expected layouts gets, per layout and key order, one copy of its body for each name.
 static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emission, const NaturalLoop& naturalLoop)
 {
@@ -1235,6 +1482,8 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
         return PassOutcome::Unchanged;
 
     std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, OwnKeyWalkSite { .value = open, .source = source });
+    if (!plan && isExpectedToBeList(program, function, source))
+        return expandForInLoopOverList(context, emission, { header, entry, step, open, source, region.span() });
     if (!plan)
         return PassOutcome::Unchanged;
 
@@ -1484,8 +1733,16 @@ static bool collectLiteralMadeForSpread(FunctionPassContext& context, ValueID al
     AOT::sort(value.definitions, { }, [&](ValueID definition) {
         return useLists.locationOf(definition).index;
     });
-    for (ValueID definition : value.definitions)
-        value.properties.append({ function.at(definition).key(), function.at(definition).valueOperand() });
+    // A key that is defined again keeps its place among the keys and takes the new value. The value it had may be one that a pass listed only to hold the place, which no field of the target is typed for.
+    for (ValueID definition : value.definitions) {
+        PropertyKeyID key = function.at(definition).key();
+        ValueID held = function.at(definition).valueOperand();
+        auto earlier = std::ranges::find(value.properties, key, &std::pair<PropertyKeyID, ValueID>::first);
+        if (earlier != value.properties.end())
+            earlier->second = held;
+        else
+            value.properties.append({ key, held });
+    }
     return true;
 }
 
@@ -1681,14 +1938,52 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     return outcome;
 }
 
+static bool isOnlyCopiedFrom(FunctionPassContext& context, ValueID allocation, ValueID alias)
+{
+    return std::ranges::all_of(context.analyses.useLists().usesOf(alias), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = context.function.at(use.user);
+        if (user.opcode == Opcode::CopyObject)
+            return user.excludedOperands().empty();
+        if (user.opcode == Opcode::CopyDataProperties)
+            return user.excludedOperands().empty() && user.targetOperand() != alias;
+        return context.analyses.sameObjectThroughCasts(use.user).valueInFrontOfFacts() == allocation && isOnlyCopiedFrom(context, allocation, use.user);
+    });
+}
+
+// `let all = {}; all = { ...all, [key]: value }`: a dictionary that never gets a property has none to copy.
+static PassOutcome replaceCopiesOfEmptyDictionaries(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    Vector<ValueID, 2> copies;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& copy = function.at(id);
+            if (copy.opcode != Opcode::CopyObject)
+                continue;
+            ValueID source = context.analyses.sameObjectThroughCasts(copy.sourceOperand()).valueInFrontOfFacts();
+            if (function.at(source).opcode == Opcode::NewDictionary && isOnlyCopiedFrom(context, source, source))
+                copies.append(id);
+        }
+    }
+    for (ValueID id : copies)
+        function.edit(id).become(Opcode::NewDictionary);
+    return copies.isEmpty() ? PassOutcome::Unchanged : PassOutcome::Changed;
+}
+
 PassOutcome expandOwnKeys(FunctionPassContext& context)
 {
     const OpcodeSet opcodes = context.analyses.opcodesOfValues();
-    bool mayHaveWalks = opcodes.intersects(opcodesOfWalks);
-    bool mayHaveForInLoops = opcodes.contains(Opcode::ForInStep);
+    // A short schedule expands only small copies: the runtime's plan for a copy costs more than most of these functions ever get back.
+    bool mayHaveWalks = context.isShortSchedule ? opcodes.contains(Opcode::CopyDataProperties) : opcodes.intersects(opcodesOfWalks);
+    bool mayHaveForInLoops = !context.isShortSchedule && opcodes.contains(Opcode::ForInStep);
     bool mayHaveKeyOrderTests = opcodes.intersects(opcodesOfKeyOrderTests) && opcodes.contains(Opcode::NewObject);
     if (!mayHaveWalks && !mayHaveForInLoops && !mayHaveKeyOrderTests)
         return PassOutcome::Unchanged;
+
+    if (opcodes.contains(Opcode::CopyObject) && opcodes.contains(Opcode::NewDictionary) && replaceCopiesOfEmptyDictionaries(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
 
     EmissionInputs inputs(context);
     IRBuilder builder(inputs.analysisContext(), context.function, context.types, &context.analyses);
@@ -1699,10 +1994,10 @@ PassOutcome expandOwnKeys(FunctionPassContext& context)
 
     Vector<PlannedWalk, 4> walks;
     if (mayHaveWalks)
-        walks = planOwnKeyWalks(context);
+        walks = planOwnKeyWalks(context, context.isShortSchedule ? std::optional { OwnKeyWalk::Spread } : std::nullopt);
     for (const PlannedWalk& walk : walks) {
         if (!walk.walkedSources.isEmpty())
-            expandWalk(emission, walk);
+            expandWalk(context, emission, walk);
         else if (expandStringify(context, emission, walk.site) == PassOutcome::Unchanged)
             continue;
         context.build.statistics().count(StatisticID::OwnKeyWalksExpanded, std::max<uint64_t>(walk.walkedSources.size(), 1));

@@ -88,6 +88,30 @@ bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
+Vector<ModuleID, 2> ModuleTable::formsThatAttributesAskFor(StringView publicPath) const
+{
+    String start = makeString(publicPath, '?');
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    Vector<ModuleID, 2> forms;
+    for (; place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start); ++place)
+        forms.append(ModuleID(byPath[place]));
+    return forms;
+}
+
+bool ModuleTable::holdsPathStartingWith(StringView start) const
+{
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
+}
+
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const
 {
     std::span<const CompiledRuntimeModuleData> runtimeModules = m_tables->compiledRuntimeModules();
@@ -261,6 +285,25 @@ String ModuleTable::pathTextForLineColumns(ModuleID module) const
 }
 
 // The name of a file ends its public path, whether or not the directory stands apart.
+IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
+{
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    for (; place < byPath.size(); ++place) {
+        ModuleID module(byPath[place]);
+        String path = pathText(module);
+        if (!path.startsWith(start))
+            break;
+        bool isCode = data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs;
+        if (isCode && !data(module).registryID() && !data(module).evaluatorModule() && functor(path) == IterationStatus::Done)
+            return IterationStatus::Done;
+    }
+    return IterationStatus::Continue;
+}
+
 bool ModuleTable::hasFileWithExtension(StringView extension) const
 {
     return std::ranges::any_of(modulesByPath(), [&](uint32_t module) {

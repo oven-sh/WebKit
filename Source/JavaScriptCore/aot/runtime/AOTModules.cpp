@@ -106,6 +106,7 @@ void Modules::visitRoots(Visitor& visitor)
 #undef AOT_VISIT_REFERENCE
         }
         visitor.appendUnbarriered(m_namespaceStructure);
+        visitor.appendUnbarriered(m_extensibleNamespaceStructure);
     });
 }
 
@@ -524,7 +525,7 @@ void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespa
         ensureLoaded(module).namespaceObjectFor(phase).set(*this, namespaceObject);
 }
 
-JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
+JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shouldPreventExtensions)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -542,7 +543,7 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
     // The names of a file are taken once, for whoever imports it and for the host.
     if (moduleData.kind == ModuleKind::CommonJs) {
         if (std::optional<ModuleID> face = m_table.faceOfFile(module))
-            RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase));
+            RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase, shouldPreventExtensions));
     }
 
     bool ranCode = false;
@@ -582,22 +583,34 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
         exportObjects.names->setIndex(vm, i, text);
     }
 
-    if (!m_namespaceStructure) {
-        m_namespaceStructure = ModuleNamespace::createStructure(vm, realm, realm->moduleNamespaceObjectStructure()->storedPrototype());
+    bool isRequired = phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index());
+    if (phase == ModulePhase::Evaluation && m_modulesWithExtensibleNamespace.get(module.index()))
+        shouldPreventExtensions = false;
+    Structure*& structure = shouldPreventExtensions ? m_namespaceStructure : m_extensibleNamespaceStructure;
+    if (!structure) {
+        structure = ModuleNamespace::createStructure(vm, realm, realm->moduleNamespaceObjectStructure()->storedPrototype(), shouldPreventExtensions);
         m_storedReferences.recordAll();
     }
-    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, m_namespaceStructure, module, phase, exportObjects);
-    if (phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index()) && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
+    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, structure, module, phase, exportObjects);
+    if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
         namespaceObject->setESModuleMarker(true);
     setNamespace(module, phase, namespaceObject);
     return namespaceObject;
 }
 
-JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase)
+bool Modules::mayExport(ModuleID module, UniquedStringImpl* name) const
+{
+    const ModuleData& moduleData = data(module);
+    if (moduleData.kind != ModuleKind::SourceText || moduleData.capturesExports() || moduleData.hasDynamicStarExport())
+        return true;
+    return !!m_table.findExport(module, name);
+}
+
+JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase, bool shouldPreventExtensions)
 {
     if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
         return namespaceObject;
-    return createNamespace(module, phase);
+    return createNamespace(module, phase, shouldPreventExtensions);
 }
 
 JSObject* Modules::importMeta(ModuleID module)
@@ -702,6 +715,12 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
         key = loader()->resolve(realm, m_state.strings->string(vm, failure.specifierString()), pathString(failure.importerModule()), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, void());
+    if (!isForRequire) {
+        // `import` passes the resolved key to the loader, which resolves it again.
+        DisallowVMEntry disallowVMEntry(vm);
+        key = loader()->resolve(realm, jsString(vm, key.string()), pathString(failure.importerModule()), nullptr, true);
+    }
+    RETURN_IF_EXCEPTION(scope, void());
     if (host().createLoadError) {
         JSValue error = host().createLoadError(realm, key.string());
         RETURN_IF_EXCEPTION(scope, void());
@@ -709,6 +728,13 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
             throwException(realm, scope, error);
             return;
         }
+    }
+    // The build did not find the module, so the program does not hold it, whatever the resolver finds now.
+    if (host().createModuleNotFoundError) {
+        JSValue error = host().createModuleNotFoundError(realm, specifier, importer, isForRequire);
+        RETURN_IF_EXCEPTION(scope, void());
+        throwException(realm, scope, error);
+        return;
     }
     throwException(realm, scope, createModuleMissingAtBuildError(realm, specifier, importer, isForRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s));
 }
@@ -796,8 +822,12 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (!data(module).isUncompiledCode()) {
         // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
-            if (std::optional<ModuleID> form = findWithAttributes(moduleKey(fileOf(module)), attributes))
+            ModuleID file = fileOf(module);
+            Identifier key = keyWithoutForm(file);
+            if (std::optional<ModuleID> form = findWithAttributes(key, attributes))
                 module = m_table.faceOfFile(*form).value_or(*form);
+            else
+                noteFormAnsweredFirst(key, *attributes, file);
         }
         RELEASE_AND_RETURN(scope, startImport(module, asyncEvaluationOrder(referrer)));
     }
@@ -817,6 +847,49 @@ std::optional<ModuleID> Modules::findByName(const Identifier& key)
     return found;
 }
 
+// The loader of `bun run` knows every form of a file by the path of the file.
+Identifier Modules::keyWithoutForm(ModuleID file)
+{
+    if (data(file).kind != ModuleKind::Data)
+        return moduleKey(file);
+    String path = m_table.pathText(file);
+    size_t mark = path.reverseFind('?');
+    return mark == notFound ? moduleKey(file) : Identifier::fromString(*m_instance.vm, path.left(mark));
+}
+
+// An import statement has asked for its form before any import() runs. Only the types of the host's own share a place in the loader.
+std::optional<ModuleID> Modules::findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters& fetchParameters, std::optional<ModuleID> asked) const
+{
+    if (fetchParameters.type() != ScriptFetchParameters::Type::HostDefined)
+        return std::nullopt;
+    Vector<ModuleID, 2> forms = m_table.formsThatAttributesAskFor(key.string());
+    forms.removeAllMatching([&](ModuleID form) {
+        return data(form).kind != ModuleKind::Data || m_table.pathText(form).endsWith("?json"_s);
+    });
+    if (forms.isEmpty() || (forms.size() == 1 && asked == forms[0]))
+        return std::nullopt;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        // A module that needs no link counts as linked before anybody has asked for it.
+        bool wasLoaded = status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
+        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (forms.contains(request.targetModule()))
+                return request.targetModule();
+        }
+    }
+    return std::nullopt;
+}
+
+// The host does not find every form by its type. The form that the build bound then answers, also for the types that are asked for later.
+void Modules::noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters& fetchParameters, ModuleID file)
+{
+    ModuleMapKey keyOfLoader { key.impl(), fetchParameters.type() };
+    if (data(file).kind == ModuleKind::Data && !loader()->moduleMap().contains(keyOfLoader))
+        m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, file });
+}
+
 std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
@@ -833,6 +906,8 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     if (auto first = m_formsAnsweredFirst.find(keyOfLoader); first != m_formsAnsweredFirst.end())
         return first->value.module;
     std::optional<ModuleID> module = host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
+    if (std::optional<ModuleID> loaded = findFormThatStatementLoaded(key, *fetchParameters, module))
+        module = loaded;
     if (module)
         m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, *module });
     return module;
@@ -961,7 +1036,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
         // Where the loader makes the record of a file inline, what the file throws rejects at once: no step of this import() comes to the file ahead of that.
         ModuleRecord* made = recordIfExists(module);
         bool isMadeInline = made && loader()->isMakingRecordInline(made->moduleKey());
-        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::HasComeToFile) : exposeRecord(module, RecordHolder::Loader);
+        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::IsRootOfImport) : exposeRecord(module, RecordHolder::Loader);
     }
     JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
     setIsAskingHost(wasAskingHost);
@@ -2008,6 +2083,12 @@ bool holdsFormThatAttributeAsksFor(StringView publicPath)
     return table && table->holdsFormThatAttributeAsksFor(publicPath);
 }
 
+bool mayHoldPathStartingWith(StringView start)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && (start.isEmpty() || start.startsWith('#') || table->holdsPathStartingWith(start));
+}
+
 // Each frame of each stack trace asks.
 struct PathOfModule {
     // A static string: every thread may hold it.
@@ -2030,6 +2111,8 @@ static PathOfModule pathOfModule(ModuleID module)
         RELEASE_ASSERT(table);
         // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
+        while (std::optional<ModuleID> outer = evaluator ? table->data(*evaluator).evaluatorModule() : std::nullopt)
+            evaluator = outer;
         String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
         return PathOfModule { &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef(), !!evaluator };
     }).iterator->value;
@@ -2080,6 +2163,13 @@ void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)
         if (table->hasFilePath(ModuleID(index)) && functor(ModuleID(index)) == IterationStatus::Done)
             return;
     }
+}
+
+void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor)
+{
+    Image::forEachPublishedImage([&](const Image& image) {
+        return ModuleTable(image.programTables()).forEachFilePathStartingWith(start, functor);
+    });
 }
 
 bool refusesCodeOutsideImage(JSGlobalObject* realm, StringView path)
@@ -2222,6 +2312,12 @@ JSObject* moduleNamespace(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOrThrow(realm, module);
     return modules ? modules->moduleNamespace(module, Modules::ModulePhase::Evaluation) : nullptr;
+}
+
+bool mayExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name)
+{
+    Modules* modules = modulesOf(realm);
+    return !modules || modules->refusesRequestFromHost(module) || modules->mayExport(module, name);
 }
 
 JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> referrer)
@@ -2663,9 +2759,10 @@ bool ModuleRecord::readyForSyncExecution(VisitedModuleRecords& seen)
 
 const ClassInfo ModuleNamespace::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleNamespace) };
 
-Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, bool shouldPreventExtensions)
 {
-    return Structure::preventExtensionsTransition(vm, Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info()));
+    Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return shouldPreventExtensions ? Structure::preventExtensionsTransition(vm, structure) : structure;
 }
 
 ModuleNamespace::ModuleNamespace(VM& vm, Structure* structure, ModuleID module, ModulePhase phase, const DynamicExports& dynamicExports)
@@ -2706,7 +2803,7 @@ void ModuleNamespace::ensureOwnStructure(VM& vm)
     // A Structure with properties may be shared with another namespace object.
     if (hasOwnStructure() || isValidOffset(structure()->maxOffset()))
         return;
-    setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype()));
+    setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype(), !structure()->isStructureExtensible()));
     m_hasOwnStructure = true;
 }
 
@@ -2732,7 +2829,7 @@ std::optional<unsigned> ModuleNamespace::find(UniquedStringImpl* name) const
 
 bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
-    if (m_isDeferred || m_mayNeedEvaluation || m_dynamicExportNames)
+    if (m_isDeferred || m_mayNeedEvaluation || m_dynamicExportNames || isValidOffset(structure()->maxOffset()))
         return false;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Modules& modules = this->modules();
@@ -2751,6 +2848,15 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
 bool ModuleNamespace::isSymbolLikeKey(UniquedStringImpl* name) const
 {
     return name->isSymbol() || (m_isDeferred && name == vm().propertyNames->then.impl());
+}
+
+// JSModuleNamespaceObject keeps these keys as ordinary properties. Symbol.toStringTag is not stored here: getOwnPropertySlot() answers it.
+bool ModuleNamespace::isOrdinaryKey(PropertyName name) const
+{
+    VM& vm = this->vm();
+    if (name == vm.propertyNames->toStringTagSymbol)
+        return false;
+    return isSymbolLikeKey(name.uid()) || (name == vm.propertyNames->__esModule && !hasExport(name.uid()));
 }
 
 bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
@@ -2814,6 +2920,8 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     }
     std::optional<unsigned> index = thisObject->find(name.uid());
     if (!index && !thisObject->isDynamicExport(name.uid())) {
+        if (thisObject->isOrdinaryKey(name))
+            RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, name, slot));
         if (name != vm.propertyNames->toStringTagSymbol)
             return false;
         slot.setValue(thisObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete, jsNontrivialString(vm, thisObject->m_isDeferred ? "Deferred Module"_s : "Module"_s));
@@ -2901,9 +3009,11 @@ bool ModuleNamespace::putByIndex(JSCell*, JSGlobalObject* globalObject, unsigned
     return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 }
 
-bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot&)
+bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell);
+    if (thisObject->isSymbolLikeKey(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol)
+        return Base::deleteProperty(thisObject, globalObject, name, slot);
     if (!thisObject->isSymbolLikeKey(name.uid()) && !thisObject->evaluateIfNeeded(globalObject))
         return false;
     return !thisObject->hasExport(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol;
@@ -2920,10 +3030,8 @@ bool ModuleNamespace::defineOwnProperty(JSObject* object, JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(object);
-    if (name == vm.propertyNames->__esModule && descriptor.value().isTrue() && !thisObject->hasExport(name.uid())) {
-        thisObject->setESModuleMarker(true);
-        return true;
-    }
+    if (thisObject->isOrdinaryKey(name))
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, name, descriptor, shouldThrow));
     PropertyDescriptor current;
     bool isCurrentDefined = object->getOwnPropertyDescriptor(globalObject, name, current);
     RETURN_IF_EXCEPTION(scope, false);

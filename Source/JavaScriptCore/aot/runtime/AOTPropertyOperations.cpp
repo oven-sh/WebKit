@@ -116,7 +116,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
-        Object::putWithKnownField(object, globalObject, identifier, value, slot, field);
+        bool chainLetsStoresPass = field && !object->isInSlot(*field) && vm.aotState().propertyCaches->addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
+        Object::putWithKnownField(object, globalObject, identifier, value, slot, field, chainLetsStoresPass);
         RETURN_IF_EXCEPTION(scope, void());
         object->state().objects->classes.didStoreByName(vm, object->layout(), identifier.impl());
         return;
@@ -365,7 +366,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance*
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     Structure* structure = globalObject->objectStructureForObjectConstructor();
     if (inlineCapacity != JSFinalObject::defaultInlineCapacity)
         structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
@@ -628,6 +628,11 @@ static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Ins
     if (dependsOnOrderAlone && !validatesRuntime(vm) && object->isInKeyOrder(*instance->state, *field) == readsAsValue)
         instance->state->objects->keyOrders.rememberWhetherOrderLists(object->shape(), orderWord & orderAndCountMask, key, readsAsValue);
     OPERATION_RETURN(scope, readsAsValue);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasOnlyClassFieldNames, size_t, (Instance* instance, JSCell* cell))
+{
+    return instance->state->objects->classes.computeHasOnlyClassFieldNames(cell->structure());
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasExtraProperty, size_t, (Instance* instance, JSCell* cell, uint32_t key))

@@ -2,7 +2,7 @@
 # FORM: Prepared
 # RUN: pass ResolveBuiltins
 # CHECK: outcome: Changed
-# STATISTIC: BuiltinCallsResolved = 10
+# STATISTIC: BuiltinCallsResolved = 14
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="applyWithAnyList" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -10,9 +10,16 @@ function f0 name="applyWithAnyList" parameters=[{type=anything}, {type=anything}
     v4 = Call v3, v0, v1, v2
     ReturnCall v4
 # CHECK-NOT: CallBuiltin
-# CHECK: [[list]]: {{*}} = NewArgumentList v0, v2
-# CHECK-NEXT: v4: anything = CallList v0, v1, [[list]]
-# CHECK-NEXT: ReturnCall v4
+# An array is handed on as it is. Of anything else a list is made.
+# CHECK: [[isArray0]]: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[other0]](| 0)
+# CHECK: [[array0]]([[asItIs0]]: Array):
+# CHECK-NEXT: [[passedArray0]]: anything = CallList v0, v1, [[asItIs0]]
+# CHECK-NEXT: ReturnCall [[passedArray0]]
+# CHECK: [[other0]]([[arrayLike0]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[list]]: {{*}} = NewArgumentList v0, [[arrayLike0]]
+# CHECK-NEXT: [[passedList0]]: anything = CallList v0, v1, [[list]]
+# CHECK-NEXT: ReturnCall [[passedList0]]
 }
 
 function f1 name="applyWithArray" parameters=[{type=anything}, {type=anything}, {type=Array<number>}] results=[{type=anything}] {
@@ -54,9 +61,15 @@ function f5 name="reflectApplyOfFunctionAndObject" parameters=[{type=function}, 
     v3 = Builtin builtin=ReflectApply
     v4 = Call v3, -, v0, v1, v2
     ReturnCall v4
-# CHECK: [[reflectedList]]: {{*}} = NewArgumentList v0, v2
-# CHECK-NEXT: v4: anything = CallList v0, v1, [[reflectedList]]
-# CHECK-NEXT: ReturnCall v4
+# CHECK: [[isArray5]]: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch [[isArray5]] -> taken [[array5]](| 0), notTaken [[other5]](| 0)
+# CHECK: [[array5]]([[asItIs5]]: Array):
+# CHECK-NEXT: [[passedArray5]]: anything = CallList v0, v1, [[asItIs5]]
+# CHECK-NEXT: ReturnCall [[passedArray5]]
+# CHECK: [[other5]]([[arrayLike5]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[reflectedList]]: {{*}} = NewArgumentList v0, [[arrayLike5]]
+# CHECK-NEXT: [[passedList5]]: anything = CallList v0, v1, [[reflectedList]]
+# CHECK-NEXT: ReturnCall [[passedList5]]
 }
 
 # Reflect.apply throws for a list that is undefined or null, where apply passes no argument.
@@ -65,8 +78,14 @@ function f6 name="reflectApplyOfAnyList" parameters=[{type=function}, {type=anyt
     v4 = Call v3, -, v0, v1, v2
     ReturnCall v4
 # CHECK-NOT: NewArgumentList
-# CHECK: v4: anything = Call v3, -, v0, v1, v2
-# CHECK-NEXT: ReturnCall v4
+# CHECK: [[isArray6]]: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch [[isArray6]] -> taken [[array6]](| 0), notTaken [[other6]](| 0)
+# CHECK: [[array6]]([[asItIs6]]: Array):
+# CHECK-NEXT: [[passedArray6]]: anything = CallList v0, v1, [[asItIs6]]
+# CHECK-NEXT: ReturnCall [[passedArray6]]
+# CHECK: [[other6]]([[noArray6]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[own6]]: anything = Call v3, -, v0, v1, [[noArray6]]
+# CHECK-NEXT: ReturnCall [[own6]]
 }
 
 # call throws its own TypeError for a receiver that is no function, so the call is passed on behind a test, and both arms stay tail calls.
@@ -113,12 +132,18 @@ function f10 name="reflectApplyOfAnyTarget" parameters=[{type=anything}, {type=a
 # CHECK: [[isFunction10]]: boolean = TypeTest v0 testedType=function
 # CHECK-NEXT: Branch [[isFunction10]] -> taken [[function10]](| 0), notTaken [[other10]](| 0)
 # CHECK: [[function10]]([[target10]]:{{*}}):
-# CHECK-NEXT: [[list10]]: {{*}} = NewArgumentList [[target10]], v2
-# CHECK-NEXT: [[passed10]]: anything = CallList [[target10]], v1, [[list10]]
-# CHECK-NEXT: ReturnCall [[passed10]]
+# CHECK-NEXT: [[isArray10]]: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch [[isArray10]] -> taken [[array10]](| 0), notTaken [[arrayLike10]](| 0)
 # CHECK: [[other10]]([[noFunction10]]:{{*}}) frequency=Unlikely:
 # CHECK-NEXT: [[own10]]: anything = Call v3, -, [[noFunction10]], v1, v2
 # CHECK-NEXT: ReturnCall [[own10]]
+# CHECK: [[array10]]([[asItIs10]]: Array):
+# CHECK-NEXT: [[passedArray10]]: anything = CallList [[target10]], v1, [[asItIs10]]
+# CHECK-NEXT: ReturnCall [[passedArray10]]
+# CHECK: [[arrayLike10]]([[object10]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[list10]]: {{*}} = NewArgumentList [[target10]], [[object10]]
+# CHECK-NEXT: [[passed10]]: anything = CallList [[target10]], v1, [[list10]]
+# CHECK-NEXT: ReturnCall [[passed10]]
 }
 
 # A target that is never a function is left to the error of the built-in.

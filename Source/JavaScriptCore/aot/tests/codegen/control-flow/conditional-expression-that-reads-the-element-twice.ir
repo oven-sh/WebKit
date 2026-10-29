@@ -10,13 +10,9 @@
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
-# RUN(WINDOWSARM64): lower-to-air loops f1
-# REQUIRES(WINDOWSARM64): arm64 unsanitized-code windows
-# RUN(WINDOWSX64): lower-to-air loops f1
-# REQUIRES(WINDOWSX64): x86_64 unsanitized-code windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -95,19 +91,18 @@ function f1 name="smallest" module=m0 flags=[IsChecked, HasExplicitName] length=
 }
 
 # `best = list[k] < best ? list[k] : best` loads the element once: the second read is the value of the first. What is left of the second read is the patchpoint that keeps the array alive. It is no code,
-# and it stands in the arm of the branch, so the arm is not empty and the branch stays a branch: nine branches for eight elements.
+# so it does not hold the branch: it goes in front of the select, and the loop is the one of `const value = list[k]; best = value < best ? value : best`.
 # CHECK-LABEL: steps by 8
-# CHECK: Int32 b@[[value]] = Load(b@{{*}}Reads:TypedArrayElements
-# CHECK: Int32 b@[[isSmaller]] = LessThan(b@[[value]], b@{{*}}, {{*}}:Less)
-# CHECK-NEXT: Branch(b@[[isSmaller]], Terminal, {{*}}:Less)
-# CHECK-NEXT: Successors: Then:#[[arm]], Else:#
-# CHECK-NEXT: BB#[[arm]]:
-# CHECK-NEXT: Predecessors:
+# CHECK-NOT: Branch(
+# REPEAT: turn = 1..8
+# CHECK: Int32 b@[[value%(turn)]] = Load(b@{{*}}Reads:TypedArrayElements
+# CHECK: Int32 b@[[isSmaller%(turn)]] = LessThan(b@[[value%(turn)]], b@[[best%(turn)]], {{*}}:Less)
 # CHECK-NEXT: Patchpoint(b@{{*}}:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, {{*}}:GetTypedArrayElement)
-# CHECK-NEXT: Upsilon(b@[[value]], 
+# CHECK-NEXT: Int32 b@{{*}} = Select(b@[[isSmaller%(turn)]], b@[[value%(turn)]], b@[[best%(turn)]]
+# END REPEAT
+# CHECK-NOT: Branch(
+# CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# CHECK-NOT: Branch(
 # CHECK-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 42, patchpoints: 16, {{*}} steps by 8
-# ARM64: loop #{{*}}, instructions: 43, patchpoints: 16, {{*}} steps by 8
-# The variable of the loop shares its register with the smaller value of the turn before, so the arm that keeps that value is empty and is gone.
-# WINDOWSARM64: loop #{{*}}, instructions: 35, patchpoints: 16, {{*}} steps by 8
-# WINDOWSX64: loop #{{*}}, instructions: 34, patchpoints: 16, {{*}} steps by 8
+# X64: loop #{{*}}, instructions: 18, patchpoints: 16, {{*}} steps by 8
+# ARM64: loop #{{*}}, instructions: 19, patchpoints: 16, {{*}} steps by 8

@@ -59,7 +59,7 @@ public:
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
     FunctionID functionOfStatement() const;
-    std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) const LIFETIME_BOUND;
+    std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
@@ -279,6 +279,8 @@ private:
     ValueFlowObjectID m_markerOfRun;
     ValueFlowObjectID m_markerEntered;
     std::span<const ValueFlowOperand> m_operandsInPlace;
+    // One list for each statement whose operands a run has narrowed. A rule keeps its span while it runs rules for other statements.
+    Vector<std::unique_ptr<Vector<ValueFlowOperand, 8>>, 2> m_narrowedOperandsOfRun;
     const ValueFlowNodeKey* m_keyOfStatementOfThisTurn { nullptr };
     ValueSetID m_rememberedByStatementOfThisTurn;
     HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_instancesMadeInTurn;

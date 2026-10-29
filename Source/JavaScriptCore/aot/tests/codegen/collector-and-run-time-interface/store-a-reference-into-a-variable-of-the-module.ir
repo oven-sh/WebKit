@@ -85,6 +85,6 @@ function f1 name="keep" module=m0 position=66 flags=[IsChecked, HasExplicitName]
 # CHECK-NEXT: Return(Terminal)
 # CHECK-NOT: BB#
 # CHECK-LABEL: end of function
-# ARM64 has no address with so large an offset: it makes both offsets and the constant in registers.
+# arm64 has no address with so large an offset: it makes both offsets and the constant in registers.
 # X64: instructions: 3, patchpoints: 0
 # ARM64: instructions: 6, patchpoints: 0

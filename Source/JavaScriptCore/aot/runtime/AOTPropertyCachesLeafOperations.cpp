@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTCompiledCallee.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
@@ -26,6 +27,7 @@
 #include "ArrayStorage.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
 #include "SparseArrayValueMap.h"
@@ -295,7 +297,7 @@ static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization 
     StringImpl* textBefore = key->isString() ? asString(key)->tryGetValueImpl() : nullptr;
     KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, atomization);
     // A text that became the name itself is the first of its characters. The stubs look for the name of a text that comes again.
-    if (!wasAtom && name.kind == KeyNameKind::Name && name.uid != textBefore)
+    if (!wasAtom && key->isString() && name.kind == KeyNameKind::Name && name.uid != textBefore)
         instance->state->propertyCaches->tables().rememberNameOfText(name.uid);
     return name;
 }
@@ -362,6 +364,11 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name: {
+        // Nothing is cached for a function used as a key: the objects themselves are consulted.
+        if (key->isObject()) {
+            if (StructuralRead read = readGeneric(*instance->vm, object, name.uid); read.presence != LeafPresence::TakeSlowPath)
+                return read;
+        }
         bool isDueForFiling = false;
         StructuralRead read = readAndCache(instance, object, name.uid, isDueForFiling);
         // What is due is filed by the operation that the stub calls next, and from then on the stub answers.
@@ -501,14 +508,47 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
     return static_cast<size_t>(answer);
 }
 
+// A program function used as a key converts to its source text: it has no own properties, nothing on its prototype chain has Symbol.toPrimitive, and the toString it finds is the built-in one.
+// The Structure caches both from the first conversion for as long as they hold, and the string exists from then on.
+static JSString* functionSourceForKey(VM& vm, JSCell* key)
+{
+    if (key->type() != SlimClosureType)
+        return nullptr;
+    Structure* structure = key->structure();
+    JSValue toPrimitive = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToPrimitive);
+    JSValue toString = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToString);
+    if (!toPrimitive || !toPrimitive.isUndefined() || !toString)
+        return nullptr;
+    auto* function = dynamicDowncast<JSFunction>(toString);
+    if (!function || !function->isHostFunction() || function->nativeFunction() != toTagged(NativeFunction(functionProtoFuncToString)))
+        return nullptr;
+    return CompiledCallee::sourceStringIfCreated(vm, asObject(key));
+}
+
+// Only a string that starts with a digit can be an index.
+static bool mayBeginWithDigit(const JSString* string)
+{
+    JSRopeString::LeafIterator pieces(string);
+    while (!pieces.isAtEnd()) {
+        StringView piece = pieces.next();
+        if (!piece.isEmpty())
+            return isASCIIDigit(piece[0]);
+    }
+    return true;
+}
+
 KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, KeyAtomization atomization)
 {
     if (key->isSymbol()) {
         SymbolImpl& uid = asSymbol(key)->uid();
         return uid.isPrivate() || isPreparedBeforeLookups(globalObject->vm(), &uid) ? KeyName { } : KeyName { KeyNameKind::Name, &uid };
     }
-    if (!key->isString())
-        return { };
+    if (!key->isString()) {
+        key = functionSourceForKey(globalObject->vm(), key);
+        // The first conversion atomized the string.
+        if (!key || !atomOfKey(key))
+            return { };
+    }
     constexpr unsigned maxIndexLength = 10;
     JSString* string = asString(key);
     StringImpl* text = string->tryGetValueImpl();
@@ -522,7 +562,7 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
             text = atomizes ? string->toAtomString(globalObject).data : string->toExistingAtomString(globalObject).data;
         }
         if (!text)
-            return { isRope && string->length() <= maxIndexLength ? KeyNameKind::NotAName : KeyNameKind::HasNoAtom };
+            return { isRope && string->length() <= maxIndexLength && mayBeginWithDigit(string) ? KeyNameKind::NotAName : KeyNameKind::HasNoAtom };
     }
     if (std::optional<uint32_t> index = parseIndex(*text))
         return { KeyNameKind::Index, nullptr, *index };
@@ -673,10 +713,18 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     return nullptr;
 }
 
+// A compiled object's fields have names that appear in the program, which are atoms wherever they are looked up, and its extra properties are in an ordinary object.
+static bool findsOnlyAtomNames(JSObject* object)
+{
+    if (Object* compiled = compiledObjectOrNull(object))
+        return !hasPendingStars(*compiled) && !compiled->structure()->typeInfo().overridesGetPrototype();
+    return hasOrdinaryLookups(object);
+}
+
 bool hasOnlyOrdinaryLookupsOnChain(JSObject* base)
 {
     for (JSObject* object = base; object; object = object->getPrototypeDirect().getObject()) {
-        if (!hasOrdinaryLookups(object))
+        if (!findsOnlyAtomNames(object))
             return false;
     }
     return true;

@@ -953,6 +953,7 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
       ),
       internalFields: internalFields.flatMap(({ index, uses }) => (uses === null ? [] : [{ index, uses }])),
       keepsStringsOfStoredValues: declared.keepsStringsOfStoredValues,
+      nativeAccessors: declared.nativeAccessors.map(name => builder.internComponent(name)),
       source,
     });
   }

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIRParser.h"
+#include "AOTIRPrinter.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
@@ -414,7 +415,7 @@ String standInLibraryText(unsigned libraryFunction)
     text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         if (function.platforms.contains(targetOfThisBuild().platform))
-            text.append("runtimefunction id="_s, function.id.index(), " function=f"_s, libraryFunction, '\n');
+            text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), function.id), " function=f"_s, libraryFunction, '\n');
     }
     return text.toString();
 }
@@ -426,7 +427,9 @@ static std::optional<uint32_t> runtimeFunctionNumberOf(StringView line)
         return std::nullopt;
     StringView rest = line.substring(prefix.length());
     size_t end = rest.find(' ');
-    return parseInteger<uint32_t>(end == notFound ? rest : rest.left(end), 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
+    if (RuntimeFunctionID id = runtimeFunctionFromToken(BuiltinTable::singleton(), end == notFound ? rest : rest.left(end)))
+        return id.index();
+    return std::nullopt;
 }
 
 String withStandInLibrary(const String& programText)
@@ -479,7 +482,7 @@ String withStandInLibrary(const String& programText)
     };
     for (uint32_t id : standInIDs) {
         appendOwnLinesBelow(id);
-        text.append("runtimefunction id="_s, id, " function=f"_s, numberOfFunctions, '\n');
+        text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), RuntimeFunctionID(id)), " function=f"_s, numberOfFunctions, '\n');
     }
     appendOwnLinesBelow(uint64_t { 1 } << 32);
     return text.toString();

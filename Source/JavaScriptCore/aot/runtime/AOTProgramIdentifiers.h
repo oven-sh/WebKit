@@ -84,6 +84,7 @@ private:
     Identifier create(uint32_t number) const;
     void addSymbol(uint32_t number, UniquedStringImpl*) WTF_REQUIRES_LOCK(m_symbolsLock);
     static std::optional<uint32_t> numberOfText(const Image&, StringView, unsigned hash);
+    static AtomStringImpl* findAtomSlow(StringView, unsigned hash);
 
     VM& m_vm;
     const Image& m_image;

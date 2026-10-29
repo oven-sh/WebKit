@@ -1,0 +1,48 @@
+# function handler(first, request) { this.url; first.url; request.url }   const bound = handler.bind(receiver, first)   unknown(bound)   holder.handler = bound   unknown(holder)   holder.handler(request)
+# The three requests have gone out of sight, and so has the bound function. It is seen to come back out of the holder. Whoever binds a function that is in sight hands it the receiver and the first operands
+# of every call to come, and a call of what was bound hands its operands on behind those. Nothing is proven of any of them.
+# RUN: valueflow-apply
+# CHECK: function f1 name="handler"
+# CHECK: = PropGet v0 key="url" {{*}}receivers=[L0, ..]
+# CHECK: = PropGet v1 key="url" {{*}}receivers=[L0, ..]
+# CHECK: = PropGet v2 key="url" {{*}}receivers=[L0, ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Request" constructor=f2 fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Record name="Holder" fields=[{key="handler" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Construct v2
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    v6 = PropGet v5 key="bind"
+    v7 = Call v6, v5, v3, v3 calleeKey="bind"
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f3
+    v10 = Call v9, -
+    PropSet v10, v7 key="handler" mode=Strict
+    v12 = Call v1, -, v10
+    v13 = PropGet v10 key="handler"
+    v14 = Call v13, v10, v3
+    Return
+}
+function f1 name="handler" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="url"
+    v4 = PropGet v1 key="url"
+    v5 = PropGet v2 key="url"
+    Return v5
+}
+function f2 name="Request" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="/"
+    PropSet v0, v1 key="url" mode=Strict
+    Return
+}
+function f3 name="create" module=m0 results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    Return v0
+}

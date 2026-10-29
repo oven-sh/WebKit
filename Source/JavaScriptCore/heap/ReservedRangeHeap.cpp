@@ -107,6 +107,29 @@ static bool canGrow(const ReservedRangeHeap::Request& request)
 #endif
 }
 
+static bool s_commitsOnDemand;
+
+void ReservedRangeHeap::setCommitsOnDemand(bool commitsOnDemand)
+{
+    s_commitsOnDemand = commitsOnDemand;
+}
+
+// malloc gets a range that is reserved without access in segments, each as large as all before it, and each with access from the start.
+// If it got memory that it has to commit, it would ask the system for access once for every 64 KB that it first uses.
+static size_t sizeOfFirstSegment(size_t reservedSize, const ReservedRangeHeap::Request& request)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    if (usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && !canGrow(request) && !s_commitsOnDemand) {
+        size_t size = roundUpToMultipleOf<mallocChunkSize>(request.unusedPrefixSize + std::max(request.firstSegmentSize, minSegmentSize));
+        if (size + minSegmentSize <= reservedSize)
+            return size;
+    }
+#else
+    UNUSED_PARAM(request);
+#endif
+    return reservedSize;
+}
+
 static bool reservesWithoutAccess(const ReservedRangeHeap::Request& request)
 {
 #if OS(LINUX)
@@ -160,6 +183,40 @@ static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
     return offset / granuleSize;
 }
 
+// Maps an inaccessible range as PROT_NONE up front, and without MADV_DONTFORK: malloc keeps its metadata for a range inside the range, so a forked child needs it.
+static void* tryReserveAt(size_t size, OSAllocator::Usage usage, void* address, bool isWritable)
+{
+#if OS(LINUX)
+    if (!isWritable) {
+        void* result = mmap(address, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (result == MAP_FAILED)
+            return nullptr;
+        while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+        return result;
+    }
+#endif
+    return OSAllocator::tryReserveUncommitted(size, usage, address, isWritable);
+}
+
+static void* tryReserveAligned(size_t size, size_t alignment, OSAllocator::Usage usage, bool isWritable)
+{
+#if OS(LINUX)
+    if (!isWritable) {
+        auto* mapped = static_cast<uint8_t*>(tryReserveAt(size + alignment, usage, nullptr, false));
+        if (!mapped)
+            return nullptr;
+        auto* aligned = std::bit_cast<uint8_t*>(roundUpToMultipleOf(alignment, std::bit_cast<uintptr_t>(mapped)));
+        size_t leadingPadding = aligned - mapped;
+        if (leadingPadding)
+            munmap(mapped, leadingPadding);
+        if (leadingPadding < alignment)
+            munmap(aligned + size, alignment - leadingPadding);
+        return aligned;
+    }
+#endif
+    return OSAllocator::tryReserveUncommittedAligned(size, alignment, usage, nullptr, isWritable);
+}
+
 ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
 {
     RELEASE_ASSERT(request.minSize && !(request.size % sizeStep) && !(request.minSize % sizeStep) && request.minSize <= request.size, request.size, request.minSize);
@@ -175,11 +232,11 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
         size_t nextSize = std::max(size / 2 / sizeStep * sizeStep, request.minSize);
         bool hasAnotherAttempt = attempt + 1 < maxReservationAttempts && nextSize < size;
         if (uintptr_t start = tryReserve(size, request)) {
-            std::optional<Backing> backing = tryCreateBacking(start, size, request);
+            std::optional<Backing> backing = tryCreateBacking(start, sizeOfFirstSegment(size, request), request);
             if (!backing && !(hasAnotherAttempt && nextSize >= request.unusedPrefixSize + mallocChunkSize))
                 backing = Backing { BackEnd::Granules, nullptr, size };
             if (backing)
-                return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : backing->size, *backing, request);
+                return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : size, size, *backing, request);
             releaseReservation(start, size, request);
         }
         if (!hasAnotherAttempt)
@@ -204,7 +261,7 @@ void* ReservedRangeHeap::tryReserveRandomWindow(size_t size, size_t alignment, O
         if (reserved == MAP_FAILED)
             reserved = nullptr;
 #else
-        void* reserved = OSAllocator::tryReserveUncommitted(size, usage, requestedAddress, isWritable);
+        void* reserved = tryReserveAt(size, usage, requestedAddress, isWritable);
 #endif
         if (!reserved) {
             if (refusalMeansNoRoomAnywhere)
@@ -228,7 +285,7 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
     if (request.placement == Placement::AtStart) {
         void* requestedAddress = std::bit_cast<void*>(request.start + request.unreservedPrefixSize);
         size_t reservedSize = size - request.unreservedPrefixSize;
-        address = OSAllocator::tryReserveUncommitted(reservedSize, request.usage, requestedAddress, isWritable);
+        address = tryReserveAt(reservedSize, request.usage, requestedAddress, isWritable);
         if (!address)
             return 0;
         if (address != requestedAddress) {
@@ -237,7 +294,7 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
         }
 #if OS(UNIX)
         if (request.initialAccess == InitialAccess::None) {
-            size_t inaccessibleSize = isWritable ? request.unusedPrefixSize - request.unreservedPrefixSize : reservedSize;
+            size_t inaccessibleSize = isWritable ? request.unusedPrefixSize - request.unreservedPrefixSize : 0;
             RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
         }
 #endif
@@ -248,12 +305,12 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
     if (request.placement == Placement::RandomWindow)
         address = tryReserveRandomWindow(reservedSize, alignment, request.usage, isWritable);
     if (!address)
-        address = OSAllocator::tryReserveUncommittedAligned(reservedSize, alignment, request.usage, nullptr, isWritable);
+        address = tryReserveAligned(reservedSize, alignment, request.usage, isWritable);
     if (!address)
         return 0;
 #if OS(UNIX)
     if (request.initialAccess == InitialAccess::None) {
-        size_t inaccessibleSize = isWritable ? request.reservedSizeBelowStart + request.unusedPrefixSize : reservedSize;
+        size_t inaccessibleSize = isWritable ? request.reservedSizeBelowStart + request.unusedPrefixSize : 0;
         RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
     }
 #endif
@@ -281,8 +338,15 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
     // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
     // for a 4 GB region is about 40 KB of pages touched before the first allocation.
+    void* memory = std::bit_cast<void*>(start + request.unusedPrefixSize);
+    size_t memorySize = size - request.unusedPrefixSize;
+    bool isCommitted = false;
+#if OS(LINUX)
+    // Where the system counts writable memory against a limit it may refuse. malloc then commits what it uses.
+    isCommitted = reservesWithoutAccess(request) && !s_commitsOnDemand && !mprotect(memory, memorySize, PROT_READ | PROT_WRITE);
+#endif
     mi_arena_id_t arena { };
-    if (!mi_manage_os_memory_ex(std::bit_cast<void*>(start + request.unusedPrefixSize), size - request.unusedPrefixSize, false, false, true, -1, true, &arena))
+    if (!mi_manage_os_memory_ex(memory, memorySize, isCommitted, false, true, -1, true, &arena))
         return std::nullopt;
     mi_heap_t* heap = mi_heap_new_in_arena(arena);
     RELEASE_ASSERT(heap);
@@ -290,7 +354,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
     // mi_arena_t and theaps inside this region and registers them in
     // process-wide lists that _mi_process_fork_child walks pre-exec.
-    while (madvise(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+    while (!reservesWithoutAccess(request) && madvise(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, MADV_DOFORK) == -1 && errno == EAGAIN) { }
 #elif OS(DARWIN)
     // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
     // same rationale as the Linux MADV_DOFORK branch above.
@@ -304,16 +368,17 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
 #endif
 }
 
-ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing& backing, const Request& request)
+ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, size_t reservedSize, const Backing& backing, const Request& request)
     : m_start(start)
     , m_size(size)
-    , m_initialSegmentSize(backing.size)
+    , m_initialSegmentSize(reservedSize)
     , m_backEnd(backing.backEnd)
     , m_isGrowable(size > backing.size)
+    , m_isReservedWhole(reservedSize == size)
     , m_usage(request.usage)
     , m_name(request.name)
     , m_mallocHeap(backing.mallocHeap)
-    , m_reservedSize(backing.size)
+    , m_reservedSize(reservedSize)
 {
     RELEASE_ASSERT((m_backEnd == BackEnd::Malloc) == !!backing.mallocHeap);
     RELEASE_ASSERT(!m_isGrowable || m_backEnd == BackEnd::Malloc);
@@ -415,8 +480,9 @@ void ReservedRangeHeap::releaseFreeMemory()
 #if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) {
         Locker locker { m_lock };
+        // Not forced: a forced collection purges every arena in the process, one thread at a time. Free memory is returned to the OS after malloc's purge delay instead.
         for (void* heap : m_segmentHeaps)
-            mi_heap_collect(static_cast<mi_heap_t*>(heap), true);
+            mi_heap_collect(static_cast<mi_heap_t*>(heap), false);
     }
 #endif
 }
@@ -504,6 +570,22 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 {
 #if OS(LINUX) && USE(MIMALLOC)
     size_t minSize = std::max(minSegmentSize, roundUpToMultipleOf<mallocChunkSize>(allocationSize) + mallocChunkSize);
+    if (m_isReservedWhole) {
+        size_t left = m_size - m_segmentsEnd;
+        if (left < minSize)
+            return false;
+        size_t size = std::min(std::max(minSize, m_segmentsEnd), left);
+        // What is too small for a segment of its own goes with this one.
+        if (left - size < minSegmentSize)
+            size = left;
+        std::optional<Backing> backing = tryCreateBacking(m_start + m_segmentsEnd, size, Request { .name = m_name, .usage = m_usage, .initialAccess = InitialAccess::None });
+        if (!backing)
+            return false;
+        m_segmentHeaps.append(backing->mallocHeap);
+        m_segmentArenas.append(backing->mallocArena);
+        m_segmentsEnd += size;
+        return true;
+    }
     size_t size = std::max(minSize, roundUpToMultipleOf<mallocChunkSize>(reservedSize() / 2));
     size_t left = addressSpaceLeft();
     if (left < minSize + addressSpaceToLeaveBesideSegment)
@@ -518,7 +600,7 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
         size = std::min(size, (m_size - offset) / mallocChunkSize * mallocChunkSize);
 
         void* address = std::bit_cast<void*>(m_start + offset);
-        void* reserved = OSAllocator::tryReserveUncommitted(size, m_usage, address, false);
+        void* reserved = tryReserveAt(size, m_usage, address, false);
         if (!reserved) {
             size = size / 2 / mallocChunkSize * mallocChunkSize;
             if (size < minSize)
@@ -532,7 +614,6 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
             m_segmentsEnd = offset + size;
             continue;
         }
-        RELEASE_ASSERT(!mprotect(address, size, PROT_NONE));
 
         std::optional<Backing> backing = tryCreateBacking(m_start + offset, size, request);
         if (!backing) {

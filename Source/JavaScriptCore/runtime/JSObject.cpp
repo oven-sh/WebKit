@@ -1070,6 +1070,11 @@ void JSObject::notifyPresenceOfIndexedAccessors(VM& vm)
     if (!mayBePrototype())
         return;
 
+#if ENABLE(AOT)
+    if (vm.aotState().classPrototypeBeingDefined == this) [[unlikely]]
+        return;
+#endif
+
     globalObject->haveABadTime(vm, this);
 }
 

@@ -78,6 +78,8 @@ struct FlowSiteLoss {
     Witness witness { noWitness };
     bool seesConstructedObject { false };
     bool hasOtherRoots { false };
+    // One more than an index into FlowSiteTables::otherOrigins, or 0.
+    uint16_t otherOrigins { 0 };
 
     friend bool operator==(const FlowSiteLoss&, const FlowSiteLoss&) = default;
 };
@@ -157,6 +159,9 @@ struct FlowApplicationDeleter {
 struct FlowFunctionTables {
     uint32_t functionCountAsRead { 0 };
     Vector<FunctionFlow> functions;
+    // Only for --explain, and empty otherwise: whether the closures escape by a path that does not start at FunctionFlow::witness, and where, as in FlowSiteLoss.
+    BitVector functionsWithOtherEscapeOrigins;
+    Vector<uint16_t> otherEscapeOriginsOfFunctions;
     Vector<Vector<OperandSummary>> parameterSummaries;
     Vector<Vector<OperandUses>> storedValueUses;
     Vector<Vector<OperandUses>> storedFramePointerUses;
@@ -195,6 +200,8 @@ struct FlowSiteTables {
     // Sorted by site. The location of a site is where an error is reported; only a site that the source text has elsewhere is listed.
     Vector<WrittenPositionOfSite> writtenPositionsOfSites;
     Vector<FlowSiteLoss> accessSiteLosses;
+    // Only for --explain: the independent origins of a loss beside its witness.
+    Vector<Wire::OtherOriginsRecord> otherOrigins;
     Vector<bool> callsOfBoundFunctions;
     // Empty where no array has such a kind.
     Vector<bool> receiversThatMayHaveDecidedStorage;
@@ -245,6 +252,7 @@ BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable&, std::span<const Feat
 
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
+    BitVector modulesWithNamespaceNamedByOperations;
     FlowModuleOrder moduleOrder;
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
@@ -294,6 +302,12 @@ public:
     uint32_t functionCount() const { return static_cast<uint32_t>(m_tables.functions.functions.size()); }
 
     const FunctionFlow& function(FunctionID) const LIFETIME_BOUND;
+    FlowSiteLoss lossOfParameters(FunctionID id) const
+    {
+        const FunctionFlow& flow = function(id);
+        const FlowFunctionTables& tables = m_tables.functions;
+        return { .cause = flow.cause, .witness = flow.witness, .hasOtherRoots = tables.functionsWithOtherEscapeOrigins.get(id.index()), .otherOrigins = id.index() < tables.otherEscapeOriginsOfFunctions.size() ? tables.otherEscapeOriginsOfFunctions[id.index()] : uint16_t { 0 } };
+    }
     bool mayBeReached(FunctionID function) const { return this->function(function).reachability != FunctionReachability::Unreached; }
     bool runsAtMostOnce(FunctionID function) const { return this->function(function).executions == ExecutionCount::AtMostOnce; }
     bool runsAtMostOnce(const Program&, FunctionID) const;
@@ -326,11 +340,14 @@ public:
     std::span<const FlowIndirectCall> indirectCallsFrom(FunctionID callerAsRead) const LIFETIME_BOUND;
 
     const ModuleFlow& module(ModuleID) const LIFETIME_BOUND;
+    // An operation in a reachable body named the namespace object when flow analysis ran. What flow analysis says about the object holds for operations that run, and such an operation may be in code that never does.
+    bool wasNamespaceNamedByOperation(ModuleID module) const { return m_tables.wholeProgram.modulesWithNamespaceNamedByOperations.get(module.index()); }
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
     void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
+    void setReasonForNoResults(UnseenCodeCause cause) { m_tables.wholeProgram.unseenCode.append(UnseenCodeRecord { .cause = cause }); }
     // The fields whose types were taken back as the results were applied. Their reads have no checks yet.
     std::span<const FieldReference> fieldsTakenBack() const LIFETIME_BOUND { return m_fieldsTakenBack.span(); }
     void setFieldsTakenBack(Vector<FieldReference>&& fields) { m_fieldsTakenBack = WTF::move(fields); }
@@ -371,6 +388,7 @@ public:
     bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
     bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
+    std::span<const Wire::OtherOriginsRecord> otherOrigins() const LIFETIME_BOUND { return m_tables.sites.otherOrigins.span(); }
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     bool mayCallBoundFunction(AccessSiteID) const;
     // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.

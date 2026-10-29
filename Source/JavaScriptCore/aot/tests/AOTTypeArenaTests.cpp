@@ -10,6 +10,7 @@
 #include "AOTEffectsOfProtocols.h"
 #include "AOTIRTestSupport.h"
 #include "AOTProvisionalFunctions.h"
+#include "AOTResultRulesInternal.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
@@ -336,6 +337,30 @@ static void fullSharedMemoRejectsNewEntries()
     AOT_TEST_CHECK(counts.fullShards && counts.entries == numberOfKeysFound && numberOfKeysFound < numberOfKeys);
 }
 
+static void idsThatDifferInHighBitsHashDifferently()
+{
+    auto hashOf = [](uint32_t prefix, uint32_t first, uint32_t second) {
+        WordHasher hasher;
+        hasher.add(prefix);
+        hasher.add(first);
+        hasher.add(second);
+        return hasher.hash();
+    };
+    constexpr unsigned highBitsShift = 29;
+    for (uint32_t prefix = 0; prefix < 64; ++prefix) {
+        uint64_t hashOfFinalIDs = hashOf(prefix, TypeTable::anything.index(), TypeTable::anything.index());
+        for (uint32_t firstBits = 1; firstBits < 8; ++firstBits) {
+            for (uint32_t secondHighBits = 0; secondHighBits < 8; ++secondHighBits) {
+                for (uint32_t secondLowBits = 0; secondLowBits < 8; ++secondLowBits) {
+                    uint32_t first = TypeTable::anything.index() ^ firstBits << highBitsShift;
+                    uint32_t second = TypeTable::anything.index() ^ secondHighBits << highBitsShift ^ secondLowBits;
+                    AOT_TEST_CHECK(hashOf(prefix, first, second) != hashOfFinalIDs);
+                }
+            }
+        }
+    }
+}
+
 static void arenasShareOnlySideEffectFreeAnswers()
 {
     TypeTable types(BuiltinTable::singleton());
@@ -477,6 +502,7 @@ static void onlyCompleteListOfCalleesSaysAllThatIsEntered()
     v(internedTablesDoNotDependOnThreads) v(listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
     v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
+    v(idsThatDifferInHighBitsHashDifferently) \
     v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers) \
     v(onlyCompleteListOfCalleesSaysAllThatIsEntered)
 

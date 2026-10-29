@@ -139,6 +139,7 @@ InternedLocationMasks::ID InternedLocationMasks::intern(const LocationMasks& mas
 CompactEffects InternedLocationMasks::compress(const Effects& effects)
 {
     uint8_t flags = (effects.mayThrow ? CompactEffects::MayThrow : 0)
+        | (effects.mayThrow.otherThanStackOverflow() ? CompactEffects::MayThrowOtherThanStackOverflow : 0)
         | (effects.mayThrow.byRule() ? CompactEffects::MayThrowByRule : 0)
         | (effects.mayCollect ? CompactEffects::MayCollect : 0)
         | (effects.mayCallUnknownCode ? CompactEffects::MayCallUnknownCode : 0)
@@ -152,6 +153,8 @@ static ThrowEffect throwEffectOf(uint8_t flags)
 {
     if (!(flags & CompactEffects::MayThrow))
         return false;
+    if (!(flags & CompactEffects::MayThrowOtherThanStackOverflow))
+        return ThrowEffect::onlyStackOverflow();
     return flags & CompactEffects::MayThrowByRule ? ThrowEffect(true) : ThrowEffect::onlyForLackOfMemory();
 }
 
@@ -497,6 +500,15 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
     Vector<ParameterSummary> parameters(function.numberOfEntryParameters(), [&](size_t) {
         return parameter;
     });
+    // The body is the source's: it reads and writes through a parameter what the source does. What the source does to the object it creates is in no summary.
+    if (function.role == FunctionRole::AllocatedThisVersion) {
+        CalleeSummary source(context, function.derivation.source);
+        const auto& parameterMap = function.derivation.parameterMap;
+        for (size_t index = 0; index < std::min<size_t>(parameters.size(), parameterMap.size()); ++index) {
+            if (std::optional<uint32_t> original = parameterMap[index].original)
+                parameters[index].memory = source->memory(*original);
+        }
+    }
     return createFunctionSummary(effects.normal, effects.handler, WTF::move(parameters), { });
 }
 
@@ -649,6 +661,17 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     BodySummaries nothingKept;
     EffectSummaries summaries;
     EffectSummarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found).update(summaries);
+    return summaries;
+}
+
+EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build)
+{
+    BodySummaries nothingKept;
+    EffectSummaries summaries;
+    EffectSummarizer summarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found);
+    summarizer.setIsOnlyCheck();
+    summarizer.readCalleesByOperandTypes();
+    summarizer.update(summaries);
     return summaries;
 }
 

@@ -26,7 +26,7 @@ void reportBuiltinUseTests(TestSiteReporter& reporter)
 {
     BuiltinUseInputs inputs = inputsOf(reporter.context(), { });
     inputs.identities = &reporter.context().analyses;
-    reporter.forEachCandidate([&](const Value& candidate) {
+    reporter.forEachCandidate(builtinUseOpcodes, [&](const Value& candidate) {
         if (!builtinUseOpcodes.contains(candidate.opcode))
             return;
         BuiltinUsePlan plan = planBuiltinUse(inputs, reporter.use(), reporter.point());

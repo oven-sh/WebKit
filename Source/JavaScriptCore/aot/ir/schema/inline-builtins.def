@@ -23,6 +23,7 @@ inline ArrayWithLength ArrayOf ; Allocates throws ; family ArrayStorageBuiltin ;
 inline ArrayFrom ; asOverload ; family ArrayBufferViewBuiltin
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
+inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
 inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
 inline ObjectHasOwn ObjectPropertyIsEnumerable OwnPropertyDescriptorFields ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
 inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ; asOverload ; family ObjectBuiltin
@@ -44,6 +45,7 @@ inline DataViewGet(TypedArrayType) ; Allocates reads(TypedArrayStorage, TypedArr
 inline DataViewSet(TypedArrayType) ; reads(TypedArrayStorage) writes(TypedArrayElements) throws ; family BufferBuiltin
 inline Atomics(AtomicsOperation) ; Allocates reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) throws ; family BufferBuiltin
 inline BufferAccess(AccessDirection, UInt8, NumberKind, Endianness) ; asOverload ; family BufferBuiltin
+inline BufferCopy ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family BufferBuiltin
 inline MathMinOfArray MathMaxOfArray ; reads(ArrayStorage, Elements[Array]) ; family MathBuiltin
 inline CallNumberConstructor NumberToString ParseInt ; asOverload ; family MathBuiltin
 inline NumberToStringAppend ; asOverload ; family MathBuiltin ; formOnly

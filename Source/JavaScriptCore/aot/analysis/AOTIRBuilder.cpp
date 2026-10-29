@@ -280,6 +280,16 @@ ValueID IRBuilder::addValue(Value&& value)
     return ValueID(m_function.values.size() - 1);
 }
 
+TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
+{
+    if (!narrower)
+        return { };
+    TypeID part = types.intersectionOf(narrower, type);
+    if (part == TypeTable::never || part == type || !types.at(part).isSubsetOf(types.at(type), program))
+        return { };
+    return part;
+}
+
 void IRBuilder::prepare(Value& value)
 {
     RELEASE_ASSERT(value.opcode != Opcode::Parameter);
@@ -288,7 +298,12 @@ void IRBuilder::prepare(Value& value)
     value.isTailCall = isTailCall;
     TypingMemo* memo = m_analyses ? m_analyses->typingMemo() : nullptr;
     value.type = resultTypeOf(m_context.program, m_function, value, m_types, memo);
-    if (keepsExpectedTypes(m_context.program) && !value.expected().predicted())
+    if (!keepsExpectedTypes(m_context.program))
+        return;
+    // A value modeled on another one carries over that value's expected type.
+    if (TypeID brought = value.expected().predicted())
+        value.setExpected(ExpectedType(partInside(m_context.program, m_types, brought, value.type)));
+    else
         value.setExpected(expectedTypeOf(m_context.program, m_function, value, m_types, memo));
 }
 
@@ -630,7 +645,7 @@ void IRBuilder::emitRethrow(ValueID exception)
 
 void IRBuilder::emitUnreachable()
 {
-    openTerminator();
+    openTerminator().setCutBy(context().build.passToReportForUnreachableCode());
     closeBlock();
 }
 

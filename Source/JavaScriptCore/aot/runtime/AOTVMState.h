@@ -18,6 +18,7 @@
 namespace JSC {
 
 class CallFrame;
+class JSCell;
 class JSGlobalObject;
 class Structure;
 class VM;
@@ -28,6 +29,7 @@ class CacheRegistry;
 class CallSiteCache;
 class Image;
 class Modules;
+class PagesOfVM;
 class ProgramIdentifiers;
 class RegExpLiterals;
 class RuntimeReporter;
@@ -64,12 +66,14 @@ public:
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
+    static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
+    static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall() { return OBJECT_OFFSETOF(VMState, newTargetOfSuperCall); }
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
 
-    struct LoopPollPages {
+    struct PolledInstances {
         Lock lock;
-        Vector<void*, 1> pages WTF_GUARDED_BY_LOCK(lock);
+        Vector<Instance*, 1> instances WTF_GUARDED_BY_LOCK(lock);
     };
 
     const Image* image { nullptr };
@@ -77,6 +81,8 @@ public:
     bool validatesRuntime { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
+    // It is marked as a prototype when it is created, but nothing inherits from it until the class definition ends. Only compared with.
+    JSObject* classPrototypeBeingDefined { nullptr };
     // Its Date.prototype has the members that JSON.stringify reads on a date, and keeps them. Only compared with, never read through: a realm may be gone.
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     // They run the CommonJS files of a graph in front of the jobs in which the loader of `bun run` would.
@@ -85,12 +91,18 @@ public:
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
+    // Set from when compiled code's `super(..)` enters a native constructor until that constructor requests the Structure for the new object, or returns. Only compared, never dereferenced.
+    JSCell* parentOfSuperCall { nullptr };
+    JSCell* newTargetOfSuperCall { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
+    // Of the innermost call in compiled code when the heap was last full and collected.
+    const void* returnAddressOfCallThatCollected { nullptr };
     // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
     void* stackPointerOfImport { nullptr };
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
+    std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
@@ -107,7 +119,7 @@ public:
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
     StructuresWithFastIndexing structuresWithFastIndexing;
-    LoopPollPages loopPollPages;
+    PolledInstances polledInstances;
 };
 
 static_assert(sizeof(std::unique_ptr<RuntimeTable>) == sizeof(void*));

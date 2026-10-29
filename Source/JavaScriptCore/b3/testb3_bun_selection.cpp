@@ -543,6 +543,210 @@ static void testSelectOfIncrementedValue()
     }
 }
 
+static Policy selectionPolicyFor(CPUFeatureSet features)
+{
+    Policy policy = selectionPolicy();
+    policy.targetFeatures = features;
+    return policy;
+}
+
+template<typename FloatType>
+static Vector<FloatType> numbersToCompare()
+{
+    using Bits = std::conditional_t<sizeof(FloatType) == 8, uint64_t, uint32_t>;
+    Vector<FloatType> result;
+    for (auto& operand : floatingPointOperands<FloatType>())
+        result.append(operand.value);
+    result.append(std::bit_cast<FloatType>(static_cast<Bits>(std::bit_cast<Bits>(static_cast<FloatType>(-2)) - 1)));
+    result.append(std::bit_cast<FloatType>(static_cast<Bits>(std::bit_cast<Bits>(static_cast<FloatType>(2)) - 1)));
+    result.append(-std::numeric_limits<FloatType>::quiet_NaN());
+    return result;
+}
+
+template<typename FloatType>
+static bool haveSameBits(FloatType a, FloatType b)
+{
+    return !memcmp(&a, &b, sizeof(FloatType));
+}
+
+template<typename FloatType>
+static void checkMinOrMax(bool isMax, FloatType a, FloatType b, FloatType result)
+{
+    if (a != a || b != b) {
+        CHECK(result != result);
+        CHECK(haveSameBits(result, a != a ? a : b) || haveSameBits(result, b != b ? b : a));
+        return;
+    }
+    if (a == b) {
+        CHECK(haveSameBits(result, std::signbit(a) == isMax ? b : a));
+        return;
+    }
+    CHECK(haveSameBits(result, (a < b) == isMax ? b : a));
+}
+
+template<typename FloatType>
+static void testFMinAndFMaxOfType()
+{
+    Vector<FloatType> numbers = numbersToCompare<FloatType>();
+    auto constant = [](Graph& graph, BasicBlock* block, FloatType value) -> Value* {
+        if constexpr (sizeof(FloatType) == 8)
+            return graph.number(block, value);
+        else
+            return block->appendNew<ConstFloatValue>(graph.proc, Origin(), value);
+    };
+    for (B3::Opcode opcode : { FMin, FMax }) {
+        bool isMax = opcode == FMax;
+        struct Case {
+            Policy policy;
+            bool usesPolicy;
+        };
+        const Case cases[] = { { Policy(), false }, { selectionPolicy(), true }, { selectionPolicyFor(CPUFeatureSet()), true } };
+        for (const Case& testCase : cases) {
+            bool usesPolicy = testCase.usesPolicy;
+            Procedure proc(testCase.policy);
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<FloatType, FloatType>(proc, root);
+            graph.ret(root, graph.make(root, opcode, arguments[0], arguments[1]));
+            auto code = compileProc(proc);
+            if (isX86() && usesPolicy)
+                CHECK_EQ(numberOfInsts(proc, [](Air::Inst& inst) { return inst.kind.opcode == Air::BranchDouble || inst.kind.opcode == Air::BranchFloat; }), 1u);
+            for (FloatType a : numbers) {
+                for (FloatType b : numbers)
+                    checkMinOrMax(isMax, a, b, invoke<FloatType>(*code, a, b));
+            }
+        }
+        for (FloatType known : numbers) {
+            for (bool isKnownFirst : { false, true }) {
+                Procedure proc(selectionPolicyFor(isKnownFirst ? CPUFeatureSet() : CPUFeatureSet::host()));
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                Value* argument = cCallArgumentValues<FloatType>(proc, root)[0];
+                Value* other = constant(graph, root, known);
+                graph.ret(root, isKnownFirst ? graph.make(root, opcode, other, argument) : graph.make(root, opcode, argument, other));
+                auto code = compileProc(proc);
+                bool isNegativeZero = !known && std::signbit(known);
+                if (isX86() && known == known && (isMax || !isNegativeZero))
+                    CHECK_EQ(numberOfInsts(proc, [](Air::Inst& inst) { return inst.kind.opcode == Air::BranchDouble || inst.kind.opcode == Air::BranchFloat; }), 0u);
+                for (FloatType a : numbers)
+                    checkMinOrMax(isMax, isKnownFirst ? known : a, isKnownFirst ? a : known, invoke<FloatType>(*code, a));
+            }
+        }
+    }
+}
+
+static void testFMinAndFMax()
+{
+    testFMinAndFMaxOfType<double>();
+    testFMinAndFMaxOfType<float>();
+}
+
+static void testSelectAsMinOrMax()
+{
+    struct Case {
+        B3::Opcode comparison;
+        bool comparesInSelectOrder;
+        bool comparisonHasSecondUse;
+        bool isOneInstruction;
+    };
+    const Case cases[] = {
+        { LessThan, true, false, true },
+        { LessThan, false, false, true },
+        { GreaterThan, true, false, true },
+        { GreaterThan, false, false, true },
+        { GreaterThan, true, true, true },
+        { LessEqual, true, false, false },
+        { GreaterEqual, false, false, false },
+        { Equal, true, false, false },
+    };
+    auto build = [](Graph& graph, const Case& testCase) {
+        BasicBlock* root = graph.proc.addBlock();
+        auto arguments = cCallArgumentValues<double, double>(graph.proc, root);
+        Value* a = arguments[0];
+        Value* b = arguments[1];
+        Value* condition = testCase.comparesInSelectOrder ? graph.make(root, testCase.comparison, a, b) : graph.make(root, testCase.comparison, b, a);
+        Value* chosen = graph.select(root, condition, a, b);
+        graph.ret(root, testCase.comparisonHasSecondUse ? graph.make(root, Add, chosen, graph.make(root, IToD, condition)) : chosen);
+    };
+    auto compare = [](B3::Opcode comparison, double a, double b) {
+        switch (comparison) {
+        case LessThan:
+            return a < b;
+        case GreaterThan:
+            return a > b;
+        case LessEqual:
+            return a <= b;
+        case GreaterEqual:
+            return a >= b;
+        default:
+            return a == b;
+        }
+    };
+    Vector<double> numbers = numbersToCompare<double>();
+    for (const Case& testCase : cases) {
+        for (bool usesPolicy : { false, true }) {
+            Procedure lowered(usesPolicy ? selectionPolicy() : Policy());
+            Graph loweredGraph { lowered };
+            build(loweredGraph, testCase);
+            lowerToAirForTesting(lowered);
+            bool usesMinOrMax = isX86() && usesPolicy && testCase.isOneInstruction;
+            CHECK_EQ(numberOfInsts(lowered, [](Air::Inst& inst) { return inst.kind.opcode == Air::MinOrSecondDouble || inst.kind.opcode == Air::MaxOrSecondDouble; }), usesMinOrMax ? 1u : 0u);
+            CHECK_EQ(numberOfInsts(lowered, Air::MoveDoubleConditionallyDouble), usesMinOrMax ? 0u : 1u);
+
+            Procedure proc(usesPolicy ? selectionPolicyFor(testCase.comparesInSelectOrder ? CPUFeatureSet() : CPUFeatureSet::host()) : Policy());
+            Graph graph { proc };
+            build(graph, testCase);
+            auto code = compileProc(proc);
+            for (double a : numbers) {
+                for (double b : numbers) {
+                    bool isTrue = testCase.comparesInSelectOrder ? compare(testCase.comparison, a, b) : compare(testCase.comparison, b, a);
+                    double expected = isTrue ? a : b;
+                    if (testCase.comparisonHasSecondUse)
+                        expected += isTrue;
+                    CHECK(haveSameBits(invoke<double>(*code, a, b), expected));
+                }
+            }
+        }
+    }
+}
+
+static void testBranchOnExtendedValueTestsNarrowValue()
+{
+    for (B3::Opcode extension : { ZExt32, SExt32 }) {
+        for (bool hasSecondUser : { false, true }) {
+            for (bool usesPolicy : { false, true }) {
+                auto build = [&](Graph& graph) {
+                    Procedure& proc = graph.proc;
+                    BasicBlock* root = proc.addBlock();
+                    BasicBlock* taken = proc.addBlock();
+                    BasicBlock* notTaken = proc.addBlock();
+                    Value* extended = graph.make(root, extension, graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]));
+                    graph.branch(root, extended, taken, notTaken);
+                    graph.ret(taken, hasSecondUser ? extended : graph.int64(taken, 1));
+                    graph.ret(notTaken, graph.int64(notTaken, 2));
+                };
+                Procedure lowered(usesPolicy ? selectionPolicy() : Policy());
+                Graph loweredGraph { lowered };
+                build(loweredGraph);
+                lowerToAirForTesting(lowered);
+                bool testsNarrowValue = usesPolicy && !hasSecondUser;
+                CHECK_EQ(numberOfInsts(lowered, Air::BranchTest32), testsNarrowValue ? 1u : 0u);
+                CHECK_EQ(numberOfInsts(lowered, Air::BranchTest64), testsNarrowValue ? 0u : 1u);
+
+                Procedure proc(usesPolicy ? selectionPolicy() : Policy());
+                Graph graph { proc };
+                build(graph);
+                auto code = compileProc(proc);
+                int64_t negative = extension == ZExt32 ? 0x80000000ll : static_cast<int64_t>(std::numeric_limits<int32_t>::min());
+                CHECK_EQ(invoke<int64_t>(*code, 0), 2);
+                CHECK_EQ(invoke<int64_t>(*code, 1), 1);
+                CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(0x80000000ll)), hasSecondUser ? negative : 1);
+                CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(0x700000000ll)), 2);
+            }
+        }
+    }
+}
+
 static void buildBranchOnLoad16(Graph& graph)
 {
     Procedure& proc = graph.proc;
@@ -1206,6 +1410,9 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testMul64ByImmediate());
     RUN(testStoreOfIncrementedAddressAtAddress());
     RUN(testSelectOfIncrementedValue());
+    RUN(testFMinAndFMax());
+    RUN(testSelectAsMinOrMax());
+    RUN(testBranchOnExtendedValueTestsNarrowValue());
     RUN(testBranchOnLoad16());
     RUN(testLoadsFarFromTheirUsers());
     RUN(testPinnedRegisterIsNamedDirectly());

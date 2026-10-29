@@ -16,6 +16,7 @@
 #include "AOTProgramTables.h"
 #include "AOTSort.h"
 #include "AOTStubKey.h"
+#include "AOTStubsPolls.h"
 #include "AOTThreads.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
@@ -180,7 +181,7 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code, size
     const SiteDescription& sites = code.sites;
     std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
     for (const Relocation& relocation : code.body.relocations) {
-        if (relocation.space != SymbolSpace::Stub || code.body.stubKeys[relocation.symbol].family() != StubFamily::PollAtPrologue)
+        if (relocation.space != SymbolSpace::Stub || !isPollAtPrologue(code.body.stubKeys[relocation.symbol]))
             continue;
         RELEASE_ASSERT(code.frame.prologueChecks.containsIf([&](const PrologueCheck& check) {
             return check.callOffset == relocation.offset;
@@ -405,12 +406,12 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     return findCallSite(&*head, returnOffset);
 }
 
-bool Image::callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex site) const
+std::optional<CalleeOfSite> Image::calleeOfSiteAt(uint32_t function, CallSiteIndex site) const
 {
     const ImageFunction& record = this->function(function);
-    if (!record.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) [[likely]]
-        return false;
-    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).callsOwnFunctionObjectAt(site.bits());
+    if (!record.has(ImageFunctionFlag::HasCalleesOfSites)) [[likely]]
+        return std::nullopt;
+    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).calleeOfSiteAt(site.bits());
 }
 
 std::optional<FunctionID> Image::constructedCalleeAt(uint32_t function, CallSiteIndex site) const

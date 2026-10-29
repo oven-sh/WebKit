@@ -296,6 +296,49 @@ bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
     return !ValueSets::isComplement(arriving) && !m_inputs.sets().meet(maker().intersect(arriving, universe.knownObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
+// Other code may bring objects that pass. What the program brings is the better guess at what arrives.
+// Only objects with a layout of the program count: what a built-in makes for a class below it is listed without its layout.
+bool ValueFlowPositions::turnsAwayEverySeenObject(ValueSetID seen, const Type& type)
+{
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    if (ValueSets::isComplement(seen) || !type.isJavaScriptValue() || !type.layouts || type.anyObject || type.anyFunction || !type.classes.isEmpty())
+        return false;
+    ValueSetID objects = maker().intersect(seen, universe.placeholders().objectsWithLayoutOfProgram);
+    return !m_inputs.sets().isEmpty(objects) && !m_inputs.sets().meet(objects, universe.maskOf(maker(), m_inputs.program, type));
+}
+
+// The contents of many instances are merged one instance at a time. A list of strings over the limit would be rewritten at every step, one string longer.
+bool ValueFlowPositions::keepContentStringsWithinLimit(ClassParts& parts)
+{
+    bool hasChanged = false;
+    for (ClassPart& part : parts) {
+        for (TypeID& contents : part.writtenContents) {
+            TypeID within = withStringsWithinLimit(contents);
+            hasChanged |= within != contents;
+            contents = within;
+        }
+    }
+    return hasChanged;
+}
+
+TypeID ValueFlowPositions::withStringsWithinLimit(TypeID id)
+{
+    if (!id)
+        return id;
+    const Type& type = m_types.at(id);
+    bool widensStrings = type.stringLiterals.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType);
+    if (!widensStrings && type.classes.isEmpty())
+        return id;
+    Type within = type;
+    bool hasChanged = keepContentStringsWithinLimit(within.classes);
+    if (widensStrings)
+        within.primitives |= Primitive::String;
+    if (!widensStrings && !hasChanged)
+        return id;
+    within.canonicalize();
+    return m_types.intern(WTF::move(within));
+}
+
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);
@@ -321,6 +364,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
     if (listed && *listed == part && (!isRegExp || type.regExpLiteralSet == instance.regExpLiteralSet))
         return false;
     Type united = type.unionWith(instance, m_types);
+    keepContentStringsWithinLimit(united.classes);
     bool saysSomethingElse = united.classes != type.classes || united.regExpLiteralSet != type.regExpLiteralSet;
     type = WTF::move(united);
     return saysSomethingElse;
@@ -815,6 +859,10 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
             followed = maker().unite(followed, m_inputs.solver().closuresFollowedToConstruction(calleeOfConstruction->node));
         if (m_inputs.sets().size(followed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             listed = maker().unite(listed, maker().intersect(arriving, followed));
+        // A class that has escaped and was followed to the construction is one of the classes that the construction enters.
+        AOT_THRESHOLD(size_t, maxClassesFollowedToConstruction, 4);
+        if (ValueSetID classes = maker().intersect(arriving, universe.constructorsWithLayouts()); m_inputs.sets().size(classes) <= maxClassesFollowedToConstruction)
+            listed = maker().unite(listed, classes);
     }
 
     Vector<FunctionID> functions;
@@ -900,13 +948,11 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
             return loss;
         if (std::optional<ValueFlowUnknownSource> source = m_inputs.solver().unknownSourceOf(node))
             loss.cause = unprovenCauseOf(*source);
-        if (m_inputs.solver().input().remembersWhoLoggedEachEdge) {
-            std::call_once(m_counts.hasFoundBirths, [&] {
-                m_counts.births.emplace(m_inputs);
-            });
-            loss.witness = m_counts.births->witnessOf(node);
-            loss.hasOtherRoots = m_counts.births->hasSeveralRoots(node);
-            if (std::optional<ValueFlowUnknownSource> source = m_counts.births->sourceOf(node))
+        if (const ValueFlowBirthsOfUnknownObject* births = m_inputs.birthsOfUnknownObject) {
+            loss.witness = births->witnessOf(node);
+            loss.hasOtherRoots = births->hasSeveralRoots(node);
+            loss.otherOrigins = births->otherOriginsOf(node);
+            if (std::optional<ValueFlowUnknownSource> source = births->sourceOf(node))
                 loss.cause = unprovenCauseOf(*source);
         }
         return loss;
@@ -915,8 +961,14 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
         return { .cause = UnprovenCause::Untracked };
     case ValueFlowProof::OutsideFamily:
         return { .cause = result.stranger && isDataFromOutside(result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger };
-    case ValueFlowProof::UndecidedLayout:
+    case ValueFlowProof::UndecidedLayout: {
+        // Code outside the program constructs with a class that it holds.
+        LayoutID layout = result.stranger && m_inputs.universe().isObject(result.stranger) ? m_inputs.universe().layoutOf(result.stranger) : LayoutID();
+        FunctionID constructor = layout ? m_inputs.program.at(layout).constructor : FunctionID();
+        if (Witness origin = constructor && m_inputs.birthsOfUnknownObject ? m_inputs.birthsOfUnknownObject->escapeOriginOf(m_inputs.universe().closureOf(constructor)) : noWitness; hasFunction(origin))
+            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(m_inputs.universe().closureOf(constructor)), .otherOrigins = m_inputs.birthsOfUnknownObject->otherEscapeOriginsOf(m_inputs.universe().closureOf(constructor)) };
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

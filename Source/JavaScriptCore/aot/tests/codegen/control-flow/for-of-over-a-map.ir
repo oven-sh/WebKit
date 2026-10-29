@@ -11,6 +11,12 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
+# RUN(FAST): lower-to-b3 optimized loops f1
+# REQUIRES(FAST): unsanitized-code
+# RUN(X64LOOP): lower-to-air loops f1
+# REQUIRES(X64LOOP): x86_64 unsanitized-code not-windows faulting-loop-polls
+# RUN(ARM64LOOP): lower-to-air loops f1
+# REQUIRES(ARM64LOOP): arm64 unsanitized-code not-windows
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
 # RUN(ARM64): lower-to-air size f1
@@ -121,7 +127,20 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK-NOT: :HasArrayStorage)
 # CHECK-NOT: :GetArrayElement)
 # CHECK-LABEL: end of function
-# The one patchpoint on the likely paths is the poll.
+# The patchpoints on the likely paths are the polls of the two copies of the loop.
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 74, patchpoints: 1, rare instructions: 11
+# The body touches no collection, so the loop has a copy for a table that stays as it is: the table, its kind, its size and the place of its entries are read ahead of that copy.
+# A turn of it polls, compares the position with the size and loads the entry. An entry that was deleted, a table of another kind and the end of the walk leave it.
+# FAST-LABEL: steps by 1
+# FAST-NOT: Reads:CollectionStorage
+# FAST: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
+# FAST-NOT: Reads:CollectionStorage
+# FAST: Load(b@{{*}}Reads:CollectionEntries, {{*}}:MapNext)
+# FAST-NOT: Reads:CollectionStorage
+# FAST: Load(b@{{*}}Reads:CollectionEntries, {{*}}:MapNext)
+# FAST-NOT: Reads:Collection
+# FAST-LABEL: end of loop
+# X64LOOP: loop #{{*}}, instructions: 22, patchpoints: 1
+# ARM64LOOP: loop #{{*}}, instructions: 23, patchpoints: 1
+# X64: instructions: 106, patchpoints: 2, rare instructions: 14
 # ARM64: instructions: 85, patchpoints: 1, rare instructions: 13

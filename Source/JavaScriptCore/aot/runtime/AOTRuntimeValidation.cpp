@@ -48,9 +48,11 @@
 
 namespace JSC { namespace AOT {
 
+std::atomic<bool> imageChecksProofs;
+
 void willReadLegacyRegExpStatics(VM& vm)
 {
-    if (validatesRuntime(vm) && vm.aotState().image->programTables().flags & ProgramTables::neverReadsLegacyRegExpStatics)
+    if (checksClaimsAboutObjects(vm) && vm.aotState().image && vm.aotState().image->programTables().flags & ProgramTables::neverReadsLegacyRegExpStatics)
         crashOnValidationFailure(vm, { ValidationFailureKind::LegacyRegExpStaticRead, { }, { }, JSValue() });
 }
 
@@ -292,7 +294,23 @@ std::optional<MarkOfCallWithoutSite> MarkOfCallWithoutSite::read(const void* ret
     return MarkOfCallWithoutSite { Typed::ValueID(*value), static_cast<int32_t>(*callee) };
 }
 
-void crashOnValidationFailure(VM&, const ValidationFailure& failure)
+// Checks made where the runtime changes or enumerates an object, and at the end of an operation, run on the program's thread.
+static bool isFoundOnThreadOfProgram(ValidationFailureKind kind)
+{
+    switch (kind) {
+    case ValidationFailureKind::ImpossibleMutation:
+    case ValidationFailureKind::KeysListed:
+    case ValidationFailureKind::RemovedFieldNamed:
+    case ValidationFailureKind::OperationEnteredVM:
+    case ValidationFailureKind::OperationCollected:
+    case ValidationFailureKind::LegacyRegExpStaticRead:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void crashOnValidationFailure(VM& vm, const ValidationFailure& failure)
 {
     // Never released: another thread that fails waits here until this one has crashed.
     static Lock lock;
@@ -307,11 +325,17 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
         dumpChangedRegister(WTF::dataFile(), failure.found);
     else if (failure.kind == ValidationFailureKind::CallCollected || failure.kind == ValidationFailureKind::CallThrew)
         dumpCalledCode(WTF::dataFile(), failure.found);
+    else if (failure.kind == ValidationFailureKind::UnreachableValue && failure.found.isInt32() && static_cast<uint32_t>(failure.found.asInt32()) < numberOfEnumerators<PassID>)
+        dataLog("cut by ", nameOf(static_cast<PassID>(failure.found.asInt32())));
     else
         dumpClassOf(WTF::dataFile(), failure.found);
     dataLogLn();
     if (ASCIILiteral word = disableOf(failure.kind); !word.isEmpty())
         dataLogLn("AOT: the check belongs to --aot-disable=", word);
+    if (isFoundOnThreadOfProgram(failure.kind)) {
+        for (const String& place : placesOfInnermostCompiledFrames(vm))
+            dataLogLn("AOT: at ", place);
+    }
     writeCheckedNativeCalls();
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }
@@ -443,27 +467,23 @@ CollectionVersions collectionVersionsOf(VM& vm)
     return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
 }
 
-NEVER_INLINE void OperationValidationScope::open(Entry entry)
+NEVER_INLINE void OperationValidationScope::open(Record& record, VM& vm, Entry entry)
 {
     OperationPermissions permissions = permissionsOf(entry);
-    m_entry = entry;
-    m_mayNotEnterVM = !permissions.mayEnterVM;
-    m_mayNotCollect = !permissions.mayCollect;
-    m_collectionVersions = collectionVersionsOf(m_vm);
-    m_didEnterVMBefore = std::exchange(m_vm.didEnterVM, false);
-    m_isOpen = true;
+    new (NotNull, &record) Record { vm, collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) };
 }
 
-NEVER_INLINE void OperationValidationScope::close()
+NEVER_INLINE void OperationValidationScope::close(Record& record)
 {
-    bool didEnterVM = m_mayNotEnterVM && m_vm.didEnterVM;
+    VM& vm = record.vm;
+    bool didEnterVM = record.mayNotEnterVM && vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
-    bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersionsOf(m_vm) != m_collectionVersions;
+    bool didCollect = record.mayNotCollect && !vm.exceptionForInspection() && collectionVersionsOf(vm) != record.collectionVersions;
     if (didEnterVM || didCollect) {
-        dataLogLn("AOT: ", nameOf(m_entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
-        crashOnValidationFailure(m_vm, { didEnterVM ? ValidationFailureKind::OperationEnteredVM : ValidationFailureKind::OperationCollected, { }, { }, { } });
+        dataLogLn("AOT: ", nameOf(record.entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
+        crashOnValidationFailure(vm, { didEnterVM ? ValidationFailureKind::OperationEnteredVM : ValidationFailureKind::OperationCollected, { }, { }, { } });
     }
-    m_vm.didEnterVM |= m_didEnterVMBefore;
+    vm.didEnterVM |= record.didEnterVMBefore;
 }
 
 static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* cell)

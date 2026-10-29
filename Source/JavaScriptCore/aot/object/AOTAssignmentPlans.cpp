@@ -39,6 +39,7 @@ ExcludedNameList::ExcludedNameList(Vector<UniquedStringImpl*>&& names, uint32_t 
 AssignmentPlanCache::AssignmentPlanCache(State& state)
     : m_state(state)
     , m_chainDependentOwner(state.chainDependents->addOwner(*this))
+    , m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "assignment plans"_s, *this);
     if (Options::aotCountsPath())
@@ -103,7 +104,7 @@ bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
 NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* target, JSObject* extraProperties, const AssignmentSource& source, uint32_t hash)
 {
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     unsigned setIndex = hash % numberOfSets;
     Set& set = (*m_sets)[setIndex];
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -297,7 +298,7 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
 void AssignmentPlanCache::growMappedCopies()
 {
     Vector<std::unique_ptr<MappedCopy>> before = std::exchange(m_mappedCopies, { });
-    zeroSpan(std::span { m_state.instance.allocation.copiesWithoutFrame });
+    zeroSpan(m_state.instance.copiesWithoutFrame());
     size_t size = before.isEmpty() ? minNumberOfPlacesForMappedCopies : before.size() * 2;
     m_mappedCopies.grow(size);
     m_shiftForMappedCopies = 64 - WTF::fastLog2(static_cast<unsigned>(size));
@@ -580,6 +581,16 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .absentBits = traits.absentBits,
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
+        if (const RuntimeType& type = layouts.typeOf(*field); type.primitiveSet().contains(PrimitiveSet::Integer)) {
+            auto range = type.integerRange();
+            int64_t least = range ? std::max<int64_t>(range->first, INT32_MIN) : INT32_MIN;
+            int64_t greatest = range ? std::min<int64_t>(range->second, INT32_MAX) : INT32_MAX;
+            if (least <= greatest) {
+                store.leastInt32 = static_cast<int32_t>(least);
+                store.greatestInt32 = static_cast<int32_t>(greatest);
+                store.writesInt32AsItIs = holdsIntegersBetween(field->slot.representation(), least, greatest);
+            }
+        }
         store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
             && !(store.leavesUndefinedAndNullToOtherWay && property.field->slotHoldsUndefinedAndNull);
         plan.mayStoreCells |= traits.holdsCell;

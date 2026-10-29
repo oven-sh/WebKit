@@ -14,6 +14,7 @@
 #include "ReservedRangeHeap.h"
 #include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "WeakInlines.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -35,6 +36,7 @@
 #endif
 #if OS(UNIX)
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace JSC {
@@ -71,8 +73,6 @@ static constexpr unsigned barrenCollectionsUntilError = 4;
 // While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
-// Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
-static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
 static_assert(smallestUsableSize == smallestCellRangeSize);
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
@@ -184,7 +184,9 @@ static void makeEmptyExtensionReadable(uintptr_t start)
 #if OS(UNIX) && !PLATFORM(PLAYSTATION)
     OSAllocator::protect(page, pageSize(), true, false);
 #endif
+#if !OS(LINUX)
     OSAllocator::commit(page, pageSize(), false, false);
+#endif
 }
 #endif
 
@@ -199,16 +201,25 @@ static uintptr_t endOfImageBelow4GB()
         uintptr_t& end;
     } bounds { start, end };
     dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) {
-        auto& bounds = *static_cast<Bounds*>(data);
+        // The executable is the object that contains this code. Its position in the iteration order depends on the C library.
+        static constexpr uint8_t byteInExecutable { };
+        bool isExecutable = false;
+        uintptr_t start = std::numeric_limits<uintptr_t>::max();
+        uintptr_t end = 0;
         for (unsigned index = 0; index < info->dlpi_phnum; ++index) {
             const auto& header = info->dlpi_phdr[index];
             if (header.p_type != PT_LOAD)
                 continue;
             uintptr_t address = info->dlpi_addr + header.p_vaddr;
-            bounds.start = std::min(bounds.start, address);
-            bounds.end = std::max<uintptr_t>(bounds.end, address + header.p_memsz);
+            isExecutable |= std::bit_cast<uintptr_t>(&byteInExecutable) - address < header.p_memsz;
+            start = std::min(start, address);
+            end = std::max<uintptr_t>(end, address + header.p_memsz);
         }
-        // The executable comes first.
+        if (!isExecutable)
+            return 0;
+        auto& bounds = *static_cast<Bounds*>(data);
+        bounds.start = start;
+        bounds.end = end;
         return 1;
     }, &bounds);
 #endif
@@ -258,6 +269,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         .usage = OSAllocator::FastMallocPages,
         .placement = ReservedRangeHeap::Placement::RandomWindow,
         .initialAccess = ReservedRangeHeap::InitialAccess::None,
+        .firstSegmentSize = GB,
     };
     ReservedRangeHeap* range = nullptr;
     bool reservesAllAboveBase = !distanceFromBase || !hasAddressSpaceLimit();
@@ -546,25 +558,30 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    return m_hasReleasedReserve || m_exhaustedHeaps.contains(ExhaustedHeap::Structures);
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables });
 }
 
-bool MarkedBlockCage::tryKeepReleasedReservesAgain()
+bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
 {
     if (!hasHeapThatReleasedReserve())
         return false;
     if (m_exhaustedHeaps.contains(ExhaustedHeap::Structures)) {
-        if (!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain())
+        if (!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Structures);
     }
-    if (m_hasReleasedReserve && !tryKeepOwnReleasedReserveAgain())
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Tables)) {
+        if (!vm.symbolImplToSymbolMap.tryGrowEarly())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
+    }
+    if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
     m_exhaustedHeaps = { };
     return true;
 }
 
-bool MarkedBlockCage::tryKeepOwnReleasedReserveAgain()
+bool MarkedBlockCage::tryRestoreOwnReserve()
 {
     if (!m_hasReleasedReserve || !m_numberOfChunksReleased)
         return false;
@@ -592,7 +609,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (!tryKeepReleasedReservesAgain())
+    if (!tryRestoreReleasedReserves(vm))
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -605,12 +622,11 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
         return false;
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
-    clearDeadStack(vm);
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (hasHeapThatReleasedReserve()) {
-        if (!tryKeepReleasedReservesAgain())
+        if (!tryRestoreReleasedReserves(vm))
             return false;
     } else {
         // How much the program can allocate now says whether this collection was barren too.
@@ -619,21 +635,6 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     }
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
-}
-
-void* MarkedBlockCage::takeLowestAddressOfDeadStack(VM& vm)
-{
-    uintptr_t stackPointer = std::bit_cast<uintptr_t>(currentStackPointer());
-    uintptr_t lowest = stackPointer;
-    if (void* stackPointerAtError = std::exchange(m_stackPointerAtError, nullptr))
-        lowest = std::min(lowest, std::bit_cast<uintptr_t>(stackPointerAtError));
-    // A frame that has no stack check of its own may end below the soft limit.
-    return std::bit_cast<void*>(std::min(stackPointer, std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.stackLimit()))));
-}
-
-void MarkedBlockCage::clearDeadStack(VM& vm)
-{
-    sanitizeStackForVMFrom(vm, takeLowestAddressOfDeadStack(vm));
 }
 
 bool MarkedBlockCage::releaseLastReserve()
@@ -751,14 +752,13 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 {
     m_numberOfBarrenCollections = 0;
     m_hasCollectedAtPoll = false;
-    m_stackPointerAtError = currentStackPointer();
 }
 
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!s_isGrowable || !m_exhaustedHeaps.contains(ExhaustedHeap::Cells))
+    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Tables) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
@@ -797,11 +797,18 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
-    // Under a limit on address space nothing may be left to make a String of.
-    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable)
+#if OS(LINUX)
+    // Under a limit on address space nothing may be left to make a String of, or for the host to write a crash report with.
+    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable) {
+        // The threads of a collection get here together. One of them says so and ends the process.
+        static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
+        while (isEnding.test_and_set())
+            pause();
         dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
-    else
-        dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
+        _exit(EXIT_FAILURE);
+    }
+#endif
+    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }
@@ -810,6 +817,11 @@ void logExhaustedAddressSpace()
 {
     if (s_isGrowable)
         MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Cells);
+}
+
+void MarkedBlockCage::setCommitsOnDemand(bool commitsOnDemand)
+{
+    ReservedRangeHeap::setCommitsOnDemand(commitsOnDemand);
 }
 
 void MarkedBlockCage::setExhaustionHandler(ExhaustionHandler handler)
@@ -824,6 +836,19 @@ void MarkedBlockCage::willUseLastReserve(VM& vm)
     // Loops of the run time that make many cells look for the error that is owed, not for a termination. A thread that is to end leaves them at once.
     if (vm.hasPendingTermination())
         vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddSymbol(VM& vm)
+{
+    if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowEarly()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    // A collection takes dead Symbols out of the table. The caller is about to allocate a cell, so it collects here if it may collect at all.
+    if (vm.heap.tryCollectForExhaustedCage(nullptr, nullptr) && vm.symbolImplToSymbolMap.tryGrowEarly())
+        return;
+    vm.heap.cage().addExhaustedHeap(ExhaustedHeap::Tables);
+    vm.traps().setNeedsOutOfMemoryError(true);
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

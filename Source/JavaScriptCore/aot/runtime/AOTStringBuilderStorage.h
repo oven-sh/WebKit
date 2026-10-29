@@ -145,7 +145,7 @@ public:
     JSString* toString(JSGlobalObject*, Instance&, StringUse);
     JSString* finish(JSGlobalObject*, Instance&, StringUse);
     std::optional<StringKeyCache::Lookup> tryFinishWithCachedKey(Instance&, JSString*& key, unsigned& hash);
-    JSString* finishWithNewKey(Instance&, unsigned hash);
+    JSString* finishWithNewKey(JSGlobalObject*, Instance&, unsigned hash);
     static JSString* concatenate(JSGlobalObject*, Instance&, std::span<const EncodedJSValue> primitives, StringUse);
     static JSString* tryFindKeyByParts(Instance&, std::span<const EncodedJSValue> primitives);
 

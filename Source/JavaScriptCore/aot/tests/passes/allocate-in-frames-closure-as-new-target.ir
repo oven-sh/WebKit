@@ -1,0 +1,42 @@
+# A constructing call allocates `this` for a plain function, and reads new.target.prototype to do it. The read gives the function cell properties, and the new prototype object keeps the cell.
+# So a closure passed as new.target is on the heap, even where the callee only compares new.target. So is one that reaches the call through a parameter
+# FORM: Prepared
+# RUN: frame-plan
+# RUN(BORROWED): borrowed-parameters
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Derived" constructor=f2 flags=[HasHeritage]
+
+function f0 name="passesFreshClosure" parameters=[{type=f1}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = SuperConstruct v0, v1 layout=L0 callees=[f1]
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Heap
+
+function f1 name="Base" flags=[HasThis, HasNewTarget] thisType={type=anything} results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    Return
+}
+# BORROWED-LABEL: f1: 0 borrowed, 1 borrowed
+
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=f1}] results=[{type=anything}] {
+  b0(v0: anything, v1: f1):
+    v2 = SuperConstruct v1, v0 layout=L0 callees=[f1]
+    Return v2
+}
+# BORROWED-LABEL: f2: 0 leaks
+
+function f3 name="passesFreshClosureOn" parameters=[{type=f1}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = CallDirect v1, v0 function=f2
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v1: Heap
+
+function f4 name="target" results=[{type=undefined}] {
+    Return
+}

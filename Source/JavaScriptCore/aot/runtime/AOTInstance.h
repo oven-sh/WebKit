@@ -73,7 +73,7 @@ struct JSONLevelWords {
     ZeroedStorage<StackManager::Mirror> limit;
 };
 
-// A stub that is about to jump into the code of a function object compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame from the time on that such calls record their callees.
+// A stub that makes a tail call by value compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame once the run time has seen a function object get a name.
 struct CallByValueWords {
     ZeroedStorage<StackManager::Mirror> limit;
     // FunctionTables::isRenamedAtRunTime.
@@ -198,7 +198,8 @@ struct MappedCopy;
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    static constexpr unsigned numberOfCopiesWithoutFrame = 64;
+    // A large program copies between several hundred pairs of shapes and key orders. Two pairs at one place evict each other, and an evicted copy takes a frame.
+    static constexpr unsigned numberOfCopiesWithoutFrame = 2048;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
         return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + 2 * (targetWords >> 32) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
@@ -219,8 +220,8 @@ struct AllocationWords {
     uint64_t compactTableHeader;
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
 };
+static_assert(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*) <= InstanceLayout::bytesReservedForCopiesWithoutFrame);
 
 // Most objects that have extra properties have one or two.
 static constexpr unsigned extraPropertiesInlineCapacity = 2;
@@ -318,7 +319,8 @@ struct Instance : InstanceHeader {
 #define AOT_ADD_SIZE_OF_INSTANCE_PART(member, Type) + sizeof(Type)
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_DECLARE_INSTANCE_PART, AOT_SKIP_INSTANCE_PART)
     State* state;
-    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    uintptr_t pollIsDue;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
     void** runtimeTable;
     SlotHandlers handlers;
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
@@ -327,6 +329,8 @@ struct Instance : InstanceHeader {
 #else
     FOR_EACH_AOT_INSTANCE_PART(AOT_DECLARE_INSTANCE_PART)
     State* state;
+    // Not zero while the polls of the VM are switched on. A stub reads it after an operation that allocates.
+    uintptr_t pollIsDue;
 #endif
 #undef AOT_DECLARE_INSTANCE_PART
 
@@ -391,6 +395,7 @@ struct Instance : InstanceHeader {
 
     std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
     static constexpr ptrdiff_t offsetOfBoxedCalls();
+    std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> copiesWithoutFrame() { return std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> { reinterpret_cast<const MappedCopy**>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCopiesWithoutFrame), AllocationWords::numberOfCopiesWithoutFrame }; }
     std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
 
     template<typename Visitor>
@@ -464,7 +469,8 @@ static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 // From now on every stub that is about to jump into the code of a function object polls first.
-void makeCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
+void makeTailCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
+void setPollsEnabled(Instance&, bool);
 
 } } // namespace JSC::AOT
 

@@ -61,7 +61,7 @@ static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSplice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncUnShift);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);

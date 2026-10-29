@@ -308,6 +308,8 @@ void ObjectInterpreter::executeCast(ValueID id)
         return executeOther(id);
 
     VariantCastOutcomes outcomes = evaluateCastOnVariants(m_sinking.shapeContext(object), *stateOf(object), function().at(id));
+    if (function().at(id).opcode == Opcode::AssumeType)
+        narrowToProvenType(object, function().at(id).provenType());
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {
@@ -1183,7 +1185,16 @@ bool ObjectInterpreter::fitsType(VirtualObjectID object, TypeID type) const
 {
     const ObjectState* state = stateOf(object);
     RELEASE_ASSERT(state);
-    return isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type);
+    if (isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type))
+        return true;
+    // What was assumed about a result that may be absent holds, without null and undefined, for one that is present.
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    bool isThere = std::ranges::all_of(state->variants, [&](const ObjectVariant& variant) {
+        return family.at(variant.shape).kind == VirtualShapeKind::Fields;
+    });
+    return isThere && state->assumedTypes.containsIf([&](TypeID assumedType) {
+        return program().at(assumedType).withoutNullish().isSubsetOf(program().at(type), program());
+    });
 }
 
 bool ObjectInterpreter::fitsTypeWithoutCasts(VirtualObjectID object, TypeID type) const
@@ -1316,7 +1327,7 @@ void ObjectInterpreter::executeStore(ValueID id)
     }
     TypeID typeProvenByFlow;
     if (!canStore(object, *access, *field, stored)) {
-        if (opcode != Opcode::PropSet || !canStoreUnprovenValue(object, *access, *field))
+        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field))
             return executeAccessOnCell(id, object);
         if (!objectOf(stored))
             typeProvenByFlow = typeOfFieldThatStaysInSlot(m_sinking, object, *stateOf(object), *field);
@@ -1593,10 +1604,45 @@ static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDesc
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }
 
+// A list of substrings has no holes, so an element is present exactly when its index is below the length.
+// The test becomes that comparison. Both edges of its branch stay live and the list stays virtual on both.
+bool ObjectInterpreter::executePresenceTestOnDenseList(ValueID id)
+{
+    const Value& test = function().at(id);
+    if (test.opcode != Opcode::IsElementPresent)
+        return false;
+    VirtualObjectID list = objectOf(test.operand(0));
+    if (!list || !stateOf(list)->isVirtual() || stateOf(list)->variants.size() != 1)
+        return false;
+
+    const VirtualFamily& family = m_sinking.familyOf(list);
+    const VirtualShape& shape = singleShapeOf(list);
+    if (shape.kind != VirtualShapeKind::Fields)
+        return false;
+    const VirtualObjectDescription& description = family.descriptionOf(shape);
+    if (description.kind != VirtualObjectKind::BuiltinPrefix || !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
+        return false;
+
+    std::optional<int64_t> index = integerConstantThroughCasts(program(), function(), test.positionOperand());
+    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
+    if (!index || *index < 0 || !length || !hasStored(shape, *length))
+        return false;
+
+    m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
+    if (isRewriting()) {
+        IRBuilder& builder = cursor().builder();
+        ValueID position = builder.appendInteger(*index);
+        replaceRead(id, builder.append(Opcode::Less, { position, values().find(list)->field(*length) }));
+    }
+    return true;
+}
+
 void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
+    if (executePresenceTestOnDenseList(id))
+        return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);
     if (!entry) {
@@ -1707,17 +1753,46 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
     if (numberOfLiveTargets < 2)
         return;
 
+    auto holdsItsReferrer = [&](const ObjectEntry& entry) {
+        return std::ranges::any_of(entry.state.heldObjects, [&](const HeldObject& held) {
+            return m_state.canReach(held.object, entry.object);
+        });
+    };
     Vector<VirtualObjectID, 4> objects;
     for (const ObjectEntry& entry : m_state.objects) {
-        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltBeforeBranches)
+        if (entry.state.isCell())
+            continue;
+        const Candidate& candidate = m_sinking.at(entry.object);
+        if (candidate.isBuiltBeforeBranches || (candidate.isBuiltBeforeBranchesOnceCyclic && holdsItsReferrer(entry)))
             objects.append(entry.object);
     }
     for (VirtualObjectID object : objects)
         build(object, BuildCause { .limit = LimitID::MaxMaterializations });
 }
 
+void ObjectInterpreter::buildBeforeLeavingHandler(const Terminator& terminator)
+{
+    BlockID handler = m_sinking.handlerOf(m_state.block);
+    if (!handler)
+        return;
+    bool leavesHandler = false;
+    for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex)
+        leavesHandler |= !isDeadEdge(terminator, targetIndex) && m_sinking.handlerOf(terminator.targets[targetIndex].block) != handler;
+    if (!leavesHandler)
+        return;
+
+    Vector<VirtualObjectID, 4> objects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltUnderHandler)
+            objects.append(entry.object);
+    }
+    for (VirtualObjectID object : objects)
+        build(object, BuildCause { });
+}
+
 void ObjectInterpreter::executeTerminator(const Terminator& terminator)
 {
+    buildBeforeLeavingHandler(terminator);
     buildBeforeBranch(terminator);
     switch (terminator.kind) {
     case TerminatorKind::Return:
@@ -1954,6 +2029,22 @@ void ObjectInterpreter::forgetAnswersOfTests()
         entry = TestEntry { entry.test, hasLastingAnswer(function().at(entry.test)) ? VirtualObjectID() : entry.object, std::nullopt };
 }
 
+// An AssumeType is a proof, so a variant outside its type cannot reach it: `r.ok ? r.value : r.error`.
+void ObjectInterpreter::narrowToProvenType(VirtualObjectID object, TypeID provenType)
+{
+    const ObjectState& state = *stateOf(object);
+    if (state.variants.size() < 2 || hasUntaggedVariant(state))
+        return;
+    ShapeContext context = m_sinking.shapeContext(object);
+    uint32_t keptTagBits = 0;
+    for (const ObjectVariant& variant : state.variants) {
+        if (evaluateTypeTestOfShape(context, context.family.at(variant.shape), program().at(provenType)) != KnownBoolean::False)
+            keptTagBits |= variant.tagMask();
+    }
+    if (keptTagBits && keptTagBits != state.tagBits())
+        narrow(object, keptTagBits);
+}
+
 void ObjectInterpreter::narrow(VirtualObjectID object, uint32_t keptTagBits)
 {
     ObjectState& state = *stateOf(object);
@@ -2001,6 +2092,7 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
         call.setExpectedResult(listCall.expectedResult());
+        call.setCalledBuiltin(listCall.calledBuiltin());
         break;
     case Opcode::ConstructList:
         call.become(Opcode::Construct);
@@ -2530,6 +2622,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())
             m_sinking.didBuildAfterMerge(member, state.cellJoinedAt);
+        if (!isRewriting() && !m_sinking.handlerOf(m_state.block))
+            m_sinking.buildUnderHandler(member);
     }
 
     if (!isRewriting()) {
@@ -2538,7 +2632,9 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
     }
 
     Origin userOrigin = cursor().builder().origin();
+    cursor().willBuild(*this);
     buildMembers(members.span(), cause);
+    cursor().didBuild();
     cursor().setOrigin(userOrigin);
 }
 

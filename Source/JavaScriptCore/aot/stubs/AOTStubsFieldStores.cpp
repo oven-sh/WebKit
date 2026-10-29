@@ -121,7 +121,7 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     };
     auto storeCell = [&](const SlotTraits& traits) {
         if (traits.isNarrowReference) {
-            encodeCell32(jit, value, r.scratch);
+            encodeCellOfProgram(jit, value, r.scratch);
             jit.store32(r.scratch, slot);
         } else
             jit.store64(value, slot);

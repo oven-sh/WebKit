@@ -91,6 +91,7 @@ static uint64_t computeMask(const MemoryLocation& location, NOESCAPE const Invoc
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -171,6 +172,7 @@ LocationOverlap overlapOf(const Program& program, const MemoryLocation& a, const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

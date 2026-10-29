@@ -446,6 +446,8 @@ export interface DirectEntrySpec {
   offsetOfNativeObject?: string;
   /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
   returnsFields?: boolean;
+  /** The function answers a `double`, in a register for numbers, and nothing is boxed. It cannot fail. A NaN that it answers is the one that arithmetic makes. */
+  returnsNumber?: boolean;
 }
 
 export interface NativeCodeRef {
@@ -588,6 +590,8 @@ export const builtinMarks = [
   "IsCalledWithoutStartupLoads",
   // Its instances have such a method, whether or not the table has their prototype object.
   "InstancesHaveMethodCalledWithStartupLoads",
+  // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
+  "LoadsCodeWithoutJSAccess",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -728,6 +732,8 @@ export type ErrorKind = (typeof errorKinds)[number];
 export const nativeCallKinds = ["Cpp", "Rust", "NewCppFunction", "NewRustFunction", "Bindgen"] as const;
 export type NativeCallKind = (typeof nativeCallKinds)[number];
 
+export type LinkedFunctionExpansion = "IteratorGenericClose" | "IteratorGenericNext";
+
 export type IntrinsicSpec =
   | { intrinsic: "Operation"; opcode: string }
   | { intrinsic: "Conversion"; conversion: Exclude<Conversion, "None" | "Dictionary"> }
@@ -746,6 +752,7 @@ export type IntrinsicSpec =
   | { intrinsic: "PrependArgument"; callee: string; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
+  | { intrinsic: "LinkedFunction"; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"
@@ -760,7 +767,6 @@ export type IntrinsicSpec =
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
         | "ModulePrivateName"
-        | "LinkedFunction"
         | "Erased"
         | "BundleError";
     };

@@ -63,6 +63,12 @@ public:
         return result;
     }
 
+    // Grows the table once it has room for fewer than capacity / 8 more keys. Returns false if the allocation fails; the remaining room is still usable.
+    bool tryGrowEarly()
+    {
+        return m_map.tryReserveCapacityForAdd(std::max(m_map.capacity() / 8, 1u));
+    }
+
     template<typename Functor>
     ValueArg* ensureValue(const KeyType& key, NOESCAPE const Functor& functor)
     {

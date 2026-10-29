@@ -942,14 +942,30 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
     Expected<BlockFrequency> actual = function.at(decided.from).frequency;
     if (!isRarerThan(expected, actual).predicted() || !analyses.cfg().isReachable(decided.from))
         return;
-    bool isEnteredAnotherWay = std::ranges::any_of(analyses.cfg().incomingEdges(target), [&](Edge edge) {
-        return edge != decided && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
-    });
-    if (isEnteredAnotherWay)
+    auto isEnteredAnotherWay = [&](Edge way) {
+        return std::ranges::any_of(analyses.cfg().incomingEdges(targetOf(function, way).block), [&](Edge edge) {
+            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
+        });
+    };
+    if (isEnteredAnotherWay(decided))
         return;
+    Vector<Edge, 4> jumpsToRarerBlocks;
+    auto raise = [&](BlockID block) {
+        function.edit(block, BlockEdit::Rest).frequency = actual;
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind == TerminatorKind::Jump && isRarerThan(function.at(terminator.next().block).frequency, actual).predicted())
+            jumpsToRarerBlocks.append(Edge { block, 0 });
+    };
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
-            function.edit(block, BlockEdit::Rest).frequency = actual;
+            raise(block);
+    }
+    // What a block always goes on to runs as often as the block. The way behind a failed test often joins one that is rarer still. What lies behind the tests there stays as it is until they are decided too.
+    while (!jumpsToRarerBlocks.isEmpty()) {
+        Edge jump = jumpsToRarerBlocks.takeLast();
+        BlockID next = targetOf(function, jump).block;
+        if (isRarerThan(function.at(next).frequency, actual).predicted() && !isEnteredAnotherWay(jump))
+            raise(next);
     }
 }
 

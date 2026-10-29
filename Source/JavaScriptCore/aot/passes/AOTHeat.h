@@ -99,6 +99,8 @@ public:
     Expected<bool> isAllocatedIn(LayoutID, ModuleID) const;
     // Whether some store, definition or literal of the program puts a value of the layout under the name. Only values whose type lists a few layouts count.
     Expected<bool> isStoredUnder(LayoutID, PropertyKeyID) const;
+    // Whether some store or definition puts a new object without prototype or layout under the name: `this._events = Object.create(null)`.
+    Expected<bool> isDictionaryStoredUnder(PropertyKeyID name) const { return isStoredUnder(LayoutID(), name); }
     Expected<HeatClass> of(const Program&, FunctionID) const;
     // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run.
     Expected<bool> isCompact(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCompact; }

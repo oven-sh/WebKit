@@ -98,11 +98,11 @@ function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint(
 # CHECK-NOT: Reads:
-# CHECK: Double b@[[size]] = IToD(b@{{*}})
+# CHECK: Int32 b@[[size]] = Phi(
 # CHECK-NEXT: Return(b@[[size]], Terminal)
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint(
 # CHECK-NOT: Reads:
 # CHECK-LABEL: end of function
-# X64: instructions: 6, patchpoints: 0, rare instructions: 2
-# ARM64: instructions: 6, patchpoints: 0, rare instructions: 2
+# X64: instructions: 5, patchpoints: 0, rare instructions: 2
+# ARM64: instructions: 5, patchpoints: 0, rare instructions: 2

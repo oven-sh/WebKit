@@ -1,0 +1,47 @@
+# The parameter may also hold a built-in object that is no function. Met with `function` such an object is named `function`, which is wider than the type the body was
+# typed with. Each caller of the copy passes a function, so the copy leaves the object out: the parameter is narrowed, and what the body stores it into still takes it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls VerifyProgram
+# STATISTIC: CalleeVersions = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="later" kind=Arrow captures=[{type=f0|f1|builtin(ArrayPrototype)}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="each" role=Library parameters=[{type=f0|f1|builtin(ArrayPrototype)}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f2
+    v3 = Call v0, -, v1, v1
+# REPEAT: i = 3..62
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v2
+}
+
+function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v1, v0 function=f3
+    v4 = CallDirect v2, v0 function=f3
+    v5 = Builtin builtin=ArrayPrototype
+    v6 = CallDirect v5, v0 function=f3
+    Return v4
+}
+# CHECK-LABEL: function f4 name="outsideLoops"
+# CHECK: v3{{*}}= CallDirect v1, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v4{{*}}= CallDirect v2, v0 function=[[forAnyFunction]]
+# CHECK: v6{{*}}= CallDirect v5, v0 function=f3
+# CHECK: function [[forAnyFunction]] name="each" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: f0|f1,
+# CHECK-NEXT: = NewClosure v0 function=f2
+# CHECK-NEXT: = Call v0, -, v1, v1
+# CHECK-NEXT: = Add

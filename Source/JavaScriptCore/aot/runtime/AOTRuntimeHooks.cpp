@@ -99,10 +99,10 @@ void didChangeMicrotaskQueueing(VM& vm)
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
 {
-    VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
-    Locker locker { loopPollPages.lock };
-    for (void* page : loopPollPages.pages)
-        OSAllocator::protect(page, WTF::pageSize(), !enabled, !enabled);
+    VMState::PolledInstances& polled = vm.aotState().polledInstances;
+    Locker locker { polled.lock };
+    for (Instance* instance : polled.instances)
+        setPollsEnabled(*instance, enabled);
 }
 
 } // namespace JSC::AOT::RuntimeHooks

@@ -15,6 +15,7 @@
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
+#include "ProxyObject.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -761,21 +762,39 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
     return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key)), allButBunUnlessNamed(object))), object.node);
 }
 
-// A stack frame shows the own property `name` or `displayName` of the function object. A rule reads no closure that has escaped beside the object nobody knows, so the node of the operand hands on its closures.
+// Code that relies on the type of a value runs behind a test of it. A function that arrives where the type admits none is written to by name, and there the run time sees that it is renamed.
+bool HeapRule::mayBeFunctionByType(const ValueFlowOperand& object)
+{
+    if (m_statement.kind != ValueFlowStatementKind::Operation || !m_statement.function || m_statement.function.index() >= m_program.functions.size())
+        return true;
+    auto operand = std::ranges::find(m_operands, object.node, &ValueFlowOperand::node);
+    if (!object.node || operand == m_operands.end())
+        return true;
+    const Function& function = m_program.at(m_statement.function);
+    ValueID value = operation().operand(static_cast<uint32_t>(operand - m_operands.begin()));
+    if (!value)
+        return true;
+    const Value& definition = function.at(value);
+    return (definition.opcode == Opcode::Expect ? m_program.at(definition.expectedType().predicted()) : m_program.typeOf(function, value)).mayBeFunction();
+}
+
+// A stack frame shows the own property `name` or `displayName` of the function object. A closure that has escaped is not listed beside the unknown object: the run time notices when it is renamed.
 void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet receivers)
 {
     if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != m_tables.nameKey() && key.name != m_tables.displayNameKey()))
         return;
     if (m_namesFunctionWhereItIsMade)
         return;
+    // A closure that is seen to arrive counts whatever the type says.
+    if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.displayNameKey() && mayBeFunctionByType(object)) {
+        if (ClimbingSet placeholders = m_context.restrict(receivers, m_universe.placeholdersAlone()); holdsAnything(placeholders))
+            add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatStatementsGiveDisplayName), placeholders);
+    }
     // The texts that are written as the `name` of a closure that the rule reads say whether they rename it.
     bool writesTextOfName = key.keyClass == HeapKeyClass::Name && key.name == m_tables.nameKey();
     ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures());
     if (writesTextOfName && holdsAnything(closures))
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsName), std::exchange(closures, { }));
-    // The modules of the run time name a function of the program only under the key as it is written.
-    if (object.node && (key.keyClass == HeapKeyClass::Name || isInProgramCode()) && m_context.meet(receivers, m_universe.placeholdersAlone()))
-        connect(object.node, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename));
     if (holdsAnything(closures)) {
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), closures);
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsGiveDisplayName), closures);
@@ -840,9 +859,9 @@ void HeapRule::letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object,
 {
     if (key.keyClass == HeapKeyClass::Index || !isInProgramCode())
         return;
-    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.holdersOfLibraryExports());
+    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.eventRaisingLibraryExportHolders());
     if (key.keyClass == HeapKeyClass::Unknown)
-        holdersOfExports = m_context.unite(holdersOfExports, holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
+        holdersOfExports = m_context.unite(holdersOfExports, m_context.restrict(holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers), m_universe.eventRaisingLibraryExportHolders()));
     if (holdsAnything(holdersOfExports) && mayCallWhateverHasEscaped(m_context))
         letSeenCodeCallEscapedFunctionsAmong(m_context, key.keyClass == HeapKeyClass::Name ? m_context.lookup(holdersOfExports, nameOfLookupForValue(key), useOfLookupUnder(key)) : m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports));
 }
@@ -976,6 +995,12 @@ void HeapRule::runCreateArguments(const ValueFlowOperand& count, const ValueFlow
     connect(count, propertyNamed(BuiltinNames::length));
     if (callee)
         connect(*callee, propertyNamed(BuiltinNames::callee));
+    else {
+        // Strict arguments have a `callee` accessor, and both of its functions are native.
+        HeapKey calleeKey { HeapKeyClass::Name, m_tables.calleeKey() };
+        for (HeapPropertyPart part : { HeapPropertyPart::Getter, HeapPropertyPart::Setter })
+            add(m_context.written(arguments, writtenName(calleeKey, part)), only(m_tables.undescribedNativeCode()));
+    }
     BuiltinID iteratorMethod = m_builtins.findOwnMember(m_builtins.at(BuiltinClasses::Array).prototype, BuiltinNames::iteratorSymbol);
     add(propertyNamed(BuiltinNames::iteratorSymbol), iteratorMethod ? only(m_universe.objectOf(iteratorMethod)) : unknownObject(ValueFlowUnknownSource::UndescribedNativeResult));
 }
@@ -1476,10 +1501,23 @@ void HeapRule::runOperation()
             readOwn(array, elementsName, m_context.written(ClimbingSet(only(site)), elementsName));
         return;
     }
-    case Opcode::GetInternalField:
-        readOwn(operand(At::GetInternalField::object), internalFieldsName, m_statement.result);
+    case Opcode::GetInternalField: {
+        const ValueFlowOperand& object = operand(At::GetInternalField::object);
+        // A proxy keeps its target and its handler in internal fields. One that `new Proxy()` made cannot be revoked, so neither is ever null.
+        ClimbingSet objects = m_context.valueOf(object);
+        // This also says that the statement deals with proxies itself, so holding one here does not open it.
+        ClimbingSet proxies = m_context.proxiesAskedByTheirTrapsIn(object);
+        if (holdsAnything(proxies)) {
+            BuiltinSlotID slot = operation().index() == static_cast<uint32_t>(ProxyObject::Field::Handler) ? BuiltinSlots::ProxyHandler : BuiltinSlots::ProxyTarget;
+            connect(m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, slot.index() }), m_statement.result);
+        }
+        // Nothing is said of other objects before one arrives: what is added once stays.
+        if (!m_context.meet(objects, ValueSets::complement(m_context.withMembersOf(ValueSets::nothing, proxies))))
+            return;
+        readOwn(object, internalFieldsName, m_statement.result);
         add(m_statement.result, m_universe.anyPrimitive());
         return;
+    }
     case Opcode::PutInternalField:
         write(m_context.valueOf(operand(At::PutInternalField::object)), internalFieldsName, operand(At::PutInternalField::value));
         connect(operand(At::PutInternalField::value), m_statement.result);

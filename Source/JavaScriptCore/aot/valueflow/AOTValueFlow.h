@@ -334,6 +334,8 @@ struct ValueFlowStatement {
     // What the tests in front of its block let through. Where one of these holds nothing the statement never runs.
     uint8_t guardCount { 0 };
     uint32_t firstGuard { 0 };
+    // Four bits for each of the first eight operands: bit g says that the operand is the very value that guard g tested for the type of its cell, which never changes. The rules see it as the test lets it through.
+    uint32_t guardsOfOperands { 0 };
 };
 
 enum class ValueFlowCallKind : uint8_t {

@@ -1,0 +1,241 @@
+# function area(box) { return box.width * box.height; }
+# function widen(box) { box.width = box.width + 1; return box.width; }
+# function rename(box) { box.name = "other"; return box.name; }
+# function grow(box) { box.depth = 3; return box.depth; }
+# function shrink(box) { delete box.height; return box.height; }
+# function hasWidth(box) { return "width" in box; }
+# function ownWidth(box) { return Object.hasOwn(box, "width"); }
+# function names(box) { let text = ""; for (const name in box) text += name + ","; return text; }
+# function written(box) { return JSON.stringify(box); }
+# function copied(box) { return { ...box, extra: 1 }; }
+# function taken(box) { const { width, ...rest } = box; return rest; }
+# function total(box, other) { return box.width + other.width; }
+# function swapped(box, other) { const held = box.width; box.width = other.width; other.width = held; return box.width; }
+# function sameKind(box, other) { return typeof box.width === typeof other.width; }
+# register(area, widen, rename, grow, shrink, hasWidth, ownWidth, names, written, copied, taken, total, swapped, sameKind)
+# The parameters are expected to be records with a width and a height, so the accesses go by slot behind tests of the layout.
+# The shell hands each function 40 operands, most of them something else, and runs the same text itself: what comes back and what is left of the operand are the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; globalThis.register = (...compiled) => { const twins = [function area(box) { return box.width * box.height; }, function widen(box) { box.width = box.width + 1; return box.width; }, function rename(box) { box.name = "other"; return box.name; }, function grow(box) { box.depth = 3; return box.depth; }, function shrink(box) { delete box.height; return box.height; }, function hasWidth(box) { return "width" in box; }, function ownWidth(box) { return Object.hasOwn(box, "width"); }, function names(box) { let text = ""; for (const name in box) text += name + ","; return text; }, function written(box) { return JSON.stringify(box); }, function copied(box) { return { ...box, extra: 1 }; }, function taken(box) { const { width, ...rest } = box; return rest; }, function total(box, other) { return box.width + other.width; }, function swapped(box, other) { const held = box.width; box.width = other.width; other.width = held; return box.width; }, function sameKind(box, other) { return typeof box.width === typeof other.width; }]; const inputs = [() => ({ width: 2, height: 3 }), () => ({ width: 2.5, height: 3.5 }), () => ({ height: 3, width: 2 }), () => ({ width: 2 }), () => ({ }), () => ({ width: "2", height: 3 }), () => ({ width: undefined, height: null }), () => ({ width: 2147483647, height: 2 }), () => ({ width: -0, height: 0 }), () => ({ width: 2n, height: 3n }), () => ({ width: { valueOf() { return 5; } }, height: 2 }), () => ({ width: 2, height: 3, name: "box", depth: 1 }), () => ({ get width() { return 7; }, height: 3 }), () => ({ get width() { return 7; }, set width(value) { this.height = value; }, height: 3 }), () => ({ set width(value) { }, height: 3 }), () => Object.freeze({ width: 2, height: 3 }), () => Object.seal({ width: 2, height: 3 }), () => Object.preventExtensions({ width: 2, height: 3 }), () => Object.defineProperty({ height: 3 }, "width", { value: 2 }), () => Object.defineProperty({ height: 3 }, "width", { value: 2, enumerable: true, writable: true }), () => Object.create({ width: 2, height: 3 }), () => Object.create({ get width() { return 7; }, set width(value) { this.seen = value; } }), () => Object.create(Object.freeze({ width: 2, height: 3 })), () => Object.create(null), () => Object.assign(Object.create(null), { width: 2, height: 3 }), () => new (class { width = 2; height = 3; })(), () => new (class { #hidden = 1; width = 2; get height() { return this.#hidden; } })(), () => new Proxy({ width: 2, height: 3 }, { }), () => new Proxy({ width: 2, height: 3 }, { get(target, key) { return key === "width" ? 9 : target[key]; } }), () => [2, 3], () => Object.assign([2, 3], { width: 2, height: 3 }), () => Object.assign(() => { }, { width: 2, height: 3 }), () => ({ width: 2, height: 3, toJSON() { return "told"; } }), () => ({ 1: "one", width: 2, 0: "zero", height: 3 }), () => ({ [Symbol.iterator]: 1, width: 2, height: 3 }), () => "text", () => 7, () => true, () => null, () => undefined]; const show = (value, depth = 0) => { if (typeof value === "string") return JSON.stringify(value); if (typeof value === "symbol") return "symbol"; if (typeof value === "bigint") return value + "n"; if (typeof value === "function") return "function"; if (Object.is(value, -0)) return "-0"; if (typeof value !== "object" || value === null || depth > 2) return String(value); let text = Array.isArray(value) ? "[" : "{"; const keys = Reflect.ownKeys(value); for (let i = 0; i < keys.length; i++) { const described = Reflect.getOwnPropertyDescriptor(value, keys[i]); text += String(keys[i]) + ":" + ("value" in described ? show(described.value, depth + 1) : "accessor") + ","; } return text + "}"; }; const tell = (run, operand, other) => { try { return show(run(operand, other)) + " " + show(operand); } catch (error) { return "throws " + error.name + " " + show(operand); } }; for (let k = 0; k < compiled.length; k++) { let same = 0; for (let n = 0; n < inputs.length; n++) { const next = inputs[(n + 1) % inputs.length]; const got = tell(compiled[k], inputs[n](), next()), expected = tell(twins[k], inputs[n](), next()); if (got === expected) same++; else print(twins[k].name + " of " + inputs[n] + ": " + got.slice(0, 90) + " and not " + expected.slice(0, 90)); } print(twins[k].name + ": " + same + " of " + inputs.length); } }; })();
+# CHECK: area: 40 of 40
+# CHECK-NEXT: widen: 40 of 40
+# CHECK-NEXT: rename: 40 of 40
+# CHECK-NEXT: grow: 40 of 40
+# CHECK-NEXT: shrink: 40 of 40
+# CHECK-NEXT: hasWidth: 40 of 40
+# CHECK-NEXT: ownWidth: 40 of 40
+# CHECK-NEXT: names: 40 of 40
+# CHECK-NEXT: written: 40 of 40
+# CHECK-NEXT: copied: 40 of 40
+# CHECK-NEXT: taken: 40 of 40
+# CHECK-NEXT: total: 40 of 40
+# CHECK-NEXT: swapped: 40 of 40
+# CHECK-NEXT: sameKind: 40 of 40
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f9 @0
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v18 = NewClosure function=f10 @0
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v20 = NewClosure function=f11 @0
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v22 = NewClosure function=f12 @0
+    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v24 = NewClosure function=f13 @0
+    v25 = Convert v24 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v26 = NewClosure function=f14 @0
+    v27 = Convert v26 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v28 = Builtin builtin=GlobalThis @955
+    v29 = PropGet v28 key="register" [isFreeName] @955
+    v30 = Call v29, -, v1, v3, v5, v7, v9, v11, v13, v15, v17, v19, v21, v23, v25, v27 calleeName="register" @955
+    v31 = Undefined @955
+    Return v31 @955
+}
+function f1 name="area" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @0
+  b1():
+    v1 = PropGet v0 key="width" @28
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @28
+    v3 = PropGet v0 key="height" @40
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @40
+    v5 = Mul v2, v4 @28
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @28
+    Return v6 @28
+}
+function f2 name="widen" module=m0 position=54 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @54
+  b1():
+    v1 = PropGet v0 key="width" @88
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @88
+    v3 = Integer integer=1 @100
+    v4 = Add v2, v3 @88
+    PropSet v0, v4 key="width" @76
+    v6 = PropGet v0 key="width" @110
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @110
+    Return v7 @110
+}
+function f3 name="rename" module=m0 position=123 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @123
+  b1():
+    v1 = String string="other" @157
+    PropSet v0, v1 key="name" @146
+    v3 = PropGet v0 key="name" @173
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @173
+    Return v4 @173
+}
+function f4 name="grow" module=m0 position=185 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @185
+  b1():
+    v1 = Integer integer=3 @218
+    PropSet v0, v1 key="depth" @206
+    v3 = PropGet v0 key="depth" @228
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @228
+    Return v4 @228
+}
+function f5 name="shrink" module=m0 position=241 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @241
+  b1():
+    v1 = PropDelete v0 key="height" @275
+    v2 = PropGet v0 key="height" @290
+    Return v2 @290
+}
+function f6 name="hasWidth" module=m0 position=304 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @304
+  b1():
+    v1 = PropHas v0 key="width" @347
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @347
+    Return v2 @347
+}
+function f7 name="ownWidth" module=m0 position=354 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @354
+  b1():
+    v1 = Builtin builtin=Object @386
+    v2 = Builtin builtin=ObjectHasOwn @386
+    v3 = String string="width" @405
+    v4 = Call v2, v1, v0, v3 calleeName="Object.hasOwn" @393
+    ReturnCall v4 casts=[{declared={type=boolean flags=[IsExpected]}}] @393
+}
+function f8 name="names" module=m0 position=417 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @417
+  b1():
+    v1 = String string="" @450
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @450
+    v3 = ForInOpen v0 @473
+    Jump -> next b2(v2) @473
+  b2(v4):
+    LoopHint @473
+    v6 = ForInStep v3, v0 @473
+    v7 = ResultAt v6 @473
+    v8 = ResultAt v6 index=1 @473
+    Branch v7 -> taken b3(), notTaken b4() @473
+  b3():
+    v9 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @505
+    Return v9 @505
+  b4():
+    v10 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @465
+    v11 = String string="," @493
+    v12 = Add v10, v11 @486
+    v13 = Add v4, v12 @486
+    v14 = Convert v13 declared={type=undefined|null|string flags=[IsExpected]} @478
+    Jump -> next b2(v14) @478
+}
+function f9 name="written" module=m0 position=513 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @513
+  b1():
+    v1 = Builtin builtin=JSON @544
+    v2 = PropGet v1 key="stringify" @544
+    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]} @544
+    v4 = Call v3, v1, v0 calleeKey="stringify" calleeName="JSON.stringify" @549
+    ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @549
+}
+function f10 name="copied" module=m0 position=567 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @567
+  b1():
+    v1 = CopyObject v0 @597
+    v2 = Integer integer=1 @614
+    PropDefine v1, v2 key="extra" @607
+    Return v1 @597
+}
+function f11 name="taken" module=m0 position=621 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @621
+  b1():
+    v1 = TypeTest v0 testedType=undefined|null @670
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @670
+  b2(v2):
+    Jump -> next b3() @670
+  b3() frequency=Unlikely:
+    v3 = NewRuntimeError runtimeError=NotDestructurable name="width" @670
+    Throw v3 @670
+  b4(v4):
+    v5 = PropGet v4 key="width" @670 @651
+    v6 = NewObject layout=L0 @643
+    CopyDataProperties v6, v4 excludedKeys=["width"] @643
+    v8 = FinishObject v6 @643
+    Return v8 @682
+}
+function f12 name="total" module=m0 position=690 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @690
+  b1():
+    v2 = PropGet v0 key="width" @726
+    v3 = PropGet v1 key="width" @738
+    v4 = Add v2, v3 @726
+    Return v4 @726
+}
+function f13 name="swapped" module=m0 position=753 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @753
+  b1():
+    v2 = PropGet v0 key="width" @797
+    v3 = PropGet v1 key="width" @820
+    PropSet v0, v3 key="width" @808
+    PropSet v1, v2 key="width" @833
+    v6 = PropGet v0 key="width" @860
+    Return v6 @860
+}
+function f14 name="sameKind" module=m0 position=873 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @873
+  b1():
+    v2 = PropGet v0 key="width" @919
+    v3 = TypeOf v2 @912
+    v4 = PropGet v1 key="width" @940
+    v5 = TypeOf v4 @933
+    v6 = StrictEq v3, v5 @912
+    v7 = Convert v6 declared={type=boolean flags=[IsExpected]} @912
+    Return v7 @912
+}

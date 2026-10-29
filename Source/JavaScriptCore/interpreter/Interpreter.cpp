@@ -1069,7 +1069,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 if (visitor->isOfConstructedFunctionThatLeft())
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())
-                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
+                else if (visitor.compiledFrames().isAtFailedTailCall())
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
                     appendIfWanted(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));

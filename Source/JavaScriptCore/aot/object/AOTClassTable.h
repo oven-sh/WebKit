@@ -31,6 +31,7 @@ class JSFinalObject;
 class JSGlobalObject;
 class JSObject;
 class Structure;
+class Symbol;
 class VM;
 
 namespace AOT {
@@ -47,6 +48,7 @@ public:
     ~ClassTable();
 
     const LayoutData* classWithIndex(uint32_t) const;
+    void askEveryClassForItsPrototype(VM&);
     const LayoutData* classConstructedBy(FunctionID) const;
     const LayoutData* baseOf(const LayoutData& layout) const { return layout.base() == LayoutData::noBase ? nullptr : classWithIndex(layout.base()); }
     const LayoutData& classOfInstances(const LayoutData& instanceLayout) const
@@ -71,6 +73,12 @@ public:
         };
         return std::ranges::any_of(classLayout.methods(), hasComputedName) || std::ranges::any_of(classLayout.staticMethods(), hasComputedName);
     }
+    // The record names the parent and every member, so the run time can define the class before the program evaluates it.
+    static bool canBeDefinedFromRecord(const LayoutData& classLayout)
+    {
+        bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
+        return recordNamesParent && !hasComputedMemberNames(classLayout);
+    }
     static bool isDefinedByClass(const LayoutData& layout)
     {
         if (!layout.isClass())
@@ -94,6 +102,12 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
+    // Null if nothing distinguishes the objects that the parent creates for that new.target from other cells of the built-in class.
+    Symbol* instanceBrandFor(VM&, JSCell* parent, JSCell* newTarget);
+    Structure* structureWithInstanceBrand(VM&, JSCell* parent, JSCell* newTarget, Structure*);
+    bool carriesBrandOfClass(Structure*, uint32_t rankOfClass) const;
+    // Does not allocate.
+    bool computeHasOnlyClassFieldNames(Structure*);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -101,6 +115,7 @@ public:
     enum class ClassPart : uint8_t { Everything, ClassObject, PrototypeMembers };
     JSValue resolveHeritage(JSGlobalObject*, JSValue heritage);
     Closure* createClassObject(VM&, const LayoutData&);
+    Closure* classObjectForEvaluation(Closure* allocated, const LayoutData&) const;
     void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, JSValue parent, JSValue prototypeParent);
     void createClassPart(JSGlobalObject*, Closure* classObject, ClassPart);
@@ -114,6 +129,7 @@ public:
     void didCreatePrototypeLeftToRecord(const LayoutData&);
     void disarmMemberGuards(const LayoutData&);
     void didStoreByName(VM&, const LayoutData& instanceLayout, UniquedStringImpl*);
+    void didFindMemberByName(VM&, const LayoutData& instanceLayout, UniquedStringImpl*);
     // Whoever files the store in a cache has walked the chain above an object that has the prototype object of its class: the store creates the property until one of these objects reports a change.
     void didFindThatStoresPass(VM&, const LayoutData& instanceLayout, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
@@ -224,6 +240,19 @@ private:
     void rememberInstanceOfClassBelow(InstanceOfClassBelow);
     void rememberInstanceOfOtherEvaluation(VM&, const Object& instance, JSObject* prototype, uint32_t allocation);
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
+    // Keyed by the class's rank plus one.
+    HashMap<uint32_t, Symbol*> m_brandsOfInstances;
+    HashMap<UniquedStringImpl*, const LayoutData*> m_classesByBrand;
+    std::array<uint32_t, structureNameCacheSize> m_structureNameCache { };
+    struct StructureWithBrand {
+        JSCell* parent;
+        JSCell* newTarget;
+        Structure* withoutBrand;
+        Structure* withBrand;
+    };
+    static constexpr size_t numberOfStructuresWithBrands = 16;
+    static size_t indexOfStructureWithBrand(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfStructuresWithBrands - 1); }
+    std::array<StructureWithBrand, numberOfStructuresWithBrands> m_structuresWithBrands { };
     State& m_state;
     const ProgramTables& m_tables;
     mutable std::array<std::atomic<uint64_t>, 64> m_recentClassLookups { };

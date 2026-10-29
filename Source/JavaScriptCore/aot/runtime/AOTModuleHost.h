@@ -84,10 +84,14 @@ struct ModuleHost {
     JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
     // The program has registered something with the host that answers to the name of a native module in its place. Null in a host where nothing can be registered.
     bool (*replacesNativeModule)(JSGlobalObject*, const String& path);
+    // Callbacks wait in a queue of the host's own that it empties between jobs, as process.nextTick() fills. Null in a host that has no such queue.
+    bool (*hasQueuedTicks)(JSGlobalObject*);
     // The host loads the module as the one import of a module of its own, the main module. Null in a host that has no such module.
     bool (*isImportOfMainModule)(JSGlobalObject*, ModuleID);
     // The body of the main module.
     void (*runMainModule)(JSGlobalObject*, ModuleID entryPoint);
+    // The error of the host's resolver for a specifier that it does not find. Null in a host whose resolver has no error of its own.
+    JSValue (*createModuleNotFoundError)(JSGlobalObject*, const String& specifier, const String& importer, bool isForRequire);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -95,6 +99,8 @@ const ModuleHost& moduleHostOf(JSGlobalObject*);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
 // The image holds the file as something that only an import with an attribute gets.
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
+// False: both functions above return false for every path that starts with `start`.
+JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);
@@ -105,6 +111,8 @@ JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
+// The path of each program file with code, in any image in use, that starts with `start`. Data files are looked up on disk. A file in several images is reported once per image. Callable from any thread.
+JS_EXPORT_PRIVATE void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // A file whose loader answers an object of the host, a database or a page.
@@ -127,6 +135,8 @@ JS_EXPORT_PRIVATE bool isCompiledModuleRecord(AbstractModuleRecord*);
 JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, ModuleID, std::optional<int64_t> referrerAsyncOrder);
 JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
+// False only if the namespace object of the module has no such name. Creates nothing.
+JS_EXPORT_PRIVATE bool mayExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name);
 // The referrer is the file of the image whose require() the host answers.
 JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
 
@@ -165,7 +175,7 @@ JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
 JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
 // On the new thread, before it has a VM.
 JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
-// On the new thread, once it has its instance, or ends without one.
+// On the new thread, when it ends: returns the pages if no VM took them. A VM takes all of them and returns them when it ends.
 JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
 // On the new thread, before the first statement of the program runs, or once it has run code that is not compiled, or where it ends. Until then room is kept for what the thread has yet to take.
 JS_EXPORT_PRIVATE void didStartThread(VM*);

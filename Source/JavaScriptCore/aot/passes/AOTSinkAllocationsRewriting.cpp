@@ -87,6 +87,29 @@ void RewriteCursor::willKeepThrowingValue(ObjectInterpreter& interpreter)
         cut(interpreter);
 }
 
+void RewriteCursor::willBuild(ObjectInterpreter& interpreter)
+{
+    if (m_numberOfBuildsBegun++ || !m_originalHandler)
+        return;
+    if (m_handlerArgumentsAreStale) {
+        std::optional<Target> target = handlerTargetFor(m_interpreterAtTerminator ? *m_interpreterAtTerminator : interpreter);
+        if (m_function.at(block()).handler != target) {
+            BlockID next = addUncoveredBlock();
+            m_function.edit(next, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
+            m_builder.emitJump(next);
+            moveTo(next);
+        }
+        m_handlerArgumentsAreStale = false;
+    }
+    m_handlerOfBuild = m_function.at(block()).handler;
+}
+
+void RewriteCursor::didBuild()
+{
+    if (!--m_numberOfBuildsBegun)
+        m_handlerOfBuild = std::nullopt;
+}
+
 void RewriteCursor::cut(ObjectInterpreter& interpreter)
 {
     BlockID next = addCoveredBlock(interpreter);
@@ -98,6 +121,8 @@ BlockID RewriteCursor::addUncoveredBlock()
 {
     BlockID block = m_builder.addBlock(m_frequency);
     m_function.edit(block, BlockEdit::Rest).shape = m_function.at(m_originalBlock).shape;
+    if (m_handlerOfBuild)
+        m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = m_handlerOfBuild;
     return block;
 }
 
@@ -150,7 +175,8 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
         if (hasStored(shape, fieldIndex))
             type = types.unionOf(type, typeOf(contentsOf(shapes, family.descriptionOf(shape), fieldIndex), types));
     }
-    if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
+    // A join passes its fields on to other joins of the family, whose variants may differ, so every join carries the union over the family.
+    if (type != TypeTable::never && (field.kind == VirtualFieldKind::Element || (candidate.isJoin && field.isProperty()))) {
         for (const VirtualObjectDescription& description : family.descriptions())
             type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
     }
@@ -202,8 +228,9 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     AOT::sort(m_edgesNeedingCode, { }, [](const Edge& edge) {
         return std::pair { edge.from, edge.targetIndex };
     });
+    // What is built on the exit of a block that a handler covers is built under that handler.
     for (Edge edge : m_edgesNeedingCode)
-        builder.splitEdge(edge);
+        builder.splitEdge(edge, m_function.at(edge.from).handler);
     return true;
 }
 
@@ -418,10 +445,12 @@ void AllocationSinking::rewriteBlock(BlockID block)
 
     if (m_inputs.throwingTerminators.get(block.index()))
         m_cursor->willKeepThrowingValue(interpreter);
+    m_cursor->willEnterEdges(interpreter);
     for (const OutgoingEdge& outgoing : edges) {
         if (!interpreter.isDeadEdge(terminator, outgoing.edge.targetIndex))
             rewriteEdge(interpreter, terminator, outgoing);
     }
+    m_cursor->didEnterEdges();
     if (foldTerminator(interpreter, terminator))
         m_tables->blocksWithDecidedBranches.append(m_cursor->block());
     for (const Target& target : terminator.targets)

@@ -11,6 +11,7 @@
 
 namespace JSC {
 
+class JSFunction;
 class PropertyName;
 
 namespace AOT {
@@ -42,6 +43,8 @@ String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 void didFlattenStructure(VM&, Structure*);
+// A native constructor entered by compiled code's `super(..)` creates an object for this new.target and would give it this Structure.
+Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 // No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.
 bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didMakeStructureForAddition(VM&, Structure* made);

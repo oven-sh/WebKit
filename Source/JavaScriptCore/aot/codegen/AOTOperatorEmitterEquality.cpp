@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTNumberLiteralStrings.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsValues.h"
@@ -22,11 +23,15 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint64_t bitsOfQuietNaN = 0x7ffull << 52 | 1ull << 51;
 static_assert((undefinedDouble & bitsOfQuietNaN) == bitsOfQuietNaN && (nullDouble & bitsOfQuietNaN) == bitsOfQuietNaN);
 
-static bool mayBeStringCell(LiteralStringWord word, const Type& type)
+static bool mayBeStringCell(const LiteralStringTable& literals, LiteralStringWord word, const Type& type)
 {
     if (word.value()->hasInt64())
         return static_cast<uint64_t>(word.value()->asInt64()) >= minCell32;
-    return type.primitives & Primitive::AnyString;
+    if (type.primitives & Primitive::String)
+        return true;
+    return std::ranges::any_of(type.stringLiterals, [&](StringID literal) {
+        return !literals.indexOf(literal);
+    });
 }
 
 namespace {
@@ -331,7 +336,7 @@ private:
         if (std::optional<Condition> isEqual = equalsLiteral(y, x))
             return *isEqual;
         Condition haveEqualWords = equalityOnBoxedBits(value, Boxed(x.value()), Boxed(y.value()), isStrict);
-        if (!mayBeStringCell(x, typeOf(left)) || !mayBeStringCell(y, typeOf(right)))
+        if (!mayBeStringCell(inputs().literalStrings, x, typeOf(left)) || !mayBeStringCell(inputs().literalStrings, y, typeOf(right)))
             return haveEqualWords;
 
         ConversionEmitter& conversions = emitter<ConversionEmitter>();

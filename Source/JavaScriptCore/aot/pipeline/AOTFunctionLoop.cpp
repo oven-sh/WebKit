@@ -319,7 +319,7 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::
         m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
     }
     AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
-    AOT::sort(first, isProcessedLater);
+    parallelSort(m_loops, first.mutableSpan(), isProcessedLater);
 
     ParallelRegionScope parallelRegion;
     m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);
@@ -547,11 +547,16 @@ struct FinishedCopy {
 
 } // anonymous namespace
 
-static QueuedFunction createQueuedFunction(const Program& program, FunctionID id)
+// The size estimates how long a function takes to compile. A function with warm code runs the long schedule and grows through inlining.
+static QueuedFunction createQueuedFunction(const Program& program, FunctionID id, const Heat* heat = nullptr)
 {
     if (ProvisionalFunctions::contains(id))
         return { id, 0 };
-    return { id, static_cast<uint32_t>(numberOfValuesIn(program, id)) };
+    AOT_THRESHOLD(uint64_t, warmCodeCostFactor, 6);
+    uint64_t size = numberOfValuesIn(program, id);
+    if (heat && heat->hasWarmCode(program, id).predicted())
+        size *= warmCodeCostFactor;
+    return { id, static_cast<uint32_t>(std::min<uint64_t>(size, UINT32_MAX)) };
 }
 
 static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEdit, const OptimizationInputs& inputs, const PassRunner& runner, ProgramAnalyses& analyses)
@@ -572,16 +577,22 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
         // Of a copy that has changed.
         Vector<std::unique_ptr<FinishedCopy>> finished(count);
         Vector<uint8_t> didChange(FillWith { }, count, static_cast<uint8_t>(0));
+        const Heat* heat = schedule.id == FunctionSchedule::Optimize ? &inputs.heat : nullptr;
         // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
         Vector<QueuedFunction> startedEarly;
         if (schedule.functions == ScheduledFunctions::Reached) {
-            startedEarly = largeFunctions(program, loops).map([&](uint32_t index) {
-                return createQueuedFunction(program, FunctionID(index));
+            AOT_THRESHOLD(size_t, minValuesOfLargeFunction, 4096);
+            AOT_THRESHOLD(size_t, minValuesWithWarmCode, 64);
+            startedEarly = collectInParallel<QueuedFunction>(loops, count, [&](unsigned index, Vector<QueuedFunction>& found) {
+                FunctionID id(index);
+                size_t numberOfValues = numberOfValuesIn(program, id);
+                if (numberOfValues >= minValuesOfLargeFunction || (heat && numberOfValues >= minValuesWithWarmCode && heat->hasWarmCode(program, id).predicted()))
+                    found.append(createQueuedFunction(program, id, heat));
             });
         }
 
         auto reach = [&](FunctionID target, FunctionReferenceKind kind, FoundFunctions& found) {
-            found.append(createQueuedFunction(program, target));
+            found.append(createQueuedFunction(program, target, heat));
             switch (kind) {
             case FunctionReferenceKind::Call:
             case FunctionReferenceKind::Dispatch:
@@ -614,9 +625,9 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                 });
                 break;
             case ScheduledFunctions::Reached:
-                scheduled.reserveInitialCapacity(inputs.callGraph.roots().size());
-                for (FunctionID root : inputs.callGraph.roots())
-                    scheduled.append(createQueuedFunction(program, root));
+                scheduled = collectInParallel<QueuedFunction>(loops, inputs.callGraph.roots().size(), [&](unsigned position, Vector<QueuedFunction>& roots) {
+                    roots.append(createQueuedFunction(program, inputs.callGraph.roots()[position], heat));
+                });
                 break;
             case ScheduledFunctions::OneAtATime:
                 RELEASE_ASSERT_NOT_REACHED();

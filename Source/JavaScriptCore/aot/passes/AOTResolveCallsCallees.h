@@ -40,7 +40,7 @@ public:
     Expected<std::span<const FunctionID>> listed() const LIFETIME_BOUND { return isProven() ? m_listedByType.span() : m_expected.span(); }
     Expected<std::span<const FunctionID>> expected() const LIFETIME_BOUND { return m_expected.span(); }
 
-    // PlaceTypeTests puts the test for one expected callee. Several that are only expected get neither a test nor arms: chooseDispatchedCallees() says why.
+    // PlaceTypeTests puts the test for one expected callee. Several expected callees of a call get neither a test nor arms: chooseDispatchedCallees() says why. A construct gets an arm for each.
     bool hasOneExpectedCallee() const { return m_proof == CalleeProof::Test && m_expected.size() == 1 && !arriveOnWaysOfTheirOwn; }
     bool isDispatchedAtOperation() const { return m_proof != CalleeProof::Unknown && !hasOneExpectedCallee(); }
 

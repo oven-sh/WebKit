@@ -74,12 +74,14 @@ private:
     void setImmortalCellAt(uint32_t* narrowCells, JSCell** wideCells, uint32_t number, JSCell*) const;
     std::optional<uint32_t> findLiteralString(unsigned hash, StringView) const;
     bool isTextOfLiteralStringWithoutText(uint32_t number, StringView) const;
+    JSString* createLiteralString(uint32_t number) const;
 
     Instance& m_instance;
     State& m_state;
     const Image& m_image;
     const ProgramTables& m_tables;
     const bool m_usesWideReferences;
+    const uint32_t m_numberOfLiteralStrings;
     RememberedSlotSet m_constantCells;
     std::array<RefPtr<StringImpl>, 1 << literalStringCacheIndexBits> m_literalStringCacheKeys;
 };

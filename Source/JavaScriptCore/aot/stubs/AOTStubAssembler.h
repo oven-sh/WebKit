@@ -55,6 +55,8 @@ struct OperationCall {
     FirstArgument firstArgument { FirstArgument::Instance };
     Saves saves { Saves::Nothing };
     bool checksException { true };
+    // For an operation that allocates. If an allocation fails, the operation goes on with the reserve, and the poll throws the error at the call site.
+    bool pollsBeforeReturning { false };
     // Set after the registers are saved, so a call that saves them leaves the argument registers as they were.
     std::optional<GPRReg> secondArgumentIn { };
     std::optional<GPRReg> thirdArgumentIn { };
@@ -64,6 +66,20 @@ struct OperationCall {
     std::optional<GPRReg> valueDestination { };
     std::optional<SpilledArguments> spilledArguments { };
 };
+
+// The stub that calls an operation of this run time that allocates throws the error of a failed allocation, even if the operation cannot throw otherwise.
+constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
+{
+    switch (entry) {
+    // These take the pending exception and throw nothing.
+    case Entry::operationAOTCatch:
+    case Entry::operationAOTCatchException:
+    case Entry::operationAOTCatchValueAndException:
+        return false;
+    default:
+        return firstArgument == OperationCall::FirstArgument::Instance && effectsOf(entry).mayCollect;
+    }
+}
 
 struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
@@ -80,7 +96,7 @@ void readTagsFromInstance(CCallHelpers&);
 class StubAssembler final : public CCallHelpers {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    StubAssembler(const StubOptions&, const StubCatalog&);
+    StubAssembler(const StubOptions&, const StubCatalog&, PCRelativeReach addressReach = PCRelativeReach::Near);
 
     StubRecording generate(StubKey body);
     StubRecording generateForTesting(StubKey body, const ScopedLambda<void(StubAssembler&)>& generator) { return generateBody(body, generator); }
@@ -160,14 +176,20 @@ public:
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
+    void pollBeforeReturningFromNativeCode();
+    void pollBeforeReturningFromOperation(Label afterPoll);
+    Jump branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch);
     // For a frame that ends at the address in the register.
     void checkStackBeforeEntering(GPRReg endOfFrame);
     // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
     void checkStackBeforeEnteringCallee();
+    CallPosition callPosition() const { return m_callPosition; }
+    void setCallPosition(CallPosition position) { m_callPosition = position; }
     // In a frame of this stub, ahead of the call that returns to the label. What the poll throws leaves the frame as if the callee had thrown it.
     void pollBeforeCall(Label returnSite);
-    static Address limitOfCallsByValue();
+    static Address limitOfTailCallsByValue();
     static Address softStackLimitWord();
+    static Address pollIsDueWord();
     static Address trapAwareSoftStackLimitWord();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
@@ -323,9 +345,9 @@ private:
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
 
     void emitStackAlignmentCheck();
-    void emitStubCall(StubKey);
+    void emitStubCall(StubKey, StubReference::Kind = StubReference::Kind::Call);
     void pollIfBelow(Address limit, StubKey poll);
-    void pollAtStubEntry(StubKey poll);
+    void pollAtStubEntry(StubKey poll, StubReference::Kind = StubReference::Kind::Call);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
     void checkReturnsFlags(RelationalCondition) const;
@@ -336,6 +358,7 @@ private:
     RelocationRecorder m_relocations;
 
     StubKey m_key;
+    CallPosition m_callPosition { CallPosition::Ordinary };
     StubSignature m_signature;
     StubRecording m_recording;
     RegisterSet m_allocated;
@@ -351,6 +374,7 @@ private:
     Vector<PendingCall> m_pendingCalls;
     Vector<PendingStubAddress> m_pendingStubAddresses;
     Vector<PendingLabelAddress> m_pendingLabelAddresses;
+    PCRelativeReach m_addressReach;
 };
 
 inline StubKey StubAssembler::key() const

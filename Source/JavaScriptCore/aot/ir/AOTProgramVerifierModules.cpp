@@ -76,10 +76,10 @@ static bool isUncompiledCode(const Module& module)
     return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
 }
 
-// Only the run knows every name of such a module.
+// The names of such a module are known only at run time, or the host creates an export when it is first read.
 static bool findsNamesAtRunTime(const Module& module)
 {
-    return isUncompiledCode(module) || module.requests.containsIf([](const ModuleRequest& request) {
+    return isUncompiledCode(module) || module.kind == ModuleKind::Runtime || module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
     });
 }

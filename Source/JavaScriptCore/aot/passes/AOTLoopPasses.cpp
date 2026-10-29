@@ -22,6 +22,7 @@
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
+#include "AOTOperatorForms.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
@@ -76,6 +77,25 @@ static bool hasNumberParameter(const Program& program, const Function& function)
     return false;
 }
 
+static bool hasIntegerBeyondInt32(const Program& program, const Function& function)
+{
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (isNumberBeyondInt32(program.typeOf(function, id)) && program.typeOf(function, id).isInteger())
+                return true;
+        }
+    }
+    return false;
+}
+
+// An int32 counter whose step may overflow int32 is tested after every step. A counter below an int32 bound is still an int32 one step later.
+static bool stepsBeyondInt32(FunctionPassContext& context, const InductionVariable& variable)
+{
+    return context.program.typeOf(context.function, variable.parameter).isInt32() && std::ranges::any_of(variable.steppedValues, [&](ValueID stepped) {
+        return isNumberBeyondInt32(context.program.typeOf(context.function, stepped));
+    });
+}
+
 // A staying edge into a shared block is split before it is used.
 static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const InductionVariable& variable)
 {
@@ -87,7 +107,7 @@ static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const Indu
 
 static bool mayBecomeIntegerCounter(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
 {
-    if (!isNumberBeyondInt32(context.program.typeOf(context.function, variable.parameter)) || !variable.start)
+    if (!variable.start || (!isNumberBeyondInt32(context.program.typeOf(context.function, variable.parameter)) && !stepsBeyondInt32(context, variable)))
         return false;
     // What another loop hands over, in a join in front of this one or as it has counted it up, is an integer if that loop's counter becomes one.
     const Type& start = context.program.typeOf(context.function, variable.start);
@@ -450,15 +470,206 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
     return bounded;
 }
 
+// On an integer kept as a double, such an operator converts its operand in every iteration, and calls if that fails. A number that is only incremented is cheapest as a double.
+static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter)
+{
+    const Function& function = context.function;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        for (ValueID id : function.at(loop.at(index)).values) {
+            const Value& value = function.at(id);
+            if (!hasOperatorForm(value.opcode) || !isLegalOperatorForm(value.opcode, OperatorForm::Integers) || !mayCallRuntime(value.opcode, OperatorForm::Numbers))
+                continue;
+            bool usesParameter = false;
+            bool othersAreIntegers = true;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                if (context.analyses.identityOf(operand) == parameter)
+                    usesParameter = true;
+                else
+                    othersAreIntegers &= context.program.typeOf(function, operand).isInteger();
+            });
+            if (usesParameter && othersAreIntegers)
+                return true;
+        }
+    }
+    return false;
+}
+
+// An integer that a loop carries, that starts as an int32, changes by a constant in every iteration and is bounded by no test is expected to stay an int32. The expectation is tested after the step.
+static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRBuilder& builder)
+{
+    struct SteppedArgument {
+        Edge edge;
+        uint32_t parameterIndex;
+    };
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<SteppedArgument, 4> arguments;
+    for (const LoopInduction& loop : analyses.inductionVariables().loops()) {
+        const NaturalLoop& naturalLoop = analyses.naturalLoops().loop(loop.loopIndex);
+        std::optional<bool> isLoopExpectedToRun;
+        for (const InductionVariable& variable : loop.variables) {
+            const Type& type = context.program.typeOf(function, variable.parameter);
+            if (!type.isNumberWithoutFraction() || type.isInteger() || function.at(variable.parameter).expected().predicted())
+                continue;
+            if (!isLoopExpectedToRun)
+                isLoopExpectedToRun = isExpectedToRun(context, naturalLoop).predicted();
+            if (!*isLoopExpectedToRun)
+                break;
+            if (!variable.start || !context.program.typeOf(function, variable.start).isInt32() || variable.step.kind != InductionStepKind::Constant || !Range::int32().contains(variable.step.constant))
+                continue;
+            // If a test bounds it by a number, that number is tested for being an integer before the loop.
+            if (std::ranges::any_of(variable.tests, [&](const InductionTest& test) { return isBoundingRelation(test.relation, variable.direction); }))
+                continue;
+            if (!hasUseCheaperOnIntegers(context, naturalLoop, variable.parameter))
+                continue;
+            for (Edge edge : analyses.cfg().incomingEdges(loop.header)) {
+                if (analyses.naturalLoops().belongsTo(edge.from, naturalLoop))
+                    arguments.append({ edge, variable.parameterIndex });
+            }
+        }
+    }
+    for (auto [edge, parameterIndex] : arguments) {
+        ValueID handedOn = targetOf(function, edge).arguments[parameterIndex];
+        TypeID type = function.at(handedOn).type;
+        Value cast = IRBuilder::make(Opcode::Upcast, { handedOn });
+        cast.setCastType(type);
+        cast.setExpected(ExpectedType(context.types.intersectionOf(type, TypeTable::int32)));
+        builder.setOrigin(function.at(handedOn).origin());
+        ValueID expected = builder.insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(cast));
+        replaceUse(function, Use { .kind = Use::Kind::EdgeArgument, .block = edge.from, .operandIndex = parameterIndex, .targetIndex = edge.targetIndex }, expected);
+    }
+    if (arguments.isEmpty())
+        return false;
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return true;
+}
+
+namespace {
+
+struct SumWithCounter {
+    ValueID counter;
+    int64_t addend { 0 };
+};
+
+struct TestOfSum {
+    ValueID comparison;
+    uint32_t sideOfSum;
+    SumWithCounter sum;
+};
+
+} // anonymous namespace
+
+static std::optional<SumWithCounter> findSumWithConstant(FunctionPassContext& context, ValueID id)
+{
+    const Function& function = context.function;
+    const Value& sum = function.at(context.analyses.identityOf(id));
+    auto constantAt = [&](uint32_t index) {
+        return integerConstantThroughCasts(context.program, function, sum.operand(index));
+    };
+    switch (sum.opcode) {
+    case Opcode::Increment:
+        return SumWithCounter { sum.operand(0), 1 };
+    case Opcode::Decrement:
+        return SumWithCounter { sum.operand(0), -1 };
+    case Opcode::Add:
+        if (std::optional<int64_t> right = constantAt(1))
+            return SumWithCounter { sum.operand(0), *right };
+        if (std::optional<int64_t> left = constantAt(0))
+            return SumWithCounter { sum.operand(1), *left };
+        return std::nullopt;
+    case Opcode::Sub:
+        if (std::optional<int64_t> right = constantAt(1); right && *right != std::numeric_limits<int64_t>::min())
+            return SumWithCounter { sum.operand(0), -*right };
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
+static bool testsSumInCycle(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    return std::ranges::any_of(context.analyses.cfg().reversePostOrder(), [&](BlockID block) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || !relationalOperators.contains(function.at(terminator.conditionOperand()).opcode) || !context.analyses.isInCycle(block))
+            return false;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        return sums.contains(function.at(context.analyses.identityOf(comparison.operand(0))).opcode) || sums.contains(function.at(context.analyses.identityOf(comparison.operand(1))).opcode);
+    });
+}
+
+// `k + 1 < length` says the same about the counter as `k < length - 1`, and only a test of the counter itself bounds it for later code.
+// An integral number plus a small integer is exact whenever it is near an integer far from the limit of exact integers; elsewhere its sign decides both comparisons.
+static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    constexpr int64_t farthestAddend = 1ll << 31;
+    constexpr int64_t farthestBound = 1ll << 51;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const UseLists& useLists = analyses.useLists();
+    Vector<TestOfSum, 2> tests;
+    for (const LoopInduction& induction : analyses.inductionVariables().loops()) {
+        const NaturalLoop& loop = loops.loop(induction.loopIndex);
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID block = loop.at(index);
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Branch || loops.belongsTo(terminator.taken().block, loop) == loops.belongsTo(terminator.notTaken().block, loop))
+                continue;
+            if (!terminator.taken().proofs.isEmpty() || !terminator.notTaken().proofs.isEmpty())
+                continue;
+            ValueID id = terminator.conditionOperand();
+            const Value& comparison = function.at(id);
+            if (!relationalOperators.contains(comparison.opcode) || useLists.useCount(id) != 1 || useLists.blockOf(id) != block)
+                continue;
+            for (uint32_t side = 0; side < 2; ++side) {
+                std::optional<SumWithCounter> sum = findSumWithConstant(context, comparison.operand(side));
+                if (!sum || !sum->addend || std::abs(sum->addend) > farthestAddend)
+                    continue;
+                const InductionVariable* variable = induction.find(analyses.identityOf(sum->counter));
+                if (!variable || variable->step.kind != InductionStepKind::Constant || variable->steppedValues.contains(analyses.identityOf(comparison.operand(side))))
+                    continue;
+                const Type& bound = context.program.typeOf(function, comparison.operand(1 - side));
+                if (!context.program.typeOf(function, sum->counter).isNumberWithoutFraction() || !bound.isInteger() || bound.integers.minimum < -farthestBound || bound.integers.maximum > farthestBound)
+                    continue;
+                tests.append({ id, side, *sum });
+                break;
+            }
+        }
+    }
+    for (const TestOfSum& test : tests) {
+        ProgramPoint point = useLists.pointOf(test.comparison);
+        builder.setOrigin(function.at(test.comparison).origin());
+        Value addend = IRBuilder::make(Opcode::Integer);
+        addend.setInteger(test.sum.addend);
+        ValueID bound = builder.insertBefore(point, IRBuilder::make(Opcode::Sub, { function.at(test.comparison).operand(1 - test.sideOfSum), builder.insertBefore(point, WTF::move(addend)) }));
+        Value& comparison = function.edit(test.comparison, ValueEdit::Definition);
+        comparison.setOperand(test.sideOfSum, test.sum.counter);
+        comparison.setOperand(1 - test.sideOfSum, bound);
+    }
+    if (tests.isEmpty())
+        return false;
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return true;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
-    if (!context.analyses.cfg().hasCycle() || !hasNumberParameter(context.program, context.function))
+    if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 
     PassOutcome outcome = PassOutcome::Unchanged;
     uint64_t numberOfConvertedCounters = 0;
     BitVector parametersOverStepLimit;
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
+        outcome = PassOutcome::Changed;
+    // During the rounds, only a counter that has just got its own test is converted, before the tests that the round would place on it. Other counters have their bound by then or get it after the rounds.
+    if (context.isInRounds && outcome == PassOutcome::Unchanged)
+        return outcome;
     for (;;) {
         Vector<CounterCandidate, 4> candidates = findCounterCandidates(context, parametersOverStepLimit);
         if (candidates.isEmpty()) {
@@ -490,6 +701,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     if (numberOfConvertedCounters) {
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
         context.hasCountersConvertedSinceTestsWerePlaced = true;
+    }
+    if (expectUnboundedCountersToStayInt32(context, builder)) {
+        context.hasCountersConvertedSinceTestsWerePlaced = true;
+        outcome = PassOutcome::Changed;
     }
     // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
     if (outcome == PassOutcome::Changed)
@@ -576,6 +791,17 @@ static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder
 
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
+static bool isCollectionLookup(const Program& program, const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    const BuiltinOverload& overload = program.builtins().at(value.overload());
+    if (overload.mode != BuiltinCallMode::Call)
+        return false;
+    BuiltinID builtin = program.builtins().canonicalID(overload.builtin);
+    return builtin == Builtins::MapPrototypeGet || builtin == Builtins::MapPrototypeHas || builtin == Builtins::SetPrototypeHas;
+}
+
 static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
@@ -600,7 +826,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean)
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -651,6 +877,14 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 return false;
             Effects effects = context.analyses.effectsOf(id).onAnyEdge();
             return effects.isUnobservable() && !effects.reads.overlaps(clobbers.writes);
+        }
+        // So does a look-up in a Map or a Set while the loop writes to none.
+        if (isCollectionLookup(program, value)) {
+            if (keptReads.get(id.index()) || !hasInvariantOperands(value))
+                return false;
+            // What the look-up writes itself is seen nowhere: the hash of a string, a table laid out anew. It throws only for lack of memory.
+            Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+            return effects.isRemovableWhenUnused() && !effects.reads.without(heapsWhoseWritesNobodySees).overlaps(clobbers.writes);
         }
         if (!hoistableReadOpcodes.contains(value.opcode))
             return false;
@@ -779,13 +1013,83 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
     return numberOfHoistedReads;
 }
 
+static bool mayChangeKeys(const EffectsOnEdges& effects)
+{
+    constexpr AbstractHeapSet heapsDescribingKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    Effects any = effects.onAnyEdge();
+    return any.mayRunOtherCode() || any.writes.containsAny(heapsDescribingKeys);
+}
+
+// There is one path from after the enumerator's open to the loop entry, and nothing on it changes any object's keys.
+static bool leadsToLoopWithoutChangeOfKeys(FunctionPassContext& context, ValueID open, BlockID lastBlock)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    AOT_THRESHOLD(unsigned, maxBlocksBetweenOpeningAndLoop, 4);
+    BlockID block = lastBlock;
+    for (unsigned step = 0; step < maxBlocksBetweenOpeningAndLoop; ++step) {
+        if (function.at(block).terminator.kind != TerminatorKind::Jump || mayChangeKeys(context.analyses.effectsOfTerminator(block)))
+            return false;
+        const BlockValues& values = function.at(block).values;
+        for (size_t index = values.size(); index--;) {
+            if (values[index] == open)
+                return true;
+            if (mayChangeKeys(context.analyses.effectsOf(values[index])))
+                return false;
+        }
+        std::span<const BlockID> predecessors = cfg.predecessors(block);
+        if (predecessors.size() != 1)
+            return false;
+        block = predecessors[0];
+    }
+    return false;
+}
+
+// Each step checks whether the enumerator still describes its object's keys. If nothing else in the loop can change an object's keys, the result only changes in a step that the runtime handles.
+static unsigned markStepsOfKeyPreservingLoops(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    NaturalLoops& naturalLoops = context.analyses.naturalLoops();
+    unsigned numberOfMarkedSteps = 0;
+    for (unsigned i = 0; i < naturalLoops.numLoops(); ++i) {
+        const NaturalLoop& loop = naturalLoops.loop(i);
+        ValueID step;
+        bool preservesKeys = true;
+        for (unsigned j = 0; j < loop.size() && preservesKeys; ++j) {
+            BlockID block = loop.at(j);
+            for (ValueID id : function.at(block).values) {
+                if (function.at(id).opcode == Opcode::ForInStep && !step && naturalLoops.innerMostLoopOf(block) == &loop)
+                    step = id;
+                else
+                    preservesKeys &= !mayChangeKeys(context.analyses.effectsOf(id));
+            }
+            preservesKeys &= !function.at(block).isHandlerBlock() && !mayChangeKeys(context.analyses.effectsOfTerminator(block));
+        }
+        if (!step || !preservesKeys || function.at(step).keysChangeOnlyInSteps() || !function.at(step).positionOperand())
+            continue;
+        // It takes a few more bytes.
+        if (!isHot(heatClassOf(context, loop.header())).predicted())
+            continue;
+        ValueID open = function.at(step).enumeratorOperand();
+        if (function.at(open).opcode != Opcode::ForInOpen || function.at(open).objectOperand() != function.at(step).objectOperand())
+            continue;
+        std::optional<Edge> entry = naturalLoops.findSingleEntry(loop);
+        if (!entry || entry->isHandlerEdge() || !leadsToLoopWithoutChangeOfKeys(context, open, entry->from))
+            continue;
+        function.edit(step).setKeysChangeOnlyInSteps(true);
+        ++numberOfMarkedSteps;
+    }
+    return numberOfMarkedSteps;
+}
+
 PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasCycle())
         return PassOutcome::Unchanged;
 
     Vector<Edge, 2> entriesFromBranches;
-    unsigned numberOfChanges = hoistReadsOutOfLoops(context, entriesFromBranches);
+    unsigned numberOfChanges = markStepsOfKeyPreservingLoops(context);
+    numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
     if (!entriesFromBranches.isEmpty()) {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
         for (Edge entry : entriesFromBranches)
@@ -935,7 +1239,7 @@ static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID
     BitVector hints;
     std::span<const ValueID> values = function.at(block).values.span();
     for (size_t index = 0; index < values.size(); ++index) {
-        if (function.at(values[index]).opcode == Opcode::LoopHint)
+        if (function.at(values[index]).opcode == Opcode::LoopHint && !function.at(values[index]).followsStores())
             hints.set(index);
     }
     if (hints.isEmpty())
@@ -959,12 +1263,54 @@ static bool removeHintsOutsideCycles(FunctionPassContext& context)
     return changed;
 }
 
+// Every path around a loop goes through its header. If the header polls, another poll in the same iteration adds nothing.
+static bool removeDuplicateIterationHints(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.cfg().hasCycle())
+        return false;
+    auto isHintOfLoop = [&](ValueID id) {
+        return function.at(id).opcode == Opcode::LoopHint;
+    };
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const BlockCycles& cycles = analyses.blockCycles();
+    Vector<std::pair<BlockID, BitVector>, 2> duplicateHints;
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        BlockID header = loop.header();
+        std::optional<unsigned> cycle = cycles.innermostCycleOf(header);
+        size_t hintOfHeader = function.at(header).values.findIf(isHintOfLoop);
+        if (hintOfHeader == notFound || !cycle || !cycles.forest()[*cycle].isReducible())
+            continue;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID block = loop.at(index);
+            if (cycles.innermostCycleOf(block) != cycle || function.at(block).handler != function.at(header).handler)
+                continue;
+            BitVector hints;
+            std::span<const ValueID> values = function.at(block).values.span();
+            for (size_t position = block == header ? hintOfHeader + 1 : 0; position < values.size(); ++position) {
+                if (isHintOfLoop(values[position]) && !function.at(values[position]).replacesTailCalls())
+                    hints.set(position);
+            }
+            if (!hints.isEmpty())
+                duplicateHints.append({ block, WTF::move(hints) });
+        }
+    }
+    IRBuilder builder(analyses.context(), context.function, context.types, &analyses);
+    for (auto& [block, hints] : duplicateHints)
+        builder.eraseValues(block, hints);
+    return !duplicateHints.isEmpty();
+}
+
 PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     while (removeOutermostDeadLoops(context))
         outcome = PassOutcome::Changed;
     if (removeHintsOutsideCycles(context))
+        outcome = PassOutcome::Changed;
+    if (removeDuplicateIterationHints(context))
         outcome = PassOutcome::Changed;
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)

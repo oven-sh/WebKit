@@ -62,15 +62,19 @@ function f1 name="repeated" module=m0 flags=[HasExplicitName] length=2 thisType=
     Return v19
 }
 
-# Without types `out += piece` still fills the buffer on the stack. A turn has two calls: the piece is added to the empty text, which makes a text of whatever it is, and that text is copied into the buffer.
+# Without types `out += piece` still fills the buffer on the stack. The piece is added to the empty text, which makes a text of whatever it is, and that text is copied into the buffer.
+# The sum takes the piece alone, and a piece that is a text comes back as it is, behind two tests: no run-time function is entered for it, and no register is written but that of the piece.
 # CHECK-LABEL: loop #
 # CHECK: Int64 b@[[cursor]] = Phi(
-# CHECK: Int64 b@[[text]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[piece]]:Register({{*}}), resultConstraints = Register({{*}}:Add)
+# CHECK: Int64 b@[[text]] = Patchpoint(b@[[piece]]:Register({{*}}), resultConstraints = Register({{*}}:Add)
 # CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}), b@[[cursor]]:Register({{*}}), b@[[text]]:Register({{*}}), resultConstraints = Register({{*}}:StringBuilderAppendString)
 # CHECK-LABEL: end of loop
 # No rope is made, and the text is made once, behind the loop.
 # CALLS-LABEL: f1: size=
 # CALLS-NOT: Concatenate
+# CALLS-NOT: BinaryOperation
 # CALLS: operation operationAOTStackStringBuilderFinish x1
 # CALLS-NOT: Concatenate
+# CALLS-NOT: BinaryOperation
+# CALLS: stub UnaryOperation.AddToEmptyString
 # CALLS: f{{*}}: size=

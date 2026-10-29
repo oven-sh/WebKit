@@ -202,15 +202,6 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
     });
 }
 
-// A validating build reads the header of every object and closure that a proof names, and a cell of a frame may have none. An array has its header wherever it lies.
-static bool staysOnHeapForValidation(const Program& program, const BuildContext& build, const Value& allocation)
-{
-    bool readsHeaders = build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
-    if (!readsHeaders || arrayAllocationsWithStorage.contains(allocation.opcode))
-        return false;
-    return allocation.opcode != Opcode::NewObject || !program.at(allocation.layout()).isEnvironment();
-}
-
 // A conversion, a test against `prototype` and the like read members of the function, which makes it an object with properties.
 static bool treatsOperandAsObject(Opcode opcode, uint32_t operandIndex)
 {
@@ -335,10 +326,38 @@ bool FramePlanner::mayGiveFrameCell(ValueID value) const
     return false;
 }
 
+static bool meansCellMayOutliveFrame(AllocationHeapCause cause)
+{
+    switch (cause) {
+    case AllocationHeapCause::Escapes:
+    case AllocationHeapCause::SeveralLiveInstances:
+    case AllocationHeapCause::HasUntrackedAlias:
+    case AllocationHeapCause::LiveAcrossSuspension:
+    case AllocationHeapCause::LiveAtReturnCall:
+    case AllocationHeapCause::HeldByHeapCell:
+    case AllocationHeapCause::HeldAcrossIterations:
+    case AllocationHeapCause::SeenByNativeCode:
+        return true;
+    case AllocationHeapCause::None:
+    case AllocationHeapCause::NotTracked:
+    case AllocationHeapCause::HasNoFrameForm:
+    case AllocationHeapCause::ChangedByUse:
+    case AllocationHeapCause::ClosureIsNotOnlyCalled:
+    case AllocationHeapCause::LayoutDefersClosures:
+    case AllocationHeapCause::FieldsCreatedLater:
+    case AllocationHeapCause::ExceedsLimit:
+    case AllocationHeapCause::MaterializationDoesNotPay:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::optional<Use> use, LimitID limit)
 {
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
+        return;
+    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause) && !isArray(object))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;
@@ -384,7 +403,7 @@ void FramePlanner::collectCandidates()
                 m_plan.count(StatisticID::EmptyArgumentListsShared);
                 continue;
             }
-            if (value.storage() != AllocationStorage::Heap || staysOnHeapForValidation(m_program, m_build, value))
+            if (value.storage() != AllocationStorage::Heap)
                 continue;
             if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;
@@ -538,7 +557,7 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     BlockID blockOfDefinition = useLists.blockOf(definition);
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
-    std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    ObjectUses knownUses = m_escape.usesOf(closure);
     // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
     bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
@@ -595,8 +614,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
-        std::optional<uint32_t> entryParameter = entryParameterOf(m_program.at(id), call, operandIndex);
-        return entryParameter && m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        const Function& callee = m_program.at(id);
+        if (std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex))
+            return m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        // An argument without a parameter is unused.
+        std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
+        return argument && *argument >= callee.numberOfPositionalParameters() && !callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
     };
     CalleeList callees = calleesOfCall(m_program, call);
     Callees seen = callees.seen().predicted();
@@ -990,6 +1013,9 @@ void FramePlanner::checkReturnCalls()
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
                     continue;
+                // A borrower of a closure returns no part of it, and a non-borrower is passed the heap closure. So the result of the call it was lent to is never the cell in the frame.
+                if (isCandidate(object) && isLent(object) && sameObjectThroughCasts(m_function, operand) != allocationOf(object))
+                    continue;
                 if (isCandidate(object) && calleesEndTheirTailCalls())
                     keepsFrame |= mayBeInFrame(object);
                 else
@@ -1182,7 +1208,7 @@ void FramePlanner::checkMaterialization()
     for (ObjectID environment : candidates()) {
         if (m_decisions[environment.index()].storage != AllocationStorage::FrameUntilMaterialized)
             continue;
-        std::span<const ObjectUse> uses = m_escape.usesOf(environment);
+        ObjectUses uses = m_escape.usesOf(environment);
         auto isCaptureOfFrameClosure = [&](const ObjectUse& entry) {
             return entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index());
         };

@@ -14,6 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct RefusedCode {
     bool evaluatedText { false };
+    bool hostEvaluatedText { false };
     bool codeOutsideImage { false };
 };
 

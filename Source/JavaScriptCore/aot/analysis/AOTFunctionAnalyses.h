@@ -140,6 +140,7 @@ public:
     bool mayCallUnknownCode(ValueID id) { return answerFromTraits<&EffectTraits::mayCallUnknownCode, &EffectTraitsOnEdges::normal>(id); }
     bool maySuspendOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::maySuspend, &EffectTraitsOnEdges::anyEdge>(id); }
     bool mayRunOtherCodeOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::mayRunOtherCode, &EffectTraitsOnEdges::anyEdge>(id); }
+    bool mayExitSidewaysOnAnyEdge(ValueID id) { return answerFromTraits<&EffectTraits::mayExitSideways, &EffectTraitsOnEdges::anyEdge>(id); }
     bool mayWriteWhatIsSeen(ValueID id) { return answerFromTraits<&EffectTraits::mayWriteWhatIsSeen, &EffectTraitsOnEdges::anyEdge>(id); }
     bool hasNoEffects(ValueID id) { return answerFromTraits<&EffectTraits::isPure, &EffectTraitsOnEdges::anyEdge>(id); }
     bool isRemovableWhenUnused(ValueID id) { return answerFromTraits<&EffectTraits::isRemovableWhenUnused, &EffectTraitsOnEdges::anyEdge>(id); }

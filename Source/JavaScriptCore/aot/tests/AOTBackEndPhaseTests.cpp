@@ -1159,7 +1159,7 @@ static void testLoopGoesOnFromCounterOfCopiedLoop()
             header->setSuccessors(B3::FrequentedBlock(body), B3::FrequentedBlock(behind));
             auto* poll = body->appendNew<B3::PatchpointValue>(proc, B3::Void, origin);
             poll->isLoopPoll = true;
-            poll->turnsAreShort = true;
+            poll->iterationsAreShort = true;
             poll->effects = B3::Effects::none();
             poll->effects.reads = B3::HeapRange::top();
             poll->effects.writes = B3::HeapRange(1, 2);

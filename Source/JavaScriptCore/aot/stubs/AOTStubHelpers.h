@@ -87,6 +87,8 @@ void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
 // The reference is bits 0 to 31 of word. The bits above are not cleared.
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
+// The same for a cell that the program passes in. A narrow reference never refers to a cell kept in a frame; a build that validates or checks proofs at run time checks that here.
+void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 // Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
 // The caller has proven that the word is a literal string word.

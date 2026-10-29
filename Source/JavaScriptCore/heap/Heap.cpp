@@ -2905,12 +2905,20 @@ StoredCellLog& Heap::storedCellLog()
     return *m_storedCellLog;
 }
 
-bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
+bool Heap::isOutsideCage(AlignedMemoryAllocator* allocator) const
+{
+    return allocator == fastMallocAllocator.get() || allocator == primitiveGigacageAllocator.get();
+}
+
+bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext, AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
+    // A collection takes its own memory from malloc. Where malloc has none for storage, the caller throws.
+    if (isOutsideCage(exhaustedAllocator))
+        return false;
     if (deferralContext || isDeferred()) {
-        cage().didFindNoRoomWhereNothingCollects();
+        cage().didFindNoRoomWithoutCollecting();
         if (deferralContext)
             deferralContext->m_shouldGC = true;
         else
@@ -2923,18 +2931,25 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
 
 void Heap::collectForExhaustedCage()
 {
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::willCollectForExhaustedCage(vm());
+#endif
+    // Helper threads allocate memory of their own.
+    collector().willCollectWithoutHelpers();
     collectNow(Sync, CollectionScope::Full);
 #if ASAN_ENABLED
     // Under ASan a block keeps the cells that a collection found dead until the next collection.
     collectNow(Sync, CollectionScope::Full);
 #endif
+    collector().didCollectWithoutHelpers();
 }
 
 bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
-    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
+    if (isOutsideCage(exhaustedAllocator))
         return false;
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())

@@ -52,13 +52,11 @@ void GuardEmitter::generateIsInBounds(const ValueContext& value)
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
-    if (!form) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        defineTest(value, boolean(false));
-        return;
-    }
     defineTestByBranching(value, [&](BranchTargets targets) {
-        emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);
+        if (form)
+            emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);
+        else
+            emitter<ElementAccessEmitter>().branchOnPresentElementInAnyStorage(value, targets);
     });
 }
 

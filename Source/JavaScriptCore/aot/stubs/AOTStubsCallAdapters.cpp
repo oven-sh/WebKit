@@ -390,12 +390,20 @@ StubSignature signatureOfEnterSlimClosure(StubKey) { return { }; }
 StubSignature signatureOfEnterModuleBody(StubKey) { return { }; }
 StubSignature signatureOfEnterClosureForConstruct(StubKey) { return { }; }
 
+// toCodeAddress() does it on x86-64.
+static void clearIsRenamedBit(StubAssembler& jit, GPRReg word)
+{
+    if (isARM64())
+        jit.and64(TrustedImm64(~(1ULL << ClosureWord::isRenamedBit)), word);
+}
+
 void generateEnterClosure(StubAssembler& jit)
 {
     const GPRReg word = jit.reuseScratch(StubRegister::T11);
     JumpList hasWord;
     emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
+    clearIsRenamedBit(jit, word);
     hasWord.append(jit.jump());
 
     // The callee only says which realm is entered. The first argument is the number of the function, an int32.
@@ -542,6 +550,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
 
     Jump isNotFullClosure = jit.branchIfNotType(calleeGPR, CompiledClosureType);
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
+    clearIsRenamedBit(jit, word);
     Jump hasWord = jit.jump();
     isNotFullClosure.link(&jit);
     loadSlimClosureWord(jit, calleeGPR, word);
@@ -603,8 +612,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     extractBits(jit, word, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
     loadKindOfClosureFunction(jit, function, kind);
     isNotPlainFunction.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(nonPlainFunctionKindMask())));
-    // The call below comes by no stub that records its callee.
-    isNotPlainFunction.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
+    isNotPlainFunction.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
 
     jit.subPtr(TrustedImm32(static_cast<int32_t>(-offsetOfCount)), sp);
     jit.store64(calleeGPR, Address(fp, offsetOfCallee));

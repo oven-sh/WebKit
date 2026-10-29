@@ -89,6 +89,8 @@ public:
     void callFunction(CCallHelpers&, FunctionID callee, uint16_t entry, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void callRegister(CCallHelpers&, GPRReg address, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry);
+    void moveAddressOfFunction(FunctionID callee, uint16_t entry, GPRReg destination);
+    void moveAddressOfStub(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, GPRReg destination);
 
     // Under validation: calls the operation that reports a failure, with its arguments in place.
     void reportChangedRegister(CCallHelpers&);

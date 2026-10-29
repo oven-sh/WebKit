@@ -10,6 +10,7 @@
 #include "AOTLayoutData.h"
 #include "AOTObjectBuilder.h"
 #include "AOTRuntimeType.h"
+#include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
@@ -141,7 +142,7 @@ private:
 
     Set& setFor(const FieldMovePlanKey&);
 
-    std::unique_ptr<Sets> m_sets;
+    MadeInArena<Sets> m_sets;
     const Entry* m_lastFound { nullptr };
     RememberedSlotSet m_writes;
 };

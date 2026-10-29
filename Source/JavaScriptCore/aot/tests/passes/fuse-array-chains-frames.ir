@@ -7,29 +7,29 @@
 
 module m0 path="main.js" displayPath="main.js"
 module m1 path="library.js" displayPath="library.js"
-runtimefunction id=32 function=f1
-runtimefunction id=64 function=f2
-runtimefunction id=81 function=f3
-runtimefunction id=131091 function=f0
-function f0 name="traverseArray" module=m1 position=900 role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeFilter function=f1
+runtimefunction id=ArrayPrototypeMap function=f2
+runtimefunction id=ArrayPrototypeReduce function=f3
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" module=m1 position=900 role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
-function f1 name="filter" module=m1 position=100 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="filter" module=m1 position=100 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="map" module=m1 position=200 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="map" module=m1 position=200 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f3 name="reduce" module=m1 position=300 role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="reduce" module=m1 position=300 role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeReduce thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array<anything>):
     v4 = Integer integer=0
     v5 = ElemGet v0, v4

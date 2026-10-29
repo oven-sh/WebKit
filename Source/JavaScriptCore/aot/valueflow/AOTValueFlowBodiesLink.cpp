@@ -1193,6 +1193,7 @@ private:
         universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
         universe.m_holdersOfLibraryExports = ValueSets::nothing;
         universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
+        universe.m_eventRaisingLibraryExportHolders = ValueSets::nothing;
         BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
@@ -1200,9 +1201,14 @@ private:
             appendHoldersOfExports(list, ModuleID(index));
             universe.m_holdersOfExportsOfModule[index] = take();
             universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
-            if (!mayRaiseEvents.get(index))
-                universe.m_holdersOfLibraryExportsThatRaiseNoEvent = maker.unite(universe.m_holdersOfLibraryExportsThatRaiseNoEvent, universe.m_holdersOfExportsOfModule[index]);
+            ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_eventRaisingLibraryExportHolders : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
+            holders = maker.unite(holders, universe.m_holdersOfExportsOfModule[index]);
         }
+        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+            if (ModuleID module = m_program.functions[index].module; module && mayRaiseEvents.get(module.index()))
+                list.append(universe.closureOf(FunctionID(index)));
+        }
+        universe.m_eventRaisingLibraryClosures = take();
         universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
@@ -1221,10 +1227,13 @@ private:
             if (BuiltinClassID builtinClass = universe.m_classOfCoroutineResult[index])
                 ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
         }
+        Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
                 ofLayout[layout.index()].append(object);
+            if (universe.m_sites[site].isProxyFromNamedConstructor)
+                proxiesFromNamedConstructor.append(object);
             if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
@@ -1232,6 +1241,7 @@ private:
             else if (!universe.m_sites[site].layout)
                 list.append(object);
         }
+        universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
@@ -1304,7 +1314,8 @@ private:
         }
         universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
         universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
-        ValueSetID inEveryClassButNoBuiltinObject = maker.unite(maker.uniteAll(inheritingLayouts.span()), universe.m_objectsThatMayBeAnything);
+        universe.m_instancesBelowBuiltinClasses = maker.uniteAll(inheritingLayouts.span());
+        ValueSetID inEveryClassButNoBuiltinObject = maker.unite(universe.m_instancesBelowBuiltinClasses, universe.m_objectsThatMayBeAnything);
         ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
 
         auto hasSameCellTypeTest = [&](BuiltinClassID first, BuiltinClassID second) {
@@ -1522,10 +1533,16 @@ private:
             ValueSetID instances = ValueSets::nothing;
             for (BuiltinClassID builtinClass : mask.insideOneOfClasses)
                 instances = maker.unite(instances, universe.instancesOf(builtinClass));
+            // The test is of the type of the cell. A proxy may be callable, but no closure is a proxy.
+            if (mask.insideOneOfClasses.size() == 1 && mask.insideOneOfClasses[0] == BuiltinClasses::Proxy)
+                instances = maker.intersect(instances, ValueSets::complement(universe.closures()));
             linked.set = maker.intersect(linked.set, instances);
         }
-        for (BuiltinClassID builtinClass : mask.outsideClasses)
+        for (BuiltinClassID builtinClass : mask.outsideClasses) {
             linked.set = maker.intersect(linked.set, ValueSets::complement(universe.sureInstancesOf(builtinClass)));
+            if (builtinClass == BuiltinClasses::Proxy)
+                linked.set = maker.intersect(linked.set, ValueSets::complement(universe.proxiesFromNamedConstructor()));
+        }
         if (linked.familyObjects)
             linked.familyObjects = maker.intersect(linked.familyObjects, linked.set);
         return linked;
@@ -1596,6 +1613,7 @@ private:
                 statement.isOnlyCalledOnItsHolder,
                 statement.guardCount,
                 first.operand + statement.firstGuard,
+                statement.guardsOfOperands,
             };
         });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {

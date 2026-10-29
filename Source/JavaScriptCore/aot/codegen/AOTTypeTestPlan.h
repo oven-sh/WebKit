@@ -34,6 +34,7 @@ struct CellTest {
     PropertyKeyID symbol { };
     ArrayBufferSharingMode sharingMode { ArrayBufferSharingMode::Default };
     ModuleID module { };
+    LayoutID classLayout { };
 
     static CellTest isObject() { return { .kind = CellTestKind::IsObject }; }
 };

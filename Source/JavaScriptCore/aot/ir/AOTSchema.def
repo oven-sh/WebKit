@@ -92,6 +92,7 @@ heap ExternalState observable ordered
 heap AllocatorState
 heap RuntimeState ordered
 heap ValidationState
+heap CalleesInFrames observable ordered
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
@@ -113,7 +114,7 @@ external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
 external BuiltinClass : id = BuiltinClassID, crate::builtins::id::BuiltinClass { Array Arguments Map Set Promise RegExp Generator AsyncGenerator } ; namedInText
 external BuiltinName : id = BuiltinName, crate::builtins::id::BuiltinName { prototype }
 external RuntimeModule : id = RuntimeModuleID, crate::builtins::id::RuntimeModule ; namedInText
-external RuntimeFunction : id = RuntimeFunctionID, crate::builtins::id::RuntimeFunction
+external RuntimeFunction : id = RuntimeFunctionID, crate::builtins::id::RuntimeFunction ; namedInText
 external CheckedJSType : enum = CheckedJSType, crate::builtins::id::CheckedJSType
 external LinkTimeConstant : enum = LinkTimeConstantID, crate::builtins::id::LinkTimeConstant
 external Feature : enum = RemovableFeature, crate::builtins::id::Feature

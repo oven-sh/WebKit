@@ -54,29 +54,95 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
-// The limit that sends a call here lies above every frame once calls by value record their callees.
-static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
+// generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
+SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
+{
+    return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
+}
+
+// A tail call by value gives up a frame and returns to where that frame would have returned. Whoever holds the closure that runs above that place holds the callee from now on:
+// a caller that entered a function without its closure has a word for it in its own frame, and the adapter has the callee slot of its frame.
+SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller, CallFrame* framePointerOfCaller)
+{
+    std::optional<FunctionID> function = functionOf(callee);
+    if (!function || !tables.recordsCalleesOf(*function))
+        return;
+    const void* returnAddress = returnAddressOfPolledCall(stackPointerOfCaller);
+    const VMState& state = vm.aotState();
+    const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
+    while (site && site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::ArgumentList) {
+        auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointerOfCaller);
+        stackPointerOfCaller = record + 1;
+        framePointerOfCaller = record->callerFrame;
+        site = state.callSiteCache->resolve(*state.image, removeCodePtrTag(record->returnPC));
+    }
+    if (!site)
+        return;
+    if (site->isStubReturnSite()) {
+        if (site->stubFrameKind == StubFrameKind::Adapter)
+            framePointerOfCaller->setCallee(asObject(callee));
+        return;
+    }
+    std::optional<CalleeOfSite> said = state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
+    // The tail call of a function that was inlined is a call of the machine, and the word is that of the inlined frame.
+    if (!said && site->site.isTailCall())
+        said = calleeOfCopiedFrame(*state.image, state.callSiteCache->inlineFrames(), site->code, { site->innermostFunction, site->site.callSite, site->site.inlineFrame, site->innermostIsInlinedConstructCall, false });
+    if (!said || said->isOwnFunctionObject())
+        return;
+    auto* frameRecord = reinterpret_cast<JSCell**>(static_cast<char*>(stackPointerOfCaller) + site->frame.frameSizeInBytes() - site->frame.bytesAboveFrameRecord());
+    frameRecord[said->wordInFrame()] = callee;
+}
+
+// The limit that sends a tail call here lies above every frame once a closure was renamed.
+static bool passHolderInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller)
 {
     FunctionTables& tables = FunctionTables::of(*instance->vm);
     if (!tables.recordsCalleesOfCallsByValue())
         return false;
-    tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
+    passHolderToCalleeOfTailCall(*instance->vm, tables, callee, stackPointerOfCaller, static_cast<CallFrame*>(framePointerOfCaller));
     return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller))
+static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
 {
-    if (recordCalleeInsteadOfPolling(instance, callee, stackPointerOfCaller))
+    // Another stub may have made the polled call. generatePollBeforeEntering() sets up a frame record on x86-64 only.
+    CallFrame* framePointerOfCaller = isX86() ? static_cast<CallFrame*>(frameOfPollStub->callerFrameOrEntryFrame()) : frameOfPollStub;
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(stackPointerOfCaller), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, stackPointerOfCaller);
+    return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
+}
+
+// The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
+// A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
+static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
+{
+    {
+        DeferGCForAWhile deferGC(vm);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        RETURN_IF_EXCEPTION(scope, void());
+        vm.throwTerminationExceptionIfNeeded();
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (!vm.traps().needsOutOfMemoryError()) [[likely]]
+        return;
+    if (!hasCollectedInPolledCall(vm, stackPointerOfCaller, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
+        return;
+    DeferGCForAWhile deferGC(vm);
+    throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller))
+{
+    if (passHolderInsteadOfPolling(instance, callee, stackPointerOfCaller, framePointerOfCaller))
         return ExceptionOperationImplicitResult<void> { nullptr };
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    vm.throwTerminationExceptionIfNeeded();
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
-        DeferGCForAWhile deferGC(vm);
-        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
-    }
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
     OPERATION_RETURN(scope);
 }
 
@@ -97,8 +163,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance, uint8_t* returnAddress))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollAtPrologue);
+    {
+        DeferGCForAWhile deferGC(vm);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        vm.throwTerminationExceptionIfNeeded();
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
+    }
+    OPERATION_RETURN(scope, resumeAddressAfterStackCheck(returnAddress));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologueWithoutCollecting, void*, (Instance* instance, uint8_t* returnAddress))
+{
     // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPollAtPrologueWithoutCollecting);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     vm.throwTerminationExceptionIfNeeded();
@@ -155,8 +236,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
     VM& vm = *instance->vm;
     // A collection that starts here goes over the frames from this one.
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
@@ -168,8 +247,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
 
 static Exception* takePendingException(VM& vm)
 {
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
@@ -268,7 +345,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
-        if (validatesRuntime(globalObject->vm()))
+        if (checksClaimsAboutObjects(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
         if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
             return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));

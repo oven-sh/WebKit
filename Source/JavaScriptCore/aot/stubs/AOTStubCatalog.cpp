@@ -100,12 +100,14 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
     // The caller of this stub calls the address, and states the effects of that call itself.
     if (reference.kind == StubReference::Kind::ReturnedAddress)
         return false;
-
     bool changed = false;
 
     // The head of an operation call recorded its operation: to this head, the body all heads share calls nothing unknown.
     bool entersSharedBody = isOperationCallHead(recording.body) && reference.target == recording.body.withoutImmediate();
-    if (!entersSharedBody)
+    // A caller plans for the error of a failed allocation wherever a call may collect. What the poll does is not an effect of the stub.
+    bool isPollAfterOperation = reference.kind == StubReference::Kind::PollAfterOperation;
+    RELEASE_ASSERT(!isPollAfterOperation || leavesStubs);
+    if (!entersSharedBody && !isPollAfterOperation)
         changed = effects.merge(target.effects);
 
     if (target.leavesStubs && !leavesStubs) {
@@ -120,6 +122,7 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
     RegisterSet restored;
     switch (reference.kind) {
     case StubReference::Kind::Call:
+    case StubReference::Kind::PollAfterOperation:
     case StubReference::Kind::Jump:
         restored = reference.savedAround;
         break;

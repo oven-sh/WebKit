@@ -108,6 +108,7 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     case OperatorForm::StringAndPrimitive:
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
+    case OperatorForm::MayBeString:
         if (op == ArithmeticOperator::Add)
             return addStrings(value);
         break;
@@ -121,7 +122,6 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
     case OperatorForm::NullableNumber:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
         break;
     }

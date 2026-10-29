@@ -368,8 +368,9 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
 
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
 {
+    // readInline() called read() for a field that is stored out of line.
     JSValue value = object.readInline(field);
-    if (!value)
+    if (!value && !field.isOutOfLine())
         value = object.read(field);
     if (value)
         return { value, object.attributesOf(field), true };
@@ -396,7 +397,8 @@ bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
     if (!accepted || !object.store(vm, field, *accepted))
         return false;
-    object.didCreateField(state, field, !!object.slotOf(field));
+    // store() has already allocated the storage that the value needs.
+    object.didCreateField(state, field, false);
     if (field.isFilledAtBirth)
         object.tryFinishBirth();
     if (object.structure()->mayBePrototype()) [[unlikely]]

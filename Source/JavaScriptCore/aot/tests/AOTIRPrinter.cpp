@@ -659,10 +659,32 @@ void IRPrinter::print(RuntimeModuleID id)
         printInvalid("runtimemodule"_s, id.index());
 }
 
+StringView tokenOf(const BuiltinTable& builtins, RuntimeFunctionID id)
+{
+    std::span<const RuntimeFunctionData> functions = builtins.runtimeFunctions();
+    auto found = std::ranges::lower_bound(functions, id.index(), { }, [](const RuntimeFunctionData& function) { return function.id.index(); });
+    if (found == functions.end() || found->id != id)
+        return { };
+    return byteCast<Latin1Character>(builtinTableRuntimeFunctionTokens[found - functions.begin()]);
+}
+
+RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable& builtins, StringView token)
+{
+    BuiltinTexts tokens = builtinTableRuntimeFunctionTokens;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (token == StringView(byteCast<Latin1Character>(tokens[i])))
+            return builtins.runtimeFunctions()[i].id;
+    }
+    return { };
+}
+
 void IRPrinter::print(RuntimeFunctionID id)
 {
-    if (!printNumber(m_out, m_program.builtins(), id))
+    StringView token = tokenOf(m_program.builtins(), id);
+    if (token.isNull())
         printInvalid("runtimefunction"_s, id.index());
+    else
+        m_out.print(token);
 }
 
 static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)

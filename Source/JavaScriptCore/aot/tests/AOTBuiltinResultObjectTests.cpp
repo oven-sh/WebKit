@@ -401,7 +401,7 @@ function f1 name="settled" parameters=[{type=anything}] results=[{type=anything}
 static constexpr ASCIILiteral stepsOfArrayIterator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=68 function=f1
+runtimefunction id=ArrayIteratorPrototypeNext function=f1
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -433,7 +433,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v20 = CallDirect function=f2
     Return
 }
-function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=68 results=[{type=anything}] {
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayIteratorPrototypeNext results=[{type=anything}] {
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     v2 = GetInternalField v1
     v3 = Check v2 expectedType=i32
@@ -482,7 +482,7 @@ function f2 name="readKept" results=[{type=anything}] {
 static constexpr ASCIILiteral stepsOfGenerator = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=69 function=f2
+runtimefunction id=GeneratorPrototypeNext function=f2
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -520,7 +520,7 @@ function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] 
     v6 = String string="returned"
     Return v6
 }
-function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=GeneratorPrototypeNext parameters=[{type=anything}] results=[{type=anything}] {
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2
     v4 = ResultAt v2 index=1

@@ -321,6 +321,9 @@ static void printCellTest(const TablesContext& context, const RuntimeCellTest& t
     case CellTestKind::IsNamespaceOf:
         context.printer.print(test.module());
         break;
+    case CellTestKind::CarriesBrandOfClass:
+        context.out.print(test.rankOfClass());
+        break;
     }
     context.out.print(")");
 }
@@ -479,6 +482,12 @@ static void printClassRecord(const TablesContext& context, const LayoutData& lay
         RecordLine(context, "  guard"_s).identifier("name"_s, guard.name).field("kind"_s, nameOf(guard.kind())).field("side"_s, guard.side()).field("bit"_s, guard.bit);
         printSetsOfGuard(context, layout.aggregatesOf(guard));
     }
+    if (data.namesOfFieldsOffset) {
+        const uint32_t* names = context.tables.at<uint32_t>(data.namesOfFieldsOffset);
+        RecordLine(context, "  namesOfFields"_s).list("names"_s, unsafeMakeSpan(names, 1 + static_cast<size_t>(*names)).subspan(1), [&](uint32_t number) {
+            printIdentifier(context, number);
+        });
+    }
     if (data.subclassesOffset) {
         const uint32_t* subclasses = context.tables.at<uint32_t>(data.subclassesOffset);
         RecordLine(context, "  subclasses"_s).list("classes"_s, unsafeMakeSpan(subclasses, 1 + static_cast<size_t>(*subclasses)).subspan(1), [&](uint32_t index) {
@@ -593,6 +602,10 @@ static void printFunctionTraces(const TablesContext& context)
             .word(trace.codeType() == ModuleCode ? "module"_s : "function"_s).word(trace.isStrict ? "strict"_s : "sloppy"_s).flag("constructor"_s, trace.isConstructor)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
             .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedByComputedKey"_s, trace.isNamedByComputedKey);
+    }
+    for (uint32_t index = 0; index < context.tables.numberOfFunctions(); ++index) {
+        for (uint32_t form : context.tables.closureFormsOf(index))
+            context.out.println("closureForm f", form, " source=f", index);
     }
 }
 

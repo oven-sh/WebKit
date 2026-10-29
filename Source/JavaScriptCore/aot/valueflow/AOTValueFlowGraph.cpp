@@ -82,7 +82,15 @@ public:
                 step(index, 0);
             return;
         }
-        RELEASE_ASSERT(count <= mostIndices);
+        // A ticket has room for so many indices. More of them go in batches.
+        if (count > mostIndices) [[unlikely]] {
+            for (unsigned first = 0; first < count; first += mostIndices) {
+                run(std::min(mostIndices, count - first), [&](unsigned index, unsigned worker) {
+                    step(first + index, worker);
+                });
+            }
+            return;
+        }
         m_step = &step;
         m_helpersWanted.store(std::min(m_mostHelpers, count / 2), std::memory_order_relaxed);
         m_numberDone.store(0);
@@ -299,7 +307,8 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
 {
     ValueFlowNodeID first(m_numberOfNodes);
     size_t size = static_cast<size_t>(m_numberOfNodes) + count;
-    RELEASE_ASSERT(size < ValueFlowRoundLog::numberedByLog);
+    if (size >= ValueFlowRoundLog::numberedByLog) [[unlikely]]
+        exitProgramTooLarge();
     if (size > m_capacity) {
         size_t capacity = std::max<size_t>(m_capacity ? m_capacity * 2 : size * 4, std::max<size_t>(size, 4096));
         m_gates.grow(m_numberOfNodes, capacity);
@@ -358,7 +367,8 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
     });
     if (!number) {
         number = static_cast<uint32_t>(m_masks.size());
-        RELEASE_ASSERT(*number < 1u << 22);
+        if (*number >= 1u << 22) [[unlikely]]
+            exitProgramTooLarge();
         m_numberOfMask.add(hash, *number);
         mask.lowMembersAdmitted = lowMembersOf(admitted, *m_makers[0]);
         m_masks.append(mask);
@@ -835,6 +845,18 @@ void ValueFlowGraph::keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, Value
     m_lowMembersKeptOutOfNodesMadeForPlaceholders = lowMembersOf(keptOut, *m_makers[0]);
 }
 
+void ValueFlowGraph::listInsteadOfWhatIsKeptOut(ValueSetID objects, ValueFlowObjectID insteadOfObjects, ValueSetID strings, ValueFlowObjectID insteadOfStrings, IsMadeForPlaceholder holdsWhatWasStored)
+{
+    RELEASE_ASSERT(!m_hasSolved && insteadOfObjects.index() < 64 && insteadOfStrings.index() < 64);
+    m_holdsWhatWasStoredThroughPlaceholder = holdsWhatWasStored;
+    m_objectsWithStandIn = objects;
+    m_stringsWithStandIn = strings;
+    m_lowObjectsWithStandIn = lowMembersOf(objects, *m_makers[0]);
+    m_lowStringsWithStandIn = lowMembersOf(strings, *m_makers[0]);
+    m_standInForObjects = 1ull << insteadOfObjects.index();
+    m_standInForStrings = 1ull << insteadOfStrings.index();
+}
+
 bool ValueFlowGraph::flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID node) const
 {
     for (const Covering& covering : m_coverings) {
@@ -1184,6 +1206,14 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
         low &= ~m_lowMembersKeptOutOfNodesMadeForPlaceholders;
         lowInNoSet &= low;
         set = maker.intersect(set, m_allButKeptOutOfNodesMadeForPlaceholders);
+        if (m_holdsWhatWasStoredThroughPlaceholder && m_holdsWhatWasStoredThroughPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))) {
+            auto isKeptOut = [&](uint64_t lowMembers, ValueSetID members) {
+                return (lowKeptOut & lowMembers) || (setKeptOut != ValueSets::nothing && m_sets.meet(setKeptOut, members));
+            };
+            uint64_t standIns = (isKeptOut(m_lowObjectsWithStandIn, m_objectsWithStandIn) ? m_standInForObjects : 0) | (isKeptOut(m_lowStringsWithStandIn, m_stringsWithStandIn) ? m_standInForStrings : 0);
+            low |= standIns;
+            lowInNoSet |= standIns;
+        }
     }
     if (gate.flags & IsRetired) [[unlikely]] {
         ValueSetID taken = whatRetiredNodeTakes(node, maker);

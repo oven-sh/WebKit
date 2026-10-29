@@ -342,12 +342,19 @@ void generateReadSlot(StubAssembler& jit)
             uncached.append(jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(0)));
             returnInt32(T10);
             return;
-        case Slot::Kind::TypedArrayLength:
+        case Slot::Kind::TypedArrayLength: {
             uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
+            Jump readsByteOffset = slot.branchIfFlag(jit, Slot::readsByteOffset);
             jit.load64(Address(R0, JSArrayBufferView::offsetOfLength()), T10);
+            Label hasWord = jit.label();
             uncached.append(jit.branch64(CCallHelpers::Above, T10, TrustedImm64(std::numeric_limits<int32_t>::max())));
             returnInt32(T10);
+
+            readsByteOffset.link(&jit);
+            jit.load64(Address(R0, JSArrayBufferView::offsetOfByteOffset()), T10);
+            jit.jump().linkTo(hasWord, &jit);
             return;
+        }
         case Slot::Kind::StringLength: {
             jit.loadPtr(Address(R0, JSString::offsetOfValue()), T11);
             Jump isRope = jit.branchIfRopeStringImpl(T11);

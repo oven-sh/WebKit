@@ -105,7 +105,7 @@ function f1 name="total" module=m0 flags=[IsAsync, HasThis, IsChecked, HasExplic
 # CHECK-NOT: Reads:InternalFields
 # CHECK: Double b@[[product]] = Mul(b@{{*}}, b@{{*}}, {{*}}:Mul)
 # CHECK-NEXT: Double b@{{*}} = Add({{*}}b@[[product]],{{*}}:Add)
-# CHECK: Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSObject_butterfly
+# CHECK: Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSArray_butterfly
 # CHECK: Int64 b@{{*}} = Add(b@[[k]], $1(
 # CHECK-LABEL: end of loop
 # The sum of the loop is the other operand. Which of the two stands first goes by their numbers, which differ from target to target.

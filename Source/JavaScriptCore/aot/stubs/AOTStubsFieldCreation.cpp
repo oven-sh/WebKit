@@ -15,6 +15,8 @@
 #include "AOTObjectWords.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsAllocation.h"
+#include "AOTStubsBarriers.h"
 
 namespace JSC { namespace AOT {
 
@@ -207,15 +209,17 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     jit.jump().linkTo(findStorage, &jit);
 
     cannotAppend.link(&jit);
+    // The offset may share its register with the address.
+    loadOffsetOfExtensionWord();
     jit.preservingCallerSavedRegisters(false, [&](unsigned) {
-        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
-        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
-        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        RELEASE_ASSERT(object != A2 && noOverlap(instanceGPR, A1, A2));
-        jit.move(granuleBit, A2);
-        jit.move(object, A1);
-        jit.move(instanceGPR, A0);
-        jit.callOperation(Entry::operationAOTEnsureExtensionGranules, jit.reuseScratch(StubRegister::Operation));
+        const StubKey allocate = allocateExtension(extensionCellSizeFor(1));
+        const StubSignature signature = signatureOfAllocateExtension(allocate);
+        const GPRReg owner = signature.operands[0].gpr();
+        jit.shuffleRegisters<GPRReg, 3>({ object, r.field.extensionWordOffset, granuleBit }, { owner, signature.operands[1].gpr(), signature.operands[2].gpr() });
+        jit.callStub(allocate);
+        // The collector finds a new Extension only through its owner.
+        jit.move(owner, signatureOfWriteBarrier(writeBarrier()).operands[0].gpr());
+        jit.callStub(writeBarrier());
     });
     jit.jump().linkTo(findStorage, &jit);
 }

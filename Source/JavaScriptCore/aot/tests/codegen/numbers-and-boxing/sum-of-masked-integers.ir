@@ -83,6 +83,6 @@ function f1 name="addBytes" module=m0 flags=[IsChecked, HasExplicitName] length=
 # NONE-NOT: IToD
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
-# ARM64 shifts within the addition.
+# arm64 shifts within the addition.
 # X64: instructions: 5, patchpoints: 0
 # ARM64: instructions: 4, patchpoints: 0

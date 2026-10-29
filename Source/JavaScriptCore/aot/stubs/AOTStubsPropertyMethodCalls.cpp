@@ -99,7 +99,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         return kind.slimClosureKind() == 1 && !FunctionKindData { }.slimClosureKind();
     }());
 
-    // A validating build allocates nothing in frames, and with wide references no slot defers a closure.
+    // A validating build creates the closure that it calls, and with wide references no slot defers a closure.
     if (jit.options().validates || jit.options().useWideReferences)
         return;
 
@@ -187,7 +187,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         jit.load64(Address(sp, (i + 2) * sizeof(EncodedJSValue)), argumentGPR(i));
     jit.addPtr(TrustedImm32(offsetOfClosure), sp, calleeGPR);
     jit.move(TrustedImm32(count), countGPR);
-    jit.loadStubAddress(callValueCell(count), jit.clobberRegister(callTargetRegister));
+    jit.loadStubAddress(callValueCell(count), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 
     otherwise.link(&jit);

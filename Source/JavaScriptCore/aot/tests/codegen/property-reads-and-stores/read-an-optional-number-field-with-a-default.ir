@@ -93,17 +93,23 @@ function f1 name="limitOf" module=m0 position=48 flags=[IsChecked, HasExplicitNa
 }
 
 # An optional number has a slot of its own, and a slot that holds nothing holds a bit pattern that is no number. The read is one load of a double and a test that it is a number.
-# The ?? then tests the bits for undefined. Nothing is boxed, nothing is called, and the shape of the object is not read.
+# What is a number is not undefined: it is the answer without a further test. Only what is no number has its bits tested for undefined by the ??. Nothing is boxed, nothing is called, and the shape of the object is not read.
 # CHECK-LABEL: name="limitOf" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[search]] = ArgumentReg(
 # CHECK-NEXT: Double b@[[limit]] = Load(b@[[search]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlotOrUndefined)
 # CHECK-NEXT: Int32 b@[[isNumber]] = Equal(b@[[limit]], b@[[limit]],
-# CHECK: Branch(b@[[isNumber]], Terminal,
-# CHECK: Double b@[[value]] = Phi(
-# CHECK-NEXT: Int64 b@[[bits]] = BitwiseCast(b@[[value]],
+# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[number]], Else:Unlikely:#[[noNumber]]
+# CHECK-NEXT: BB#[[number]]:
+# CHECK-NOT: Branch(
+# CHECK: Return(
+# CHECK: BB#[[noNumber]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@[[bits]] = BitwiseCast(b@[[limit]],
 # CHECK: Int32 b@[[isUndefined]] = GreaterEqual(b@[[bits]],
 # CHECK-NEXT: Branch(b@[[isUndefined]], Terminal,
+# CHECK-NOT: Select(
 # CHECK-LABEL: end of function
 # BRANCHES-LABEL: name="limitOf" role=Source
 # BRANCHES-COUNT-2: Branch(
@@ -115,6 +121,6 @@ function f1 name="limitOf" module=m0 position=48 flags=[IsChecked, HasExplicitNa
 # NONE-NOT: Reads:JSCell
 # NONE-LABEL: end of function
 # X64-LABEL: name="limitOf" role=Source
-# X64-NEXT: instructions: 11, patchpoints: 1
+# X64-NEXT: instructions: 7, patchpoints: 1
 # ARM64-LABEL: name="limitOf" role=Source
-# ARM64-NEXT: instructions: 13, patchpoints: 1
+# ARM64-NEXT: instructions: 8, patchpoints: 0

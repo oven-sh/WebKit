@@ -77,31 +77,25 @@ function f1 name="pick" module=m0 position=39 flags=[IsChecked, HasExplicitName]
 }
 
 # The key is "x" or "y" and the layout is known, so the read is a comparison of the key and one load on either side. No property is looked up by name.
-# A string that is not in its short form is brought into it first, by a call that has no effects, on an unlikely path.
+# The key is compared as it arrives: whoever hands it over hands over the number of its text.
 # CHECK-LABEL: name="pick" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[key]] = ArgumentReg(
-# CHECK: Int32 b@[[isLong]] = AboveEqual(b@[[key]],
-# CHECK-NEXT: Branch(b@[[isLong]], Terminal,
-# CHECK-NEXT: Successors: Then:Unlikely:#[[shorten]], Else:#
-# CHECK: Int64 b@[[short]] = Phi(
-# CHECK: Int32 b@[[isX]] = Equal(b@[[short]],
+# CHECK: Int32 b@[[isX]] = Equal(b@[[key]],
 # CHECK: Branch(b@[[isX]], Terminal,
 # CHECK: Double b@[[x]] = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Double b@[[y]] = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: BB#[[shorten]]:
-# CHECK: Int64 b@[[shortened]] = Patchpoint(b@[[key]]:Register({{*}}), resultConstraints = Register({{*}}), pureFunction
 # CHECK-LABEL: end of function
 # BRANCHES-LABEL: name="pick" role=Source
-# BRANCHES-COUNT-2: Branch(
+# BRANCHES-COUNT-1: Branch(
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of function
 # NONE-LABEL: name="pick" role=Source
 # NONE-NOT: ExitsSideways
 # NONE-NOT: NamedProperties
+# NONE-NOT: Patchpoint
 # NONE-LABEL: end of function
-# The count takes in the moves around the call on the unlikely path, which follow the calling convention.
 # X64-LABEL: name="pick" role=Source
-# X64-NEXT: instructions: 14, patchpoints: 1
+# X64-NEXT: instructions: 6, patchpoints: 0
 # ARM64-LABEL: name="pick" role=Source
-# ARM64-NEXT: instructions: 15, patchpoints: 1
+# ARM64-NEXT: instructions: 6, patchpoints: 0

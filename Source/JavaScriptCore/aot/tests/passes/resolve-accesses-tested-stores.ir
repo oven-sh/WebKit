@@ -101,8 +101,8 @@ function f6 name="definition" parameters=[{type=object}, {type=number}] results=
   b0(v0: object ~ L0, v1: number):
     PropDefine v0, v1 key="y"
     Return
-# CHECK: = TypeTest v0 testedType=L0
-# CHECK: PutSlot [[definedObject]], {{*}}, v1 key="y" receivers=[L0] level=Expected
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK: PutSlot [[definedObject]], {{*}}, v1 key="y" receivers=[L0, L1] level=Expected
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropDefine v0, v1 key="y"
 # CHECK: = IsNotFrozen [[definedObject]]

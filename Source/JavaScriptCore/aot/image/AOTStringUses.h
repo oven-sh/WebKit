@@ -33,6 +33,8 @@ struct StringUses {
 struct KeyUse {
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
+    // Also counts code that runs once, which asks the table of fields and files nothing.
+    uint32_t lookupsByName { 0 };
     FunctionID firstTableLookupFunction;
     std::array<uint32_t, numberOfEnumerators<Typed::Access>> usesByAccess { };
 };

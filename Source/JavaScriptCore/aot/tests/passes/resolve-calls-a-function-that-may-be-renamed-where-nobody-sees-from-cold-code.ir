@@ -1,4 +1,4 @@
-# The test and the second arm cost bytes: cold code calls a function whose function objects may get another name where nobody sees by value.
+# Reading the captures and keeping the function object takes more bytes than a call by value, so cold code calls by value a function whose closures may be renamed out of sight.
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass ResolveCalls
@@ -16,5 +16,6 @@ function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results
     v2 = Call v0, -, v1
     Return v2
 # CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK-NOT: KeepCalleeInFrame
 # CHECK: = Call v0, -, v1
 }

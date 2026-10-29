@@ -114,8 +114,11 @@ const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& arr
     return arrayStorageFormOf(arrayStorageAtAllocation(m_program, array));
 }
 
-const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array)
+const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array, bool hasHoles)
 {
+    // arrayStorageOfLiteral() returns nothing for an array created with no elements and no holes, unless it is declared to use storage for any value.
+    if (elements.empty() && !hasHoles)
+        return formOfEmptyLiteral(context.valueID(), array);
     const ArrayStorageForm& form = formAtAllocation(array);
     // A literal with an element that never arrives is never made.
     bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
@@ -176,7 +179,7 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithStorage(const Operatio
     CodeGenerator::InitializationScope scope(generator());
     Pointer butterfly = offsetBy(asPointer(array), sizeOfArrayWithStorage(0));
     cells.storeHeader(array, header);
-    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSArray_butterfly);
     m_out.store32(m_out.int32Zero, butterfly.value(), m_heaps.Butterfly_publicLength);
     m_out.store32(low32(capacity).value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
     return array;
@@ -190,7 +193,7 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
     {
         CodeGenerator::InitializationScope scope(generator());
         cells.storeHeader(array, header);
-        m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+        m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSArray_butterfly);
     }
     emitter<BarrierEmitter>().fenceAfterInitialization();
     return array;
@@ -206,7 +209,7 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
     CodeGenerator::InitializationScope scope(generator());
     Word32 publicLength = low32(length);
-    m_out.store32(publicLength.value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
+    m_out.store32(publicLength.value(), m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly), m_heaps.Butterfly_publicLength);
     return array;
 }
 
@@ -378,7 +381,7 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
 CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& value)
 {
     std::span<const ValueID> elements = value->elementsOperands();
-    const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()));
+    const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()), true);
     unsigned length = elements.size() + value->holes().size();
     Vector<uint32_t, 16> indexes = indexesWithoutHoles(length, value->holes());
     LBasicBlock slowPath = newBlock();
@@ -410,7 +413,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         return newArrayOf(value, elements, array);
     uint64_t maxCapacity = build().limit(LimitID::MaxPlannedArrayCapacity);
     Integer capacity = plannedCapacityOf(generator(), value);
-    const ArrayStorageForm& form = length ? formOfLiteral(value, elements, array) : formOfEmptyLiteral(value.id());
+    const ArrayStorageForm& form = formOfLiteral(value, elements, array);
     if (!length && capacity.value()->hasInt64()) {
         uint64_t constantCapacity = capacity.value()->asInt64();
         if (constantCapacity > maxCapacity || (constantCapacity | 1) == arrayLiteralVectorLength(0))
@@ -441,10 +444,9 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
     return join.finish();
 }
 
-const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID literal)
+const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID literal, const Type& array)
 {
     static_assert(ArrayStorage::Int32 < ArrayStorage::Double && ArrayStorage::Double < ArrayStorage::Contiguous);
-    const Type& array = typeOf(literal);
     if (arrayStorageDeclaredBy(m_program, array).predicted() != ArrayStorage::Other)
         return formAtAllocation(array);
 
@@ -464,7 +466,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID liter
 CellPointer ArrayAllocationEmitter::newLiteralAtSite(const ValueContext& value, StaticsOffset offset)
 {
     LValue profile = m_out.valueOf(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::RuntimeState), offset));
-    return CellPointer(callStub(value, newEmptyArrayAtSite(kindOf(formOfEmptyLiteral(value.id()))), { profile }).first);
+    return CellPointer(callStub(value, newEmptyArrayAtSite(kindOf(formOfEmptyLiteral(value.id(), typeOf(value.id())))), { profile }).first);
 }
 
 } } } // namespace JSC::AOT::Typed

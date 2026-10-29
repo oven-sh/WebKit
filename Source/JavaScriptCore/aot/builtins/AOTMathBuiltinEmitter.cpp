@@ -273,6 +273,18 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
         finish(call, number(extremumOfNoValues(isMax)));
         return;
     }
+    // Int32 operands are compared and selected directly, without extending and truncating.
+    if (areIntegers(m_function, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
+        Word32 chosen = int32Operand(arguments[0]);
+        Range range = typeOf(arguments[0]).integers;
+        for (ValueID argument : arguments.subspan(1)) {
+            Word32 next = int32Operand(argument);
+            chosen = select(isMax ? greaterThan(chosen, next) : lessThan(chosen, next), chosen, next);
+            range = range.unionWith(typeOf(argument).integers);
+        }
+        finish(call, chosen, Type::integer(range));
+        return;
+    }
     if (areIntegers(m_function, call)) {
         Integer chosen = integerOperand(arguments[0]);
         Range range = typeOf(arguments[0]).integers;

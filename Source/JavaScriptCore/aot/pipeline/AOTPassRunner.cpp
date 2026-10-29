@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayChains.h"
+#include "AOTBackgroundTask.h"
 #include "AOTBindGlobalNames.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
@@ -362,18 +363,22 @@ void PassRunner::prepare(ScheduleRun& run) const
         run.notes.emplace();
 }
 
-static constexpr PassSet optionalPassesOfGenericVersions {
+static constexpr PassSet optionalPassesOfCompactFunctions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
     PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
-static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
+static constexpr PassSet optionalPassesOfGenericVersions = optionalPassesOfCompactFunctions | PassSet { PassID::InsertObjectCoercibleChecks, PassID::EliminateRedundantReads, PassID::ExpandOwnKeys };
+
+static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfCompactFunctions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths, PassID::ExpandOwnKeys };
 
 // An async function waits between its steps, so what it costs is seldom its own code.
 static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
 {
-    if (function.role == FunctionRole::GenericVersion || isCompact)
+    if (function.role == FunctionRole::GenericVersion)
         return &optionalPassesOfGenericVersions;
+    if (isCompact)
+        return &optionalPassesOfCompactFunctions;
     if (hasNoWarmCode && function.has(FunctionFlags::IsAsync))
         return &optionalPassesOfColdAsyncFunctions;
     return nullptr;
@@ -396,8 +401,10 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
     const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
     run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
-    if (run.optionalPassesOfShortSchedule)
+    if (run.optionalPassesOfShortSchedule) {
         run.maxRounds = maxRoundsOfShortSchedule;
+        context.isShortSchedule = true;
+    }
     if (contents) {
         RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
         run.setContents(*contents, function);
@@ -486,7 +493,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
@@ -644,8 +651,10 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     // Not ProgramAnalyses::effects(): summaries cached here would reach later passes, and the output would depend on this option.
     EffectSummaries effects;
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
-    if (m_verifierInputs.flow && summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
-        effects = computeEffectSummaries(program, *m_verifierInputs.flow, m_build);
+    // A pass that runs on its own gets summaries computed without flow analysis results, so its output is verified against the same kind of summaries.
+    FlowResults noResults;
+    if (summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
+        effects = computeEffectSummaries(program, m_verifierInputs.flow ? *m_verifierInputs.flow : noResults, m_build);
 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -672,8 +681,16 @@ bool PassRunner::mayRunAnalysesTogether() const
     return !m_stopAfter && !m_build.options().logging.dumpedPass;
 }
 
-void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second) const
+void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second, TaskPriority secondPriority) const
 {
+    if (secondPriority != TaskPriority::Foreground) {
+        Ref<BackgroundTask> task = BackgroundTask::start(m_build.parallelLoops(), secondPriority, { }, [&] {
+            second();
+        });
+        first();
+        task->finish();
+        return;
+    }
     forEachIndexInParallel(m_build.parallelLoops(), 2, [&](unsigned index) {
         index ? second() : first();
     });
@@ -997,8 +1014,17 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         return;
     const bool verifiesFunction = canVerify(form) && !descriptor.isVerifiedAfterNextPass;
     Vector<InternalError> errors;
-    if (verifiesFunction && !isAsVerified)
+    if (verifiesFunction && !isAsVerified) {
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
+        bool hasUnavailableGuard = std::ranges::any_of(errors, [](const InternalError& error) {
+            return error.kind == InternalErrorKind::GuardNotAvailable;
+        });
+        if (hasUnavailableGuard && inputs.effectsByOperandTypes) {
+            VerifierInputs finer = inputs;
+            finer.effects = inputs.effectsByOperandTypes;
+            errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, finer);
+        }
+    }
     if (errors.isEmpty() && !isAsVerified && hasTypedValues(context.function)) {
         // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
         ScratchTypeArena types(context.program.types);

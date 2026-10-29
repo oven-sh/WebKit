@@ -131,6 +131,9 @@ static Vector<MethodTableRow> createRows(const PlacementContext& context, const 
                 if (!guard)
                     target = { };
             }
+            // A single call may enter any of them, and reads the result from where the lookup returns it.
+            const CallingConventions& conventions = context.inputs.callingConventions;
+            RELEASE_ASSERT(!target || conventions.locationsOf(context.program, target).results == conventions.locationsOf(context.program, row.lookup).results);
             LayoutList receivers = target ? receiversOfTableEntrypoint(context.program, use.selector.key, arm.answer.method) : LayoutList();
             for (LayoutID layout : arm.layouts) {
                 bool isExpectedByEntrypoint = target && receivers.contains(layout);

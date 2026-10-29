@@ -45,6 +45,8 @@ struct DirectCallRequest {
     bool isTailCall { false };
     // The caller has made the function object itself and has handed it to nobody.
     bool callsOwnFunctionObject { false };
+    // The called function object, for when the callee's frame is named by it after a function object of the callee was renamed. The caller keeps it in a word of its own frame.
+    ValueID calleeKeptInFrame;
     // Flow has not followed the callee to the call, so it does not count the caller among the callers of the callee.
     bool calleeIsPredicted { false };
 };
@@ -59,6 +61,10 @@ TailCallRequirement tailCallRequirementOf(const Function& body);
 bool mayBeCalledDirectly(const Program&, FunctionID callee);
 // Also a function whose calls by value record their callee from the first time on that a function object is renamed where nobody sees: whoever calls it directly stands behind AreFunctionNamesUnchanged.
 bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program&, FunctionID callee);
+bool mayBeCalledDirectlyWhereCalleeIsKept(const Program&, FunctionID callee);
+// The frames of such a getter or setter are named by its function object.
+bool keepsCalleeOfAccessor(const Program&, FunctionID accessor);
+inline bool isAccessor(const Function& function) { return function.kind == FunctionKind::Getter || function.kind == FunctionKind::Setter; }
 // A function that records its callee for stack frames does so in its entrypoint, which a call by value enters.
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program&, FunctionID callee);
 bool canCallWithoutClosure(const Program&, FunctionID callee);

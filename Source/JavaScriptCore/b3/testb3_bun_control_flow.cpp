@@ -268,6 +268,118 @@ static void testInferSwitchesManyCases()
     CHECK_EQ(invoke<int64_t>(*code, 200 * 7, 0), -1);
 }
 
+// `a == v0 || a == v1 || a == v2 || a == v3` or `a != v0 && a != v1 && a != v2 && a != v3`, used as a value.
+static void buildComparisonChainUsedAsValue(Procedure& proc, B3::Opcode comparison, const Vector<int32_t>& values)
+{
+    Graph graph { proc };
+    BasicBlock* block = proc.addBlock();
+    BasicBlock* shortCircuit = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* subject = graph.make(block, Trunc, cCallArgumentValues<int64_t>(proc, block)[0]);
+    Value* phi = graph.phi(join, Int32);
+    for (unsigned i = 0; i + 1 < values.size(); ++i) {
+        BasicBlock* next = proc.addBlock();
+        Value* condition = graph.make(block, comparison, subject, graph.int32(block, values[i]));
+        if (comparison == Equal)
+            graph.branch(block, condition, shortCircuit, next);
+        else
+            graph.branch(block, condition, next, shortCircuit);
+        block = next;
+    }
+    graph.upsilon(block, graph.make(block, comparison, subject, graph.int32(block, values.last())), phi);
+    graph.jump(block, join);
+    graph.upsilon(shortCircuit, graph.int32(shortCircuit, comparison == Equal), phi);
+    graph.jump(shortCircuit, join);
+    graph.ret(join, phi);
+    proc.resetReachability();
+}
+
+static void testInferSwitchesMergesComparisonUsedAsValue()
+{
+    struct Case {
+        Vector<int32_t> values;
+        bool fitsInOneBitTest;
+    };
+    for (B3::Opcode comparison : { Equal, NotEqual }) {
+        for (const Case& testCase : { Case { { 32, 9, 10, 13 }, true }, Case { { 100, 163, 101, 140 }, true }, Case { { 32, 9, 10, 73 }, false }, Case { { 32, 9, 10 }, false } }) {
+            for (bool usesPolicy : { false, true }) {
+                bool isMerged = usesPolicy && testCase.fitsInOneBitTest;
+                Procedure inferred(usesPolicy ? bitTestPolicy() : Policy());
+                buildComparisonChainUsedAsValue(inferred, comparison, testCase.values);
+                CHECK(inferSwitches(inferred));
+                validate(inferred);
+                CHECK_EQ(numberOfValues(inferred, Switch), 1u);
+                CHECK_EQ(inferred.at(0)->last()->as<SwitchValue>()->numCaseValues(), testCase.values.size() - !isMerged);
+                CHECK_EQ(numberOfValues(inferred, comparison), isMerged ? 0u : 1u);
+                CHECK(lowerMacros(inferred));
+                validate(inferred);
+                if (isMerged) {
+                    CHECK_EQ(numberOfValues(inferred, Branch), 0u);
+                    CHECK_EQ(numberOfValues(inferred, ZShr), 1u);
+                }
+
+                Procedure proc(usesPolicy ? bitTestPolicy() : Policy());
+                buildComparisonChainUsedAsValue(proc, comparison, testCase.values);
+                auto code = compileProc(proc);
+                for (int64_t value = -70; value <= 240; ++value)
+                    CHECK_EQ(invoke<int32_t>(*code, value), static_cast<int32_t>(testCase.values.contains(static_cast<int32_t>(value)) == (comparison == Equal)));
+            }
+        }
+    }
+}
+
+// Both targets of the bit test only produce a constant.
+static void testBitTestBetweenConstantsIsBranchless()
+{
+    struct Case {
+        int64_t ifMatched;
+        int64_t otherwise;
+        bool usesSelect;
+    };
+    const Vector<int64_t> values { 9, 10, 13, 32 };
+    for (const Case& testCase : { Case { 1, 0, false }, Case { 0, 1, false }, Case { 7, 6, true }, Case { -1, 40, true } }) {
+        for (bool usesPhi : { false, true }) {
+            auto build = [&](Procedure& proc) {
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                BasicBlock* matched = proc.addBlock();
+                BasicBlock* otherwise = proc.addBlock();
+                BasicBlock* join = proc.addBlock();
+                Value* phi = graph.phi(join, Int64);
+                SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), cCallArgumentValues<int64_t>(proc, root)[0]);
+                switchValue->setFallThrough(FrequentedBlock(otherwise));
+                for (int64_t value : values)
+                    switchValue->appendCase(SwitchCase(value, FrequentedBlock(matched)));
+                auto produce = [&](BasicBlock* block, int64_t constant) {
+                    if (!usesPhi) {
+                        graph.ret(block, graph.int64(block, constant));
+                        return;
+                    }
+                    graph.upsilon(block, graph.int64(block, constant), phi);
+                    graph.jump(block, join);
+                };
+                produce(matched, testCase.ifMatched);
+                produce(otherwise, testCase.otherwise);
+                graph.ret(join, phi);
+                proc.resetReachability();
+            };
+            Procedure lowered(bitTestPolicy());
+            build(lowered);
+            CHECK(lowerMacros(lowered));
+            validate(lowered);
+            CHECK_EQ(numberOfValues(lowered, Branch), 0u);
+            CHECK_EQ(numberOfValues(lowered, ZShr), 1u);
+            CHECK_EQ(numberOfValues(lowered, Select), testCase.usesSelect ? 1u : 0u);
+
+            Procedure proc(bitTestPolicy());
+            build(proc);
+            auto code = compileProc(proc);
+            for (int64_t value = -70; value <= 140; ++value)
+                CHECK_EQ(invoke<int64_t>(*code, value), values.contains(value) ? testCase.ifMatched : testCase.otherwise);
+        }
+    }
+}
+
 static void testInferSwitchesStopsAtRareEdge()
 {
     constexpr unsigned degree = 8;
@@ -690,6 +802,8 @@ void addBunControlFlowTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());
+    RUN(testInferSwitchesMergesComparisonUsedAsValue());
+    RUN(testBitTestBetweenConstantsIsBranchless());
     RUN(testInferSwitchesStopsAtRareEdge());
     RUN(testSwitchWhoseArmsChooseNumbersLoadsFromTable());
     RUN(testInferSwitchesIgnoresTestOfOtherValue());

@@ -80,6 +80,7 @@ struct ValueFlowSite {
     LayoutID layout;
     BuiltinClassID builtinClass;
     bool namesPrototype { false };
+    bool isProxyFromNamedConstructor { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -169,8 +170,11 @@ public:
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
     ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
     ValueSetID holdersOfLibraryExportsThatRaiseNoEvent() const { return m_holdersOfLibraryExportsThatRaiseNoEvent; }
+    ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
+    ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
+    ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
@@ -191,6 +195,7 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -257,6 +262,7 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -304,9 +310,12 @@ private:
     ValueSetID m_holdersOfLibraryExports;
     Vector<ValueSetID> m_holdersOfExportsOfModule;
     ValueSetID m_holdersOfLibraryExportsThatRaiseNoEvent;
+    ValueSetID m_eventRaisingLibraryExportHolders;
+    ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;
+    ValueSetID m_instancesBelowBuiltinClasses;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;
@@ -396,6 +405,7 @@ enum class ValueFlowHostNode : uint8_t {
     LibraryModulesRequestedByProgram,
     LibraryModulesHandedOut,
     ObjectsNobodyFollowsThatDefinitionsName,
+    ObjectsNobodyFollowsThatStatementsGiveDisplayName,
     StoredUnderSymbolsNobodyKnows,
     StoredByLibraryUnderSymbolsNobodyKnows,
     SymbolsThatHostLooksForMayBeInHand,
@@ -403,7 +413,8 @@ enum class ValueFlowHostNode : uint8_t {
     HoldersOfClassesThatAppliedRowsName,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 74;
+inline constexpr unsigned numberOfValueFlowHostNodes = 75;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -576,6 +587,7 @@ struct ValueFlowBody {
         bool isOnlyCalledOnItsHolder { false };
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
+        uint32_t guardsOfOperands { 0 };
     };
 
     struct ObservedValue {

@@ -186,6 +186,9 @@ struct CompileOptions {
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.
     bool admitsUnseenCode() const { return recorded.admitted() != AdmittedCode { }; }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
+    bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
+    bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
+    bool excludesForeignCallsOfUnseenCode() const { return hasFlag(excludedCode, ExcludedCode::ForeignCallsOfUnseenCode); }
     bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }

@@ -10,6 +10,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "StructureInlines.h"
 #include "VM.h"
@@ -46,7 +47,7 @@ constexpr ObjectMutation mutationOf(SlotExitReason reason)
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation mutation)
 {
-    if (vm.aotState().validatesRuntime && object.layout().impossibleMutations().contains(mutation)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
         crashOnImpossibleMutation(vm, object, mutation);
 }
 
@@ -54,7 +55,7 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
 {
-    if (vm.aotState().validatesRuntime && object.layout().impossibleMutations().contains(mutation)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
         crashOnImpossibleMutation(vm, object, name, mutation);
 }
 
@@ -74,7 +75,7 @@ constexpr uint16_t flagOfFieldsThatCannot(ObjectMutation mutation)
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
     validateMutation(vm, object, mutation);
-    if (vm.aotState().validatesRuntime && field.flags & flagOfFieldsThatCannot(mutation)) [[unlikely]]
+    if (field.flags & flagOfFieldsThatCannot(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 

@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowSiteData.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTVector.h"
@@ -60,6 +62,27 @@ bool Reader::readNamesAndFamilies()
     return hasStrings && hasPropertyKeys && hasFamilies;
 }
 
+// The value flow analysis identifies a string by its key. Every string held by an operation or constant data has one, whether or not a property has that name.
+static void internKeysOfStringConstants(Program& program, const ParallelLoops& loops)
+{
+    Vector<StringID> ofOperations = collectInParallel<StringID>(loops, program.functions.size(), [&](unsigned index, Vector<StringID>& found) {
+        for (const Value& value : program.functions[index].values.span()) {
+            if (value.opcode == Opcode::String)
+                found.append(value.string());
+        }
+    });
+    Vector<StringID> ofData = collectInParallel<StringID>(loops, program.data.size(), [&](unsigned index, Vector<StringID>& found) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
+            if (const auto* text = node.tryAs<DataNode::String>())
+                found.append(text->value);
+        });
+    });
+    for (const Vector<StringID>& texts : { ofOperations, ofData }) {
+        for (StringID text : texts)
+            program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
+    }
+}
+
 bool Reader::readListsLayoutsAndFunctions()
 {
     if (!readListInParallel(m_sections.typeSites, m_program.typeSites))
@@ -78,8 +101,12 @@ bool Reader::readListsLayoutsAndFunctions()
     }
 
     const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly())
-        return readProgramLists() && readLayouts() && reportFirst(readFunctions().span());
+    if (options.verifiesProgram || options.isVerifyOnly()) {
+        if (!readProgramLists() || !readLayouts() || !reportFirst(readFunctions().span()))
+            return false;
+        internKeysOfStringConstants(m_program, m_build.parallelLoops());
+        return true;
+    }
 
     bool hasListsAndLayouts = false;
     Vector<Failure> failuresInFunctions;
@@ -91,7 +118,10 @@ bool Reader::readListsLayoutsAndFunctions()
             failuresInFunctions = readFunctions();
         },
     });
-    return hasListsAndLayouts && reportFirst(failuresInFunctions.span());
+    if (!hasListsAndLayouts || !reportFirst(failuresInFunctions.span()))
+        return false;
+    internKeysOfStringConstants(m_program, m_build.parallelLoops());
+    return true;
 }
 
 bool Reader::report(const InternalError& error)
