@@ -304,7 +304,6 @@ class Heap;
     v(moduleNamespaceObjectSpace, moduleNamespaceObjectHeapCellType, JSModuleNamespaceObject) \
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
-    v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
     v(remoteFunctionSpace, cellHeapCellType, JSRemoteFunction) \
     v(scopedArgumentsTableSpace, destructibleCellHeapCellType, ScopedArgumentsTable) \
@@ -437,6 +436,7 @@ public:
     size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
+    bool needCollectionEpilogue() const { return m_worldState.load() & needCollectionEpilogueBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
 #if ASSERT_ENABLED

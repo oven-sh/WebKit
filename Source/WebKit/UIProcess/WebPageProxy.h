@@ -36,6 +36,7 @@
 #include "Untrusted.h"
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/ProcessIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/UserGestureTokenIdentifier.h>
 #include <WebCore/SpeechRecognitionConnectionClientIdentifier.h>
 #include <wtf/ApproximateTime.h>
@@ -682,6 +683,8 @@ struct JSHandleInfo;
 struct KeyEventInterpretationContext;
 struct LoadParameters;
 struct MainFrameData;
+struct MediaPermissionPromptCustomization;
+struct MediaPermissionPromptResult;
 struct PageData;
 struct NavigationActionData;
 struct NetworkResourceLoadIdentifierType;
@@ -1083,7 +1086,7 @@ public:
     // instantiating RefPtr<API::Navigation>'s destructor in the generated receiver (which lacks the
     // complete API::Navigation type). The traversal queue uses the RefPtr-returning variant below.
     void goToBackForwardItemAtIndex(int32_t steps);
-    RefPtr<API::Navigation> goToBackForwardItemAtIndexForTraversal(int32_t steps, CompletionHandler<void()>&&);
+    RefPtr<API::Navigation> goToBackForwardItemAtIndexForTraversal(int32_t steps, CompletionHandler<void()>&&, WebBackForwardListItem* committedItem = nullptr);
     void enqueueHistoryTraversalDelta(int32_t delta);
     void enqueueHistoryTraversalToItem(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&);
     int32_t inFlightTraversalDirection() const;
@@ -1260,6 +1263,9 @@ public:
 #if ENABLE(UI_SIDE_COMPOSITING)
     void updateVisibleContentRects(const VisibleContentRectUpdateInfo&, bool sendEvenIfUnchanged);
     void updateVisibleContentRectsLocally(const VisibleContentRectUpdateInfo&);
+#if PLATFORM(MAC)
+    bool isRedundantUnstableVisibleContentRectUpdate(const VisibleContentRectUpdateInfo&) const;
+#endif
 
     WebCore::FloatRect updateVisibleContentRectsAndAdjustLayers(const VisibleContentRectUpdateInfo&, bool sendEvenIfUnchanged);
 #endif
@@ -2560,6 +2566,7 @@ public:
     void LEGACY_NODELETE rotationAngleForCaptureDeviceChanged(const String&, WebCore::VideoFrameRotation);
     void microphoneMuteStatusChanged(bool isMuting);
 #if PLATFORM(COCOA)
+    void showMediaCapturePermissionPrompt(MediaPermissionPromptCustomization&&, CompletionHandler<void(MediaPermissionPromptResult&&)>&&);
     using MediaPermissionPromptHandlerForTesting = Function<void(Ref<MediaPermissionPromptForTesting>&&)>;
     const MediaPermissionPromptHandlerForTesting& mediaPermissionPromptHandlerForTesting() const LIFETIME_BOUND { return m_mediaPermissionPromptHandlerForTesting; }
     void setMediaPermissionPromptHandlerForTesting(MediaPermissionPromptHandlerForTesting&& handler) { m_mediaPermissionPromptHandlerForTesting = WTF::move(handler); }
@@ -3226,6 +3233,7 @@ private:
     template<typename M> void sendToEveryWebContentProcess();
 
     void sendCORSDisablingPatternsToNetworkProcessIfNecessary();
+    void requestTargetedElementForText(WebCore::TargetedElementRequest&&, CompletionHandler<void(const Vector<Ref<API::TargetedElementInfo>>&)>&&);
     std::optional<WebCore::RegistrableDomain> unpartitionedStorageSiteForNavigation(const WebFrameProxy&, const URL&) const;
 
     void getWebCryptoMasterKey(CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
@@ -3253,12 +3261,13 @@ private:
     Ref<WebPageProxy> downloadOriginatingPage(const API::Navigation*);
     Ref<WebPageProxy> navigationOriginatingPage(const FrameInfoData&);
 
-    RefPtr<API::Navigation> goToBackForwardItem(WebBackForwardListFrameItem&, WebCore::FrameLoadType, IsSessionRestoreNavigation = IsSessionRestoreNavigation::No, CompletionHandler<void()>&& = [] { });
+    RefPtr<API::Navigation> goToBackForwardItem(WebBackForwardListFrameItem&, WebCore::FrameLoadType, IsSessionRestoreNavigation = IsSessionRestoreNavigation::No, CompletionHandler<void()>&& = [] { }, WebBackForwardListItem* committedItem = nullptr);
 
     bool dispatchPerFrameTraversals(WebBackForwardListFrameItem& fromFrame, WebBackForwardListFrameItem& toFrame, WebCore::NavigationIdentifier, WebCore::FrameLoadType, WebCore::ShouldRestoreFromBackForwardCache, const WebCore::PublicSuffix&, WTF::CallbackAggregator&);
     bool dispatchChildFrameTraversals(WebBackForwardListFrameItem& fromFrame, WebBackForwardListFrameItem& toFrame, WebCore::NavigationIdentifier, WebCore::FrameLoadType, WebCore::ShouldRestoreFromBackForwardCache, const WebCore::PublicSuffix&, WTF::CallbackAggregator&);
     bool sendGoToBackForwardItemForFrame(WebBackForwardListFrameItem& targetFrame, WebCore::NavigationIdentifier, WebCore::FrameLoadType, WebCore::ShouldRestoreFromBackForwardCache, const WebCore::PublicSuffix&, WTF::CallbackAggregator&, CompletionHandler<void(bool)>&& = [](bool) { });
     Ref<WebBackForwardListFrameItem> frameItemForLegacyTraversalRouting(WebBackForwardListItem& targetItem, ASCIILiteral logTag);
+    void restoreBackForwardListCurrentItemAfterCanceledTraversal(API::Navigation&);
 
     void updateActivityState(OptionSet<WebCore::ActivityState> flagsToUpdate);
     void updateThrottleState();
@@ -3323,6 +3332,9 @@ private:
 #if PLATFORM(COCOA)
     void didGeneratePageLoadTiming(const WebPageLoadTiming&);
     bool shouldUseRemoteSnapshotting(const WebFrameProxy* rootFrame);
+    bool shouldLaunchPrintProcess(const WebFrameProxy* rootFrame);
+    void launchPrintProcessIfNeeded(const WebFrameProxy* rootFrame);
+    CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)> launchPrintProcessForDrawingIfNeeded(const WebFrameProxy* rootFrame, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 #else
     void didGeneratePageLoadTiming(const WebPageLoadTiming&) { }
 #endif
@@ -4021,7 +4033,7 @@ private:
     RefPtr<DrawingAreaProxy> m_drawingArea;
 #if PLATFORM(COCOA)
     std::unique_ptr<RemoteLayerTreeHost> m_frozenRemoteLayerTreeHost;
-    std::unique_ptr<RemoteScrollingCoordinatorProxy> m_scrollingCoordinatorProxy;
+    RefPtr<RemoteScrollingCoordinatorProxy> m_scrollingCoordinatorProxy;
 #endif
     Ref<WebProcessProxy> m_legacyMainFrameProcess;
     const Ref<WebPageGroup> m_pageGroup;
@@ -4054,6 +4066,7 @@ private:
     String m_customTextEncodingName;
     String m_overrideContentSecurityPolicy;
     String m_openedMainFrameName;
+    WebCore::RegistrableDomain m_openedByScriptDomain;
 
     const RefPtr<WebInspectorUIProxy> m_inspector;
 

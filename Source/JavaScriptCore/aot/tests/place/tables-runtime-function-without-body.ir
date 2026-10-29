@@ -7,8 +7,8 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 runtimefunction id=0 function=f3
-runtimefunction id=31 function=f2
-runtimefunction id=44 function=f1
+runtimefunction id=30 function=f2
+runtimefunction id=43 function=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     Jump -> next b1()
@@ -25,13 +25,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = CatchValue
     Return
 }
-function f1 name="reached" role=Library flags=[HasThis] enclosingRuntimeFunction=44 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="reached" role=Library flags=[HasThis] enclosingRuntimeFunction=43 parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     v4 = Call v1, -, v3
     Return
 }
-function f2 name="unreached" role=Library flags=[HasThis] enclosingRuntimeFunction=31 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="unreached" role=Library flags=[HasThis] enclosingRuntimeFunction=30 parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     v4 = Call v1, -, v3
@@ -44,6 +44,6 @@ function f4 name="callback" kind=Arrow parameters=[{type=anything}] results=[{ty
 
 # CHECK: magic ok
 # CHECK: compiledRuntimeFunctions 1 12
-# ROWS: runtimeFunction id=44 function=[[entrypoint]] visibility=Public
+# ROWS: runtimeFunction id=43 function=[[entrypoint]] visibility=Public
 # ROWS-NOT: runtimeFunction
 # ROWS: function [[entrypoint]] name="forEach" {{*}}inRuntimeModule {{*}}length=

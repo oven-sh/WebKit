@@ -145,12 +145,12 @@
 #include <WebCore/PlatformMediaSession.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ProcessWarming.h>
+#include <WebCore/QuirkTable.h>
 #include <WebCore/Quirks.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/RemoteCommandListener.h>
 #include <WebCore/RenderTreeAsText.h>
 #include <WebCore/ResourceLoadStatistics.h>
-#include <WebCore/RuntimeQuirkTable.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/SecurityOrigin.h>
@@ -511,6 +511,8 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 
     ASSERT(m_pageMap.isEmpty());
 
+    m_isPrintProcess = parameters.isPrintProcess;
+
     if (parameters.websiteDataStoreParameters)
         setWebsiteDataStoreParameters(WTF::move(*parameters.websiteDataStoreParameters));
 
@@ -853,8 +855,9 @@ void WebProcess::setWebsiteDataStoreParameters(WebProcessDataStoreParameters&& p
         supplement->setWebsiteDataStore(parameters);
 
     platformSetWebsiteDataStoreParameters(WTF::move(parameters));
-    
-    ensureNetworkProcessConnection();
+
+    if (!m_isPrintProcess)
+        ensureNetworkProcessConnection();
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     setOptInCookiePartitioningEnabled(parameters.isOptInCookiePartitioningEnabled);
@@ -1184,8 +1187,8 @@ bool WebProcess::dispatchMessage(IPC::Connection& connection, IPC::Decoder& deco
     if (decoder.messageReceiverName() == Messages::WebFrame::messageReceiverName()) {
         if (RefPtr frame = FrameIdentifier::isValidIdentifier(decoder.destinationID()) ? webFrame(FrameIdentifier(decoder.destinationID())) : nullptr)
             frame->didReceiveMessage(connection, decoder);
-        else
-            WebFrame::sendCancelReply(connection, decoder);
+        // If the frame is gone, the message is left unhandled; Connection::dispatchMessage() sends a
+        // CancelAsyncReply for any unhandled async-reply message so the sender is not left waiting.
         return true;
     }
     if (decoder.messageReceiverName() == Messages::WebSWContextManagerConnection::messageReceiverName()) {
@@ -1832,6 +1835,14 @@ void WebProcess::bindAccessibilityFrameWithData(WebCore::FrameIdentifier, std::s
 #endif
 
 #if ENABLE(GPU_PROCESS)
+
+#if PLATFORM(COCOA)
+void WebProcess::prepareForPrinting(CompletionHandler<void(bool)>&& completionHandler)
+{
+    ASSERT(m_isPrintProcess);
+    completionHandler(protect(ensureGPUProcessConnection())->waitForDidInitialize());
+}
+#endif
 
 // Received by the process rather than a page, because the frame's page may have gone here since the
 // frame was painted, and a request that reached nothing would leave the snapshot waiting for it.

@@ -51,6 +51,7 @@
 #include "WebBackForwardListMessages.h"
 #include "WebFrameProxy.h"
 #include "WebNotificationManagerMessageHandler.h"
+#include "WebPageInspectorController.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyMessages.h"
@@ -196,7 +197,7 @@ void RemotePageProxy::injectPageIntoNewProcess()
     }
 
     Ref drawingArea = *page->drawingArea();
-    m_drawingArea = RemotePageDrawingAreaProxy::create(drawingArea.get(), m_process);
+    m_drawingArea = RemotePageDrawingAreaProxy::create(drawingArea.get(), m_process, m_webPageID);
 #if ENABLE(FULLSCREEN_API)
     m_fullscreenManager = RemotePageFullscreenManagerProxy::create(pageID(), protect(page->fullScreenManager()), m_process);
 #endif
@@ -242,6 +243,8 @@ void RemotePageProxy::injectPageIntoNewProcess()
 
     // frameTreeCreationParameters above contains the main frame's current frameViewportInfo.
     m_lastSentMainFrameViewportInfo = protect(page->mainFrame())->frameViewportInfo();
+
+    WebPageInspectorController::pageWasAddedToProcess(protect(page->browsingContextGroup()), m_process, m_webPageID);
 }
 
 void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)
@@ -406,7 +409,7 @@ void RemotePageProxy::setDrawingArea(DrawingAreaProxy* drawingArea)
     if (m_drawingArea && m_drawingArea->identifier() == drawingArea->identifier())
         return;
 
-    m_drawingArea = RemotePageDrawingAreaProxy::create(*drawingArea, m_process);
+    m_drawingArea = RemotePageDrawingAreaProxy::create(*drawingArea, m_process, m_webPageID);
     RefPtr websitePolicies = page->mainFrameWebsitePolicies();
     m_process->send(
         Messages::WebProcess::CreateWebPage(
@@ -422,6 +425,8 @@ void RemotePageProxy::setDrawingArea(DrawingAreaProxy* drawingArea)
 
     // frameTreeCreationParameters above contains the main frame's current frameViewportInfo.
     m_lastSentMainFrameViewportInfo = mainFrame->frameViewportInfo();
+
+    WebPageInspectorController::pageWasAddedToProcess(protect(page->browsingContextGroup()), m_process, m_webPageID);
 }
 
 void RemotePageProxy::setCurrentOrientation(WebCore::ScreenOrientationType orientation)

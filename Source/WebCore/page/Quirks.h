@@ -109,6 +109,7 @@ public:
     WEBCORE_EXPORT static std::optional<String> needsCustomUserAgentOverride(const URL&, const String& applicationNameForUserAgent, const String& currentUserAgent);
 
     WEBCORE_EXPORT static bool needsPartitionedCookies(const ResourceRequest&);
+    WEBCORE_EXPORT static bool shouldExemptCookieFromITPDataRemoval(const String& cookieName);
 
     WEBCORE_EXPORT static std::optional<Vector<HashSet<String>>> LEGACY_NODELETE defaultVisibilityAdjustmentSelectors(const URL&);
 
@@ -201,14 +202,14 @@ private:
     mutable QuirkBitSet m_probedQuirks;
 
     template<typename Probe>
-    bool isBehaviorEnabledAfterProbing(const QuirkBehavior& quirk, NOESCAPE const Probe& probe) const
+    bool isBehaviorEnabledAfterProbing(QuirkBehaviorID id, NOESCAPE const Probe& probe) const
     {
-        auto index = static_cast<size_t>(quirk.id);
+        auto index = static_cast<size_t>(id);
         if (!m_probedQuirks.get(index)) {
             m_probedQuirks.set(index);
-            m_quirksData.setEnabled(quirk, probe());
+            m_quirksData.setEnabled(id, probe());
         }
-        return m_quirksData.isBehaviorEnabled(quirk.id);
+        return m_quirksData.isBehaviorEnabled(id);
     }
 
     bool m_needsConfigurableIndexedPropertiesQuirk { false };

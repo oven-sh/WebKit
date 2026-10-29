@@ -100,6 +100,23 @@ async function waitForEntityTransform(model, predicate, description, timeout = 5
     }
 }
 
+async function snapshotOnceModelsRender(afterReady)
+{
+    window.testRunner?.waitUntilDone();
+    window.internals?.disableModelLoadDelaysForTesting();
+
+    await Promise.all([...document.querySelectorAll("model")].map(model => model.ready));
+    await UIHelper.ensureStablePresentationUpdate();
+
+    if (afterReady) {
+        afterReady();
+        await UIHelper.ensureStablePresentationUpdate();
+    }
+
+    await UIHelper.renderingUpdate();
+    window.testRunner?.notifyDone();
+}
+
 // The 3D matrix assertions reject a 2D argument outright, and DOMMatrix stays 2D until an operation touches z.
 const as3d = matrix => new DOMMatrixReadOnly(matrix.toFloat64Array());
 
@@ -147,7 +164,7 @@ const parseSceneGraph = text => {
         if (entityMatch) {
             while (openEntities.length && openEntities.at(-1).depth >= depth)
                 openEntities.pop();
-            const entity = { name: entityMatch[1] ?? "", element: null, parent: openEntities.at(-1) ?? null, depth };
+            const entity = { name: entityMatch[1] ?? "", element: null, rotation: [0, 0, 0, 1], parent: openEntities.at(-1) ?? null, depth };
             entities.push(entity);
             openEntities.push(entity);
             continue;
@@ -156,6 +173,10 @@ const parseSceneGraph = text => {
         const elementMatch = /^\s*\(element (.+)\)$/.exec(line);
         if (elementMatch && openEntities.length)
             openEntities.at(-1).element = elementMatch[1];
+
+        const rotationMatch = /^\s*\(rotation (.+)\)$/.exec(line);
+        if (rotationMatch && openEntities.length)
+            openEntities.at(-1).rotation = rotationMatch[1].split(" ").map(Number);
     }
     return entities;
 };

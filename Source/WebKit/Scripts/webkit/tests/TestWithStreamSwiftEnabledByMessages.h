@@ -43,7 +43,7 @@ namespace WebKit {
 
 class TestWithStreamSwiftEnabledByMessageForwarder final : public IPC::StreamMessageReceiver {
 public:
-    static Ref<TestWithStreamSwiftEnabledByMessageForwarder> createFromWeak(WebKit::TestWithStreamSwiftEnabledByWeakRef* _Nonnull handler)
+    static Ref<TestWithStreamSwiftEnabledByMessageForwarder> createFromWeak(WebKit::TestWithStreamSwiftEnabledByWeakRef* WTF_NONNULL handler)
     {
         return adoptRef(*new TestWithStreamSwiftEnabledByMessageForwarder(handler));
     }
@@ -52,7 +52,7 @@ public:
     void ref() const { StreamMessageReceiver::ref(); }
     void deref() const { StreamMessageReceiver::deref(); }
 private:
-    TestWithStreamSwiftEnabledByMessageForwarder(WebKit::TestWithStreamSwiftEnabledByWeakRef* _Nonnull);
+    TestWithStreamSwiftEnabledByMessageForwarder(WebKit::TestWithStreamSwiftEnabledByWeakRef* WTF_NONNULL);
     std::unique_ptr<WebKit::TestWithStreamSwiftEnabledBy> getMessageTarget();
     std::unique_ptr<WebKit::TestWithStreamSwiftEnabledByWeakRef> m_handler;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
@@ -73,7 +73,7 @@ class SendString {
 public:
     using Arguments = std::tuple<String>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwiftEnabledBy_SendString; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithStreamSwiftEnabledBy_SendString; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;

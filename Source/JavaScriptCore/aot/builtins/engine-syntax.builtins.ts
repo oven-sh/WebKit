@@ -213,7 +213,6 @@ export default b.declarations(
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
     "defaultAsyncFromAsyncArrayLike",
     "defaultAsyncFromAsyncIterator",
-    "defaultAsyncFromAsyncIteratorWithNext",
   ]),
 
   operation("CollectionTable", "collectionTable"),

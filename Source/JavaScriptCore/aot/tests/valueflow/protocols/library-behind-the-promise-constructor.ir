@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 runtimefunction id=0 function=f2
-runtimefunction id=94 function=f3
+runtimefunction id=93 function=f3
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Promise
     v1 = NewClosure function=f1
@@ -24,6 +24,6 @@ function f1 name="executor" kind=Arrow parameters=[{type=anything}] results=[{ty
 function f2 name="Promise" role=Library flags=[HasThis, HasNewTarget] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-function f3 name="try" role=Library flags=[HasThis] enclosingRuntimeFunction=94 parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="try" role=Library flags=[HasThis] enclosingRuntimeFunction=93 parameters=[{type=anything}] results=[{type=anything}] {
     Return v1
 }

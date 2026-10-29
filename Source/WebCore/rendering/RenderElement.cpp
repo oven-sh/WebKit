@@ -345,7 +345,7 @@ Style::Difference RenderElement::adjustStyleDifference(Style::Difference diff) c
     }
 
     if (diff.contextSensitiveProperties & Style::DifferenceContextSensitiveProperty::ClipPath) {
-        if (hasLayer() && protect(downcast<RenderLayerModelObject>(*this))->layer()->willCompositeClipPath())
+        if (hasLayer() && downcast<RenderLayerModelObject>(*this).layer()->willCompositeClipPath())
             diff.result = std::max(diff.result, Style::DifferenceResult::RecompositeLayer);
         else
             diff.result = std::max(diff.result, Style::DifferenceResult::Repaint);
@@ -726,7 +726,7 @@ RenderPtr<RenderObject> RenderElement::detachRendererInternal(RenderObject& rend
     ASSERT(parent);
     CheckedPtr nextSibling = renderer.nextSibling();
 
-    if (CheckedPtr previousSibling = renderer.previousSibling())
+    if (auto* previousSibling = renderer.previousSibling())
         previousSibling->setNextSibling(nextSibling.get());
     if (nextSibling)
         nextSibling->setPreviousSibling(renderer.previousSibling());
@@ -803,7 +803,7 @@ static RenderLayer* layerNextSiblingRespectingTopLayer(const RenderElement& rend
         return nullptr;
     }
 
-    return findNextLayer(*protect(renderer.parent()), parentLayer, &renderer);
+    return findNextLayer(*renderer.parent(), parentLayer, &renderer);
 }
 
 static void addLayers(const RenderElement& insertedRenderer, RenderElement& currentRenderer, RenderLayer& parentLayer)
@@ -985,7 +985,7 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
             || m_style.usedZIndex() != newStyle.usedZIndex();
 
         if (visibilityChanged)
-            protect(document())->invalidateRenderingDependentRegions();
+            document().invalidateRenderingDependentRegions();
 
         bool inertChanged = m_style.effectiveInert() != newStyle.effectiveInert();
 
@@ -1098,12 +1098,12 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
 
     if (view().frameView().hasSlowRepaintObject(*this)) {
         if (!newStyleSlowScroll)
-            protect(view())->frameView().removeSlowRepaintObject(*this);
+            view().frameView().removeSlowRepaintObject(*this);
     } else if (newStyleSlowScroll)
-        protect(view())->frameView().addSlowRepaintObject(*this);
+        view().frameView().addSlowRepaintObject(*this);
 
     if (isDocumentElementRenderer() || isBody())
-        protect(view())->frameView().updateExtendBackgroundIfNecessary();
+        view().frameView().updateExtendBackgroundIfNecessary();
 }
 
 inline void RenderCounter::rendererStyleChanged(RenderElement& renderer, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle)
@@ -1277,7 +1277,7 @@ void RenderElement::insertedIntoTree()
     // If |this| is visible but this object was not, tell the layer it has some visible content
     // that needs to be drawn and layer visibility optimization can't be used
     if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
-        if (CheckedPtr parentLayer = layerParent())
+        if (auto* parentLayer = layerParent())
             parentLayer->dirtyVisibleContentStatus();
     }
 
@@ -1299,7 +1299,7 @@ void RenderElement::willBeRemovedFromTree()
     // If we remove a visible child from an invisible parent, we don't know the layer visibility any more.
     if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
         // FIXME: should get parent layer. Necessary?
-        if (CheckedPtr enclosingLayer = parent()->enclosingLayer())
+        if (auto* enclosingLayer = parent()->enclosingLayer())
             enclosingLayer->dirtyVisibleContentStatus();
     }
 
@@ -1340,7 +1340,7 @@ void RenderElement::willBeDestroyed()
         protect(document())->contentChangeObserver().rendererWillBeDestroyed(protect(*element()));
 #endif
     if (Style::hasImageWithAttachment(m_style.backgroundLayers(), FillAttachment::FixedBackground) && !settings().fixedBackgroundsPaintRelativeToDocument())
-        protect(view())->frameView().removeSlowRepaintObject(*this);
+        view().frameView().removeSlowRepaintObject(*this);
 
     unregisterForVisibleInViewportCallback();
 
@@ -1801,7 +1801,7 @@ bool RenderElement::isVisibleIgnoringGeometry() const
         return false;
     if (usedStyle().visibility() != UsedVisibility::Visible)
         return false;
-    if (protect(view())->frameView().isOffscreen())
+    if (view().frameView().isOffscreen())
         return false;
 
     return true;
@@ -1986,8 +1986,7 @@ const Style::ComputedStyle* RenderElement::lazyPseudoElementStyle(const Style::P
 
     std::unique_ptr<Style::ComputedStyle> result = resolvePseudoElementStyle(pseudoElementIdentifier, parentStyle);
     if (result) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
+        return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
     }
     return nullptr;
 }
@@ -2189,7 +2188,7 @@ bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
     // If the target doesn't have any children or siblings that could be used to calculate the scroll position, we must be
     // at the end of the document. Scroll to the bottom. FIXME: who said anything about scrolling?
     if (!o && document().view()) {
-        point = FloatPoint(0, protect(document())->view()->contentsHeight());
+        point = FloatPoint(0, document().view()->contentsHeight());
         return true;
     }
     return false;
@@ -2328,7 +2327,7 @@ void RenderElement::updateOutlineAutoAncestor(bool hasOutlineAuto)
 
 bool RenderElement::hasOutlineAnnotation() const
 {
-    return element() && element()->isLink() && (protect(document())->printing() || (view().frameView().paintBehavior() & PaintBehavior::AnnotateLinks));
+    return element() && element()->isLink() && (document().printing() || (view().frameView().paintBehavior() & PaintBehavior::AnnotateLinks));
 }
 
 bool RenderElement::hasSelfPaintingLayer() const
@@ -2934,8 +2933,7 @@ void RenderElement::layoutIfNeeded()
 RenderHTMLCanvas* RenderElement::drawableCanvas() const
 {
     auto* canvasRenderer = ancestorsOfType<RenderHTMLCanvas>(*this).first();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return canvasRenderer && canvasRenderer->hasDrawableContent() ? const_cast<RenderHTMLCanvas*>(canvasRenderer) : nullptr;
+    return canvasRenderer && canvasRenderer->hasDrawableContent() ? const_cast<RenderHTMLCanvas*>(canvasRenderer) : nullptr;
 }
 
 }

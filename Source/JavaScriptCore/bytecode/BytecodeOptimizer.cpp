@@ -27,7 +27,7 @@
 #include "BytecodeOptimizer.h"
 
 #include "BytecodeGenerator.h"
-#include "BytecodeGeneratorBaseInlines.h"
+#include "BytecodeGeneratorInlines.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "ExpressionInfoInlines.h"
@@ -2143,7 +2143,7 @@ void BytecodeOptimizerAccess::emit()
     m_codeBlock->replaceOutOfLineJumpTargets();
 
     m_writer.swap(newWriter);
-    m_generator.m_lastOpcodeID = JSGeneratorTraits::opcodeForDisablingOptimizations;
+    m_generator.m_lastOpcodeID = op_debug;
     m_generator.m_lastInstruction = m_writer.ref();
 
     if (m_registerShift) {

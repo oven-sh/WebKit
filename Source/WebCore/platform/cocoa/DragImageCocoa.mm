@@ -29,47 +29,38 @@
 #if ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
 
 #import "ColorMac.h"
-#import "Element.h"
-#import "FontCascade.h"
-#import "FontDescription.h"
-#import "FontSelector.h"
-#import "LocalDefaultSystemAppearance.h"
 #import "NativeImage.h"
-#import "NodeDocument.h"
-#import "Page.h"
-#import "StringTruncator.h"
-#import "TextIndicator.h"
-#import "WebKitNSImageExtras.h"
-#import <pal/spi/cf/CoreTextSPI.h>
-#import <pal/spi/cg/CoreGraphicsSPI.h>
-#import <pal/spi/cocoa/URLFormattingSPI.h>
-#import <wtf/SoftLinking.h>
-#import <wtf/URL.h>
-
-#if !HAVE(URL_FORMATTING)
-SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(LinkPresentation)
-#endif
 
 namespace WebCore {
 
-IntSize dragImageSize(RetainPtr<NSImage> image)
+static IntSize dragImageSize(RetainPtr<NSImage> image)
 {
     return (IntSize)[image size];
 }
 
-void deleteDragImage(RetainPtr<NSImage>)
+IntSize DragImage::size() const
+{
+    return dragImageSize(m_platformImage);
+}
+
+static void deleteDragImage(RetainPtr<NSImage>)
 {
     // Since this is a RetainPtr, there's nothing additional we need to do to
     // delete it. It will be released when it falls out of scope.
 }
 
-IntPoint platformAdjustDragImageHotSpot(const IntPoint& hotSpot, const IntSize& dragImageSize)
+void DragImage::deletePlatformImage(PlatformDragImage image)
+{
+    deleteDragImage(WTF::move(image));
+}
+
+IntPoint DragImage::platformAdjustDragImageHotSpot(const IntPoint& hotSpot, const IntSize& dragImageSize)
 {
     // The hot spot is relative to the image's lower-left corner.
     return { hotSpot.x(), dragImageSize.height() - hotSpot.y() };
 }
 
-RetainPtr<NSImage> scaleDragImage(RetainPtr<NSImage> image, FloatSize scale)
+static RetainPtr<NSImage> scaleDragImage(RetainPtr<NSImage> image, FloatSize scale)
 {
     NSSize originalSize = [image size];
     NSSize newSize = NSMakeSize((originalSize.width * scale.width()), (originalSize.height * scale.height()));
@@ -78,8 +69,13 @@ RetainPtr<NSImage> scaleDragImage(RetainPtr<NSImage> image, FloatSize scale)
     [image setSize:newSize];
     return image;
 }
+
+void DragImage::scale(FloatSize scale)
+{
+    m_platformImage = scaleDragImage(takePlatformImage(), scale);
+}
     
-RetainPtr<NSImage> dissolveDragImageToFraction(RetainPtr<NSImage> image, float delta)
+static RetainPtr<NSImage> dissolveDragImageToFraction(RetainPtr<NSImage> image, float delta)
 {
     if (!image)
         return nil;
@@ -93,7 +89,12 @@ RetainPtr<NSImage> dissolveDragImageToFraction(RetainPtr<NSImage> image, float d
     return dissolvedImage;
 }
 
-RetainPtr<NSImage> createDragImageFromImage(NativeImage& image, GraphicsClient*, float)
+void DragImage::dissolveToFraction(float delta)
+{
+    m_platformImage = dissolveDragImageToFraction(takePlatformImage(), delta);
+}
+
+static RetainPtr<NSImage> createDragImageFromImage(NativeImage& image, GraphicsClient*, float)
 {
     // An NSBitmapImageRep, unlike the representation -[NSImage initWithCGImage:size:] makes, reports the image's own pixel size.
     RetainPtr imageRep = adoptNS([[NSBitmapImageRep alloc] initWithCGImage:image.platformImage().get()]);
@@ -101,8 +102,13 @@ RetainPtr<NSImage> createDragImageFromImage(NativeImage& image, GraphicsClient*,
     [dragImage addRepresentation:imageRep.get()];
     return dragImage;
 }
+
+DragImage DragImage::create(NativeImage& image, GraphicsClient* client, float deviceScaleFactor)
+{
+    return DragImage { createDragImageFromImage(image, client, deviceScaleFactor) };
+}
     
-RetainPtr<NSImage> createDragImageIconForCachedImageFilename(const String& filename)
+static RetainPtr<NSImage> createDragImageIconForCachedImageFilename(const String& filename)
 {
     RetainPtr<NSString> extension;
     size_t dotIndex = filename.reverseFind('.');
@@ -119,173 +125,39 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
-const CGFloat linkImagePadding = 10;
-const CGFloat linkImageDomainBaselineToTitleBaseline = 18;
-const CGFloat linkImageCornerRadius = 5;
-const CGFloat linkImageMaximumWidth = 400;
-const CGFloat linkImageFontSize = 11;
-const CFIndex linkImageTitleMaximumLineCount = 2;
+DragImage DragImage::createIconForCachedImageFilename(const String& filename)
+{
+    return DragImage { createDragImageIconForCachedImageFilename(filename) };
+}
+
 const int linkImageShadowRadius = 0;
 const int linkImageShadowOffsetY = 0;
 const int linkImageDragCornerOutsetX = 6 - linkImageShadowRadius;
 const int linkImageDragCornerOutsetY = 10 - linkImageShadowRadius + linkImageShadowOffsetY;
 
-IntPoint dragOffsetForLinkDragImage(DragImageRef dragImage)
+static IntPoint dragOffsetForLinkDragImage(PlatformDragImage dragImage)
 {
     IntSize size = dragImageSize(dragImage);
     return { linkImageDragCornerOutsetX, size.height() + linkImageDragCornerOutsetY };
 }
 
-FloatPoint anchorPointForLinkDragImage(DragImageRef dragImage)
+IntPoint DragImage::dragOffsetForLink() const
+{
+    return dragOffsetForLinkDragImage(m_platformImage);
+}
+
+static FloatPoint anchorPointForLinkDragImage(PlatformDragImage dragImage)
 {
     IntSize size = dragImageSize(dragImage);
     return { -static_cast<float>(linkImageDragCornerOutsetX) / size.width(), -static_cast<float>(linkImageDragCornerOutsetY) / size.height() };
 }
 
-struct LinkImageLayout {
-    LinkImageLayout(URL&, const String& title);
-
-    struct Label {
-        FloatPoint origin;
-        RetainPtr<CTFrameRef> frame;
-    };
-    Vector<Label> labels;
-
-    FloatRect boundingRect;
-};
-
-LinkImageLayout::LinkImageLayout(URL& url, const String& titleString)
+FloatPoint DragImage::anchorPointForLink() const
 {
-    RetainPtr title = nsStringNilIfEmpty(titleString);
-    RetainPtr nsURL = url.createNSURL();
-    NSString *absoluteURLString = [nsURL absoluteString];
-
-    RetainPtr domain = absoluteURLString;
-#if HAVE(URL_FORMATTING)
-    domain = [nsURL _lp_simplifiedDisplayString];
-#else
-    if (LinkPresentationLibrary())
-        domain = [nsURL _lp_simplifiedDisplayString];
-#endif
-
-    if ([title isEqualToString:absoluteURLString])
-        title = nil;
-
-    NSFont *titleFont = [NSFont boldSystemFontOfSize:linkImageFontSize];
-    NSFont *domainFont = [NSFont systemFontOfSize:linkImageFontSize];
-
-    NSColor *titleColor = [NSColor labelColor];
-    NSColor *domainColor = [NSColor secondaryLabelColor];
-
-    CGFloat maximumAvailableWidth = linkImageMaximumWidth - linkImagePadding * 2;
-
-    CGFloat currentY = linkImagePadding;
-    CGFloat maximumUsedTextWidth = 0;
-
-    auto buildLines = [this, maximumAvailableWidth, &maximumUsedTextWidth, &currentY] (NSString *text, NSColor *color, NSFont *font, CFIndex maximumLines, CTLineBreakMode lineBreakMode) {
-        CTParagraphStyleSetting paragraphStyleSettings;
-        paragraphStyleSettings.spec = kCTParagraphStyleSpecifierLineBreakMode;
-        paragraphStyleSettings.valueSize = sizeof(CTLineBreakMode);
-        paragraphStyleSettings.value = &lineBreakMode;
-        RetainPtr<CTParagraphStyleRef> paragraphStyle = adoptCF(CTParagraphStyleCreate(&paragraphStyleSettings, 1));
-
-        NSDictionary *textAttributes = @{
-            (id)kCTFontAttributeName: font,
-            (id)kCTForegroundColorAttributeName: color,
-            (id)kCTParagraphStyleAttributeName: (id)paragraphStyle.get()
-        };
-        NSDictionary *frameAttributes = @{
-            (id)kCTFrameMaximumNumberOfLinesAttributeName: @(maximumLines)
-        };
-
-        RetainPtr<NSAttributedString> attributedText = adoptNS([[NSAttributedString alloc] initWithString:text attributes:textAttributes]);
-        RetainPtr<CTFramesetterRef> textFramesetter = adoptCF(CTFramesetterCreateWithAttributedString((CFAttributedStringRef)attributedText.get()));
-
-        CFRange fitRange;
-        CGSize textSize = CTFramesetterSuggestFrameSizeWithConstraints(textFramesetter.get(), CFRangeMake(0, 0), (CFDictionaryRef)frameAttributes, CGSizeMake(maximumAvailableWidth, CGFLOAT_MAX), &fitRange);
-
-        RetainPtr<CGPathRef> textPath = adoptCF(CGPathCreateWithRect(CGRectMake(0, 0, textSize.width, textSize.height), nullptr));
-        RetainPtr<CTFrameRef> textFrame = adoptCF(CTFramesetterCreateFrame(textFramesetter.get(), fitRange, textPath.get(), (CFDictionaryRef)frameAttributes));
-
-        RetainPtr ctLines = CTFrameGetLines(textFrame.get());
-        CFIndex lineCount = CFArrayGetCount(ctLines);
-        if (!lineCount)
-            return;
-
-        Vector<CGPoint> origins(lineCount);
-        CGRect lineBounds;
-        CGFloat height = 0;
-        CTFrameGetLineOrigins(textFrame.get(), CFRangeMake(0, 0), origins.mutableSpan().data());
-        for (CFIndex lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
-            RetainPtr line = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
-
-            lineBounds = CTLineGetBoundsWithOptions(line, 0);
-            CGFloat trailingWhitespaceWidth = CTLineGetTrailingWhitespaceWidth(line);
-            CGFloat lineWidthIgnoringTrailingWhitespace = lineBounds.size.width - trailingWhitespaceWidth;
-            maximumUsedTextWidth = std::max(maximumUsedTextWidth, lineWidthIgnoringTrailingWhitespace);
-
-            if (lineIndex)
-                height += origins[lineIndex - 1].y - origins[lineIndex].y;
-        }
-
-        LinkImageLayout::Label label;
-        label.frame = textFrame;
-        label.origin = FloatPoint(linkImagePadding, currentY + origins[0].y);
-        labels.append(label);
-
-        currentY += height + lineBounds.size.height;
-    };
-
-    if (title)
-        buildLines(title.get(), titleColor, titleFont, linkImageTitleMaximumLineCount, kCTLineBreakByTruncatingTail);
-
-    if (title && domain)
-        currentY += linkImageDomainBaselineToTitleBaseline - (domainFont.ascender - domainFont.descender);
-
-    if (domain)
-        buildLines(domain, domainColor, domainFont, 1, kCTLineBreakByTruncatingMiddle);
-
-    currentY += linkImagePadding;
-
-    boundingRect = FloatRect(0, 0, maximumUsedTextWidth + linkImagePadding * 2, currentY);
-
-    // To work around blurry drag images on 1x displays, make the width and height a multiple of 2.
-    // FIXME: remove this workaround when <rdar://problem/33059739> is fixed.
-    boundingRect.setWidth((static_cast<int>(boundingRect.width()) / 2) * 2);
-    boundingRect.setHeight((static_cast<int>(boundingRect.height() / 2) * 2));
+    return anchorPointForLinkDragImage(m_platformImage);
 }
 
-DragImageData createDragImageForLink(Element& element, URL& url, const String& title, float deviceScaleFactor)
-{
-    LinkImageLayout layout(url, title);
-
-    LocalDefaultSystemAppearance localAppearance(protect(element.document())->useDarkAppearance(protect(element.computedStyle())));
-
-    auto imageSize = layout.boundingRect.size();
-    RetainPtr<NSImage> dragImage = adoptNS([[NSImage alloc] initWithSize:imageSize]);
-    [dragImage _web_lockFocusWithDeviceScaleFactor:deviceScaleFactor];
-
-    RetainPtr<CGContextRef> cgContext = [NSGraphicsContext currentContext].CGContext;
-
-    RetainPtr backgroundPath = adoptCF(CGPathCreateWithRoundedRect(layout.boundingRect, linkImageCornerRadius, linkImageCornerRadius, nullptr));
-    CGContextSetFillColorWithColor(cgContext.get(), cachedCGColor(colorFromCocoaColor([NSColor controlBackgroundColor])).get());
-    CGContextAddPath(cgContext.get(), backgroundPath.get());
-    CGContextFillPath(cgContext.get());
-    CGContextSetTextMatrix(cgContext.get(), CGAffineTransformIdentity);
-
-    for (const auto& label : layout.labels) {
-        CGContextSaveGState(cgContext.get());
-        CGContextTranslateCTM(cgContext.get(), label.origin.x(), layout.boundingRect.height() - label.origin.y() - linkImagePadding);
-        CTFrameDraw(label.frame.get(), cgContext.get());
-        CGContextRestoreGState(cgContext.get());
-    }
-
-    [dragImage unlockFocus];
-
-    return  { dragImage, nullptr };
-}
-
-DragImageRef createDragImageForColor(const Color& color, const FloatRect&, float, Path&)
+static PlatformDragImage createDragImageForColor(const Color& color, const FloatRect&, float, Path&)
 {
     auto dragImage = adoptNS([[NSImage alloc] initWithSize:NSMakeSize(ColorSwatchWidth, ColorSwatchWidth)]);
 
@@ -303,6 +175,11 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect&, float
     [dragImage unlockFocus];
 
     return dragImage;
+}
+
+DragImage DragImage::createForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
+{
+    return DragImage { createDragImageForColor(color, elementRect, pageScaleFactor, visiblePath) };
 }
 
 } // namespace WebCore
