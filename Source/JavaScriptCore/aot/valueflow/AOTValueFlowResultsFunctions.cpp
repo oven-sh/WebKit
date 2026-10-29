@@ -665,8 +665,31 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         for (uint32_t asked : statementsAskedFor.of(number))
             follow(asked);
     }
-    for (size_t function : isEnteredByHost)
-        tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = BuiltinCallbackTimes::Repeatedly });
+    // The host hands the default export of an entry to Bun.serve. Its `fetch` then gets the requests, as that of a program that calls Bun.serve itself.
+    BitVector getsRequests(numberOfFunctions);
+    for (const Entry& entry : program.entries) {
+        for (const HostRead& read : entry.hostReads) {
+            if (!listsWhatWasSeen || !read.builtin || program.builtins().canonicalID(read.builtin) != Builtins::BunServe)
+                continue;
+            auto exported = std::ranges::find(program.at(entry.module).exports, read.exportName, &ModuleExport::name);
+            if (exported == program.at(entry.module).exports.end() || !exported->variable)
+                continue;
+            ValueSetID configurations = solver.possibleValuesOf(bodies.nodes().variable(exported->variable));
+            if (ValueSets::isComplement(configurations))
+                continue;
+            ValueSetID handlers = heap.writtenUnder(heap.maker().intersect(configurations, universe.knownObjects()), ValueFlowName::property(program, program.keyOf(BuiltinNames::fetch)));
+            if (ValueSets::isComplement(handlers))
+                continue;
+            sets.forEachMember(handlers, [&](ValueFlowObjectID handler) {
+                if (FunctionID function = universe.closureFunction(handler); function && inputs.isReached(function))
+                    getsRequests.quickSet(function.index());
+            });
+        }
+    }
+    BitVector isCalledByHost = isEnteredByHost;
+    isCalledByHost.merge(getsRequests);
+    for (size_t function : isCalledByHost)
+        tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = getsRequests.quickGet(function) ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly });
     stampedCalls.functionsEnteredWithoutStamp = BitVector(numberOfFunctions);
     for (const FlowIndirectCall& call : tables.functions.indirectCalls)
         stampedCalls.functionsEnteredWithoutStamp.quickSet(call.callee.index());

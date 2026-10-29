@@ -1556,7 +1556,8 @@ static void placeCallsOfLinks(const Program& program, Function& caller, const Fu
             uint32_t& frame = frames[position / 2];
             if (!frame) {
                 uint32_t frameOfLink = frameOfFirstLink + static_cast<uint32_t>(position / 2);
-                caller.inlineFrames.append(InlineFrame { .callee = call.function(), .callPosition = program.at(caller.inlineFrames[frameOfLink].callee).position, .parent = frameOfLink, .module = traversal.module });
+                const InlineFrame link = caller.inlineFrames[frameOfLink];
+                caller.inlineFrames.append(InlineFrame { .callee = call.function(), .callPosition = link.calledBuiltin ? link.callPosition : program.at(link.callee).position, .parent = frameOfLink, .module = traversal.module });
                 frame = caller.inlineFrames.size() - 1;
             }
             caller.edit(cloner.cloneOf(id), ValueEdit::Definition).inlineFrame = frame;

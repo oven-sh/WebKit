@@ -72,6 +72,12 @@ public:
         };
         return std::ranges::any_of(classLayout.methods(), hasComputedName) || std::ranges::any_of(classLayout.staticMethods(), hasComputedName);
     }
+    // The record names the parent and every member, so the run time can define the class before the program evaluates it.
+    static bool canBeDefinedFromRecord(const LayoutData& classLayout)
+    {
+        bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
+        return recordNamesParent && !hasComputedMemberNames(classLayout);
+    }
     static bool isDefinedByClass(const LayoutData& layout)
     {
         if (!layout.isClass())
@@ -108,6 +114,7 @@ public:
     enum class ClassPart : uint8_t { Everything, ClassObject, PrototypeMembers };
     JSValue resolveHeritage(JSGlobalObject*, JSValue heritage);
     Closure* createClassObject(VM&, const LayoutData&);
+    Closure* classObjectForEvaluation(Closure* allocated, const LayoutData&) const;
     void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, JSValue parent, JSValue prototypeParent);
     void createClassPart(JSGlobalObject*, Closure* classObject, ClassPart);

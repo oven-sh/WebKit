@@ -120,7 +120,6 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
         reads: readByFormatting,
         implementation: b.generic,
       },
-      b.otherwise,
     ],
   }) satisfies b.GetterField;
 

@@ -172,7 +172,7 @@ private:
     ALWAYS_INLINE void throwOwedOutOfMemoryError()
     {
         if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]]
-            throwOwedOutOfMemoryErrorBeforeReturn(m_instance, m_frameRecordOfOperation);
+            throwOwedOutOfMemoryErrorBeforeReturn(m_instance, m_frameRecordOfOperation, *this);
     }
 
     Instance& m_instance;

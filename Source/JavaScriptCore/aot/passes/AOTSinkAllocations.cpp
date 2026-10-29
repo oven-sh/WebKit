@@ -586,7 +586,9 @@ void AllocationSinking::resetCounters()
         candidate.numberOfBorrowingBuilds = 0;
         candidate.numberOfFoldedStores = 0;
         candidate.numberOfRepeatedStores = 0;
-        candidate.mergeBlock = BlockID();
+        // Building before branches hides the merge. The plan to duplicate the code after it still needs it.
+        if (!candidate.isBuiltBeforeBranches)
+            candidate.mergeBlock = BlockID();
         candidate.firstCause = std::nullopt;
     }
     m_returns.clear();
@@ -699,6 +701,9 @@ bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
         if (!exceedsMaxBuilds(candidate, maxNumberOfBuilds) && paysToSink(candidate))
             continue;
         candidate.isBuiltBeforeBranches = true;
+        // Duplicating the code after the merge pays where one of the builds is on a rarer path. Planning it for the others is work for nothing.
+        if (!candidate.numberOfRarerBuilds)
+            candidate.mergeBlock = BlockID();
         changed = true;
     }
     if (changed)

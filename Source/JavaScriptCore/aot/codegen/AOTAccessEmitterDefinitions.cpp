@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTCodeSizeEstimate.h"
@@ -161,7 +162,8 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(isUnknown);
-    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .isOnRarePath = true });
+    // What refuses a value stands for a call of Object.create, which a trace of the refusal names.
+    callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .calledBuiltin = value->refusesOtherValues() ? Builtins::ObjectCreate : BuiltinID(), .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);

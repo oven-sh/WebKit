@@ -20,6 +20,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxGuessedWorkerFiles(Load, CodeSize, NotOptimized, 4, 4, 0, "embedded code files that are compiled in case a Worker with an unknown path starts them")
     MaxRepeatedSourceBytes(Load, CodeSize, NotOptimized, 262144, 262144, 0, "bytes of source text that entry points compiled on their own have in common")
     MaxRepeatedSourcePercent(Load, CodeSize, NotOptimized, 5, 5, 0, "percent of the source text that entry points compiled on their own have in common")
+    MaxSourceBytesExpectedToBeAnalyzed(Load, CompileTime, NotOptimized, 268435456, 268435456, 268435456, "bytes of source text of a program whose first load expects whole-program analysis to come to an end")
     MaxDataNodes(Load, Memory, BuildError, 16777216, 16777216, 0, "values in a data module or macro result")
     MaxNestingDepth(Lower, Memory, BuildError, 2000, 2000, 0, "how deeply code can be nested")
     MaxTypeNodes(Lower, CompileTime, WiderType, 65536, 65536, 0, "the size of one TypeScript type")
@@ -51,6 +52,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxValueFlowEdgesLogged(AnalyzeFlow, Memory, NotOptimized, 67108864, 67108864, 67108864, "edges of whole-program analysis before it stops and the program is compiled without it")
     MaxValueFlowSetMembers(AnalyzeFlow, CompileTime, DeclaredType, 16777216, 16777216, 16777216, "shapes and callees tracked per value")
     MaxValueFlowMembersToldApart(AnalyzeFlow, CompileTime, NotOptimized, 64, 64, 0, "receivers of a method call or names of a computed key looked at one by one")
+    MaxValueFlowObjectsListedByMember(AnalyzeFlow, CompileTime, NotOptimized, 1024, 1024, 1024, "objects of one receiver that whole-program analysis links one by one")
     MaxObjectsOfTypedResult(AnalyzeFlow, CompileTime, GenericPath, 256, 256, 0, "object and array types reachable from the type that one call parses by")
     MaxAppendedFieldsPerLayout(AnalyzeFlow, Memory, OutOfLineStorage, 96, 96, 0, "properties added to an object type after creation")
 

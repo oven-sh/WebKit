@@ -182,8 +182,7 @@ Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
     RELEASE_ASSERT(!closures.closureIfCreated(constructor));
     Closure* created = Closure::create(vm, structure, constructor);
     closures.registerClassObject(created);
-    bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
-    if (!recordNamesParent || hasComputedMemberNames(classLayout))
+    if (!canBeDefinedFromRecord(classLayout))
         return created;
     ASSERT(hasOneClassObject(classLayout));
     count(m_state.instance, RuntimeCounterID::ClassesMadeWhenFirstTouched);
@@ -272,6 +271,9 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
             didCreatePrototypeLeftToRecord(classLayout);
         return prototype;
     }
+    // The evaluation of such a class brings its own class object, and until then the class has no prototype.
+    if (isDefinedByClass(classLayout) && !canBeDefinedFromRecord(classLayout))
+        return nullptr;
     if (hasOneClassObject(classLayout))
         m_state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor));
     if (!isDefinedByClass(classLayout))
@@ -1207,6 +1209,15 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
     return true;
+}
+
+// The run time may make the one class object of a class before the program evaluates the class. The evaluation then continues with that object, not with the one it allocated.
+Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutData& classLayout) const
+{
+    if (!hasOneClassObject(classLayout))
+        return allocated;
+    auto* registered = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(allocated->function()));
+    return registered ? registered : allocated;
 }
 
 void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)

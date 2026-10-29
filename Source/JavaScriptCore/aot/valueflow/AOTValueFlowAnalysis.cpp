@@ -588,6 +588,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
+        .mostObjectsListedByMember = build.limit(LimitID::MaxValueFlowObjectsListedByMember),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,

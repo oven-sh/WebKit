@@ -17,6 +17,7 @@
 
 namespace JSC {
 
+class ThrowScope;
 class VM;
 struct VMEntryRecord;
 
@@ -94,7 +95,7 @@ bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 const void* returnAddressOfInnermostCompiledCall(VM&);
 
 // For an operation whose allocation failed. It throws only if the stub that called the operation tests for an exception and the function it returns to expects one there.
-void throwOwedOutOfMemoryErrorBeforeReturn(Instance&, CallerFrameAndPC* frameRecordOfOperation);
+void throwOwedOutOfMemoryErrorBeforeReturn(Instance&, CallerFrameAndPC* frameRecordOfOperation, ThrowScope& scopeOfOperation);
 
 } // namespace AOT
 } // namespace JSC

@@ -58,6 +58,7 @@ struct ValueFlowSolverInput {
     uint64_t mostSetMembers { UINT64_MAX };
     uint64_t mostMembersToldApart { UINT64_MAX };
     uint64_t mostEdgesLogged { UINT64_MAX };
+    uint64_t mostObjectsListedByMember { UINT64_MAX };
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
     bool leavesOutWhatIsCovered { false };
@@ -289,6 +290,7 @@ public:
         uint32_t madeNodesAtRest { 0 };
         uint32_t nodesSaturated { 0 };
         uint32_t nodesHoldingObjectsOutsideFamily { 0 };
+        uint32_t namesWithSeveralCells { 0 };
         bool isPastEdgeBudget { false };
         Seconds rules;
         Seconds merge;
@@ -837,6 +839,8 @@ private:
     };
     static constexpr unsigned numberOfNodeMakers = 64;
     std::array<NodesOfManyObjects, numberOfNodeMakers> m_nodesOfManyObjects;
+    uint64_t mostObjectsListedByMember() const;
+    bool isListedByMember(ValueSetID) const;
     Vector<uint32_t> m_madeNodesOfStatement;
     ListWithRoomToFill<uint32_t> m_firstUseOfStatement;
     ListThatStaysInPlace<Use> m_uses;

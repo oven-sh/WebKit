@@ -525,12 +525,12 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
 
 // Only where the operation returns to a stub that tests for an exception and then returns into a function: any other stub continues and must not find an exception.
 // The handler active at a return address is known if the address has its own site, or the function has no handlers.
-void throwOwedOutOfMemoryErrorBeforeReturn(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
+void throwOwedOutOfMemoryErrorBeforeReturn(Instance& instance, CallerFrameAndPC* frameRecordOfOperation, ThrowScope& scopeOfOperation)
 {
     VM& vm = *instance.vm;
     const Image& image = *vm.aotState().image;
     // The error is thrown only after a collection has found no room. While the operation puts collections off, the error waits for a poll.
-    if (vm.exceptionForInspection() || vm.heap.isDeferred())
+    if (scopeOfOperation.exception() || vm.heap.isDeferred())
         return;
     CodeLocation location = image.locate(removeCodePtrTag(std::bit_cast<CallFrame*>(frameRecordOfOperation)->rawReturnPC()));
     if (location.kind != CodeKind::Stub || location.stubFrameKind != StubFrameKind::ReturnsAfterOperation)

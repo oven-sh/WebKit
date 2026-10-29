@@ -2861,15 +2861,20 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
             // The call takes every function from the stack that was copied in around it. The code was entered for the outermost of them that is shown.
             const Value& call = function.at(block.terminator.callOperand());
             std::optional<WrittenTailCall> place;
+            FunctionID callee = call.opcode == Opcode::CallDirect ? call.function() : FunctionID();
             for (Origin origin = call.origin();;) {
                 FunctionID standing = origin.inlineFrame ? function.inlineFrames[origin.inlineFrame].callee : FunctionID(index);
                 if (standing && !program.at(standing).isHiddenInStackTraces() && firstSourceOf(program, standing) == source) {
+                    // The tests at the head of a function hand on to its body at the position of the function. Nobody wrote that call.
+                    bool handsOnToOwnBody = callee && origin.position == program.at(callee).position && firstSourceOf(program, callee) == source;
                     bool isCallOfFunction = origin.inlineFrame == call.origin().inlineFrame;
-                    place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
+                    if (!handsOnToOwnBody)
+                        place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
                 }
                 if (!origin.inlineFrame)
                     break;
                 const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+                callee = frame.callee;
                 origin.position = frame.callPosition;
                 origin.inlineFrame = frame.parent;
             }

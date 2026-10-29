@@ -532,10 +532,33 @@ static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, con
 static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, LayoutID classLayout, AnswersAboutSets& answers)
 {
     Vector<AssignedValue> assigned;
+    std::optional<ValueFlowHeapView> heap;
+    // Object.assign(Point.prototype, { norm() { .. } }): the values of the fields of the literal.
+    auto listWhatIsCopied = [&](const Write& write) {
+        if (ValueSets::isComplement(write.arrives))
+            return;
+        if (!heap)
+            heap.emplace(inputs);
+        bool isWrittenForOtherObjectsToo = Typed::isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers);
+        inputs.sets().forEachMember(write.arrives, [&](ValueFlowObjectID source) {
+            LayoutID layout = inputs.universe().layoutOf(source);
+            if (!layout)
+                return;
+            ValueSetID sourceAlone = heap->maker().of(source);
+            for (const Field& field : inputs.program.at(layout).fields) {
+                if (!field.key || inputs.program.isIndexLike(field.key) || heap->writtenUnder(sourceAlone, ValueFlowName::getter(field.key)) != ValueSets::nothing)
+                    continue;
+                if (ValueSetID value = heap->writtenUnder(sourceAlone, ValueFlowName::property(field.key)); value != ValueSets::nothing)
+                    assigned.append({ field.key, value, MethodKind::Method, isWrittenForOtherObjectsToo });
+            }
+        });
+    };
     auto list = [&](ValueFlowObjectID holder) {
         for (const Write& write : ledger.writesFiledOn(holder)) {
             if (std::optional<MethodKind> kind = kindOfMemberUnder(write.under.kind))
                 assigned.append({ PropertyKeyID(write.under.payload), write.arrives, *kind, isWrittenForOtherObjectsToo(inputs, ledger, write.through, answers) });
+            else if (write.under.kind == ValueFlowNameKind::CopiedFrom)
+                listWhatIsCopied(write);
         }
     };
     list(inputs.universe().prototypeOf(classLayout));

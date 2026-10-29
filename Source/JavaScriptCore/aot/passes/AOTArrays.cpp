@@ -765,8 +765,18 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
         frames.append(frame);
         return static_cast<uint32_t>(frames.size() - 1);
     };
+    // A method that is not written in JavaScript has the frame of a built-in whose steps stand in its caller.
+    auto calledBuiltinOf = [&](const Value& call) -> BuiltinID {
+        if (call.opcode != Opcode::CallBuiltin || (call.inlineFrame && frames[call.inlineFrame].calledBuiltin))
+            return { };
+        const BuiltinTable& builtins = context.program.builtins();
+        const BuiltinOverload& overload = builtins.at(call.overload());
+        return overload.mode == BuiltinCallMode::Call ? builtins.canonicalID(overload.builtin) : BuiltinID();
+    };
     auto appendFrameOfBuiltin = [&](ValueID id) -> std::optional<Origin> {
         const Value& call = function.at(id);
+        if (BuiltinID builtin = calledBuiltinOf(call))
+            return function.enterFrameOfBuiltin(context.id, call.origin(), builtin);
         if (call.opcode != Opcode::CallDirect)
             return std::nullopt;
         const Function& builtin = context.program.at(call.function());
@@ -779,13 +789,16 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     bool linksHavePlacesOfTheirOwn = std::ranges::any_of(links, [&](const ChainCallback& link) {
         return link.call != chain.lastCall;
     });
-    bool linksAreWrittenInJavaScript = std::ranges::all_of(links, [&](const ChainCallback& link) {
-        return function.at(link.call).opcode == Opcode::CallDirect;
+    bool linksHaveFrames = std::ranges::all_of(links, [&](const ChainCallback& link) {
+        const Value& call = function.at(link.call);
+        return call.opcode == Opcode::CallDirect || calledBuiltinOf(call);
     });
-    if (linksHavePlacesOfTheirOwn && linksAreWrittenInJavaScript) {
+    if (linksHavePlacesOfTheirOwn && linksHaveFrames) {
         // The frames of the links stand in a row in front of the frame of the site, which is where the copy of the traversal looks for them.
-        for (const ChainCallback& link : links)
-            appendFrameOfBuiltin(link.call);
+        for (const ChainCallback& link : links) {
+            std::optional<Origin> frameOfLink = appendFrameOfBuiltin(link.call);
+            RELEASE_ASSERT(frameOfLink);
+        }
         const Function& traversal = context.program.at(findChainTraversal(context.program));
         origin = Origin { traversal.position, appendFrame({ .callee = step, .callPosition = origin.position, .parent = origin.inlineFrame, .isTailCall = origin.isTailCall, .module = traversal.module }) };
     }
