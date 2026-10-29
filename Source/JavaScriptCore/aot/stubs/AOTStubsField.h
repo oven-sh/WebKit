@@ -179,6 +179,7 @@ void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg 
 // Gives the field of slotData its granule, in the stub or by the run time, and goes on at findStorage. Writes address, representation and secondScratch.
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const ScopedLambda<void()>& loadOffsetOfExtensionWord, Label findStorage);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
+PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 

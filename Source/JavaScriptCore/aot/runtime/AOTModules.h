@@ -509,6 +509,7 @@ private:
     bool m_loadsModulesByName;
     const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
+    bool m_hasAskedEveryClass { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {
         Strong<JSPromise> promise;

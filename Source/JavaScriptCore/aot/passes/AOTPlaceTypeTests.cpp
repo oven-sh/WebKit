@@ -1572,9 +1572,6 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
         if (found.outcome != BuiltinMemberLookup::Outcome::Found)
             return false;
         BuiltinID member = builtins.canonicalID(found.member);
-        // Flow lists how the program uses each built-in. A member that no access of the program is seen to reach speaks for no receiver, though code that nobody has seen may come by it.
-        if (!context.inputs.flow.usesOf(member).containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Written }))
-            return true;
         // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
         return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
     });
@@ -2413,8 +2410,6 @@ struct TestPlacer {
     std::optional<GenericCopy> copy { };
     GenericCopy::Extent extentOfCopy { GenericCopy::Extent::NotCopied };
     BitVector unclonableStretches { };
-    // Cannot be copied alone: a value defined in the stretch must reach a use after it unmerged. A copy that continues after the stretch may take that use along.
-    BitVector stretchesCopiedOnlyWithWhatFollows { };
     // Of a cold function, as it was before the placer changed it.
     std::optional<BitVector> stretchesInFrontOfLoops { };
     BitVector stretchesThatGuessLayouts { };
@@ -2824,19 +2819,12 @@ struct TestPlacer {
             }
             return *livenessInsideStretches;
         };
-        BitVector goesOnBehind(regions.size());
-        for (const StretchRange& range : plan.ranges) {
-            if (goesOnBehindStretch(range))
-                goesOnBehind.quickSet(range.stretch);
-        }
         for (unsigned stretch = 0; stretch < regions.size(); ++stretch) {
             const StretchRegion& region = regions[stretch];
             if (region.blocks.isEmpty())
                 continue;
             CloneCheck check = RegionCloner::checkCanDuplicate(analyses, region.blocks.span(), region.entries.span(), liveness);
-            if (check == CloneCheck::OperandMustBeDefinition && goesOnBehind.quickGet(stretch))
-                stretchesCopiedOnlyWithWhatFollows.set(stretch);
-            else if (check != CloneCheck::CanClone && check != CloneCheck::FunctionMayNotBeCloned)
+            if (check != CloneCheck::CanClone && check != CloneCheck::FunctionMayNotBeCloned)
                 unclonableStretches.set(stretch);
         }
         extendCopiesBehindStretches(liveness);
@@ -2876,15 +2864,6 @@ struct TestPlacer {
                 loop.copyComesBack = false;
             isOnWayBackIntoLoop.clearAll();
             extentOfCopy = planGenericCopy(blocksOfStretches.span(), liveness);
-        }
-        // The other stretches must not pay for these: without them the copy is the one that was always made.
-        if (!stretchesCopiedOnlyWithWhatFollows.isEmpty() && (extentOfCopy == GenericCopy::Extent::NotCopied || copy->wasCutShortByLimit())) {
-            unclonableStretches.merge(stretchesCopiedOnlyWithWhatFollows);
-            stretchesCopiedOnlyWithWhatFollows.clearAll();
-            isOnWayBackIntoLoop.clearAll();
-            copy.reset();
-            extendCopiesBehindStretches(liveness);
-            return;
         }
         if (copy->wasCutShortByLimit())
             context.gaveUp(LimitID::MaxBlocksCopiedBehindStretches);

@@ -353,6 +353,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::ProgramTooLargeToAnalyze });
         FlowResults results;
         results.setReasonForNoResults(UnseenCodeCause::LimitReached);
+        build.continueWithoutFlowResults();
         if (goesOn)
             (*goesOn)(reportUsesOfLibraryCode(results));
         return results;

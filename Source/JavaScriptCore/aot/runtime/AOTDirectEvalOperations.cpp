@@ -514,6 +514,7 @@ struct EvalVariableScopeContents {
     JSObject* variables { nullptr };
     JSValue privateClassBrand { };
     JSValue privateBrand { };
+    const PrivateNameEnvironment* privateNames { nullptr };
 };
 
 class EvalVariableScope final : public JSLexicalEnvironment {
@@ -566,6 +567,10 @@ EvalVariableScope* EvalVariableScope::create(VM& vm, Structure* structure, JSSco
     symbolTable->setUsesSloppyEval(isVarScope);
     for (unsigned i = 0; i < numberOfScopeOffsets; ++i)
         symbolTable->takeNextScopeOffset();
+    if (contents.privateNames) {
+        for (auto& [name, entry] : *contents.privateNames)
+            symbolTable->addPrivateName(name.get(), entry);
+    }
     auto* result = new (NotNull, allocateCell<EvalVariableScope>(vm, allocationSize(symbolTable))) EvalVariableScope(vm, structure, next, symbolTable);
     result->finishCreation(vm);
     result->variableAt(privateClassBrandScopeOffset()).set(vm, result, contents.privateClassBrand);
@@ -712,6 +717,15 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         innermost = EvalVariableScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::variableScope, EvalVariableScope::createStructure), innermost, scopeType, contents);
     };
 
+    PrivateNameEnvironment privateNames;
+    for (auto& binding : bindings) {
+        if (std::optional<PrivateNameEntry> entry = privateNameEntryOf(binding))
+            privateNames.add(RefPtr<UniquedStringImpl> { identifierAt(instance, binding.name).impl() }, *entry);
+    }
+    // An eval inside the evaluated source collects the private names in scope from the symbol tables of the scope chain. This scope binds nothing, so it stands outside the others.
+    if (!privateNames.isEmpty())
+        pushVariableScope(ScopeType::LexicalScope, { .ownBindings = createBindings({ }), .privateNames = &privateNames });
+
     size_t index = bindings.size();
     size_t runEnd = index;
     while (index) {
@@ -756,12 +770,7 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         pushVariableScope(ScopeType::VarScope, { .variables = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) });
 
     const EvalBindingData* thisBinding = findBinding(bindings, EvalBindingKind::This);
-    EvalScopeChain chain { innermost, boundThisOrEmpty(thisBinding ? read(*thisBinding) : operandCopy->get(0), request.isInDerivedConstructor), { } };
-    for (auto& binding : bindings) {
-        if (std::optional<PrivateNameEntry> entry = privateNameEntryOf(binding))
-            chain.privateNames.add(RefPtr<UniquedStringImpl> { identifierAt(instance, binding.name).impl() }, *entry);
-    }
-    return chain;
+    return { innermost, boundThisOrEmpty(thisBinding ? read(*thisBinding) : operandCopy->get(0), request.isInDerivedConstructor), WTF::move(privateNames) };
 }
 
 class DirectEvalCaches final : public JSDestructibleObject {

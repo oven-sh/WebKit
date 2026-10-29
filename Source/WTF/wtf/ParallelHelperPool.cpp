@@ -161,11 +161,11 @@ void ParallelHelperPool::ensureThreads(unsigned numThreads)
 }
 
 #if ENABLE(AOT)
-void ParallelHelperPool::waitUntilThreadsHaveWaited()
+void ParallelHelperPool::waitUntilThreadsAreUp()
 {
     Locker locker { *m_lock };
     for (RefPtr<AutomaticThread>& thread : m_threads)
-        thread->waitUntilHasWaited(locker);
+        thread->waitUntilIsUp(locker);
 }
 #endif
 

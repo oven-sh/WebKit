@@ -48,6 +48,7 @@ public:
     ~ClassTable();
 
     const LayoutData* classWithIndex(uint32_t) const;
+    void askEveryClassForItsPrototype(VM&);
     const LayoutData* classConstructedBy(FunctionID) const;
     const LayoutData* baseOf(const LayoutData& layout) const { return layout.base() == LayoutData::noBase ? nullptr : classWithIndex(layout.base()); }
     const LayoutData& classOfInstances(const LayoutData& instanceLayout) const

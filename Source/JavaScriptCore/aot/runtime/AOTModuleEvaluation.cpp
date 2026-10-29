@@ -15,6 +15,7 @@
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
 #include "AOTObjectModel.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTState.h"
@@ -173,6 +174,9 @@ bool Modules::readyForSyncExecution(ModuleID start, VisitedModuleRecords& seen)
         if (isComponentEvaluated(*this, module))
             return ImportWalkStep::Skip;
         ModuleStatus moduleStatus = status(module);
+        // The loader of `bun run` has no status for a CommonJS file. An importer gets what a running file has exported so far.
+        if (moduleStatus == ModuleStatus::Evaluating && isCommonJSFileOrFace(module))
+            return ImportWalkStep::Skip;
         bool isReady = moduleStatus != ModuleStatus::Evaluating && moduleStatus != ModuleStatus::EvaluatingAsync && !moduleData.hasTopLevelAwait();
         return isReady ? ImportWalkStep::Enter : ImportWalkStep::Stop;
     });
@@ -480,6 +484,8 @@ JSValue Modules::callBody(ModuleID module)
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     ClosureTable& closures = m_state.objects->closures;
+    if (validatesRuntime(vm) && !std::exchange(m_hasAskedEveryClass, true)) [[unlikely]]
+        m_state.objects->classes.askEveryClassForItsPrototype(vm);
     SetForScope isAskingHost(m_isAskingHost, false);
     if (!moduleData.isOfLibrary())
         didStartThread(&vm);
@@ -2362,7 +2368,11 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
     bool needsLoader = needsLoaderForRequire(module);
     // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
-    std::optional<VM::SynchronousModuleQueueScope> queue(std::in_place, *m_instance.vm);
+    // A read of a deferred namespace evaluates the module and takes no step of the loader: an import() that the module calls is loaded in later jobs.
+    bool runsStepsOfLoader = reason == SynchronousEvaluationReason::Require;
+    std::optional<VM::SynchronousModuleQueueScope> queue;
+    if (runsStepsOfLoader)
+        queue.emplace(*m_instance.vm);
     SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
     auto leaveLoad = [&] {
         if (!queue)
@@ -2381,7 +2391,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     };
     auto didLeaveLoad = makeScopeExit(leaveLoad);
     if (!needsLoader) {
-        evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::StepsOfLoaderWaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
+        evaluateImportedCommonJSFiles(module, m_instance.vm->synchronousModuleQueue() ? JobsOfImportedFiles::StepsOfLoaderWaitForLoader : JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsLeftToLoader);
         RETURN_IF_EXCEPTION(scope, void());
         needsLoader = m_rootWhoseFilesRanAhead == module;
         // One of the files may have required the module.
@@ -2409,7 +2419,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
                     return;
                 TRY_CLEAR_EXCEPTION(scope, void());
             }
-            JSModuleLoader::drainSynchronousModuleQueue(realm);
+            if (runsStepsOfLoader)
+                JSModuleLoader::drainSynchronousModuleQueue(realm);
             RETURN_IF_EXCEPTION(scope, void());
             if (exception) [[unlikely]]
                 throwException(realm, scope, exception);
@@ -2417,7 +2428,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         }
         promise = evaluate(module, std::nullopt, nullptr);
         RETURN_IF_EXCEPTION(scope, void());
-        JSModuleLoader::drainSynchronousModuleQueue(realm);
+        if (runsStepsOfLoader)
+            JSModuleLoader::drainSynchronousModuleQueue(realm);
     }
     leaveLoad();
     RETURN_IF_EXCEPTION(scope, void());

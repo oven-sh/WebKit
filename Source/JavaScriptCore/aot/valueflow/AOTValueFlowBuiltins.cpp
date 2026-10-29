@@ -2498,8 +2498,11 @@ private:
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
-        if (std::optional<BuiltinOperand> source = m_overload->result.prototypeSource; source && fresh == m_resultObject)
+        if (std::optional<BuiltinOperand> source = m_overload->result.prototypeSource; source && fresh == m_resultObject) {
             connectFrom({ .kind = BuiltinPlaceKind::Prototype, .operand = source }, prototype);
+            if (part.kind == BuiltinTypePartKind::Instance)
+                writeOwnPropertiesListedOnPrototypes(part.builtinClass, object);
+        }
         for (const BuiltinSlotContents& contents : part.contents) {
             ValueFlowNodeID held = m_context.written(object, nameOf(contents.slot));
             if (fresh != m_resultObject || !listOwnKeysIn(held))
@@ -2583,6 +2586,27 @@ private:
                     continue;
                 BuiltinTypeID holds = m_builtins.at(slot).holds;
                 m_context.add(m_context.written(only(m_context, fresh), nameOf(slot)), valueInSlot(slot, holds));
+            }
+        }
+    }
+
+    // The table lists the own properties of an instance on the prototype object of its class, where a lookup finds them on its way up.
+    // A bound function inherits from whatever its target does, and a constructor of the host may inherit from Object.prototype.
+    void writeOwnPropertiesListedOnPrototypes(BuiltinClassID builtinClass, ClimbingSet object)
+    {
+        for (BuiltinClassID current = builtinClass; current; current = m_builtins.at(current).parent) {
+            BuiltinID prototypeObject = m_builtins.at(current).prototype;
+            if (!prototypeObject)
+                continue;
+            for (BuiltinID member : m_builtins.membersOf(prototypeObject)) {
+                const Builtin& entry = m_builtins.at(member);
+                PropertyKeyID key = entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) ? m_program.keyOf(entry.name) : PropertyKeyID();
+                if (!key)
+                    continue;
+                for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
+                    if (overload.mode == BuiltinCallMode::Get)
+                        m_context.add(m_context.written(object, ValueFlowName::property(m_program, key)), m_tables.primitivesOf(overload.result.type));
+                }
             }
         }
     }
@@ -4332,6 +4356,28 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     });
 }
 
+// A class that a library module defines is in no table, and its methods only escape with an instance: nothing calls them. A built-in calls those under the names that it asks for.
+static void callMethodsOfEscapedLibraryInstances(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet prototypes = context.valueOf(heldPrototypeObjectsOfLibraryClasses(context));
+    if (!context.meet(prototypes, ValueSets::anything))
+        return;
+    forEachNameCalledIn(behavior, [&](BuiltinName name) {
+        Vector<ValueFlowObjectID, 4> methods;
+        context.forEachMember(context.restrict(context.valueOf(context.readWhatWasWritten(prototypes, property(context, name))), universe.closures()), [&](ValueFlowObjectID closure) {
+            if (context.program().at(universe.closureFunction(closure)).role == FunctionRole::Library)
+                methods.append(closure);
+        });
+        if (methods.isEmpty())
+            return;
+        ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
+        callFromNativeCode(context, ClimbingSet(context.maker().of(methods.span())), operandHolding(universe.unknownObjectAlone()), passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), [](ClimbingSet) {
+            return ClimbingSet();
+        });
+    });
+}
+
 // The object nobody knows stands for the receivers that have escaped, and a set that holds it lists none of them. Their functions of the program run as whatever has escaped runs.
 // A function of the table that one of them finds goes on doing to it what its row says.
 static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
@@ -4409,6 +4455,7 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     if (!context.contains(context.valueOf(hub), ValueFlowUniverse::unknownObject()))
         return;
     callLibraryMethodsOfUnknownReceiver(context, hub, behavior);
+    callMethodsOfEscapedLibraryInstances(context, hub, behavior);
     applyBuiltinsThatActOnEscapedReceivers(context, hub, behavior);
     if (behavior.protocols.contains(Protocol::OwnValues))
         runGettersOnObjectsNobodyKnows(context);

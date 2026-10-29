@@ -529,6 +529,57 @@ void generatePrivateGet(StubAssembler& jit)
     });
 }
 
+// The usual store under a private name on an object that is no compiled object, found as generatePrivateGet() finds it.
+PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
+{
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::None)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg object = operationArgumentGPR(1);
+    constexpr GPRReg token = operationArgumentGPR(2);
+    constexpr GPRReg field = operationArgumentGPR(3);
+    constexpr GPRReg value = operationArgumentGPR(4);
+    const GPRReg records = jit.allocateScratch(StubRegister::T13);
+    const GPRReg location = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg owner = jit.allocateScratch(firstStubOperandRegister);
+    RELEASE_ASSERT(noOverlap(object, token, field, value, records, location, storage));
+    constexpr unsigned bytesOfRecord = ClassToken::slotsPerRecord * sizeof(EncodedJSValue);
+    static_assert(ClassToken::recordsProbedByCompiledCode == 2);
+    JumpList callsOperation;
+
+    callsOperation.append(jit.branchIfNotCell(object));
+    jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), records);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, records));
+    jit.zeroExtend32ToWord(field, location);
+    jit.lshift64(TrustedImm32(shiftOfRecordsOfField), location);
+    jit.addPtr(location, records);
+    jit.load32(Address(object, JSCell::structureIDOffset()), storage);
+    Jump isFirst = jit.branch32(CCallHelpers::Equal, storage, slotOfButterfly(records, ClassToken::StructureNumber));
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, slotOfButterfly(records, ClassToken::slotsPerRecord + ClassToken::StructureNumber)));
+    jit.addPtr(TrustedImm32(bytesOfRecord), records);
+    isFirst.link(&jit);
+
+    jit.load32(slotOfButterfly(records, ClassToken::LocationOfBrand), location);
+    Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, location);
+    loadAtLocation(jit, object, location, storage, location);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, location, token));
+    needsNoBrand.link(&jit);
+
+    jit.load32(slotOfButterfly(records, ClassToken::LocationOfValue), location);
+    jit.signExtend32ToPtr(location, location);
+    jit.move(object, storage);
+    Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, location, CCallHelpers::TrustedImmPtr(nullptr));
+    jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
+    isInObject.link(&jit);
+    jit.store64(value, BaseIndex(storage, location, CCallHelpers::TimesOne));
+    jit.move(object, owner);
+    jit.jumpToStub(writeBarrier());
+
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
+}
+
 // The usual definition of a private name on an object that is no compiled object: an object of the same Structure has taken the name before. No record names the Structure of a compiled object.
 PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
 {

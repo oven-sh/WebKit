@@ -99,6 +99,16 @@ const LayoutData* ClassTable::classWithIndex(uint32_t index) const
     return offset ? m_tables.at<LayoutData>(offset) : nullptr;
 }
 
+// Anything may ask a class for its prototype before the program evaluates the class, but few programs do.
+// A validating run asks every class at the start, so a class that cannot take the question fails in every program that has one.
+void ClassTable::askEveryClassForItsPrototype(VM& vm)
+{
+    for (uint32_t index = 0; index < m_tables.numberOfLayoutIndices; ++index) {
+        if (const LayoutData* classLayout = classWithIndex(index))
+            classPrototype(vm, *classLayout);
+    }
+}
+
 const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
 {
     auto& recentLookup = m_recentClassLookups[function.index() % m_recentClassLookups.size()];

@@ -62,9 +62,11 @@ public:
     }
     bool isSabotaged(Sabotage part) const { return m_options.recorded.isSabotaged(part); }
 
-    bool isEnabled(FlowResultKind kind, uint32_t subject) const { return m_options.recorded.isEnabled(kind, subject); }
-    bool isEnabledForProgram(FlowResultKind kind) const { return m_options.recorded.isEnabledForProgram(kind); }
-    bool isEnabledEverywhere(FlowResultKind kind) const { return m_options.recorded.isEnabledEverywhere(kind); }
+    bool isEnabled(FlowResultKind kind, uint32_t subject) const { return !m_hasNoFlowResults && m_options.recorded.isEnabled(kind, subject); }
+    bool isEnabledForProgram(FlowResultKind kind) const { return !m_hasNoFlowResults && m_options.recorded.isEnabledForProgram(kind); }
+    bool isEnabledEverywhere(FlowResultKind kind) const { return !m_hasNoFlowResults && m_options.recorded.isEnabledEverywhere(kind); }
+    // Flow stopped at its budget. The build continues as with `disable=flow-results`, so there is one such state to test.
+    void continueWithoutFlowResults() { m_hasNoFlowResults = true; }
     bool isEnabled(PassID pass, Typed::FunctionID function) const { return m_options.recorded.isEnabled(pass, function); }
     bool isEnabled(SelectionRuleID rule, Typed::FunctionID function) const { return m_options.recorded.isEnabled(rule, function); }
     bool isEnabled(B3::PolicySwitch policySwitch, Typed::FunctionID function) const { return m_options.recorded.isEnabled(policySwitch, function); }
@@ -139,6 +141,7 @@ private:
     Diagnostics m_diagnostics;
     Statistics m_statistics;
     const CompileOptions m_options;
+    bool m_hasNoFlowResults { false };
     const AssemblerPolicy m_assemblerPolicy;
     Losses m_losses;
     bool m_recordsLimitHits { true };

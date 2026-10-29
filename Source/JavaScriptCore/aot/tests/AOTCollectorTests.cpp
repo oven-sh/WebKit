@@ -26,9 +26,12 @@
 #include "Weak.h"
 #include "WeakInlines.h"
 #include <optional>
+#include <wtf/Condition.h>
 #include <wtf/DataLog.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ParallelHelperPool.h>
+#include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -220,6 +223,34 @@ static void checkWideHeapStartsHelpers()
     for (unsigned index = 0; index < length; index += 997)
         AOT_TEST_CHECK(array->getDirectIndex(realm, index).isObject());
     ensureStillAliveHere(array);
+}
+
+static void testWaitingForStartedThreadsDoesNotWaitForTheirWork()
+{
+    // Never destroyed, like the collector's own pool: a thread that is leaving still refers to its pool.
+    ParallelHelperPool& pool = ParallelHelperPool::create("Test Helper"_s).leakRef();
+    pool.ensureThreads(2);
+    BinarySemaphore hasTakenWork;
+    Lock lock;
+    Condition mayFinishCondition;
+    bool mayFinish = false;
+    {
+        ParallelHelperClient client(&pool);
+        client.setFunction([&] {
+            hasTakenWork.signal();
+            Locker locker { lock };
+            while (!mayFinish)
+                mayFinishCondition.wait(lock);
+        });
+        hasTakenWork.wait();
+        pool.waitUntilThreadsAreUp();
+        {
+            Locker locker { lock };
+            mayFinish = true;
+            mayFinishCondition.notifyAll();
+        }
+        client.finish();
+    }
 }
 
 static void testHelpersStartEagerlyWithoutCompiledCode()
@@ -557,6 +588,7 @@ std::span<const NativeTest> collectorTests()
         { "collector/helpers/small-heap-starts-none"_s, withCompiledCodeOptions<checkSmallHeapStartsNoHelper> },
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
         { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
+        { "collector/helpers/waiting-for-started-threads-does-not-wait-for-their-work"_s, testWaitingForStartedThreadsDoesNotWaitForTheirWork },
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },
         { "collector/roots/eden-collection-defers-nothing"_s, withCompiledCodeOptions<checkEdenCollectionDefersNothing> },

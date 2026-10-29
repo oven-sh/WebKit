@@ -214,7 +214,7 @@ static bool tryStoreExtraPropertyAndCache(Instance* instance, Object& object, co
 }
 
 // branchUnlessTypeAccepts() leaves these to the runtime. Null where the stub decides by itself.
-static ASCIILiteral whyStubCannotTestType(const RuntimeType& type, JSValue value)
+static ASCIILiteral whyStubCannotTestType(const RuntimeLayoutTable& layouts, const RuntimeType& type, JSValue value)
 {
     constexpr OptionSet<PrimitiveSet> everyNumber { PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber };
     if (value.isInt32() || !value.isCell()) {
@@ -238,7 +238,11 @@ static ASCIILiteral whyStubCannotTestType(const RuntimeType& type, JSValue value
         case CellTestKind::IsCallable:
             return isFunctionType(cell->type()) ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: callable"_s;
         case CellTestKind::IsClosureOf:
-            return "field store left the stub: absent, the stub cannot test the type: a closure of listed functions"_s;
+            if (cell->type() == SlimClosureWithPropertiesType)
+                return "field store left the stub: absent, the stub cannot test the type: a slim closure with properties where the type lists functions"_s;
+            if (layouts.cellPassesTest(test, cell))
+                return { };
+            break;
         case CellTestKind::InheritsClassInfo:
         case CellTestKind::IsPristine:
             return "field store left the stub: absent, the stub cannot test the type: an object of a built-in class"_s;
@@ -270,7 +274,8 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
     }
     if (!admits)
         return "field store left the stub: absent, the slot does not admit the value"_s;
-    if (ASCIILiteral why = whyStubCannotTestType(object.state().objects->layouts.typeOf(field), value); !why.isNull())
+    const RuntimeLayoutTable& layouts = object.state().objects->layouts;
+    if (ASCIILiteral why = whyStubCannotTestType(layouts, layouts.typeOf(field), value); !why.isNull())
         return why;
     if (field.slot.representation() == SlotRepresentation::DeferredClosure)
         return "field store left the stub: absent, the slot defers a closure"_s;

@@ -740,7 +740,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 #if ENABLE(AOT)
     // Let the threads this collection started finish their first-time allocations before it ends.
     if (startsHelpersLazily() && hasStartedHelpers())
-        m_helperClient.pool().waitUntilThreadsHaveWaited();
+        m_helperClient.pool().waitUntilThreadsAreUp();
 #endif
 
     assertMarkStacksEmpty();

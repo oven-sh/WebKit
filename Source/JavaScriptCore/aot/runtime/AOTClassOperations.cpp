@@ -412,6 +412,10 @@ static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, u
     bool needsBrand = found.name == found.declaredName && found.hasBrand;
     if (needsBrand && !isValidOffset(found.brand.offset))
         return;
+    // Compiled code stores at a remembered location and tells the Structure nothing.
+    if (object->structure()->mayHaveImmutableProperties())
+        return;
+    object->structure()->didReplaceProperty(found.property.offset);
     addKnownStructure(vm, token, fieldIndex, object->structure(), found.property.offset, needsBrand ? std::optional(found.brand.offset) : std::nullopt);
 }
 

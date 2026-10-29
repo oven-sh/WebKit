@@ -266,7 +266,8 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     ValueSetMaker& maker = m_context.maker();
     ValueSetID objectsOfRealmInTable = maker.intersect(m_universe.builtinObjects(), ValueSets::complement(maker.unite(m_tables.objectsOfNativeModules(), m_tables.objectsOfPublicModules())));
     ValueSetID createdByNativeCode = maker.intersect(m_universe.knownObjects(), ValueSets::complement(maker.unite(objectsOfRealmInTable, m_tables.objectsWithoutPropertiesOfNativeCode())));
-    bool mayFindAccessorOfNativeCode = search == PropertySearch::OwnProperty && m_context.meet(m_context.unite(receivers, withSourcesOfCopies(m_context, known(receivers))), createdByNativeCode);
+    // A search of the whole chain starts at the receiver's own properties.
+    bool mayFindAccessorOfNativeCode = m_context.meet(m_context.unite(receivers, withSourcesOfCopies(m_context, known(receivers))), createdByNativeCode);
     if (mayFindAccessorOfArguments || mayFindAccessorOfTable || mayFindAccessorOfNativeCode)
         addFunctionNobodyFollows();
     if (mayFindAccessorOfTable && part == HeapPropertyPart::Getter && key.mayNameNonEnumerable(m_program.keyOf(BuiltinNames::__proto__)))
