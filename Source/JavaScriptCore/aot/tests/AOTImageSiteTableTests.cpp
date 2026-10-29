@@ -60,7 +60,7 @@ static void appendCallWithReadWithoutSite(CodeSketch& sketch, Vector<ExpectedSit
 
 static uint32_t appendPrologueCheck(CodeSketch& sketch, uint32_t function, uint32_t resumeOffset)
 {
-    uint32_t call = sketch.callStub(pollAtPrologue());
+    uint32_t call = sketch.callStub(pollAtPrologue(true));
     changeUnits(sketch.code().body, [](Vector<CodeUnit>& units) {
         units.last().kind = CodeUnit::Kind::Pinned;
     });

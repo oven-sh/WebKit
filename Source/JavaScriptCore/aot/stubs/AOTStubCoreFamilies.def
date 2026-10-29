@@ -20,6 +20,7 @@ v(RejectInFrame, EnteredByRuntime, (Plain, BelowSpilledArguments), FormAxis, 0, 
 
 // AOTStubsPolls.cpp
 v(PollAtPrologue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologue)
+v(PollAtPrologueWithoutCollecting, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologueWithoutCollecting)
 v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, X86_64Only, X86_64Only, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
 v(PollBeforeEntering, InternalEntry, (Plain, FunctionObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
 

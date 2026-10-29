@@ -54,6 +54,12 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
+// generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
+SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
+{
+    return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
+}
+
 // A tail call by value gives up a frame and returns to where that frame would have returned. Whoever holds the closure that runs above that place holds the callee from now on:
 // a caller that entered a function without its closure has a word for it in its own frame, and the adapter has the callee slot of its frame.
 SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller, CallFrame* framePointerOfCaller)
@@ -61,8 +67,7 @@ SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& t
     std::optional<FunctionID> function = functionOf(callee);
     if (!function || !tables.recordsCalleesOf(*function))
         return;
-    // generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
-    const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
+    const void* returnAddress = returnAddressOfPolledCall(stackPointerOfCaller);
     const VMState& state = vm.aotState();
     const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
     while (site && site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::ArgumentList) {
@@ -98,19 +103,46 @@ static bool passHolderInsteadOfPolling(Instance* instance, JSCell* callee, void*
     return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
 }
 
+static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
+{
+    // Another stub may have made the polled call. generatePollBeforeEntering() sets up a frame record on x86-64 only.
+    CallFrame* framePointerOfCaller = isX86() ? static_cast<CallFrame*>(frameOfPollStub->callerFrameOrEntryFrame()) : frameOfPollStub;
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(stackPointerOfCaller), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, stackPointerOfCaller);
+    return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
+}
+
+// The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
+// A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
+static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
+{
+    {
+        DeferGCForAWhile deferGC(vm);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        RETURN_IF_EXCEPTION(scope, void());
+        vm.throwTerminationExceptionIfNeeded();
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (!vm.traps().needsOutOfMemoryError()) [[likely]]
+        return;
+    if (!hasCollectedInPolledCall(vm, stackPointerOfCaller, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
+        return;
+    DeferGCForAWhile deferGC(vm);
+    throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller))
 {
     if (passHolderInsteadOfPolling(instance, callee, stackPointerOfCaller, framePointerOfCaller))
         return ExceptionOperationImplicitResult<void> { nullptr };
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    vm.throwTerminationExceptionIfNeeded();
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
-        DeferGCForAWhile deferGC(vm);
-        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
-    }
+    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
     OPERATION_RETURN(scope);
 }
 
@@ -131,8 +163,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance, uint8_t* returnAddress))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollAtPrologue);
+    {
+        DeferGCForAWhile deferGC(vm);
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        vm.throwTerminationExceptionIfNeeded();
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
+    }
+    OPERATION_RETURN(scope, resumeAddressAfterStackCheck(returnAddress));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologueWithoutCollecting, void*, (Instance* instance, uint8_t* returnAddress))
+{
     // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPollAtPrologueWithoutCollecting);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     vm.throwTerminationExceptionIfNeeded();

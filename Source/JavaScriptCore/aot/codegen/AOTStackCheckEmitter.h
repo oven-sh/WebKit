@@ -40,6 +40,7 @@ struct StackCheckState {
     Vector<PendingStackCheck, 1> pending;
     bool isProvenToFitOnStack { false };
     bool isEnteredWithoutStackCheck { true };
+    bool functionMayCollect { true };
 };
 
 unsigned smallestFrameTestedAtSetup(StackCheck);

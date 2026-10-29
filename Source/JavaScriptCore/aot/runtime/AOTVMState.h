@@ -96,6 +96,8 @@ public:
     JSCell* newTargetOfSuperCall { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
+    // Of the innermost call in compiled code when the heap was last full and collected.
+    const void* returnAddressOfCallThatCollected { nullptr };
     // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
     void* stackPointerOfImport { nullptr };
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.

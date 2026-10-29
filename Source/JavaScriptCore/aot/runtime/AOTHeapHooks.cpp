@@ -19,6 +19,7 @@
 #include "AOTObject.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "Collector.h"
@@ -172,6 +173,11 @@ void willAnalyzeHeap(VM& vm)
     state.caches->willAnalyzeHeap(vm);
     for (Instance* instance : state.instances)
         instance->state->caches->willAnalyzeHeap(vm);
+}
+
+void willCollectForExhaustedCage(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
 }
 
 String nameOfCompiledCallee(JSCell* cell)

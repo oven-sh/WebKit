@@ -40,6 +40,7 @@ void visitCalleesOfFrames(VM&, AbstractSlotVisitor&, uint64_t phase);
 void willWorkOnThisThread(VM&);
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);
 void willAnalyzeHeap(VM&);
+void willCollectForExhaustedCage(VM&);
 String nameOfCompiledCallee(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
 // Where the cells of a live Structure keep their 32-bit references, from the start of the cell. Nothing for a Structure of other cells than compiled objects.

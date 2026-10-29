@@ -2933,6 +2933,10 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
 
 void Heap::collectForExhaustedCage()
 {
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::willCollectForExhaustedCage(vm());
+#endif
     collectNow(Sync, CollectionScope::Full);
 #if ASAN_ENABLED
     // Under ASan a block keeps the cells that a collection found dead until the next collection.

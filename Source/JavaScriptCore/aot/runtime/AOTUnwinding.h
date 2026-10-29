@@ -89,6 +89,10 @@ bool isCaughtAboveCleanup(VM&, const ReturnSiteInRun& siteOfCleanup);
 // Whether the trace was taken where native code now stands. True where compiled code has not called it.
 bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 
+// Of the innermost call in compiled code on the stack. Native and interpreter frames may lie above it. Null if no compiled code is running.
+// Only where a collection may run: vm.topCallFrame is stale in an operation that records no frame.
+const void* returnAddressOfInnermostCompiledCall(VM&);
+
 // For an operation whose allocation failed. It throws only if the stub that called the operation tests for an exception and the function it returns to expects one there.
 void throwOwedOutOfMemoryErrorBeforeReturn(Instance&, CallerFrameAndPC* frameRecordOfOperation);
 

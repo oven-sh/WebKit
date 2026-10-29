@@ -844,9 +844,10 @@ void MarkedBlockCage::willAddSymbol(VM& vm)
         return;
     if (vm.traps().needsOutOfMemoryError())
         return;
-    MarkedBlockCage& cage = vm.heap.cage();
-    cage.addExhaustedHeap(ExhaustedHeap::Tables);
-    cage.didFindNoRoomWithoutCollecting();
+    // A collection takes dead Symbols out of the table. The caller is about to allocate a cell, so it collects here if it may collect at all.
+    if (vm.heap.tryCollectForExhaustedCage(nullptr) && vm.symbolImplToSymbolMap.tryGrowEarly())
+        return;
+    vm.heap.cage().addExhaustedHeap(ExhaustedHeap::Tables);
     vm.traps().setNeedsOutOfMemoryError(true);
 }
 

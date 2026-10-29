@@ -46,6 +46,7 @@ static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-el
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
+static constexpr ASCIILiteral pollInCallStubTest = "runtime-operations/poll-in-call-stub-leaves-pending-out-of-memory-error"_s;
 
 static constexpr ASCIILiteral programText =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -398,6 +399,19 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
+// No collection has run inside the polled call.
+static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    vm.heap.cage().didFindNoRoomWithoutCollecting();
+    vm.traps().setNeedsOutOfMemoryError(true);
+    void* returnAddressesOfPolledCall[2] = { &vm, &vm };
+    callOperationFromTest(vm, operationAOTPollBeforeEntering, &program.instance(), static_cast<void*>(returnAddressesOfPolledCall + 2));
+    AOT_TEST_CHECK(!scope.exception() && vm.traps().needsOutOfMemoryError() && vm.heap.cage().owesCollection());
+    vm.traps().setNeedsOutOfMemoryError(false);
+}
+
 static void unusedEntriesTrap()
 {
     runWithLoadedProgram(unusedEntriesTrapTest, programText, checkUnusedEntriesTrap);
@@ -448,6 +462,11 @@ static void pollThrowsDeferredTerminationAfterTheDeferral()
         dataLogLn("The process that polls ", result.description());
         failNativeTest(__FILE__, __LINE__, deferredTerminationTest.characters());
     }
+}
+
+static void pollInCallStubLeavesPendingOutOfMemoryError()
+{
+    runWithLoadedProgram(pollInCallStubTest, programText, checkPollInCallStubLeavesPendingOutOfMemoryError);
 }
 
 static void callsAreNotCountedByDefault()
@@ -503,6 +522,7 @@ std::span<const NativeTest> runtimeOperationTests()
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { pushesAndHolesTest, pushesAndHoles },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
+        { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
     };
     return tests;
 }

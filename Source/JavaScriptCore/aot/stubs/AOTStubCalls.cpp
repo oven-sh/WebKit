@@ -43,7 +43,7 @@ static bool returnsToItsCallSite(const StubCatalog& catalog, StubKey called)
     if (neverReturns(called))
         return false;
     // It replaces its return address, so no code after the call runs, and the PrologueCheck names the call by the label before it.
-    if (called == pollAtPrologue())
+    if (isPollAtPrologue(called))
         return false;
     // A stub that suspends copies the frame from sp up, and control comes back with the registers of the code that resumes it.
     return !catalog.effectsOf(called).maySuspend;

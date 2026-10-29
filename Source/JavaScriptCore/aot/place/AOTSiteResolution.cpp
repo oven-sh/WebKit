@@ -438,6 +438,9 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
         std::optional<uint32_t> field = program.at(member).findField(store.key());
         if (planned.storage != LayoutStorage::CompiledObject || !field)
             return std::nullopt;
+        // A class below a built-in class that declares a private name has a record, and its instances are cells of the built-in class, which have no slots.
+        if (builtinBaseClassOf(program, member))
+            return std::nullopt;
         const Field& declaration = fieldAt(program, declarationOf(program, { member, *field }));
         const PlacedSlot& slot = planned.slots[*field];
         if (!declaration.form.isEmpty() || declaration.flags.contains(FieldFlags::IsPrivate) || !slot.hasStorage() || slot.representation == SlotRepresentation::DeferredClosure || !slot.indexInLayoutRecord)

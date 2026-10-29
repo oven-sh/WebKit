@@ -760,7 +760,7 @@ static void testCallsWithoutValidation()
     AOT_TEST_CHECK(catalog.summaryOf(callValue(0)).signature.usesCallConvention);
 
     size_t bytesBeforeCall = 0;
-    for (StubKey key : { pollAtPrologue(), awaitBySavingFrame(), suspendGenerator(GeneratorSuspension::Yield), throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), callValue(0) }) {
+    for (StubKey key : { pollAtPrologue(true), pollAtPrologue(false), awaitBySavingFrame(), suspendGenerator(GeneratorSuspension::Yield), throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), callValue(0) }) {
         AOT_TEST_CHECK(sizeOfCall(catalog, key, bytesBeforeCall) == sizeOfNearCall);
         AOT_TEST_CHECK(!bytesBeforeCall);
     }
@@ -784,7 +784,7 @@ static StubKey findStubPreserving(const StubCatalog& catalog, GPRReg preserved)
             continue;
         if (summary.signature.usesCallConvention || summary.signature.immediate || summary.signature.result != StubResult::GPR)
             continue;
-        if (containsRegister(summary.clobbered, preserved) || body == pollAtPrologue())
+        if (containsRegister(summary.clobbered, preserved) || isPollAtPrologue(body))
             continue;
         found = body;
         break;

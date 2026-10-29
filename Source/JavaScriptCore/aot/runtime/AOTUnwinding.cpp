@@ -451,6 +451,19 @@ bool beginsInTopCompiledFrame(VM& vm, const ReturnAddressTrace& trace)
     return !frames || frames->isAtEnd() || beginsAt(trace, frames->callSite().address);
 }
 
+const void* returnAddressOfInnermostCompiledCall(VM& vm)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* frame = vm.topCallFrame; frame && entryFrame; frame = frame->callerFrame(entryFrame)) {
+        if (frame->callerFrameOrEntryFrame() == entryFrame)
+            continue;
+        std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frame, entryFrame);
+        if (frames && !frames->isAtEnd())
+            return frames->callSite().address;
+    }
+    return nullptr;
+}
+
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {

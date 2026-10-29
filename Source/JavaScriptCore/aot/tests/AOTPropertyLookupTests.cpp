@@ -673,7 +673,7 @@ static void testFirstAdditionIsNotCached(LoadedProgram& program)
     });
     Identifier addedByKey = Identifier::fromString(vm, "2l"_s);
     check(addedByKey, [&](JSObject* object) {
-        operationAOTPutByValAndCache(instance, JSValue::encode(object), JSValue::encode(jsString(vm, addedByKey.string())), JSValue::encode(jsNumber(9)));
+        callOperationFromTest(vm, operationAOTPutByValAndCache, instance, JSValue::encode(object), JSValue::encode(jsString(vm, addedByKey.string())), JSValue::encode(jsNumber(9)));
     });
 }
 

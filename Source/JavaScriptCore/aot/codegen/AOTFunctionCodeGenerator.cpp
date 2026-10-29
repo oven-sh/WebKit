@@ -14,6 +14,7 @@
 #include "AOTClaimChecks.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeMap.h"
+#include "AOTEffectSummaries.h"
 #include "AOTElideStackChecks.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFrameMaps.h"
@@ -298,6 +299,8 @@ bool FunctionCodeGenerator::generateB3()
     if (options.writesCodeSizeMap()) [[unlikely]]
         proc.setNeedsPCToOriginMap();
     setStackCheckGenerator(proc, m_inputs.stackChecks.of(m_id), m_records.frame, m_stackChecks);
+    EffectsOnEdges effectsOnCall = m_inputs.effects.of(m_id).onCall();
+    m_stackChecks.functionMayCollect = effectsOnCall.normal.mayCollect || effectsOnCall.handler.mayCollect;
 
     m_records.frame.readsCallerFrame = traits.readsCallerFrame;
     CodeGenerator generator(FunctionInputs { build, m_worker.types, m_inputs, m_id, m_function, analyses, frameMaps }, proc, m_records);
