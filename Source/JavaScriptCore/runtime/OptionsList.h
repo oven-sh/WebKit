@@ -527,6 +527,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceDidDeferGCWork, false, Normal, "If true, we will force all DeferGC destructions to perform a GC."_s) \
     v(Unsigned, gcMaxHeapSize, 0, Normal, nullptr) \
     v(Size, forceRAMSize, 0, Normal, nullptr) \
+    v(Size, forceBufferMemoryLimit, 0, Normal, "The bytes that resizable ArrayBuffers and WebAssembly memories may use together. Zero is three times the memory of the machine."_s) \
     v(Bool, recordGCPauseTimes, false, Normal, nullptr) \
     v(Bool, dumpHeapStatisticsAtVMDestruction, false, Normal, nullptr) \
     v(Bool, enableStrongRefTracker, false, Normal, "Enable logging of live Strong<*> values. Use alongside $vm.triggerMemoryPressure() and dumpHeapOnLowMemory."_s) \
