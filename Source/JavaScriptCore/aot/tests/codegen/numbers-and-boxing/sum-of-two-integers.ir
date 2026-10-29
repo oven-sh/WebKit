@@ -67,6 +67,6 @@ function f1 name="add" module=m0 flags=[IsChecked, HasExplicitName] length=2 thi
 # NONE-NOT: Branch(
 # NONE-NOT: Patchpoint(
 # NONE-LABEL: end of function
-# ARM64 widens the second operand within the addition.
+# arm64 widens the second operand within the addition.
 # X64: instructions: 4, patchpoints: 0
 # ARM64: instructions: 3, patchpoints: 0

@@ -38,6 +38,15 @@ struct DirectiveLine {
     std::optional<StringView> parenthesized;
     StringView value;
     unsigned line;
+    // `# NAME: value`: capitals, one blank after the `#`, the colon right after the name.
+    bool isWellFormed { true };
+    bool hasColon { true };
+};
+
+struct GeneratedMarker {
+    unsigned line;
+    Vector<StringView, 4> functions;
+    Vector<StringView> linesBelow;
 };
 
 class TestFileParser {
@@ -73,6 +82,11 @@ private:
     };
 
     void collectDirectiveLines();
+    bool parseMarker(StringView line, unsigned number);
+    void checkGeneratedMarker();
+    bool isKnownName(StringView) const;
+    std::optional<String> findNameWithin2Edits(StringView) const;
+    void reportIfMeantAsDirective(const DirectiveLine&);
     void parseRunDirectives();
     void parseOtherDirective(const DirectiveLine&);
 
@@ -102,6 +116,9 @@ private:
     TestFile m_file;
     Vector<DirectiveLine> m_directives;
     Vector<PendingCheckGroup> m_checkGroups;
+    std::optional<unsigned> m_openSourceBlock;
+    bool m_hasSourceBlock { false };
+    std::optional<GeneratedMarker> m_generated;
 };
 
 } // anonymous namespace
@@ -201,6 +218,12 @@ static Vector<StringView, 4> splitWords(StringView text)
     return words;
 }
 
+static bool isWordOfCommentCharacter(char16_t character)
+{
+    return isASCIIAlphanumeric(character) || character == '-';
+}
+
+// A comment that fills its line and begins with a word. Whether the word makes it a directive is decided once the prefixes of the RUN lines are known.
 static std::optional<DirectiveLine> splitDirective(StringView line, unsigned number)
 {
     unsigned position = skipCharacters(line, 0, isTabOrSpace<char16_t>);
@@ -208,24 +231,50 @@ static std::optional<DirectiveLine> splitDirective(StringView line, unsigned num
         return std::nullopt;
 
     unsigned nameStart = skipCharacters(line, position + 1, isTabOrSpace<char16_t>);
-    if (nameStart == line.length() || !isASCIIUpper(line[nameStart]))
-        return std::nullopt;
-    position = skipCharacters(line, nameStart, isNameCharacter);
+    bool isWellFormed = nameStart == position + 2 && line[position + 1] == ' ';
+    position = skipCharacters(line, nameStart, isWordOfCommentCharacter);
     StringView name = line.substring(nameStart, position - nameStart);
+    if (name.isEmpty() || !isASCIIAlpha(name[0]))
+        return std::nullopt;
+    isWellFormed &= isASCIIUpper(name[0]) && name.containsOnly<isNameCharacter>();
 
     std::optional<StringView> parenthesized;
     if (hasCharacterAt(line, position, '(')) {
         unsigned parenthesizedStart = position + 1;
-        position = skipCharacters(line, parenthesizedStart, isParenthesizedCharacter);
-        if (position == line.length())
-            return std::nullopt;
-        parenthesized = line.substring(parenthesizedStart, position - parenthesizedStart);
-        ++position;
+        unsigned parenthesizedEnd = skipCharacters(line, parenthesizedStart, isParenthesizedCharacter);
+        if (parenthesizedEnd < line.length()) {
+            parenthesized = line.substring(parenthesizedStart, parenthesizedEnd - parenthesizedStart);
+            position = parenthesizedEnd + 1;
+        }
     }
 
-    if (!hasCharacterAt(line, position, ':'))
-        return std::nullopt;
-    return DirectiveLine { name, parenthesized, line.substring(position + 1).trim(isTabOrSpace<char16_t>), number };
+    unsigned colon = skipCharacters(line, position, isTabOrSpace<char16_t>);
+    bool hasColon = hasCharacterAt(line, colon, ':');
+    isWellFormed &= hasColon && colon == position;
+    return DirectiveLine { name, parenthesized, hasColon ? line.substring(colon + 1).trim(isTabOrSpace<char16_t>) : StringView(), number, isWellFormed, hasColon };
+}
+
+// Insertions, deletions, replacements, and two neighbors that changed places.
+static unsigned editDistance(StringView a, StringView b)
+{
+    Vector<unsigned> beforeLast;
+    Vector<unsigned> last;
+    Vector<unsigned> current;
+    for (Vector<unsigned>* row : { &beforeLast, &last, &current })
+        row->fill(0, b.length() + 1);
+    for (unsigned j = 0; j <= b.length(); ++j)
+        last[j] = j;
+    for (unsigned i = 1; i <= a.length(); ++i) {
+        current[0] = i;
+        for (unsigned j = 1; j <= b.length(); ++j) {
+            current[j] = std::min({ last[j] + 1, current[j - 1] + 1, last[j - 1] + (a[i - 1] != b[j - 1]) });
+            if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                current[j] = std::min(current[j], beforeLast[j - 2] + 1);
+        }
+        std::swap(beforeLast, last);
+        std::swap(last, current);
+    }
+    return last[b.length()];
 }
 
 static bool canBePrefix(StringView text)
@@ -274,6 +323,7 @@ TestFile TestFileParser::parse()
     for (const DirectiveLine& directive : m_directives)
         parseOtherDirective(directive);
     finishCheckGroups();
+    checkGeneratedMarker();
 
     std::stable_sort(m_file.errors.begin(), m_file.errors.end(), [](const TestFileError& a, const TestFileError& b) {
         return a.line < b.line;
@@ -292,17 +342,144 @@ void TestFileParser::collectDirectiveLines()
         StringView line = text.substring(start, end - start);
         if (hasNewline && line.endsWith('\r'))
             line = line.left(line.length() - 1);
-        if (auto directive = splitDirective(line, m_writtenOut.sourceLineOf(number)))
+        unsigned sourceLine = m_writtenOut.sourceLineOf(number);
+        if (parseMarker(line, sourceLine)) {
+            start = end + 1;
+            continue;
+        }
+        auto directive = splitDirective(line, sourceLine);
+        if (m_generated) {
+            m_generated->linesBelow.append(line);
+            if (!line.isEmpty() && (!directive || !directive->isWellFormed))
+                addError(sourceLine, "only check lines follow `# -- generated:`: the update tool writes everything below it anew"_s);
+        }
+        if (directive)
             m_directives.append(WTF::move(*directive));
         start = end + 1;
     }
+    if (m_openSourceBlock)
+        addError(*m_openSourceBlock, "`# -- source:` without `# -- end of source`"_s);
+}
+
+// True where the line is a marker or a line of the source between two of them: neither is a directive.
+bool TestFileParser::parseMarker(StringView line, unsigned number)
+{
+    constexpr ASCIILiteral marker = "# --"_s;
+    constexpr ASCIILiteral source = "# -- source: "_s;
+    constexpr ASCIILiteral generated = "# -- generated: "_s;
+    if (!line.startsWith(marker)) {
+        if (!m_openSourceBlock)
+            return false;
+        if (line.startsWith('#'))
+            return true;
+        addError(*m_openSourceBlock, "`# -- source:` without `# -- end of source`"_s);
+        m_openSourceBlock = std::nullopt;
+        return false;
+    }
+
+    if (line.startsWith(source) && splitWords(line.substring(source.length())).size() == 1) {
+        if (m_generated)
+            addError(number, "the source comes in front of `# -- generated:`"_s);
+        else if (m_hasSourceBlock && !m_openSourceBlock)
+            addError(number, "the file has two blocks of sources"_s);
+        if (!m_openSourceBlock)
+            m_openSourceBlock = number;
+        m_hasSourceBlock = true;
+    } else if (line == "# -- end of source"_s) {
+        if (!m_openSourceBlock)
+            addError(number, "`# -- end of source` without `# -- source:`"_s);
+        m_openSourceBlock = std::nullopt;
+    } else if (line.startsWith(generated) && !splitWords(line.substring(generated.length())).isEmpty()) {
+        if (m_openSourceBlock)
+            addError(number, "`# -- generated:` inside the sources"_s);
+        else if (m_generated)
+            addError(number, "the file has two lines `# -- generated:`"_s);
+        else
+            m_generated = GeneratedMarker { number, splitWords(line.substring(generated.length())), { } };
+    } else
+        addError(number, "a marker is `# -- source: <file>`, `# -- end of source` or `# -- generated: <function> ..`"_s);
+    return true;
+}
+
+// Each name is a function of the program, and has its label below the marker.
+void TestFileParser::checkGeneratedMarker()
+{
+    if (!m_generated)
+        return;
+    for (StringView function : m_generated->functions) {
+        if (function == "*"_s)
+            continue;
+        String byName = makeString("name=\""_s, function, '"');
+        String byID = makeString("function "_s, function, ' ');
+        auto names = [&](StringView line) {
+            return line.contains(byName) || line.contains(byID);
+        };
+        bool isInProgram = false;
+        for (StringView line : StringView(m_file.text).splitAllowingEmptyEntries('\n'))
+            isInProgram |= line.startsWith("function f"_s) && names(line);
+        if (!isInProgram)
+            addError(m_generated->line, "`# -- generated:` names "_s, function, ", and the program has no such function"_s);
+        else if (!m_generated->linesBelow.containsIf([&](StringView line) { return line.contains("-LABEL: function "_s) && names(line); }))
+            addError(m_generated->line, "`# -- generated:` names "_s, function, ", and no label below it does"_s);
+    }
+}
+
+bool TestFileParser::isKnownName(StringView name) const
+{
+    if (findNamedValue(directiveKinds, name))
+        return true;
+    unsigned prefixEnd = skipCharacters(name, 0, isPrefixCharacter);
+    if (!m_checkGroups.containsIf([&](const PendingCheckGroup& group) { return group.prefix == name.left(prefixEnd); }))
+        return false;
+    if (prefixEnd == name.length())
+        return true;
+    StringView suffix = name.substring(prefixEnd + 1);
+    return findNamedValue(checkSuffixes, suffix) || suffix.startsWith(countSuffix);
+}
+
+// Short names are left out: two edits make most words of three letters of one another.
+std::optional<String> TestFileParser::findNameWithin2Edits(StringView name) const
+{
+    Vector<String> known;
+    for (const auto& kind : directiveKinds)
+        known.append(kind.name);
+    for (const PendingCheckGroup& group : m_checkGroups) {
+        known.append(group.prefix);
+        for (const auto& suffix : checkSuffixes)
+            known.append(makeString(group.prefix, '-', suffix.name));
+    }
+    for (const String& candidate : known) {
+        if (candidate.length() >= 4 && editDistance(name, candidate) <= (candidate.length() == 4 ? 1u : 2u))
+            return candidate;
+    }
+    return std::nullopt;
+}
+
+// A comment whose first word is the name of a directive or a check prefix of this file, in capitals, is that directive: it is written `# NAME: value` or it is an error.
+// So is one whose first word has a colon after it or a suffix (`-NEXT`) and is such a name in another case, or in capitals and within two edits of one.
+void TestFileParser::reportIfMeantAsDirective(const DirectiveLine& directive)
+{
+    bool isInCapitals = isASCIIUpper(directive.name[0]) && directive.name.containsOnly<isNameCharacter>();
+    String inCapitals = directive.name.convertToASCIIUppercase();
+    if (isInCapitals ? isKnownName(directive.name) : isKnownName(inCapitals) && (directive.hasColon || directive.name.contains('-'))) {
+        addError(directive.line, "a directive is written `# "_s, inCapitals, ": ..`"_s);
+        return;
+    }
+    if (!isInCapitals)
+        return;
+    if (!directive.hasColon && !directive.name.contains('-'))
+        return;
+    if (auto meant = findNameWithin2Edits(directive.name))
+        addError(directive.line, directive.name, " is no directive: is it "_s, *meant, '?');
+    else if (directive.hasColon)
+        addError(directive.line, unknownDirectiveSentence(directive));
 }
 
 void TestFileParser::parseRunDirectives()
 {
     bool hasRunLine = false;
     for (const DirectiveLine& directive : m_directives) {
-        if (findNamedValue(directiveKinds, directive.name) != DirectiveKind::Run)
+        if (!directive.isWellFormed || findNamedValue(directiveKinds, directive.name) != DirectiveKind::Run)
             continue;
         hasRunLine = true;
         parseRun(directive);
@@ -313,6 +490,10 @@ void TestFileParser::parseRunDirectives()
 
 void TestFileParser::parseOtherDirective(const DirectiveLine& directive)
 {
+    if (!directive.isWellFormed) {
+        reportIfMeantAsDirective(directive);
+        return;
+    }
     auto kind = findNamedValue(directiveKinds, directive.name);
     bool takesPrefix = kind == DirectiveKind::Run || kind == DirectiveKind::Requires;
     if (directive.parenthesized && !takesPrefix) {
@@ -462,7 +643,10 @@ void TestFileParser::parseCheckLine(const DirectiveLine& directive)
 
     PendingCheckGroup* group = findCheckGroup(prefix);
     if (!group) {
-        addError(directive.line, unknownDirectiveSentence(directive));
+        if (auto meant = findNameWithin2Edits(directive.name))
+            addError(directive.line, directive.name, " is no directive: is it "_s, *meant, '?');
+        else
+            addError(directive.line, unknownDirectiveSentence(directive));
         return;
     }
 

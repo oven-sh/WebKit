@@ -100,5 +100,5 @@ function f1 name="triple" module=m0 flags=[IsChecked, HasExplicitName] length=3 
 # AIR: Patch &Patchpoint0
 # AIR-LABEL: end of function
 # X64: instructions: 16, patchpoints: 1, rare instructions: 6
-# ARM64 boxes with one addition that extends, and stores two of the three as a pair.
+# arm64 boxes with one addition that extends, and stores two of the three as a pair.
 # ARM64: instructions: 12, patchpoints: 1, rare instructions: 5

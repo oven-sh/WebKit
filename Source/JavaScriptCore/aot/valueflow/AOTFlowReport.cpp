@@ -319,6 +319,7 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.typeTests = WTF::move(bodyRecords.typeTests);
     report.accesses = buildAccessRecords(program, flow, sites.levels.span(), build);
     report.accesses.appendVector(sites.generalOperations);
+    report.otherOrigins = Vector<Wire::OtherOriginsRecord>(flow.otherOrigins());
     if (program.form() == IRForm::AsRead)
         report.remainingChecks = WTF::move(bodyRecords.remainingChecks);
     else if (collectsRecords)

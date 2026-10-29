@@ -25,6 +25,7 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTRepresentation.h"
+#include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -2375,6 +2376,7 @@ struct VariableCarrier : LoopEditor {
             VariableOfLoop variable;
             Vector<ProgramPoint, 2> stores { };
             bool isSeenByOthers { false };
+            TypeID typeOfField { };
         };
         const NaturalLoops& loops = m_analyses.naturalLoops();
         BlockID header = loop.header();
@@ -2425,6 +2427,31 @@ struct VariableCarrier : LoopEditor {
         delayed.removeAllMatching([](const DelayedVariable& candidate) {
             return candidate.isSeenByOthers || candidate.stores.isEmpty();
         });
+
+        // The store on a leaving edge is a copy of the first store, and it stores any definition of the variable. Each definition needs the type that the first store requires.
+        // Only accesses by slot can differ in that type: each names its own set of layouts.
+        TypingContext typing { m_program, m_function, m_context.types };
+        auto storeAt = [&](ProgramPoint point) -> const Value& {
+            return m_function.at(m_function.at(point.block).values[point.index]);
+        };
+        delayed.removeAllMatching([&](DelayedVariable& candidate) {
+            const Value& first = storeAt(candidate.stores.first());
+            if (!Value::opcodesWithReceivers.contains(first.opcode))
+                return false;
+            MemoryAccess access = memoryAccessOf(m_function, first);
+            TypeID required = requiredTypeOfOperand(typing, first, access.storedOperandIndex);
+            bool otherStoreIsWider = std::ranges::any_of(candidate.stores, [&](ProgramPoint point) {
+                return !hasType(memoryAccessOf(m_function, storeAt(point)).stored, required);
+            });
+            if (otherStoreIsWider)
+                return true;
+            if (hasType(candidate.variable.parameter, required))
+                return false;
+            // The read that fills the variable allows more layouts than the store. What it finds has the type of the one field that the store names if the object is proven to have that layout in the whole loop.
+            bool namesOneField = first.level() == KnowledgeLevel::Proven && m_program.at(first.receivers()).completeMembers().value().size() == 1;
+            candidate.typeOfField = required;
+            return !namesOneField || !hasType(candidate.variable.base, m_function.at(access.base).type);
+        });
         if (delayed.isEmpty() || leavingEdges.isEmpty())
             return false;
 
@@ -2438,10 +2465,15 @@ struct VariableCarrier : LoopEditor {
         for (size_t index = 0; index < delayed.size(); ++index) {
             const DelayedVariable& candidate = delayed[index];
             Vector<ValueID, 4>& definitions = definitionsOfVariables[index];
-            Value store = m_function.at(m_function.at(candidate.stores.first().block).values[candidate.stores.first().index]);
-            ValueID storedBySample = memoryAccessOf(m_function, store).stored;
+            Value store = storeAt(candidate.stores.first());
+            uint32_t storedOperandIndex = memoryAccessOf(m_function, store).storedOperandIndex;
             builder.setOrigin(store.origin());
-            definitions.append(insertCopy(builder, { header, 0 }, candidate.variable.parameter));
+            if (candidate.typeOfField) {
+                Value cast = IRBuilder::make(Opcode::AssumeType, { candidate.variable.parameter });
+                cast.setProvenType(Proven::byPosition(candidate.typeOfField));
+                definitions.append(builder.insertBefore({ header, 0 }, WTF::move(cast)));
+            } else
+                definitions.append(insertCopy(builder, { header, 0 }, candidate.variable.parameter));
             for (ProgramPoint point : candidate.stores) {
                 ValueID delayedStore = m_function.at(point.block).values[point.index];
                 definitions.append(insertCopy(builder, { point.block, point.index + 1 }, memoryAccessOf(m_function, m_function.at(delayedStore)).stored));
@@ -2451,10 +2483,7 @@ struct VariableCarrier : LoopEditor {
                 if (m_context.build.isSabotaged(Sabotage::DelayedStoresAreLeftOut))
                     break;
                 Value storeOnEdge = store;
-                for (uint32_t operand = 0; operand < storeOnEdge.numberOfOperands(); ++operand) {
-                    if (storeOnEdge.operand(operand) == storedBySample)
-                        storeOnEdge.setOperand(operand, definitions.first());
-                }
+                storeOnEdge.setOperand(storedOperandIndex, definitions.first());
                 builder.insertBefore({ block, 0 }, WTF::move(storeOnEdge));
             }
         }

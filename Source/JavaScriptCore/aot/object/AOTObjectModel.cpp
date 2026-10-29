@@ -239,7 +239,7 @@ const FieldData* RuntimeLayoutTable::findField(VM& vm, const LayoutData& layout,
     std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
     if (!number)
         return nullptr;
-    if (FieldTableEntry::hasColumn(*number) && layout.shape && layout.shape <= m_tables.numberOfFieldTableRows) {
+    if (m_tables.hasFieldTableColumn(*number) && layout.shape && layout.shape <= m_tables.numberOfFieldTableRows) {
         std::optional<uint16_t> index = findFieldInTable(m_tables, layout.shape, *number);
         ASSERT(!index || layout.fields()[*index].name == *number);
         return index ? &layout.fields()[*index] : nullptr;
@@ -1035,15 +1035,13 @@ CompiledStructure* StructureTable::withExtraProperties(VM& vm, const CompiledStr
 
 CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStructure& current, Structure& extraPropertiesStructure)
 {
-    if (!current.extraPropertiesSlot())
+    if (!current.extraPropertiesSlot() || !m_variants->requestedExtraPropertiesStructures.get(VariantMaps::requestedIndex(extraPropertiesStructure)))
         return nullptr;
     Variant variant = variantOf(current);
     variant.hasExtraProperties = true;
     variant.extraPropertiesStructure = &extraPropertiesStructure;
     if (CompiledStructure* recent = m_variants->findRecent(variant))
         return recent;
-    if (!m_variants->requestedExtraPropertiesStructures.get(VariantMaps::requestedIndex(extraPropertiesStructure)))
-        return nullptr;
     CompiledStructure* existing = find(variant);
     if (existing)
         m_variants->setRecent(variant, *existing);

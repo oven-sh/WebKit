@@ -181,7 +181,7 @@ static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& pro
     RELEASE_ASSERT(!probe.boundName || FieldTableEntry::hasColumn(*probe.boundName));
 
     if (!probe.nameHasColumn)
-        isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(FieldTableEntry::maxName)));
+        isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(jit.options().maxNameInFieldTable)));
     if (!probe.receiverIsCell)
         isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
     jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);

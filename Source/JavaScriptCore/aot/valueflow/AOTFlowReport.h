@@ -44,6 +44,7 @@ struct FlowReport {
     Vector<uint8_t> workerEntryPaths;
     Vector<Wire::AccessCountRecord> accessCounts;
     Vector<Wire::AccessRecord> accesses;
+    Vector<Wire::OtherOriginsRecord> otherOrigins;
     Vector<Wire::RemainingCheckRecord> remainingChecks;
     Vector<Wire::TypeTestRecord> typeTests;
     Vector<AllocationSiteReport> allocationSites;

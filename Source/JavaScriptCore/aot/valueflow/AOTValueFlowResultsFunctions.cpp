@@ -968,6 +968,13 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     // A read of a name finds a value that was stored on the closure, or goes on to Function.prototype.
     constexpr OptionSet<ObjectMutation> mutationsThatLetReadsRunCode { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
 
+    if (inputs.birthsOfUnknownObject) {
+        tables.functions.otherEscapeOriginsOfFunctions.fill(0, numberOfFunctions);
+        for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+            if (inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(universe.closureOf(FunctionID(index))))
+                tables.functions.functionsWithOtherEscapeOrigins.set(index);
+        }
+    }
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         FunctionFlow& flow = tables.functions.functions[index];
         ValueFlowObjectID closure = universe.closureOf(FunctionID(index));
@@ -977,8 +984,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         }
         if (inputs.hasEscaped(closure)) {
             flow.cause = UnprovenCause::ReachesNativeCode;
-            if (inputs.birthsOfUnknownObject)
+            if (inputs.birthsOfUnknownObject) {
                 flow.witness = inputs.birthsOfUnknownObject->escapeOriginOf(closure);
+                tables.functions.otherEscapeOriginsOfFunctions[index] = inputs.birthsOfUnknownObject->otherEscapeOriginsOf(closure);
+            }
             return;
         }
         if (inputs.isLost(closure)) {

@@ -19,31 +19,14 @@
 #include <wtf/text/WTFString.h>
 
 #if USE(MIMALLOC)
-#include <bmalloc/bmalloc.h>
 #endif
 
 namespace JSC {
 
 class HeapCell;
 class JSCell;
-class JSGlobalObject;
 class ReservedRangeHeap;
-class ThrowScope;
 class VM;
-
-// An allocation that may not fail and has found no room. It lives until the allocation has what it asked for.
-class RequestInExhaustedCage {
-    WTF_MAKE_NONCOPYABLE(RequestInExhaustedCage);
-public:
-    RequestInExhaustedCage() = default;
-
-private:
-    friend class Heap;
-#if USE(MIMALLOC)
-    bmalloc::api::RequestWithBallast m_requestWithBallast;
-    bool m_hasAskedWithBallast { false };
-#endif
-};
 
 class MarkedBlockCage {
     WTF_MAKE_NONCOPYABLE(MarkedBlockCage);
@@ -125,14 +108,13 @@ public:
     };
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
-    // Storage: what arrays and objects keep outside their cells. It comes from malloc.
     // Tables: the VM's hash tables that hold one entry per live value of some kind, such as Symbols. Growing one is a single large malloc.
-    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Storage = 1 << 2, Tables = 1 << 3 };
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
-    // Where storage is among what the program is owed an error for, this error is that error. So it is for cells under a limit on address space.
+    // Where the program is owed an error for cells under a limit on address space, this error is that error.
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
@@ -151,10 +133,6 @@ public:
     // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.
     static void willUseLastReserve(VM&);
-    // Called on the thread of the VM when a request of that thread to malloc that may not fail has used the ballast (bmalloc::api::keepAddressSpaceBallast()).
-    JS_EXPORT_PRIVATE static void didUseAddressSpaceBallast(VM&);
-    // Called on the thread of the VM while pieces of the ballast are missing, ahead of work whose requests to malloc may not fail. Throws if there is no room to keep them again, unless the thread is exempt.
-    JS_EXPORT_PRIVATE static bool throwErrorForMissingAddressSpaceBallast(VM&, JSGlobalObject*, ThrowScope&);
     // Called on the VM's thread before each Symbol is created. With limited address space, grows the Symbol table early, so a failed allocation can schedule an out-of-memory error while the table still has room.
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
     using LastReserveHandler = void (*)(VM&);
@@ -165,7 +143,6 @@ private:
     bool hasHeapThatReleasedReserve() const;
     bool tryRestoreReleasedReserves(VM&);
     bool tryRestoreOwnReserve();
-    bool tryRestoreBallast();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
 

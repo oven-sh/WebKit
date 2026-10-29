@@ -128,7 +128,7 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
             return { };
     }
 
-    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored };
+    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored, storedOperand.value_or(0) };
 }
 
 static LocationStability stabilityOfFlow(const LocationFlow& flow, CreationStore creationStore)

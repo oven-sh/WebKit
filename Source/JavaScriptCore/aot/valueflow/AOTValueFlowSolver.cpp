@@ -339,6 +339,13 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             m_graph.keepOutOfNodesMadeForPlaceholders(keptOutOfNodesMadeForUnknownObject, m_input.escaped, [](const void* solver, ValueFlowNodeID node) {
                 return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node) && !static_cast<const ValueFlowSolver*>(solver)->takesArgumentsOfCallGroup(node);
             }, this);
+            // A store through the unknown object still stores these values. Claims about fields and reads off escaped objects take what was stored from Written and Read nodes.
+            ValueSetID valuesKeptOut = maker.intersect(keptOutOfNodesMadeForUnknownObject, m_allButMarks);
+            ValueSetID stringsKeptOut = m_input.universe ? maker.intersect(valuesKeptOut, m_input.universe->strings()) : ValueSets::nothing;
+            m_graph.listInsteadOfWhatIsKeptOut(maker.intersect(valuesKeptOut, ValueSets::complement(stringsKeptOut)), placeholders.unknown, stringsKeptOut, ValueFlowUniverse::primitive(PrimitiveSet::String), [](const void* solver, ValueFlowNodeID node) {
+                ValueFlowMadeNodeKind kind = static_cast<const ValueFlowSolver*>(solver)->keyOfMadeNode(node)->kind;
+                return kind == ValueFlowMadeNodeKind::Written || kind == ValueFlowMadeNodeKind::Read;
+            });
         }
     }
     if (placeholders.untracked && m_input.lost) {

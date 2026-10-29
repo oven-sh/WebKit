@@ -286,10 +286,8 @@ void generatePutKnownField(StubAssembler& jit)
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
     // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none: the key is listed and nothing is stored.
     Jump alwaysNeedsStorage = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldMayExistWithoutStorage));
-    Jump isNotUndefined = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueUndefined));
-    goesByName.append(jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsStoredOnce)));
-    Jump needsNoStorage = jit.jump();
-    isNotUndefined.link(&jit);
+    // The field may be listed already. The step in the key order then leads to the same order.
+    Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
     alwaysNeedsStorage.link(&jit);
     createGranuleOfField(jit, registers, loadOffsetOfExtensionWord, findStorage);
 

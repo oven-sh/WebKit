@@ -1727,8 +1727,16 @@ static bool collectLiteralMadeForSpread(FunctionPassContext& context, ValueID al
     AOT::sort(value.definitions, { }, [&](ValueID definition) {
         return useLists.locationOf(definition).index;
     });
-    for (ValueID definition : value.definitions)
-        value.properties.append({ function.at(definition).key(), function.at(definition).valueOperand() });
+    // A key that is defined again keeps its place among the keys and takes the new value. The value it had may be one that a pass listed only to hold the place, which no field of the target is typed for.
+    for (ValueID definition : value.definitions) {
+        PropertyKeyID key = function.at(definition).key();
+        ValueID held = function.at(definition).valueOperand();
+        auto earlier = std::ranges::find(value.properties, key, &std::pair<PropertyKeyID, ValueID>::first);
+        if (earlier != value.properties.end())
+            earlier->second = held;
+        else
+            value.properties.append({ key, held });
+    }
     return true;
 }
 

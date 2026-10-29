@@ -43,7 +43,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 testaot all <folder>                                              native tests, then every *.ir under the folder, in parallel
 testaot run <file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]
 testaot native [<filter>] [--after=<name>] [--single-process]
-testaot list commands|passes|options|limits|statistics|diagnostics
+testaot list commands|passes|options|limits|statistics|diagnostics|image-format
 testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command="<command> { argument }"] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
 testaot write-out <file>                                          prints IR text with REPEAT, PROGRAM-OF and the labels of check lines inside functions written out
@@ -153,8 +153,25 @@ END REPEAT
 PROGRAM-OF: <file>
 ```
 
-A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
-directive.
+A directive is a whole comment line: `# NAME: value`, with one blank after the `#`, the name in capitals and the colon right after it. A
+comment after IR tokens on the same line is never a directive.
+
+A comment that was meant as a directive is an error, not a comment:
+
+- Its first word is the name of a directive or a check prefix of the file, in capitals, and the line is not written as above
+  (`# CHECK-NEXT v0 = Add`, `#CHECK: x`, `# CHECK : x`).
+- Its first word has a colon after it or a suffix (`-NEXT`), and is such a name in another case (`# check: x`) or in capitals and within two
+  edits of one (`# CHEKC: x`, `# CHECK-NXT x`).
+
+Any other comment is prose. So prose does not begin with `RUN`, `CHECK` or a prefix of the file in capitals.
+
+Three markers say what Bun's `test/aot/tools/update-ir-tests.ts` writes anew. Any other line that begins with `# --` is an error.
+
+```
+# -- source: <file>            the lines down to `# -- end of source` are a program, each behind `# `, and no directives. A further such line begins a further file
+# -- end of source             there is one such block at most, and it ends
+# -- generated: <function> ..  once. Each name (or `f<n>`, or `*`) is a function of the program and has its -LABEL line below. Only check lines follow
+```
 
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
 applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run

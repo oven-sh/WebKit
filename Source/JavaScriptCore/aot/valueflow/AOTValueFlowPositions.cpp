@@ -940,6 +940,7 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
         if (const ValueFlowBirthsOfUnknownObject* births = m_inputs.birthsOfUnknownObject) {
             loss.witness = births->witnessOf(node);
             loss.hasOtherRoots = births->hasSeveralRoots(node);
+            loss.otherOrigins = births->otherOriginsOf(node);
             if (std::optional<ValueFlowUnknownSource> source = births->sourceOf(node))
                 loss.cause = unprovenCauseOf(*source);
         }
@@ -954,7 +955,7 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
         LayoutID layout = result.stranger && m_inputs.universe().isObject(result.stranger) ? m_inputs.universe().layoutOf(result.stranger) : LayoutID();
         FunctionID constructor = layout ? m_inputs.program.at(layout).constructor : FunctionID();
         if (Witness origin = constructor && m_inputs.birthsOfUnknownObject ? m_inputs.birthsOfUnknownObject->escapeOriginOf(m_inputs.universe().closureOf(constructor)) : noWitness; hasFunction(origin))
-            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(m_inputs.universe().closureOf(constructor)) };
+            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(m_inputs.universe().closureOf(constructor)), .otherOrigins = m_inputs.birthsOfUnknownObject->otherEscapeOriginsOf(m_inputs.universe().closureOf(constructor)) };
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
     }
     }

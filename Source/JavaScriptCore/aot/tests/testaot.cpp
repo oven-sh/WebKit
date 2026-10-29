@@ -20,11 +20,14 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
+#include "AOTImageFormat.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
 #include "AOTPass.h"
 #include "AOTPassID.h"
 #include "AOTProgramFile.h"
+#include "AOTProgramTables.h"
+#include "AOTRuntimeDescription.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTestCommand.h"
 #include "AOTTestRunner.h"
@@ -69,7 +72,7 @@ static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
     { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
-    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
+    { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics|image-format"_s },
     { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
@@ -302,6 +305,21 @@ static void listDiagnostics(PrintStream& out)
     }
 }
 
+// For tools that read an executable without these headers. The facts are the ones that the executable's run time states about itself, so a tool can tell whether this list is about that run time.
+static void listImageFormat(PrintStream& out)
+{
+    std::span<const ASCIILiteral> names = namesOfRuntimeFacts();
+    auto facts = spanReinterpretCast<const uint32_t>(descriptionOfThisRuntime().subspan(sizeof(RuntimeDescription)));
+    for (size_t i = 0; i < names.size(); ++i)
+        out.println("fact ", facts[i], " ", names[i]);
+#define AOT_PRINT_IMAGE_SECTION(name, Element, statistic) out.println("section " #name);
+    FOR_EACH_AOT_IMAGE_SECTION(AOT_PRINT_IMAGE_SECTION)
+#undef AOT_PRINT_IMAGE_SECTION
+    out.println("offset ProgramTables::firstEnvironmentShape ", offsetof(ProgramTables, firstEnvironmentShape));
+    out.println("offset ProgramTables::closureFunctions ", offsetof(ProgramTables, closureFunctions));
+    out.println("offset ProgramTables::ranges ", offsetof(ProgramTables, ranges));
+}
+
 struct ListEntry {
     ASCIILiteral name;
     void (*print)(PrintStream&);
@@ -314,6 +332,7 @@ static constexpr ListEntry listEntries[] {
     { "limits"_s, listLimits },
     { "statistics"_s, listStatistics },
     { "diagnostics"_s, listDiagnostics },
+    { "image-format"_s, listImageFormat },
 };
 
 static int runListSubcommand(std::span<const String> arguments)

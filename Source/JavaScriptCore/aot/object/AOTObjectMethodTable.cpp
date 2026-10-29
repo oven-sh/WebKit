@@ -208,6 +208,19 @@ static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* glob
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
+// The property after a valid redefinition, as putDescriptor() in JSObject.cpp stores it.
+static Object::LeavingProperty redefinedProperty(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+{
+    unsigned attributes = descriptor.attributesOverridingCurrent(current);
+    if (descriptor.isDataDescriptor() || (descriptor.isGenericDescriptor() && !current.isAccessorDescriptor())) {
+        JSValue value = descriptor.value() ? descriptor.value() : current.value() ? current.value() : jsUndefined();
+        return { value, attributes & ~PropertyAttribute::Accessor };
+    }
+    JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : current.getterPresent() ? current.getterObject() : nullptr;
+    JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : current.setterPresent() ? current.setterObject() : nullptr;
+    return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
+}
+
 // The slot holds the property only if its attributes match the ones the layout gives the field.
 static void createField(VM& vm, Object& object, const FieldData& field, Object::LeavingProperty created)
 {
@@ -297,12 +310,8 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         return true;
     }
 
-    object->moveFieldToExtraProperties(vm, field, { current.valueOrAccessor, current.attributes }, SlotExitReason::Redefinition);
-    JSObject* extra = object->extraProperties();
-    scope.release();
-    bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
-    object->didChangeExtraProperties(vm);
-    return isDefined;
+    object->moveFieldToExtraProperties(vm, field, redefinedProperty(globalObject, currentDescriptor, descriptor), SlotExitReason::Redefinition);
+    return true;
 }
 
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)

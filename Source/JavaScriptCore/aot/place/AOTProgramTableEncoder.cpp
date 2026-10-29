@@ -1742,7 +1742,7 @@ private:
 
 static uint32_t numberOfFieldTableColumns(const TableEncoder& encoder)
 {
-    return static_cast<uint32_t>(std::min<uint64_t>(encoder.identifiers.count(), FieldTableEntry::maxName + 1));
+    return encoder.identifiers.countWithFieldTableColumn();
 }
 
 static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& encoder)
@@ -1774,7 +1774,7 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
         uint32_t cell = cellOf(method.function);
         if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition) || !cell)
             return std::nullopt;
-        if (FieldTableEntry::hasColumn(method.name))
+        if (encoder.identifiers.hasFieldTableColumn(method.name))
             definitions.append(Definition { method.name, method.kind(), cell });
     }
     // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
@@ -1829,7 +1829,7 @@ void encodeFieldTable(TableEncoder& encoder)
         const LayoutData& layout = writer.at<LayoutData>(offset);
         size_t begin = named.fields.size();
         for (const FieldData& field : layout.fields()) {
-            if (FieldTableEntry::hasColumn(field.name))
+            if (encoder.identifiers.hasFieldTableColumn(field.name))
                 named.fields.append({ field.name, FieldTableEntry::forField(layout, field).bits, FieldRecordIndex::create(field, layout.indexOf(field), writer.at<RuntimeType>(field.type), typeOfAnyValue).bits });
         }
         AOT::sort(named.fields.mutableSpan().subspan(begin));
@@ -1921,6 +1921,7 @@ void encodeFieldTable(TableEncoder& encoder)
         }
     }
     encoder.header.numberOfFieldTableRows = highestObjectShape;
+    encoder.header.numberOfFieldTableColumns = numberOfFieldTableColumns(encoder);
     encoder.setTable(ProgramTableIndex::fieldTable, table);
     encoder.setTable(ProgramTableIndex::fieldRecordIndices, recordIndices);
     encoder.setTable(ProgramTableIndex::classMemberRows, firstEntryOfClass);

@@ -1870,14 +1870,17 @@ static void testFieldsCreatedOutsideTheCellByTheirRecords()
             AOT_TEST_CHECK(extension.at<uint64_t>(offsetOfThirdGranule) == number && !extension.at<uint64_t>(offsetOfFirstExtensionSlot) && !extension.at<uint64_t>(offsetOfFirstExtensionSlot + extensionGranuleSize));
             record.slot = slotBefore;
         }
-        // Where the key order alone says that the field exists, the run time knows whether undefined asks for a granule.
+        // Where the key order alone says that the field exists, undefined asks for no granule: the key is listed and nothing is stored.
         {
             FieldData& record = stores.fieldRecord(FieldTable::recordOf(FieldTable::shapeWithOutOfLineValue, PropertyStores::nameOf(storeCase)));
             record.flags |= fieldMayExistWithoutStorage;
             FakeExtension extension(FakeExtension::bitOfSlot >> 1, bitsOf(jsNumber(1)));
             FakeObjectWithShape object(FieldTable::shapeWithOutOfLineValue, extension.encode(cageBase), CreatedFieldOrders::orderBefore);
-            AOT_TEST_CHECK(stores.store(storeCase, object.address(), bitsOf(jsUndefined())).calledOperation);
-            AOT_TEST_CHECK(extension.granule() == bitsOf(jsNumber(1)) && extension.at<uint64_t>(offsetOfExtensionGranuleBits) == FakeExtension::bitOfSlot >> 1 && object.at<uint32_t>(offsetOfOrderWord) == CreatedFieldOrders::orderBefore);
+            stores.runner.recordCallsOf(Entry::operationAOTDidCreateFieldAt);
+            StubRun run = stores.store(storeCase, object.address(), bitsOf(jsUndefined()));
+            stores.runner.countCallsOf(Entry::operationAOTDidCreateFieldAt);
+            AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.address() && static_cast<uint32_t>(run.recordedArguments[1]) == slotKeyFor(FieldTable::offsetInExtension, true));
+            AOT_TEST_CHECK(extension.granule() == bitsOf(jsNumber(1)) && extension.at<uint64_t>(offsetOfExtensionGranuleBits) == FakeExtension::bitOfSlot >> 1);
             record.flags &= ~fieldMayExistWithoutStorage;
         }
     });

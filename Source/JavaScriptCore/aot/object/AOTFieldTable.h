@@ -194,7 +194,7 @@ private:
 // The index of the field in the record of the shape's layout. The shape is an object's and the name has a column.
 inline std::optional<uint16_t> findFieldInTable(const ProgramTables& tables, uint32_t shape, uint32_t name)
 {
-    ASSERT(shape && shape <= tables.numberOfFieldTableRows && FieldTableEntry::hasColumn(name));
+    ASSERT(shape && shape <= tables.numberOfFieldTableRows && tables.hasFieldTableColumn(name));
     uint32_t index = tables.fieldTableRowOf(shape) + name;
     if (index >= tables.fieldRecordIndices().size() || FieldTableEntry { tables.fieldTableEntries()[index] }.name() != name)
         return std::nullopt;

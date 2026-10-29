@@ -286,6 +286,7 @@ struct MemoryAccess {
     MemoryLocation location { AbstractHeap::RuntimeState };
     ValueID base;
     ValueID stored;
+    uint32_t storedOperandIndex { 0 };
 
     explicit operator bool() const { return kind != Kind::NotExact; }
 };

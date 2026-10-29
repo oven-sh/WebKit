@@ -541,6 +541,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     steps->run();
     tables.application->accessSites.valueOfSite = { };
+    if (birthsOfUnknownObject)
+        tables.sites.otherOrigins = birthsOfUnknownObject->takeOtherOrigins();
     inputs.heapIndex = nullptr;
     build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;

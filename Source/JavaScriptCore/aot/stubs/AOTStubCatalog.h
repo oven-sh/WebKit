@@ -54,6 +54,8 @@ struct StubOptions {
     bool countsAllocations { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t layoutSeed { 0 };
+    // Every row of the image's table of fields has an entry for each name up to this one.
+    uint32_t maxNameInFieldTable { UINT16_MAX };
     CPUFeatureSet targetFeatures;
 };
 

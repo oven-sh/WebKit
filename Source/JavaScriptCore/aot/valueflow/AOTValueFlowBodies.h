@@ -173,6 +173,7 @@ public:
     ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
+    ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
@@ -311,6 +312,7 @@ private:
     ValueSetID m_prototypeObjectsOfLibraryClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;
+    ValueSetID m_instancesBelowBuiltinClasses;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;

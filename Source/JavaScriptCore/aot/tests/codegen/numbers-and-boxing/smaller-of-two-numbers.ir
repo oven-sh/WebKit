@@ -56,7 +56,7 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK-NEXT: Double b@[[smaller]] = FMin(b@{{*}}, b@{{*}}, {{*}}:CallInline)
 # CHECK-NEXT: Return(b@[[smaller]], Terminal)
 # CHECK-LABEL: end of function
-# ARM64 has the instruction. x86-64's gives its second operand where one is NaN and where both are zeros: it is asked in both orders and the two answers are joined bit by bit, so -0 wins.
+# arm64 has the instruction. x86-64's gives its second operand where one is NaN and where both are zeros: it is asked in both orders and the two answers are joined bit by bit, so -0 wins.
 # One branch, which is not taken unless one is NaN, leads to the sum of the two, which is NaN.
 # X64: instructions: 6, patchpoints: 0, rare instructions: 2
 # ARM64: instructions: 2, patchpoints: 0

@@ -139,6 +139,8 @@ void finalize(VM& vm, CollectionScope scope, uint64_t phase)
         state.instances.removeAllMatching([&](Instance* instance) {
             if (vm.heap.isMarked(livenessToken(instance)))
                 return false;
+            if (state.functionTables && instance->state)
+                state.functionTables->forgetDisplayNamesOf(*instance->state);
             state.instancesToDestroy.append(instance);
             return true;
         });

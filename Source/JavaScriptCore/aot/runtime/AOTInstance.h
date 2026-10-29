@@ -220,8 +220,8 @@ struct AllocationWords {
     uint64_t compactTableHeader;
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    const MappedCopy** copiesWithoutFrame;
 };
+static_assert(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*) <= InstanceLayout::bytesReservedForCopiesWithoutFrame);
 
 // Most objects that have extra properties have one or two.
 static constexpr unsigned extraPropertiesInlineCapacity = 2;
@@ -392,6 +392,7 @@ struct Instance : InstanceHeader {
 
     std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
     static constexpr ptrdiff_t offsetOfBoxedCalls();
+    std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> copiesWithoutFrame() { return std::span<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> { reinterpret_cast<const MappedCopy**>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfCopiesWithoutFrame), AllocationWords::numberOfCopiesWithoutFrame }; }
     std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
 
     template<typename Visitor>

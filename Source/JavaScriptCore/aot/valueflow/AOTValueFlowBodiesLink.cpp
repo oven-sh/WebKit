@@ -1310,7 +1310,8 @@ private:
         }
         universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
         universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
-        ValueSetID inEveryClassButNoBuiltinObject = maker.unite(maker.uniteAll(inheritingLayouts.span()), universe.m_objectsThatMayBeAnything);
+        universe.m_instancesBelowBuiltinClasses = maker.uniteAll(inheritingLayouts.span());
+        ValueSetID inEveryClassButNoBuiltinObject = maker.unite(universe.m_instancesBelowBuiltinClasses, universe.m_objectsThatMayBeAnything);
         ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
 
         auto hasSameCellTypeTest = [&](BuiltinClassID first, BuiltinClassID second) {

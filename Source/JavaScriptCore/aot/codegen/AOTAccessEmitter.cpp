@@ -157,7 +157,7 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         return;
     if (!comesAgain(context)) {
         // The table of fields answers for a compiled object without a first time. Nothing else is asked, and nothing is filed.
-        if (FieldTableEntry::hasColumn(*identifier)) {
+        if (build().identifierNumbering().hasFieldTableColumn(*identifier)) {
             callStub(context, putByIdOnce(mode), { receiver.value(), value.value() }, { .immediate = *identifier });
             return;
         }
@@ -168,7 +168,7 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier });
         return;
     }
-    StubKey stub = FieldTableEntry::hasColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
+    StubKey stub = build().identifierNumbering().hasFieldTableColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
     callStub(context, stub, { receiver.value(), value.value() }, { .immediate = *identifier });
 }
 
@@ -494,7 +494,7 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
 void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, PutMode mode)
 {
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
-    NameHasColumn nameHasColumn = identifier && FieldTableEntry::hasColumn(*identifier) ? NameHasColumn::Yes : NameHasColumn::No;
+    NameHasColumn nameHasColumn = identifier && build().identifierNumbering().hasFieldTableColumn(*identifier) ? NameHasColumn::Yes : NameHasColumn::No;
     std::optional<uint32_t> record = findRecordOfStoredField(m_program, m_placement, m_function, value.value(), nameHasColumn);
     if (!record) {
         putById(value, object, value->key(), in<Boxed>(value->valueOperand()), mode, value->siteCache());

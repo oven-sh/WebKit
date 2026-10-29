@@ -376,8 +376,8 @@ static void checkFieldTable(const TableCheck& check)
 {
     const uint32_t highestObjectShape = check.tables.firstEnvironmentShape - 1;
     const uint32_t typeOfAnyValue = check.encoder.typeOffset(TypeTable::anything);
-    const auto numberOfColumns = static_cast<uint32_t>(std::min<uint64_t>(check.encoder.identifiers.count(), FieldTableEntry::maxName + 1));
-    if (!check.expect(check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
+    const uint32_t numberOfColumns = check.encoder.identifiers.countWithFieldTableColumn();
+    if (!check.expect(check.tables.numberOfFieldTableColumns == numberOfColumns && numberOfColumns <= FieldTableEntry::maxName + 1 && check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
         return;
     auto entries = check.tables.fieldTableEntries();
     auto isRowInBounds = [&](uint32_t row) {
@@ -402,7 +402,7 @@ static void checkFieldTable(const TableCheck& check)
         if (check.tables.hasLayoutForShape(shape)) {
             const LayoutData& layout = check.tables.layoutForShape(shape);
             for (const FieldData& field : layout.fields()) {
-                if (!FieldTableEntry::hasColumn(field.name))
+                if (!check.tables.hasFieldTableColumn(field.name))
                     continue;
                 ++numberOfFieldsFound;
                 uint32_t index = row + field.name;

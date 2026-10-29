@@ -427,7 +427,7 @@ struct LiteralOrderSolver {
     // A literal's definitions run in sequence, each once, so a literal without a spread has one order: its source order.
     bool listsOrderOfEveryObject(LayoutID id) const
     {
-        if (!layouts[id.index()].createsFieldsOnlyInLiterals || hasOrdersUnread.get(id.index()))
+        if (!layouts[id.index()].createsFieldsOnlyInLiterals || hasOrdersUnread.get(id.index()) || creationsOfLayout[id.index()].isEmpty())
             return false;
         return std::ranges::all_of(creationsOfLayout[id.index()], [&](uint32_t index) {
             const LiteralCreation& creation = creations[index];

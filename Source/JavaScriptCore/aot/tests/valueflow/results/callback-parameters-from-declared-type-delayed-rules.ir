@@ -1,4 +1,4 @@
-# Library: type Listener = (request: Request) => void   function listen(listener: Listener) { unknown(listener, new Request()) }
+# The library: type Listener = (request: Request) => void   function listen(listener: Listener) { unknown(listener, new Request()) }
 # Program: function listener(request) { read(request) }   function read(request) { request.url }   listen(listener)
 # The call that passes the request to the listener is not visible. The declared type of `listener` says it receives a Request, so escaped Request objects are seen
 # at its parameter and at the parameter of `read`, which it forwards to. Both parameters get a predicted type, as if annotated. Nothing is proven about them.

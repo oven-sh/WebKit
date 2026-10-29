@@ -388,31 +388,26 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Where each object held by code outside the program escaped. An object escapes at a statement that passes it on, or through another object:
-// contents through their holder, a prototype and its constructor through an instance, an instance through its constructor. These relations form cycles,
-// so an origin is a statement that passes an object on by itself, and everything that follows is attributed to it. Nothing here depends on the order of the rounds, which depends on the number of threads.
+// How each object held by code outside the program escaped: at a statement that passes it on, or through another object:
+// contents through their holder, a prototype and its constructor through an instance, an instance through its constructor.
 class ValueFlowEscapeOrigins {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowEscapeOrigins);
 public:
     explicit ValueFlowEscapeOrigins(const ValueFlowResultInputs&);
 
-    // Objects escape along it: at a statement that passes them on, or through any object that holds them, creates them or inherits from them.
+    // The objects in `escaping` escape at `statement`, or once an object in `through` has escaped.
     struct EscapePath {
-        uint32_t round { 0 };
         ValueFlowStatementID statement;
         ValueSetID through;
         ValueSetID escaping;
     };
 
-    ValueFlowStatementID originOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : ValueFlowStatementID(); }
     std::span<const EscapePath> paths() const LIFETIME_BOUND { return m_paths.span(); }
-    std::span<const uint32_t> pathsThrough(ValueFlowObjectID holder) const LIFETIME_BOUND { return m_pathsThrough.subspan(m_firstPathThrough[holder.index()], m_firstPathThrough[holder.index() + 1] - m_firstPathThrough[holder.index()]); }
+    ValueSetID objectsWithPaths() const { return m_objectsWithPaths; }
 
 private:
-    Vector<ValueFlowStatementID> m_originOfObject;
     Vector<EscapePath> m_paths;
-    Vector<uint32_t> m_firstPathThrough;
-    Vector<uint32_t> m_pathsThrough;
+    ValueSetID m_objectsWithPaths { ValueSets::nothing };
 };
 
 class ValueFlowBirthsOfUnknownObject {
@@ -423,10 +418,14 @@ public:
     Witness witnessOf(ValueFlowNodeID) const;
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
-    // Where an object held by code outside the program escaped, or the object through which it escaped.
+    // The next independent roots in source order, as FlowSiteLoss::otherOrigins names them.
+    uint16_t otherOriginsOf(ValueFlowNodeID node) const { return node && node.index() < m_otherOriginsOfNode.size() ? m_otherOriginsOfNode[node.index()] : 0; }
+    // The statement where an object held by code outside the program escaped, or where the first object that led to it did.
     Witness escapeOriginOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
-    // Without that place the object still escapes, by a path that starts elsewhere.
+    // Without that statement the object still escapes, by a path that starts elsewhere.
     bool hasOtherEscapeOrigins(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
+    uint16_t otherEscapeOriginsOf(ValueFlowObjectID object) const { return object.index() < m_otherOriginsOfObject.size() ? m_otherOriginsOfObject[object.index()] : 0; }
+    Vector<Wire::OtherOriginsRecord> takeOtherOrigins() { return std::exchange(m_otherOrigins, { }); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -446,6 +445,9 @@ private:
     BitVector m_hasSeveralRoots;
     Vector<Witness> m_originOfObject;
     BitVector m_hasOtherOrigins;
+    Vector<uint16_t> m_otherOriginsOfNode;
+    Vector<uint16_t> m_otherOriginsOfObject;
+    Vector<Wire::OtherOriginsRecord> m_otherOrigins;
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);

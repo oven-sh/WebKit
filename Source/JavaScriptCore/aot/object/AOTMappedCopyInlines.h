@@ -164,7 +164,7 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
     const uint8_t* cellOfSource = reinterpret_cast<const uint8_t*>(source);
     uint64_t targetWords = *reinterpret_cast<const uint64_t*>(cellOfTarget + offsetOfOrderWord);
     uint64_t sourceWords = *reinterpret_cast<const uint64_t*>(cellOfSource + offsetOfOrderWord);
-    const MappedCopy* copy = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(targetWords, sourceWords, excludedRunNumberPlusOne)];
+    const MappedCopy* copy = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(targetWords, sourceWords, excludedRunNumberPlusOne)];
     if (!copy || copy->targetWords != targetWords || copy->sourceWords != sourceWords || copy->excludedRunNumberPlusOne != excludedRunNumberPlusOne)
         return false;
     if (copy->structureOfTarget != target->structureID() || copy->structureOfSource != source->structureID())

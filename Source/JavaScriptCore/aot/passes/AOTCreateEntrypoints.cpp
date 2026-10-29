@@ -122,7 +122,7 @@ static BitVector findWrittenFunctionsNamedBySeveralKeys(const Program& program, 
 }
 
 // A stack frame shows the name that the function object has when the stack is read. One function object stands for every frame of the function as it is written.
-static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
+static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops, Statistics& statistics)
 {
     const Program& program = editor.program();
     auto writtenFunctionOf = [&](FunctionID id) {
@@ -175,18 +175,24 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         FunctionID written = writtenFunctionOf(id);
         if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index())) {
-            if (flow.closuresGoOutOfSightUnnamed(id) && (!flow.closureIsMadeOnce(id) || hasSeveralForms.quickGet(written.index())))
+            if (flow.closuresGoOutOfSightUnnamed(id) && (!flow.closureIsMadeOnce(id) || hasSeveralForms.quickGet(written.index()))) {
                 writtenWithClosuresOutOfSight.append(written);
+                statistics.count(StatisticID::RenamableFunctionsOutOfSightUnnamed, 1);
+            }
             continue;
         }
         // A static field is stored without a word to the run time.
         bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
-        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !isNamedByStaticField)
+        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !isNamedByStaticField) {
+            statistics.count(StatisticID::RenamableFunctionsWithOneClosure, 1);
             continue;
+        }
         editor.at(id).capabilities.add(FunctionCapabilities::RecordsCallee);
         editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
         marked.append(id);
-        if (!flow.closuresMayBeRenamedOnlyWhereNobodySees(id) || namedBySeveralKeys.quickGet(written.index()))
+        bool isRenamedInSight = !flow.closuresMayBeRenamedOnlyWhereNobodySees(id) || namedBySeveralKeys.quickGet(written.index());
+        statistics.count(isRenamedInSight ? StatisticID::RenamableFunctionsRenamedInSight : StatisticID::RenamableFunctionsRenamedOutOfSight, 1);
+        if (isRenamedInSight)
             recordsFromTheStart.quickSet(written.index());
     }
     // The run time sees the write that renames such a function object, and has the calls by value record their callees from then on.
@@ -208,7 +214,7 @@ void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, 
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
-    markFunctionsThatRecordTheirCallee(editor, inputs.flow, loops);
+    markFunctionsThatRecordTheirCallee(editor, inputs.flow, loops, build.statistics());
     AnalysisContext context { build, program, &inputs.flow, nullptr };
     size_t numberOfFunctionsBefore = program.functions.size();
 

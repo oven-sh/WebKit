@@ -11,8 +11,10 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCompiledCallee.h"
 #include "AOTFunctionDescription.h"
 #include "AOTIRParser.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -374,6 +376,32 @@ static void testBuiltinNamesNeedNoAtomTable()
     runWithLoadedProgram("stack-traces/builtin-names-need-no-atom-table"_s, programText, checkBuiltinNamesNeedNoAtomTable, { "admit=Inspector"_s });
 }
 
+static void checkAskingForFunctionObjectOfBuiltinCreatesNothing(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto exists = [&](ASCIILiteral name) {
+        return !!findExistingObject(realm, Identifier::fromString(vm, name).impl());
+    };
+    AOT_TEST_CHECK(!exists("Math"_s) && !exists("JSON"_s) && !exists("Reflect"_s));
+    {
+        AssertNoGC assertNoGC;
+        for (unsigned index = 0; index < BuiltinTable::singleton().builtinCount(); ++index) {
+            if (BuiltinID builtin(index); builtin != Builtins::GlobalThis)
+                AOT_TEST_CHECK(!isClosureOf(realm, functionInFramesOf(builtin)));
+        }
+    }
+    AOT_TEST_CHECK(!exists("Math"_s) && !exists("JSON"_s) && !exists("Reflect"_s));
+
+    JSObject* stringify = program.realms().object(realm, "JSON.stringify"_s);
+    AOT_TEST_CHECK(isClosureOf(stringify, functionInFramesOf(Builtins::JSONStringify)) && !isClosureOf(stringify, functionInFramesOf(Builtins::JSONParse)));
+}
+
+static void testAskingForFunctionObjectOfBuiltinCreatesNothing()
+{
+    runWithLoadedProgram("stack-traces/asking-for-function-object-of-builtin-creates-nothing"_s, programText, checkAskingForFunctionObjectOfBuiltinCreatesNothing, { "admit=Inspector"_s });
+}
+
 static void testSizeOfTrace()
 {
     AOT_TEST_CHECK(ReturnAddressTrace::numberOfFlagWords(0) == 0);
@@ -423,6 +451,7 @@ std::span<const NativeTest> stackTraceTests()
         { "stack-traces/async-frames-below"_s, testAsyncFramesBelow },
         { "stack-traces/trace-with-builtin-formatted-by-gc"_s, testTraceWithBuiltinFormattedByGC },
         { "stack-traces/builtin-names-need-no-atom-table"_s, testBuiltinNamesNeedNoAtomTable },
+        { "stack-traces/asking-for-function-object-of-builtin-creates-nothing"_s, testAskingForFunctionObjectOfBuiltinCreatesNothing },
         { "stack-traces/size-of-trace"_s, testSizeOfTrace },
     };
     return tests;

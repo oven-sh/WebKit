@@ -384,7 +384,7 @@ static void testTestFileWellFormed()
 {
     TestFile file = parseTestFile(
         "# CHECK: Add\r\n"
-        "#RUN: print a b\r\n"
+        "# RUN: print a b\r\n"
         "# RUN(SECOND): verify\r\n"
         "# SECOND-NOT: x\r\n"
         "# FORM: AsRead\r\n"

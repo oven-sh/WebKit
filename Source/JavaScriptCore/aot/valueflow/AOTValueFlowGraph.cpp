@@ -835,6 +835,18 @@ void ValueFlowGraph::keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, Value
     m_lowMembersKeptOutOfNodesMadeForPlaceholders = lowMembersOf(keptOut, *m_makers[0]);
 }
 
+void ValueFlowGraph::listInsteadOfWhatIsKeptOut(ValueSetID objects, ValueFlowObjectID insteadOfObjects, ValueSetID strings, ValueFlowObjectID insteadOfStrings, IsMadeForPlaceholder holdsWhatWasStored)
+{
+    RELEASE_ASSERT(!m_hasSolved && insteadOfObjects.index() < 64 && insteadOfStrings.index() < 64);
+    m_holdsWhatWasStoredThroughPlaceholder = holdsWhatWasStored;
+    m_objectsWithStandIn = objects;
+    m_stringsWithStandIn = strings;
+    m_lowObjectsWithStandIn = lowMembersOf(objects, *m_makers[0]);
+    m_lowStringsWithStandIn = lowMembersOf(strings, *m_makers[0]);
+    m_standInForObjects = 1ull << insteadOfObjects.index();
+    m_standInForStrings = 1ull << insteadOfStrings.index();
+}
+
 bool ValueFlowGraph::flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID node) const
 {
     for (const Covering& covering : m_coverings) {
@@ -1184,6 +1196,14 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
         low &= ~m_lowMembersKeptOutOfNodesMadeForPlaceholders;
         lowInNoSet &= low;
         set = maker.intersect(set, m_allButKeptOutOfNodesMadeForPlaceholders);
+        if (m_holdsWhatWasStoredThroughPlaceholder && m_holdsWhatWasStoredThroughPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))) {
+            auto isKeptOut = [&](uint64_t lowMembers, ValueSetID members) {
+                return (lowKeptOut & lowMembers) || (setKeptOut != ValueSets::nothing && m_sets.meet(setKeptOut, members));
+            };
+            uint64_t standIns = (isKeptOut(m_lowObjectsWithStandIn, m_objectsWithStandIn) ? m_standInForObjects : 0) | (isKeptOut(m_lowStringsWithStandIn, m_stringsWithStandIn) ? m_standInForStrings : 0);
+            low |= standIns;
+            lowInNoSet |= standIns;
+        }
     }
     if (gate.flags & IsRetired) [[unlikely]] {
         ValueSetID taken = whatRetiredNodeTakes(node, maker);

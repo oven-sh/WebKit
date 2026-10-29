@@ -64,13 +64,16 @@ SUPPRESS_ASAN static bool keepCalleeInFrameOfCaller(VM& vm, FunctionTables& tabl
     const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
     const VMState& state = vm.aotState();
     const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
-    if (!site || site->isStubReturnSite() || !site->hasRecordedCallee)
+    if (!site || site->isStubReturnSite())
         return false;
-    CalleeOfSite said = *state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
-    if (said.isOwnFunctionObject())
+    std::optional<CalleeOfSite> said = state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
+    // The function that leaves may have been inlined, whole or its entrypoint alone. The word is that of the inlined frame, and the stack walk reads it for a frame of the same function.
+    if (!said && site->site.isTailCall() && FunctionDescription(site->innermostFunction).sourceFunction() == sourceFunctionOf(*function))
+        said = calleeOfCopiedFrame(*state.image, state.callSiteCache->inlineFrames(), site->code, { site->innermostFunction, site->site.callSite, site->site.inlineFrame, site->innermostIsInlinedConstructCall, false });
+    if (!said || said->isOwnFunctionObject())
         return false;
     auto* frameRecord = reinterpret_cast<JSCell**>(static_cast<char*>(stackPointerOfCaller) + site->frame.frameSizeInBytes() - site->frame.bytesAboveFrameRecord());
-    frameRecord[said.wordInFrame()] = callee;
+    frameRecord[said->wordInFrame()] = callee;
     return true;
 }
 

@@ -171,9 +171,7 @@ static Jump loadCopyWithoutFrame(StubAssembler& jit, GPRReg target, GPRReg sourc
     jit.add32(Address(source, offsetOfShapeWord), place);
     jit.add32(Address(source, offsetOfOrderWord), place);
     jit.and32(TrustedImm32(AllocationWords::numberOfCopiesWithoutFrame - 1), place);
-    jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(void*)))), place);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.copiesWithoutFrame)), place);
-    jit.loadPtr(Address(place), copy);
+    jit.loadPtr(BaseIndex(instanceGPR, place, CCallHelpers::ScalePtr, static_cast<int32_t>(InstanceLayout::offsetOfCopiesWithoutFrame)), copy);
     return jit.branchTestPtr(CCallHelpers::Zero, copy);
 }
 

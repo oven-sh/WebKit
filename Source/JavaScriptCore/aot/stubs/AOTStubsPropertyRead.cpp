@@ -240,7 +240,7 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
     static_assert(sizeof(UniquedStringImpl) == 24);
     switch (name) {
     case ObjectLookupName::IsGivenByNumber:
-        hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
+        hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable)));
         return;
     case ObjectLookupName::IsGivenByUID:
         // The names of the image are atoms that lie in the order of their numbers. Text made at run time that equals one of them is that atom.
@@ -249,11 +249,11 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
             subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.capacity))));
             jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
-            hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
+            hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable)));
         } else {
             subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.sizeOfProgramIdentifiers))));
-            hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName * sizeof(UniquedStringImpl))));
+            hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(jit.options().maxNameInFieldTable * sizeof(UniquedStringImpl))));
             jit.urshift32(TrustedImm32(3), r.name);
             jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
         }

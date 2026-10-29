@@ -521,6 +521,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
+    State* state = &State::of(closure->structure()->realm());
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
         return;
@@ -528,19 +529,24 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     if (entry.isOneOfSeveral)
         return;
     if (entry.functionObject && entry.functionObject != closure) {
-        if (mayHaveDisplayName) {
-            entry = { };
-            entry.isOneOfSeveral = true;
-        }
+        if (mayHaveDisplayName)
+            entry = { .state = entry.state == state ? state : nullptr, .isOneOfSeveral = true };
         return;
     }
     entry.functionObject = closure;
     entry.text = WTF::move(text);
-    if (isClassObject) {
-        entry.stateOfClassObject = &classObject->state();
+    entry.state = state;
+    if (isClassObject)
         entry.constructorOfClass = closureFunction;
-    }
     tables.hasDisplayNames.store(true, std::memory_order_relaxed);
+}
+
+void FunctionTables::forgetDisplayNamesOf(const State& state)
+{
+    Locker locker { namesLock };
+    displayNames.removeIf([&](auto& entry) {
+        return entry.value.state == &state;
+    });
 }
 
 static String displayNameInFrames(VM& vm, FunctionID function)
@@ -553,9 +559,9 @@ static String displayNameInFrames(VM& vm, FunctionID function)
     auto entry = tables->displayNames.find(sourceFunction);
     if (entry == tables->displayNames.end() || entry->value.isOneOfSeveral)
         return String();
-    if (!entry->value.stateOfClassObject)
+    if (!entry->value.constructorOfClass)
         return entry->value.text;
-    JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
+    JSCell* classObject = entry->value.state->objects->closures.closureIfCreated(entry->value.constructorOfClass);
     return classObject == entry->value.functionObject ? ownStringProperty(asObject(classObject), vm.propertyNames->displayName) : String();
 }
 
@@ -1009,11 +1015,9 @@ bool isClosureOf(JSCell* cell, FunctionID function)
     JSObject* object = cell->getObject();
     if (!implemented || !object)
         return false;
+    // A stack walk asks, and allocates nothing. A function object that is yet to be created is not this one.
     JSGlobalObject* realm = object->realmMayBeNull();
-    if (!realm)
-        return false;
-    auto found = findInRealm(realm, BuiltinCellKey::object(BuiltinID(*implemented)));
-    return found && *found == cell;
+    return realm && findExistingBuiltin(realm, BuiltinID(*implemented)) == object;
 }
 
 } } // namespace JSC::AOT

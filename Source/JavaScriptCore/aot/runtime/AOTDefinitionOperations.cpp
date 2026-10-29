@@ -227,21 +227,31 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
     if ((bits.hasWritable && bits.isWritable) || (bits.hasEnumerable && bits.isEnumerable) || (bits.hasConfigurable && !bits.isConfigurable))
         return false;
     constexpr unsigned attributesAtBirth = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
-    if (auto* classObject = dynamicDowncast<Closure>(function)) {
-        // Another closure may be told the name that it has, which changes nothing.
-        const LayoutData* classLayout = classObject->classData();
-        if (!classLayout)
+    if (auto* closure = dynamicDowncast<Closure>(function)) {
+        FunctionRareData* rareData = closure->rareData();
+        Structure* structure = closure->structure();
+        if ((rareData && rareData->hasReifiedName()) || !structure->isStructureExtensible() || structure->mayHaveImmutableProperties() || closure->getDirect(vm, name))
             return false;
-        // The fields of a class become properties in front of whatever is defined by name.
-        ClassTable& classes = classObject->state().objects->classes;
-        if (!classLayout->staticFields().empty() || classes.hasStaticMethodNamed(*classLayout, name.uid()))
-            return false;
-        FunctionRareData* rareData = classObject->rareData();
-        Structure* structure = classObject->structure();
-        if ((rareData && rareData->hasReifiedName()) || !structure->isStructureExtensible() || structure->mayHaveImmutableProperties() || classObject->getDirect(vm, name))
-            return false;
-        classObject->setNameProperty(vm, asString(value), attributesAtBirth);
-        classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+        if (const LayoutData* classLayout = closure->classData()) {
+            // The fields of a class become properties in front of whatever is defined by name.
+            ClassTable& classes = closure->state().objects->classes;
+            if (!classLayout->staticFields().empty() || classes.hasStaticMethodNamed(*classLayout, name.uid()))
+                return false;
+            closure->setNameProperty(vm, asString(value), attributesAtBirth);
+            classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
+        } else {
+            FunctionKindData kind = closure->kind();
+            if (kind.isBound() || kind.hasInitialNamePrefix() || kind.notesLooksForName() || closure->refusesOwnProperty(vm, name))
+                return false;
+            auto defined = asString(value)->tryGetValue();
+            if (defined->isNull())
+                return false;
+            didLookForNameProperty(vm, closure);
+            // A closure that is told the name it has stays as it is.
+            if (defined.data == initialNameProperty(closure->function()))
+                return true;
+            closure->setNameProperty(vm, asString(value), attributesAtBirth);
+        }
     } else {
         if (function->type() == SlimClosureType)
             uncheckedDowncast<SlimClosure>(function)->reify(vm);
@@ -281,6 +291,8 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
     // The layout has a field for a getter that the build saw defined, with the attributes it saw.
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
         return true;
+    if (field && compiled->isInSlot(*field))
+        return false;
     JSValue stored = bits.hasValue ? valueOrGetter : jsUndefined();
     if (isAccessor)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());

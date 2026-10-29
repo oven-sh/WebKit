@@ -278,6 +278,7 @@ struct FieldResults {
     KeysByLayout keysHeldSinceBirth { };
     Vector<std::pair<FunctionID, ValueID>> allocationsBornWithCopies { };
     BitVector isBornWithCopies { };
+    BitVector isBornWithAssignedCopies { };
     mutable SharedMemo<KindsOfMembers> kindsOfMembers { };
     struct AnswersAboutObject {
         OptionSet<Actor> open;
@@ -739,6 +740,7 @@ struct FieldResults {
     void followCopiesAtBirth(std::span<const AllocatingOperation> operations)
     {
         isBornWithCopies = BitVector(numberOfLayouts);
+        isBornWithAssignedCopies = BitVector(numberOfLayouts);
         Vector<BirthWithCopies> births = collectInParallel<BirthWithCopies>(loops, program.functions.size(), [&](unsigned index, Vector<BirthWithCopies>& found) {
             FunctionID function(index);
             if (inputs.isReached(function) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data })) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::PieceOutsideSlots, ValueFlowNotedOperation::FinishObject, ValueFlowNotedOperation::Builtin })))
@@ -759,6 +761,8 @@ struct FieldResults {
         keysHeldSinceBirth = KeysByLayout(numberOfLayouts);
         for (BirthWithCopies& birth : births) {
             isBornWithCopies.quickSet(birth.layout.index());
+            if (std::ranges::any_of(birth.copies, &CopyAtBirth::assigns))
+                isBornWithAssignedCopies.quickSet(birth.layout.index());
             AOT::sort(birth.definedKeys);
             removeRepeatedElements(birth.definedKeys);
         }
@@ -2098,7 +2102,8 @@ struct FieldResults {
                 application.layouts[index].flow.fieldCreation = FieldCreation::OnlyAtConstruction;
             // `{ port, host: name() }`: the allocation lists nothing and the definitions after it create the fields, each before anything else sees the object.
             LayoutID id(index);
-            application.layouts[index].createsFieldsOnlyInLiterals = program.layouts[index].kind == LayoutKind::Record && hasObjects(id) && isBornWithCopies.get(index) && application.layouts[index].flow.baseState == BaseState::None
+            // Object.assign() creates fields inside the call, in the order of its sources' keys. No piece of a literal lists that order.
+            application.layouts[index].createsFieldsOnlyInLiterals = program.layouts[index].kind == LayoutKind::Record && hasObjects(id) && isBornWithCopies.get(index) && !isBornWithAssignedCopies.get(index) && application.layouts[index].flow.baseState == BaseState::None
                 && build.isEnabled(FlowResultKind::ConstructorFieldOrders, index) && actorsOpenOnObjectsWith(id).isEmpty() && createsOwnFieldsBeforeObjectsAreFinished(layoutsOfObjectsWithoutListedOrder, id);
         });
     }

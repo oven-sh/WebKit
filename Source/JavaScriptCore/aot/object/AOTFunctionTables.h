@@ -106,8 +106,9 @@ struct FunctionTables {
         String text;
         // Tells the next change by the same function object from one by another. Never followed.
         const JSObject* functionObject { nullptr };
-        // A class may keep the property in a variable, which compiled code writes. Its class object is the one in the closure table of this State, and is asked when a frame is named.
-        State* stateOfClassObject { nullptr };
+        // Of the realm of the function object. The tables belong to the VM and outlive a realm, so the entry goes in the collection that finds the realm dead.
+        State* state { nullptr };
+        // A class may keep the property in a variable, which compiled code writes. Its class object is the one in the closure table of the State, and is asked when a frame is named.
         FunctionID constructorOfClass;
         bool isOneOfSeveral { false };
     };
@@ -127,6 +128,7 @@ struct FunctionTables {
     std::atomic<bool> hasNamesSetAtRunTime { false };
     std::atomic<bool> hasNamesLookedFor { false };
     std::atomic<bool> hasDisplayNames { false };
+    void forgetDisplayNamesOf(const State&);
 
     // HeapWords::recordedCallees. Compiled code writes nothing into the table that stands for no table.
     static const RecordedCallee* recordedCalleesOf(const FunctionTables*);

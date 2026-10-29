@@ -1097,6 +1097,7 @@ bool VMPropertyCaches::addFilterAndCheckStoreCreatesOwnField(JSGlobalObject* glo
     return storeCreatesOwnField(object, name);
 }
 
+// A filter lets a field's name pass where a plain property lower on the chain hides an accessor, so a name that is gone from `changed` may stop stores as well.
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
 {
     Structure* structure = changed->structure();
@@ -1108,7 +1109,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
         isField = field;
         JSObject* extra = extraPropertiesIfMade(*object);
         if (!extra)
-            return hasPendingStars(*object);
+            return true;
         structure = extra->structure();
         if (structure->isUncacheableDictionary())
             return true;
@@ -1118,7 +1119,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
     std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
     if (!offset)
         return true;
-    return isValidOffset(*offset) && (isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    return !isValidOffset(*offset) || isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue;
 }
 
 void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull)
@@ -1541,7 +1542,7 @@ static ASCIILiteral whyObjectsDidNotAnswer(VM& vm, JSValue receiver, UniquedStri
             if (type == CompiledObjectType) {
                 Object& compiled = *uncheckedDowncast<Object>(object);
                 std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
-                if (number && *number > FieldTableEntry::maxName)
+                if (number && !compiled.state().tables.hasFieldTableColumn(*number))
                     return at("the name has no column, and the receiver is a compiled object"_s, "the name has no column, and an object above is a compiled object"_s);
                 if (const FieldData* field = number ? compiled.fieldNamed(compiled.state(), uid) : nullptr) {
                     if (field->isPrivate())

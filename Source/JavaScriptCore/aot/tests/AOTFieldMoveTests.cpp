@@ -346,7 +346,7 @@ bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list
 {
     State& state = m_program.state();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne);
-    state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne)] = nullptr;
+    state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne)] = nullptr;
     copy = { };
     copy.mayTakeNoFrame = mayTakeNoFrame == MayTakeNoFrame::Yes;
     copy.targetWords = target->orderAndShapeWords();

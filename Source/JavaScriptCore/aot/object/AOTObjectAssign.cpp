@@ -786,7 +786,7 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
 
 static const MappedCopy*& placeOfCopyWithoutFrame(State& state, const MappedCopy& copy)
 {
-    return state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
+    return state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
 }
 
 static bool tryDescribeForStub(MappedCopy::Move& move)

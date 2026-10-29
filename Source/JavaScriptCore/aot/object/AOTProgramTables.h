@@ -150,6 +150,7 @@ struct ProgramTables {
     uint32_t firstEnvironmentShape;
     uint32_t numberOfLayoutIndices;
     uint32_t numberOfFieldTableRows;
+    uint32_t numberOfFieldTableColumns;
     uint32_t numberOfClosureCells;
     ClosureFunctionRangeData closureFunctions;
     TableRange ranges[numberOfProgramTables];
@@ -180,6 +181,7 @@ struct ProgramTables {
     }
     std::span<const uint32_t> fieldTableEntries() const { return fieldTable().subspan(numberOfFieldTableRows); }
     uint32_t fieldTableRowOf(uint32_t shape) const { return fieldTable()[numberOfFieldTableRows - shape]; }
+    bool hasFieldTableColumn(uint32_t identifierNumber) const { return identifierNumber && identifierNumber < numberOfFieldTableColumns; }
     const EnvironmentData& environmentForShape(uint32_t shape) const
     {
         ASSERT(shape >= firstEnvironmentShape);

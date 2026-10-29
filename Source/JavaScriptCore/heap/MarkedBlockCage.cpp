@@ -8,7 +8,6 @@
 
 #include "AOTCellFormat.h"
 #include "AddressSpaceBudget.h"
-#include "DeferGCInlines.h"
 #include "MarkedBlock.h"
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
@@ -557,7 +556,7 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Storage, ExhaustedHeap::Tables });
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables });
 }
 
 bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
@@ -568,11 +567,6 @@ bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
         if (!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Structures);
-    }
-    if (m_exhaustedHeaps.contains(ExhaustedHeap::Storage)) {
-        if (!tryRestoreBallast())
-            return false;
-        m_exhaustedHeaps.remove(ExhaustedHeap::Storage);
     }
     if (m_exhaustedHeaps.contains(ExhaustedHeap::Tables)) {
         if (!vm.symbolImplToSymbolMap.tryGrowEarly())
@@ -602,16 +596,6 @@ bool MarkedBlockCage::tryRestoreOwnReserve()
     m_numberOfChunksReleased = 0;
     m_hasReleasedReserve = false;
     m_shouldKeepLargeCellReserve = true;
-    return true;
-}
-
-bool MarkedBlockCage::tryRestoreBallast()
-{
-#if USE(MIMALLOC)
-    keepAddressSpaceBallast();
-    if (!bmalloc::api::hasWholeAddressSpaceBallast())
-        return false;
-#endif
     return true;
 }
 
@@ -772,7 +756,7 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Storage, ExhaustedHeap::Tables }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Tables) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
@@ -820,15 +804,6 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
         handler();
 }
 
-void* tryMallocAgainWithAddressSpaceBallast()
-{
-#if USE(MIMALLOC)
-    return bmalloc::api::mallocAgainWithBallast();
-#else
-    return nullptr;
-#endif
-}
-
 void logExhaustedAddressSpace()
 {
     if (s_isGrowable)
@@ -849,17 +824,6 @@ void MarkedBlockCage::willUseLastReserve(VM& vm)
         vm.traps().setNeedsOutOfMemoryError(true);
 }
 
-void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
-{
-    // An error that is owed already has found no place to be thrown.
-    if (vm.traps().needsOutOfMemoryError())
-        willUseLastReserve(vm);
-    MarkedBlockCage& cage = vm.heap.cage();
-    cage.addExhaustedHeap(ExhaustedHeap::Storage);
-    cage.didFindNoRoomWithoutCollecting();
-    vm.traps().setNeedsOutOfMemoryError(true);
-}
-
 void MarkedBlockCage::willAddSymbol(VM& vm)
 {
     if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowEarly()) [[likely]]
@@ -870,23 +834,6 @@ void MarkedBlockCage::willAddSymbol(VM& vm)
     cage.addExhaustedHeap(ExhaustedHeap::Tables);
     cage.didFindNoRoomWithoutCollecting();
     vm.traps().setNeedsOutOfMemoryError(true);
-}
-
-bool MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
-{
-#if USE(MIMALLOC)
-    if (bmalloc::api::isThisThreadExemptFromAddressSpaceBallast() || vm.heap.cage().tryRestoreBallast())
-        return false;
-    if (!vm.traps().needsOutOfMemoryError())
-        didUseAddressSpaceBallast(vm);
-    DeferGCForAWhile deferGC(vm);
-    return throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
-#else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(scope);
-    return false;
-#endif
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

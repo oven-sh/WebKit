@@ -274,8 +274,6 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
         return why;
     if (field.slot.representation() == SlotRepresentation::DeferredClosure)
         return "field store left the stub: absent, the slot defers a closure"_s;
-    if (field.flags & fieldMayExistWithoutStorage && !(field.flags & fieldIsStoredOnce) && value.isUndefined() && !object.slotOf(field))
-        return "field store left the stub: absent, undefined for a field that may exist without storage"_s;
     if (orderWord & orderWordHasFieldOutsideSlot)
         return "field store left the stub: absent, some field of the object lies outside its slot"_s;
     const CompiledStructure& structure = object.compiledStructure();
@@ -283,7 +281,7 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
         return "field store left the stub: absent, the object may be a prototype"_s;
     if (slotKeyFor(field.slot.offset, field.isOutOfLine()) == noSlotKey)
         return "field store left the stub: absent, the slot has no key"_s;
-    if (!FieldTableEntry::hasColumn(field.name))
+    if (!access.instance->image.tables->hasFieldTableColumn(field.name))
         return "field store left the stub: absent, the name has no column"_s;
     if (mode == PutMode::Define)
         return "field store left the stub: absent, a definition: NOTHING STOOD IN THE WAY"_s;

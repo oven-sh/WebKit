@@ -4349,7 +4349,9 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
             return context.restrict(membersToCall(context, receivers, name), acting);
         };
         ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
-        forEachReceiverToldApart(context, context.valueWithin(ClimbingSet(universe.knownObjects()), hub), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
+        // A value that comes back out of native code is the unknown object alone. It may be any escaped instance of a class below a built-in class.
+        ClimbingSet escapedInstances = context.valueWithin(ClimbingSet(universe.instancesBelowBuiltinClasses()), ValueFlowProgramNodes::escaped());
+        forEachReceiverToldApart(context, context.unite(context.valueWithin(ClimbingSet(universe.knownObjects()), hub), escapedInstances), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
             callFromNativeCode(context, find(receivers), thisValue, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
         });
     });
