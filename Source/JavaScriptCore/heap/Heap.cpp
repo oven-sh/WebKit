@@ -93,6 +93,7 @@
 #include "ModuleProgramExecutable.h"
 #include "ModuleRegistryEntry.h"
 #include "NumberObject.h"
+#include "PageCount.h"
 #include "PinballCompletion.h"
 #include "PreventCollectionScope.h"
 #include "ProgramExecutable.h"
@@ -719,6 +720,13 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
+#if USE(BUN_JSC_ADDITIONS)
+        // A resizable buffer with a maximum past one page holds two mappings until it is collected, and the size above does not count them.
+        if (buffer->maxByteLength().value_or(0) > PageCount::pageSize && ++m_resizableArrayBuffersSinceCollectionRequest >= resizableArrayBuffersPerCollectionRequest) {
+            m_resizableArrayBuffersSinceCollectionRequest = 0;
+            collectAsync(CollectionScope::Full);
+        }
+#endif
     }
 }
 
