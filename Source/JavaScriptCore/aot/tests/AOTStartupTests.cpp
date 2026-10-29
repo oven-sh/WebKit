@@ -20,6 +20,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include <wtf/StackBounds.h>
+#include <wtf/Threading.h>
 
 #if OS(LINUX)
 #include <link.h>
@@ -250,7 +251,13 @@ static void testMainThreadStackEndsAboveItsFirstFrame()
         uintptr_t origin = reinterpret_cast<uintptr_t>(bounds.origin());
         return origin >= reinterpret_cast<uintptr_t>(environment) && origin <= endOfMapping;
     };
-    AOT_TEST_CHECK(isRight(StackBounds::currentThreadStackBoundsForEmbedder()));
+    auto areTheSame = [](StackBounds one, StackBounds other) {
+        return one.origin() == other.origin() && one.end() == other.end();
+    };
+    AOT_TEST_CHECK(isRight(StackBounds::computeCurrentThreadStackBoundsForTesting()));
+    // The embedder and WTF::Thread have the bounds that were computed first for this thread.
+    StackBounds kept = StackBounds::currentThreadStackBoundsForEmbedder();
+    AOT_TEST_CHECK(isRight(kept) && areTheSame(kept, Thread::currentSingleton().stack()));
 
     char** end = environment;
     while (*end)
@@ -263,9 +270,12 @@ static void testMainThreadStackEndsAboveItsFirstFrame()
     auto original = entry->a_un.a_val;
     entry->a_un.a_val = reinterpret_cast<uintptr_t>(planted);
     bool isPlanted = getauxval(AT_EXECFN) == reinterpret_cast<uintptr_t>(planted);
-    StackBounds boundsUnderTracer = StackBounds::currentThreadStackBoundsForEmbedder();
+    StackBounds boundsUnderTracer = StackBounds::computeCurrentThreadStackBoundsForTesting();
+    StackBounds keptUnderTracer = StackBounds::currentThreadStackBoundsForEmbedder();
     entry->a_un.a_val = original;
     AOT_TEST_CHECK(!isPlanted || isRight(boundsUnderTracer));
+    // They stay what they are when something that a computation reads has changed.
+    AOT_TEST_CHECK(areTheSame(keptUnderTracer, kept));
 }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
