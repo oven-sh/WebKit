@@ -11,7 +11,6 @@
 #include "AOTChildProcess.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
-#include "AddressSpaceBudget.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
 #include "DeferGCInlines.h"
@@ -42,11 +41,8 @@
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#include <wtf/ParkingLot.h>
 #include <wtf/Threading.h>
-#include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -666,376 +662,6 @@ static void checkCellInFullRangeGrowsIntoSharedReserve()
     AOT_TEST_CHECK(largest);
     cage.free(largest);
 }
-
-#if USE(MIMALLOC)
-// All the address space is taken. A request to malloc that may fail gets null, requests that may not fail are served, and the thread is told. When address space comes back the ballast is kept again.
-static void checkRequestsThatMayNotFailUseBallast()
-{
-    static unsigned timesToldOfUse;
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    bmalloc::api::setAddressSpaceBallastHandler([](bmalloc::api::UseOfAddressSpaceBallast) { ++timesToldOfUse; });
-
-    struct Mapping {
-        void* pages;
-        size_t size;
-    };
-    Vector<Mapping, 64> mappings;
-    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
-        while (void* pages = OSAllocator::tryReserveUncommitted(size))
-            mappings.append({ pages, size });
-    }
-    Vector<void*> pieces;
-    pieces.reserveInitialCapacity(256 * KB);
-    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
-        pieces.append(piece);
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && !timesToldOfUse);
-
-    // An allocator that does not remember what it refused cannot be asked again.
-    if (void* again = bmalloc::api::memalignAgainWithBallast()) {
-        fastFree(again);
-        std::array<void*, 32> served;
-        for (void*& piece : served) {
-            piece = fastMalloc(16 * KB);
-            fill(piece, 16 * KB, 3);
-        }
-        served[0] = fastRealloc(served[0], 48 * KB);
-        AOT_TEST_CHECK(!bmalloc::api::hasWholeAddressSpaceBallast() && timesToldOfUse);
-        for (void* piece : served) {
-            AOT_TEST_CHECK(isFilled(piece, 16 * KB, 3));
-            fastFree(piece);
-        }
-    }
-
-    for (void* piece : pieces)
-        fastFree(piece);
-    for (auto [pages, size] : mappings)
-        OSAllocator::releaseDecommitted(pages, size, 0);
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    bmalloc::api::setAddressSpaceBallastHandler(nullptr);
-}
-
-// All the address space is taken, and requests that may not fail have let go of every piece. What the last piece left serves one more.
-static void checkRequestsThatMayNotFailLookInWhatLastPieceLeft()
-{
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-
-    struct Mapping {
-        void* pages;
-        size_t size;
-    };
-    Vector<Mapping, 64> mappings;
-    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
-        while (void* pages = OSAllocator::tryReserveUncommitted(size))
-            mappings.append({ pages, size });
-    }
-    Vector<void*> pieces;
-    pieces.reserveInitialCapacity(256 * KB);
-    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
-        pieces.append(piece);
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-
-    // An allocator that does not remember what it refused cannot be asked again.
-    if (void* served = bmalloc::api::memalignAgainWithBallast()) {
-        pieces.append(served);
-        while (bmalloc::api::sizeOfAddressSpaceBallastKept() && pieces.size() < pieces.capacity())
-            pieces.append(fastMalloc(16 * KB));
-        AOT_TEST_CHECK(!bmalloc::api::sizeOfAddressSpaceBallastKept());
-        // Another size needs a page of its own.
-        pieces.append(fastMalloc(20 * KB));
-    }
-
-    for (void* piece : pieces)
-        fastFree(piece);
-    for (auto [pages, size] : mappings)
-        OSAllocator::releaseDecommitted(pages, size, 0);
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-}
-
-// Each VM that runs compiled code adds to the ballast, and what it added is let go of when the VM is gone.
-static void checkBallastGrowsWithVMs()
-{
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast);
-    size_t numberOfVMsToPiece = MB / sizeOfAddressSpaceBallastOfVM;
-    g_numberOfVMsWithAddressSpaceBallast = 2 * numberOfVMsToPiece + 1;
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast + 2 * MB && bmalloc::api::hasWholeAddressSpaceBallast());
-    g_numberOfVMsWithAddressSpaceBallast = numberOfVMsToPiece - 1;
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast && bmalloc::api::hasWholeAddressSpaceBallast());
-    g_numberOfVMsWithAddressSpaceBallast = 0;
-}
-
-// Who asks for address space of its own takes the whole limit for free, and who decides for others takes it for taken.
-static void checkAddressSpaceThatCannotBeCountedCountsAsTaken()
-{
-    struct rlimit addressSpace;
-    AOT_TEST_CHECK(!getrlimit(RLIMIT_AS, &addressSpace) && addressSpace.rlim_cur != RLIM_INFINITY);
-    size_t counted = addressSpaceLeft();
-    AOT_TEST_CHECK(counted && counted < addressSpace.rlim_cur);
-    AOT_TEST_CHECK(addressSpaceLeft(UncountedAddressSpace::IsTaken) && addressSpaceLeft(UncountedAddressSpace::IsTaken) < addressSpace.rlim_cur);
-
-    struct rlimit limit;
-    AOT_TEST_CHECK(!getrlimit(RLIMIT_NOFILE, &limit));
-    struct rlimit noMoreFiles { 0, limit.rlim_max };
-    AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &noMoreFiles));
-    size_t leftForOwnRequests = addressSpaceLeft();
-    size_t leftForOthers = addressSpaceLeft(UncountedAddressSpace::IsTaken);
-    AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &limit));
-    AOT_TEST_CHECK(leftForOwnRequests == addressSpace.rlim_cur);
-    AOT_TEST_CHECK(!leftForOthers);
-}
-
-// All the address space is taken. What a request that may not fail has let go of is not handed to a large request that may fail, on this thread or another, while small requests are
-// served. Once address space has come back, a large request is served and the ballast is whole.
-static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
-{
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    bmalloc::api::setAddressSpaceBallastKeeper([] {
-        keepAddressSpaceBallast();
-        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
-    });
-
-    auto largeRequestFindsMemory = [] {
-        void* memory = nullptr;
-        if (!tryFastMalloc(64 * KB).getValue(memory))
-            return false;
-        fastFree(memory);
-        return true;
-    };
-    // There will be no room for the stack of a thread, nor for what its first wait asks malloc for.
-    BinarySemaphore isReady;
-    BinarySemaphore mayAsk;
-    bool foundOnOtherThread = true;
-    Ref otherThread = Thread::create("large request"_s, [&] {
-        Atomic<uint8_t> word { 0 };
-        ParkingLot::compareAndPark(&word, static_cast<uint8_t>(1));
-        isReady.signal();
-        mayAsk.wait();
-        foundOnOtherThread = largeRequestFindsMemory();
-    });
-    isReady.wait();
-
-    struct Mapping {
-        void* pages;
-        size_t size;
-    };
-    Vector<Mapping, 64> mappings;
-    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
-        while (void* pages = OSAllocator::tryReserveUncommitted(size))
-            mappings.append({ pages, size });
-    }
-    size_t leftBehindMappings = addressSpaceLeft();
-    Vector<void*> pieces;
-    pieces.reserveInitialCapacity(256 * KB);
-    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
-        pieces.append(piece);
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    size_t leftBehindPieces = addressSpaceLeft();
-
-    // An allocator that does not remember what it refused cannot be asked again.
-    void* served = bmalloc::api::memalignAgainWithBallast();
-    AOT_TEST_CHECK(!served || !bmalloc::api::hasWholeAddressSpaceBallast());
-    size_t leftBehindServedRequest = addressSpaceLeft();
-    bool found = largeRequestFindsMemory();
-    size_t leftBehindLargeRequest = addressSpaceLeft();
-    mayAsk.signal();
-    otherThread->waitForCompletion();
-    if (!served)
-        return;
-    if (found) {
-        dataLogLn("Address space left behind the mappings: ", leftBehindMappings, ", behind the pieces: ", leftBehindPieces, ", behind the request that was served: ", leftBehindServedRequest, ", behind the large request: ", leftBehindLargeRequest,
-            ". Ballast kept: ", bmalloc::api::sizeOfAddressSpaceBallastKept(), ". Served: ", RawPointer(served), ". ", mappings.size(), " mappings, ", pieces.size(), " pieces.");
-    }
-    AOT_TEST_CHECK(!found);
-    AOT_TEST_CHECK(!foundOnOtherThread);
-    // Wherever the memory of further requests that may not fail lies, they open nothing to a large request that may fail.
-    std::array<void*, 64> more;
-    for (void*& memory : more)
-        memory = fastMalloc(16 * KB);
-    AOT_TEST_CHECK(!largeRequestFindsMemory());
-    std::array<void*, 512> smallRequests;
-    for (void*& memory : smallRequests)
-        AOT_TEST_CHECK(tryFastMalloc(48).getValue(memory));
-    AOT_TEST_CHECK(!bmalloc::api::hasWholeAddressSpaceBallast() && !largeRequestFindsMemory());
-
-    for (void* memory : smallRequests)
-        fastFree(memory);
-    for (void* memory : more)
-        fastFree(memory);
-    fastFree(served);
-    for (auto [pages, size] : mappings)
-        OSAllocator::releaseDecommitted(pages, size, 0);
-    AOT_TEST_CHECK(largeRequestFindsMemory() && bmalloc::api::hasWholeAddressSpaceBallast());
-    for (void* piece : pieces)
-        fastFree(piece);
-    bmalloc::api::setAddressSpaceBallastKeeper(nullptr);
-}
-
-// All the address space is taken, and a request that may not fail has let go of a piece. Another thread that makes small blocks is served, and is told that it takes what the piece has left. A thread that is exempt is served and not told.
-static void checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold()
-{
-    using Use = bmalloc::api::UseOfAddressSpaceBallast;
-    static std::atomic<unsigned> timesToldOfSmallPage;
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    bmalloc::api::setAddressSpaceBallastKeeper([] {
-        keepAddressSpaceBallast();
-        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
-    });
-    bmalloc::api::setAddressSpaceBallastHandler([](Use use) {
-        if (use == Use::TakesWhatPiecesLeft)
-            ++timesToldOfSmallPage;
-    });
-
-    struct MakerOfSmallBlocks {
-        BinarySemaphore isReady;
-        BinarySemaphore mayAsk;
-        unsigned numberServed { 0 };
-        RefPtr<Thread> thread;
-    };
-    // There will be no room for the stack of a thread, nor for what the allocator keeps for one.
-    std::array<MakerOfSmallBlocks, 2> makers;
-    for (auto& maker : makers) {
-        bool isExempt = &maker == &makers[1];
-        maker.thread = Thread::create("small blocks"_s, [&maker, isExempt] {
-            fastFree(fastMalloc(48));
-            // So does the first wait of a thread.
-            Atomic<uint8_t> word { 0 };
-            ParkingLot::compareAndPark(&word, static_cast<uint8_t>(1));
-            if (isExempt)
-                bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
-            maker.isReady.signal();
-            maker.mayAsk.wait();
-            std::array<void*, 16> blocks;
-            for (void*& block : blocks) {
-                if (!tryFastMalloc(8 * KB).getValue(block))
-                    block = nullptr;
-                maker.numberServed += !!block;
-            }
-            for (void* block : blocks)
-                fastFree(block);
-        });
-        maker.isReady.wait();
-    }
-
-    struct Mapping {
-        void* pages;
-        size_t size;
-    };
-    Vector<Mapping, 64> mappings;
-    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
-        while (void* pages = OSAllocator::tryReserveUncommitted(size))
-            mappings.append({ pages, size });
-    }
-    Vector<void*> pieces;
-    pieces.reserveInitialCapacity(256 * KB);
-    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
-        pieces.append(piece);
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    for (size_t size = 8 * KB; size >= 16; size /= 2) {
-        void* piece;
-        while (pieces.size() < pieces.capacity() && tryFastMalloc(size).getValue(piece))
-            pieces.append(piece);
-    }
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && !timesToldOfSmallPage);
-
-    // An allocator that does not remember what it refused cannot be asked again.
-    void* served = bmalloc::api::mallocAgainWithBallast();
-    AOT_TEST_CHECK(!served || !bmalloc::api::hasWholeAddressSpaceBallast());
-    std::array<unsigned, 2> timesTold;
-    for (size_t i = 0; i < makers.size(); ++i) {
-        makers[i].mayAsk.signal();
-        makers[i].thread->waitForCompletion();
-        timesTold[i] = timesToldOfSmallPage;
-    }
-    if (served) {
-        AOT_TEST_CHECK(makers[0].numberServed && timesTold[0]);
-        AOT_TEST_CHECK(makers[1].numberServed && timesTold[1] == timesTold[0]);
-        fastFree(served);
-    }
-
-    for (void* piece : pieces)
-        fastFree(piece);
-    for (auto [pages, size] : mappings)
-        OSAllocator::releaseDecommitted(pages, size, 0);
-    bmalloc::api::setAddressSpaceBallastHandler(nullptr);
-    bmalloc::api::setAddressSpaceBallastKeeper(nullptr);
-}
-
-// All the address space is taken. The first request of a thread also needs what the allocator keeps for the thread. Where the request may not fail, both are served.
-static void checkFirstRequestsOfThreadsAreServed()
-{
-    static std::atomic<bool> mayAsk;
-    static std::atomic<bool> mayEnd;
-    static std::atomic<unsigned> numberServed;
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-
-    // More threads than the allocator has room for in the pages it has.
-    std::array<RefPtr<Thread>, 48> threads;
-    for (auto& thread : threads) {
-        thread = Thread::create("first request"_s, [] {
-            while (!mayAsk.load())
-                usleep(1000);
-            void* block = fastMalloc(48);
-            fill(block, 48, 5);
-            ++numberServed;
-            while (!mayEnd.load())
-                usleep(1000);
-            AOT_TEST_CHECK(isFilled(block, 48, 5));
-            fastFree(block);
-        });
-    }
-
-    struct Mapping {
-        void* pages;
-        size_t size;
-    };
-    Vector<Mapping, 64> mappings;
-    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
-        while (void* pages = OSAllocator::tryReserveUncommitted(size))
-            mappings.append({ pages, size });
-    }
-    Vector<void*> pieces;
-    pieces.reserveInitialCapacity(256 * KB);
-    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
-        pieces.append(piece);
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    for (size_t size = 8 * KB; size >= 16; size /= 2) {
-        void* piece;
-        while (pieces.size() < pieces.capacity() && tryFastMalloc(size).getValue(piece))
-            pieces.append(piece);
-    }
-    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-
-    // An allocator that does not remember what it refused cannot be asked again.
-    if (void* served = bmalloc::api::mallocAgainWithBallast()) {
-        mayAsk.store(true);
-        while (numberServed.load() < threads.size())
-            usleep(1000);
-        fastFree(served);
-    }
-
-    for (void* piece : pieces)
-        fastFree(piece);
-    for (auto [pages, size] : mappings)
-        OSAllocator::releaseDecommitted(pages, size, 0);
-    mayAsk.store(true);
-    mayEnd.store(true);
-    for (auto& thread : threads)
-        thread->waitForCompletion();
-}
-#endif
 #endif
 
 static bool covers(MarkedBlockCage::Indices indices, uintptr_t base, const void* pointer, size_t size)
@@ -1433,54 +1059,21 @@ static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
     return hasThrown;
 }
 
-enum class FirstToRunOut : uint8_t { Structures, Storage };
-enum class ErrorGiven : uint8_t { TheOneOwed, OneOfAnotherRequest };
-
-// Structures and storage both run out before an error can be thrown: one error is owed for the two. The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown.
-template<FirstToRunOut first, ErrorGiven given>
-static void checkErrorOwedForStructuresAndStorageIsHeardOfByBoth()
+// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown.
+static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
 {
     TestVM test;
     JSGlobalObject* realm = test.createRealm();
     VM& vm = test.vm();
 
-    if constexpr (first == FirstToRunOut::Storage)
-        MarkedBlockCage::didUseAddressSpaceBallast(vm);
     runOutOfStructures(vm);
-    if constexpr (first == FirstToRunOut::Structures)
-        MarkedBlockCage::didUseAddressSpaceBallast(vm);
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().describeExhaustedLimit().contains("Structures"_s));
 
-    if constexpr (given == ErrorGiven::TheOneOwed)
-        AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
-    else
-        AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
     AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().describeExhaustedLimit().contains("Structures"_s));
     // Only an allocator that still waits for the error takes back what it gave out.
     AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain());
 }
-
-#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
-// The collection at a poll makes room. The error is taken back, and both have again what they gave out.
-template<FirstToRunOut first>
-static void checkErrorOwedForStructuresAndStorageIsTakenBackForBoth()
-{
-    keepAddressSpaceBallast();
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    TestVM test;
-    test.createRealm();
-    VM& vm = test.vm();
-
-    if constexpr (first == FirstToRunOut::Storage)
-        MarkedBlockCage::didUseAddressSpaceBallast(vm);
-    runOutOfStructures(vm);
-    if constexpr (first == FirstToRunOut::Structures)
-        MarkedBlockCage::didUseAddressSpaceBallast(vm);
-
-    AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !vm.traps().needsOutOfMemoryError());
-    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && StructureAlignedMemoryAllocator::releaseReserve());
-}
-#endif
 
 static void checkRangeIsReused()
 {
@@ -1675,17 +1268,6 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
         { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
-#if USE(MIMALLOC)
-        { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
-        { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
-        { "heap-cage/ballast/it-grows-with-the-vms"_s, runInProcessWithSharedRange<checkBallastGrowsWithVMs> },
-        { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
-        { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
-        { "heap-cage/ballast/a-thread-that-takes-small-pages-of-what-it-let-go-of-is-told"_s, runInProcessWithSharedRange<checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold> },
-        { "heap-cage/ballast/first-requests-of-threads-are-served"_s, runInProcessWithSharedRange<checkFirstRequestsOfThreadsAreServed> },
-        { "heap-cage/cage/error-owed-for-structures-then-storage-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Structures>> },
-        { "heap-cage/cage/error-owed-for-storage-then-structures-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Storage>> },
-#endif
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },
@@ -1704,10 +1286,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/dead-stack-lies-below-the-frame-that-asks"_s, withCage<checkDeadStackLiesBelowTheFrameThatAsks> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
-        { "heap-cage/cage/error-owed-for-structures-then-storage-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::TheOneOwed>> },
-        { "heap-cage/cage/error-owed-for-storage-then-structures-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::TheOneOwed>> },
-        { "heap-cage/cage/error-of-another-request-settles-structures-then-storage"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::OneOfAnotherRequest>> },
-        { "heap-cage/cage/error-of-another-request-settles-storage-then-structures"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::OneOfAnotherRequest>> },
+        { "heap-cage/cage/error-owed-for-structures-is-heard-of-by-their-allocator"_s, withCage<checkErrorOwedForStructuresIsHeardOfByTheirAllocator> },
         { "heap-cage/cage/error-of-another-request-leaves-what-is-owed-for-cells"_s, withCage<checkErrorOfAnotherRequestAndErrorOwedForCells<false>> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)

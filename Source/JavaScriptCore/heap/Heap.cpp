@@ -25,7 +25,6 @@
 #include "JSCJSValueInlines.h"
 
 #include "AOTRemovableFeature.h"
-#include "AddressSpaceBudget.h"
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "ButterflyInlines.h"
@@ -2399,9 +2398,6 @@ void Heap::runCollectionEpilogue()
     if (shouldSweepSynchronously())
         sweepSynchronously();
 
-    if (MarkedBlockCage::isRequired())
-        keepAddressSpaceBallast();
-
     if (Options::logGC()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
         dataLog((after - before).milliseconds(), "ms]\n");
@@ -2944,17 +2940,10 @@ void Heap::collectForExhaustedCage()
 #endif
 }
 
-bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator, RequestInExhaustedCage& request)
+bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
-#if USE(MIMALLOC)
-    // Storage comes from malloc.
-    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
-        return !std::exchange(request.m_hasAskedWithBallast, true);
-#else
-    UNUSED_PARAM(request);
-#endif
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())
             return false;

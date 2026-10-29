@@ -100,7 +100,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFConfig.h>
@@ -471,28 +470,6 @@ void Instance::captureCellHeaders()
     realm.emptyArgumentList = JSArray::create(*vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
 }
 
-#if USE(MIMALLOC)
-// The VM whose compiled code this thread runs.
-static thread_local VM* t_vmOfThread;
-static VM* s_vmOfFirstThread;
-
-static void didUseAddressSpaceBallastOnThisThread(bmalloc::api::UseOfAddressSpaceBallast use)
-{
-    using Use = bmalloc::api::UseOfAddressSpaceBallast;
-    static thread_local bool isTellingVM;
-    if (!t_vmOfThread || isTellingVM)
-        return;
-    // An error in the first thread ends the program. An error in a Worker ends the Worker, which gives back what it held. Where another thread was the first to find no room, the first thread is not told.
-    if (use != Use::LetGoOfFirstPiece && t_vmOfThread == s_vmOfFirstThread)
-        return;
-    // A thread that owes its error has heard, and has let go of nothing since.
-    if (use == Use::TakesWhatPiecesLeft && t_vmOfThread->traps().needsOutOfMemoryError())
-        return;
-    SetForScope scope { isTellingVM, true };
-    MarkedBlockCage::didUseAddressSpaceBallast(*t_vmOfThread);
-}
-#endif
-
 Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
@@ -538,23 +515,6 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
-#if USE(MIMALLOC)
-    if (!t_vmOfThread)
-        g_numberOfVMsWithAddressSpaceBallast.fetch_add(1, std::memory_order_relaxed);
-#endif
-    keepAddressSpaceBallast();
-#if USE(MIMALLOC)
-    t_vmOfThread = &vm;
-    if (!s_vmOfFirstThread) {
-        s_vmOfFirstThread = &vm;
-        bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
-    }
-    bmalloc::api::setAddressSpaceBallastHandler(didUseAddressSpaceBallastOnThisThread);
-    bmalloc::api::setAddressSpaceBallastKeeper([] {
-        keepAddressSpaceBallast();
-        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
-    });
-#endif
     return instance;
 }
 
@@ -567,10 +527,6 @@ void Instance::destroy(Instance* instance)
         vmState.instances.removeFirst(instance);
         vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
-#if USE(MIMALLOC)
-        if (vmState.instances.isEmpty() && std::exchange(t_vmOfThread, nullptr))
-            g_numberOfVMsWithAddressSpaceBallast.fetch_sub(1, std::memory_order_relaxed);
-#endif
     }
     vmState.counters->add(instance->runtime.counters);
     if (instance->state) {
@@ -832,45 +788,6 @@ static void fillOperations(void** entries)
 #undef AOT_FILL_OPERATION
 }
 
-#if USE(MIMALLOC)
-// Stores that leave the stubs' own roads may add a property, and what the engine then asks of malloc may not fail. While pieces of the ballast are missing such work would live on the rest of it.
-// So the thread gets its error ahead of the operation, where nothing has been changed yet. Only the table of a process under a limit on address space has these, and the operations have no test for it.
-template<Entry entry, auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
-struct CallWithWholeBallast;
-
-template<Entry entry, auto operation, typename Result, typename... Rest, bool isNoexcept>
-struct CallWithWholeBallast<entry, operation, Result JIT_OPERATION_ATTRIBUTES (Instance*, Rest...) noexcept(isNoexcept)> {
-    static Result JIT_OPERATION_ATTRIBUTES call(Instance* instance, Rest... rest) noexcept(isNoexcept)
-    {
-        if (!bmalloc::api::hasWholeAddressSpaceBallast()) [[unlikely]] {
-            if constexpr (std::is_same_v<Result, size_t>) {
-                // The operation that can throw decides.
-                return static_cast<size_t>(LeafAnswer::TakeSlowPath);
-            } else {
-                AOT_OPERATION_BEGIN(instance, entry);
-                if (MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(vm, globalObject, scope))
-                    OPERATION_RETURN(scope);
-            }
-        }
-        AOT_MUST_TAIL_CALL return operation(instance, rest...);
-    }
-};
-
-static void callStoresWithWholeBallast(void** entries)
-{
-#define AOT_CALL_WITH_WHOLE_BALLAST(name) \
-    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, CallWithWholeBallast<Entry::name, functionInTable<Entry::name, &name>>::call>();
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValGeneric)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByVal)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCache)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCacheSloppy)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdAndCache)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutById)
-    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdSloppy)
-#undef AOT_CALL_WITH_WHOLE_BALLAST
-}
-#endif
-
 static void fillThunkAndPointers(void** entries, const Image& image)
 {
     auto set = [&](Entry entry, void* pointer) {
@@ -938,10 +855,6 @@ RuntimeTable::RuntimeTable(VM& vm)
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
-#if USE(MIMALLOC)
-    if (hasAddressSpaceLimit() && !m_countsCalls)
-        callStoresWithWholeBallast(m_entries);
-#endif
     fillThunkAndPointers(m_entries, image);
     installOperationFrontEnds(m_entries, image);
     trapUnusedEntries(m_entries, image);
@@ -1250,7 +1163,6 @@ PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding)
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
-    keepAddressSpaceBallast();
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
     size_t sizeToLeaveFree = sizeToLeaveFreeForThread;
     // Once every thread that is starting has its stack, the range of the cells can still take more.
@@ -1333,13 +1245,6 @@ void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 {
     void* pages = tryReserveGuardedPages(bytes, usage);
-#if USE(MIMALLOC)
-    if (!pages) [[unlikely]] {
-        bmalloc::api::RequestWithBallast request;
-        while (!pages && request.tryMakeRoom())
-            pages = tryReserveGuardedPages(bytes, usage);
-    }
-#endif
     RELEASE_ASSERT(pages, bytes);
     return pages;
 }
