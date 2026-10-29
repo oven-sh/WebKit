@@ -1391,7 +1391,7 @@ void VM::pruneUnusedSourceProviderCaches()
     });
 }
 
-bool VM::hasExceptionsAfterHandlingTraps()
+NEVER_INLINE bool VM::hasExceptionsAfterHandlingTraps()
 {
     if (traps().needHandling(VMTraps::NonDebuggerAsyncEvents)) [[unlikely]]
         traps().handleTraps(VMTraps::NonDebuggerAsyncEvents);
@@ -1471,7 +1471,7 @@ void VM::throwTerminationExceptionIfNeeded()
         throwTerminationException();
 }
 
-Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
 {
     // The TerminationException should never be overridden.
     if (hasPendingTerminationException())
@@ -1532,7 +1532,7 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
 }
 #endif
 
-Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
 #if ENABLE(AOT)
@@ -1549,7 +1549,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
     return throwException(globalObject, exception);
 }
 
-Exception* VM::throwException(JSGlobalObject* globalObject, JSObject* error)
+NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, JSObject* error)
 {
     return throwException(globalObject, JSValue(error));
 }

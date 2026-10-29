@@ -89,13 +89,22 @@ private:
             size_t index = function.index();
             if (index + 1 >= offsets.size())
                 return { };
+            if (uint32_t list = index < longListOf.size() ? longListOf[index] : 0)
+                return longLists.subspan(longListOffsets[list - 1], longListOffsets[list] - longListOffsets[list - 1]);
             return targets.subspan(offsets[index], offsets[index + 1] - offsets[index]);
         }
 
         Adjacency inverse(const ParallelLoops&) const;
+        uint32_t addLongList(std::span<const FunctionID>);
+        void addInverseOfLongLists(Adjacency& result) const;
 
         Vector<uint32_t> offsets;
         Vector<FunctionID> targets;
+        // A long list is kept apart, once for all the functions that have it: n functions that each may call any of the n have n equal lists, and so have their callers.
+        // longListOf is empty, or holds one more than the number of the function's long list, or 0.
+        Vector<uint32_t> longListOf;
+        Vector<uint32_t> longListOffsets;
+        Vector<FunctionID> longLists;
     };
 
     Adjacency m_callees;

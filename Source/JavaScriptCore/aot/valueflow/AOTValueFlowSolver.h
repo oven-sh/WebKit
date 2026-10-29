@@ -153,7 +153,8 @@ class ListThatStaysInPlace {
     WTF_MAKE_NONCOPYABLE(ListThatStaysInPlace);
     static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
 public:
-    static constexpr size_t mostElements = 1u << 27;
+    // Records are named by 32-bit indexes, and the highest indexes have meanings of their own.
+    static constexpr size_t mostElements = (static_cast<size_t>(1) << 32) - (1u << 16);
 
     ListThatStaysInPlace() = default;
     ~ListThatStaysInPlace();

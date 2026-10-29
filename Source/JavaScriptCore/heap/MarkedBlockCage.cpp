@@ -36,6 +36,7 @@
 #endif
 #if OS(UNIX)
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace JSC {
@@ -268,6 +269,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         .usage = OSAllocator::FastMallocPages,
         .placement = ReservedRangeHeap::Placement::RandomWindow,
         .initialAccess = ReservedRangeHeap::InitialAccess::None,
+        .firstSegmentSize = GB,
     };
     ReservedRangeHeap* range = nullptr;
     bool reservesAllAboveBase = !distanceFromBase || !hasAddressSpaceLimit();
@@ -795,11 +797,18 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
-    // Under a limit on address space nothing may be left to make a String of.
-    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable)
+#if OS(LINUX)
+    // Under a limit on address space nothing may be left to make a String of, or for the host to write a crash report with.
+    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable) {
+        // The threads of a collection get here together. One of them says so and ends the process.
+        static std::atomic_flag isEnding = ATOMIC_FLAG_INIT;
+        while (isEnding.test_and_set())
+            pause();
         dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
-    else
-        dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
+        _exit(EXIT_FAILURE);
+    }
+#endif
+    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }

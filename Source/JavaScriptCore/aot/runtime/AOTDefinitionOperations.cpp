@@ -47,6 +47,7 @@
 #include <bit>
 #include <optional>
 #include <span>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -361,9 +362,13 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     RETURN_IF_EXCEPTION(scope, false);
     if (isDefined)
         return true;
-    if (bits.hasGet && !valueOrGetter.isUndefined() && !valueOrGetter.isCallable())
+    // A closure of the program says by its type that it can be called.
+    auto isFunctionOrUndefined = [](JSValue value) {
+        return value.isUndefined() || (value.isCell() && isCompiledCalleeType(value.asCell()->type())) || value.isCallable();
+    };
+    if (bits.hasGet && !isFunctionOrUndefined(valueOrGetter))
         return false;
-    if (bits.hasSet && !setter.isUndefined() && !setter.isCallable())
+    if (bits.hasSet && !isFunctionOrUndefined(setter))
         return false;
     if (tryDefineAbsentProperty(globalObject, object, name, valueOrGetter, setter, bits))
         return true;
@@ -380,8 +385,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     JSValue setter = JSValue::decode(encodedSetter);
     auto bits = std::bit_cast<PropertyDescriptorBits>(descriptorBits);
     if (object.isObject()) [[likely]] {
-        auto name = JSValue::decode(key).toPropertyKey(globalObject);
-        OPERATION_RETURN_IF_EXCEPTION(scope);
+        // The string keeps its atom alive.
+        Identifier converted;
+        StringImpl* text = JSValue::decode(key).isString() ? asString(JSValue::decode(key))->tryGetValueImpl() : nullptr;
+        if (!text || !text->isAtom()) {
+            converted = JSValue::decode(key).toPropertyKey(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+            text = converted.impl();
+        }
+        PropertyName name(static_cast<UniquedStringImpl*>(text));
         bool isDefined = tryDefineOwnPropertyFromBits(globalObject, asObject(object), name, valueOrGetter, setter, bits);
         OPERATION_RETURN_IF_EXCEPTION(scope);
         if (isDefined) [[likely]]
@@ -519,17 +531,6 @@ static void defineMethod(JSGlobalObject* globalObject, JSObject* holder, Propert
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A class's prototype object is marked as a prototype when it is created, but nothing inherits from it until the definition ends.
-// Defining the accessor before the mark keeps JSObject::notifyPresenceOfIndexedAccessors() from giving the realm a bad time.
-static void defineIndexedAccessorOnClassPrototype(JSGlobalObject* globalObject, JSObject* prototype, PropertyName key, JSObject* function, MethodKind kind)
-{
-    Structure* structure = prototype->structure();
-    structure->setMayBePrototype(false);
-    defineMethod(globalObject, prototype, key, function, kind);
-    structure->setMayBePrototype(true);
-    prototype->didBecomePrototype(globalObject->vm());
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JSCell* classObject, EncodedJSValue property, JSCell* function, uint32_t sideAndKind))
 {
     constexpr Entry entry = Entry::operationAOTDefineMethod;
@@ -548,9 +549,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
     MethodKind kind = static_cast<MethodKind>(bits.kind);
     {
         ClassTable::MemberDefinition definition(instance->state->objects->classes, *classLayout, side, key.impl());
-        if (side == ClassSide::Prototype && kind != MethodKind::Method && parseIndex(key) && holder->mayBePrototype())
-            defineIndexedAccessorOnClassPrototype(globalObject, holder, key, member, kind);
-        else if (!tryDefineClassMemberWithoutTransition(globalObject, *closure, *classLayout, holder, key, member, kind))
+        SetForScope prototypeBeingDefined(vm.aotState().classPrototypeBeingDefined, side == ClassSide::Prototype ? holder : nullptr);
+        if (!tryDefineClassMemberWithoutTransition(globalObject, *closure, *classLayout, holder, key, member, kind))
             defineMethod(globalObject, holder, key, member, kind);
     }
     OPERATION_RETURN_IF_EXCEPTION(scope);

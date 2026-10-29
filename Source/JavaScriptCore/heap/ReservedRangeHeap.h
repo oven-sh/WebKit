@@ -44,6 +44,8 @@ public:
         OSAllocator::Usage usage { OSAllocator::UnknownUsage };
         Placement placement { Placement::Anywhere };
         InitialAccess initialAccess { InitialAccess::ReadWrite };
+        // Of a range that is reserved whole without access. malloc finds a segment full by failing, and then it returns the free memory of the whole process to the system.
+        size_t firstSegmentSize { 0 };
     };
 
     static ReservedRangeHeap* tryCreate(const Request&);

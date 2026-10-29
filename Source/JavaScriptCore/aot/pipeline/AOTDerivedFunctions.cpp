@@ -293,7 +293,7 @@ DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
     return m_phase->entries[ordinalOf(id)];
 }
 
-const Function& DerivedFunctions::at(FunctionID id) const
+NEVER_INLINE const Function& DerivedFunctions::at(FunctionID id) const
 {
     Entry& entry = entryOf(id);
     if (const Function* function = entry.published.load(std::memory_order_acquire))

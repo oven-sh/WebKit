@@ -487,11 +487,17 @@ void ListThatStaysInPlace<T>::takeMemoryFor(size_t size)
 {
     constexpr size_t elementsPerStep = 1u << 16;
     static_assert(!(elementsPerStep * sizeof(T) % (64 * KB)) && !(mostElements % elementsPerStep));
-    RELEASE_ASSERT(size <= mostElements);
+    if (size > mostElements) [[unlikely]]
+        exitProgramTooLarge();
     Locker locker { m_lock };
     if (!m_elements) {
+        // This takes address space alone. A system that is short of it gives less, and the list ends there.
+        constexpr size_t fewestElementsToAskFor = 1u << 27;
         m_numberReserved = std::max(elementsPerStep, bytesToReserve(mostElements * sizeof(T)) / sizeof(T) / elementsPerStep * elementsPerStep);
-        m_elements = static_cast<T*>(reservePages(m_numberReserved * sizeof(T)));
+        while (!(m_elements = static_cast<T*>(tryReservePages(m_numberReserved * sizeof(T)))) && m_numberReserved > fewestElementsToAskFor)
+            m_numberReserved = m_numberReserved / 2 / elementsPerStep * elementsPerStep;
+        if (!m_elements) [[unlikely]]
+            exitOutOfMemory();
     }
     if (size > m_numberReserved) [[unlikely]]
         exitOutOfMemory();

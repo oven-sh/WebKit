@@ -368,7 +368,7 @@ static std::optional<bool> isMarkedAsESModule(VM& vm, JSGlobalObject* realm, con
 
 bool tryAddPendingStar(VM& vm, Object& target, Object& source, FunctionID getter, uint32_t rule)
 {
-    ASSERT(!(rule & ~(starRuleKeyCaptureSlot | starRuleReusesDescriptors)));
+    ASSERT(!(rule & ~(starRuleKeyCaptureSlot | starRuleReusesDescriptors | starRuleKeyIsLiteralStringWord)));
     JSGlobalObject* realm = target.structure()->realm();
     if (&target == &source || source.structure()->realm() != realm)
         return false;
@@ -647,6 +647,9 @@ void Object::didChangeExtraProperties(VM& vm)
     const CompiledStructure& current = compiledStructure();
     StructureID namedStructureID = current.extraPropertiesStructureID();
     if (namedStructureID == extra->structureID())
+        return;
+    // A dictionary keeps its Structure while it grows, so a Structure that names none goes on saying all that is known.
+    if (!namedStructureID && extra->structure()->isDictionary())
         return;
     StructureTable& structures = state().objects->structures;
     CompiledStructure* updatedStructure = structures.existingWithExtraProperties(current, *extra->structure());

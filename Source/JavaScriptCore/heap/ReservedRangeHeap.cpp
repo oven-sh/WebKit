@@ -113,7 +113,7 @@ static size_t sizeOfFirstSegment(size_t reservedSize, const ReservedRangeHeap::R
 {
 #if OS(LINUX) && USE(MIMALLOC)
     if (usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && !canGrow(request)) {
-        size_t size = roundUpToMultipleOf<mallocChunkSize>(request.unusedPrefixSize + minSegmentSize);
+        size_t size = roundUpToMultipleOf<mallocChunkSize>(request.unusedPrefixSize + std::max(request.firstSegmentSize, minSegmentSize));
         if (size + minSegmentSize <= reservedSize)
             return size;
     }

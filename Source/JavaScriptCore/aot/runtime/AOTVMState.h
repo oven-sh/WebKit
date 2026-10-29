@@ -81,6 +81,8 @@ public:
     bool validatesRuntime { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
+    // It is marked as a prototype when it is created, but nothing inherits from it until the class definition ends. Only compared with.
+    JSObject* classPrototypeBeingDefined { nullptr };
     // Its Date.prototype has the members that JSON.stringify reads on a date, and keeps them. Only compared with, never read through: a realm may be gone.
     JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     // They run the CommonJS files of a graph in front of the jobs in which the loader of `bun run` would.

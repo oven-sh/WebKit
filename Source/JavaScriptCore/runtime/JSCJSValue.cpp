@@ -61,7 +61,7 @@ uint64_t JSValue::toLength(JSGlobalObject* globalObject) const
     return static_cast<uint64_t>(std::min(d, maxSafeInteger()));
 }
 
-double JSValue::toNumberSlowCase(JSGlobalObject* globalObject) const
+NEVER_INLINE double JSValue::toNumberSlowCase(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -527,7 +527,8 @@ static NEVER_INLINE void enterFunctionOfJobInAsyncContext(JSGlobalObject* global
     enterFunctionOfJob(globalObject, vm, promise, function, argument, endsJob, asyncContextIsPutBack);
 }
 
-void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+// runInternalMicrotask() leaves by a tail call to a job function. Link-time optimization would inline the job function there, and the frame it was to leave would stay.
+NEVER_INLINE void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
     bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
     if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
@@ -535,7 +536,7 @@ void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint
     enterFunctionOfJob(globalObject, vm, promise, handler, argument, endsJob, false);
 }
 
-void runFunctionJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache* microtaskCallCache)
+NEVER_INLINE void runFunctionJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache* microtaskCallCache)
 {
     bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
     if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
@@ -576,7 +577,7 @@ static NEVER_INLINE void resumeAsyncFunctionInAsyncContext(JSGlobalObject* globa
     resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
 }
 
-void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+NEVER_INLINE void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
     bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
     bool isEnteredByJobLoop = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
@@ -632,7 +633,7 @@ static NEVER_INLINE void resumeAsyncGeneratorBodyInAsyncContext(JSGlobalObject* 
     resumeAsyncGeneratorBody(vm, generator, resumeValue, resumeMode, microtaskCallCache);
 }
 
-void runAsyncGeneratorBodyJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+NEVER_INLINE void runAsyncGeneratorBodyJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
     auto* generator = uncheckedDowncast<JSAsyncGenerator>(context);
     JSGenerator::ResumeMode resumeMode = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected ? JSGenerator::ResumeMode::ThrowMode

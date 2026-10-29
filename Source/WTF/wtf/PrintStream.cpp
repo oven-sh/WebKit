@@ -76,7 +76,7 @@ void PrintStream::end()
 {
 }
 
-void printInternal(PrintStream& out, const char* string)
+NEVER_INLINE void printInternal(PrintStream& out, const char* string)
 {
     out.printf("%s", string);
 }

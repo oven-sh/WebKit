@@ -384,7 +384,8 @@ static void testReleasingFreeMemoryPurgesNoOtherRange()
     void* memory = first.tryAllocate(4 * MB);
     AOT_TEST_CHECK(memory);
     fill(memory, 4 * MB, 3);
-    void* page = static_cast<char*>(memory) + 2 * MB;
+    // malloc may start a large block anywhere in a page.
+    void* page = std::bit_cast<void*>(roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(memory) + 2 * MB));
     AOT_TEST_CHECK(isResident(page));
     first.free(memory);
     first.releaseFreeMemory();
@@ -560,7 +561,7 @@ static void runInProcessWithCage()
 #if OS(LINUX) && !ASAN_ENABLED
 static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
 
-// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of.
+// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of and exits.
 static void testMarkStackThatCannotGrowSaysWhy()
 {
     if (MarkedBlockCage::isEnabled()) {
@@ -580,7 +581,7 @@ static void testMarkStackThatCannotGrowSaysWhy()
     ChildProcessLauncher launcher("/bin/sh"_s, { });
     Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 2097152 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(markStackTest), "--useAOT=true"_s };
     ChildProcessResult result = launcher.run(arguments.span());
-    if (result.outcome != ChildProcessOutcome::Crashed || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
+    if (!result.exitedWith(EXIT_FAILURE) || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
         dataLogLn(result.output);
         dataLogLn("The process under a limit on address space ", result.description());
         failNativeTest(__FILE__, __LINE__, markStackTest.characters());

@@ -170,8 +170,9 @@ void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
 void encodeCellOfProgram(StubAssembler& jit, GPRReg cell, GPRReg word)
 {
     // The byte before a cell kept in a frame is unreadable (AOTCheckedFrameCells.h); the byte before any other cell is readable.
+    // With the address sanitizer that byte belongs to a cell that is never allocated and stays poisoned, so the read goes without the check of the shadow.
     if (jit.options().checksProofs)
-        jit.branchTest8(CCallHelpers::Zero, Address(cell, -1)).link(&jit);
+        jit.CCallHelpers::branchTest8(CCallHelpers::Zero, Address(cell, -1)).link(&jit);
     encodeCell32(jit, cell, word);
 }
 

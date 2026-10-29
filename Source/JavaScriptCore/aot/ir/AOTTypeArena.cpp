@@ -584,22 +584,22 @@ const Record& TypeInterningPhase::recordAt(const TypeInterningPhase* phase, IDTy
     return storage->recordsOf<Record>().records[position];
 }
 
-const Type& TypeTable::provisionalAt(TypeID id) const
+NEVER_INLINE const Type& TypeTable::provisionalAt(TypeID id) const
 {
     return TypeInterningPhase::recordAt<Type>(phaseOfProvisionalIDs(), id);
 }
 
-const LayoutSet& TypeTable::provisionalAt(LayoutSetID id) const
+NEVER_INLINE const LayoutSet& TypeTable::provisionalAt(LayoutSetID id) const
 {
     return TypeInterningPhase::recordAt<LayoutSet>(phaseOfProvisionalIDs(), id);
 }
 
-const CalleeSet& TypeTable::provisionalAt(CalleeSetID id) const
+NEVER_INLINE const CalleeSet& TypeTable::provisionalAt(CalleeSetID id) const
 {
     return TypeInterningPhase::recordAt<CalleeSet>(phaseOfProvisionalIDs(), id);
 }
 
-const PropertyKey& TypeTable::provisionalAt(PropertyKeyID id) const
+NEVER_INLINE const PropertyKey& TypeTable::provisionalAt(PropertyKeyID id) const
 {
     return TypeInterningPhase::recordAt<PropertyKey>(phaseOfProvisionalIDs(), id);
 }

@@ -82,7 +82,15 @@ public:
                 step(index, 0);
             return;
         }
-        RELEASE_ASSERT(count <= mostIndices);
+        // A ticket has room for so many indices. More of them go in batches.
+        if (count > mostIndices) [[unlikely]] {
+            for (unsigned first = 0; first < count; first += mostIndices) {
+                run(std::min(mostIndices, count - first), [&](unsigned index, unsigned worker) {
+                    step(first + index, worker);
+                });
+            }
+            return;
+        }
         m_step = &step;
         m_helpersWanted.store(std::min(m_mostHelpers, count / 2), std::memory_order_relaxed);
         m_numberDone.store(0);
@@ -299,7 +307,8 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
 {
     ValueFlowNodeID first(m_numberOfNodes);
     size_t size = static_cast<size_t>(m_numberOfNodes) + count;
-    RELEASE_ASSERT(size < ValueFlowRoundLog::numberedByLog);
+    if (size >= ValueFlowRoundLog::numberedByLog) [[unlikely]]
+        exitProgramTooLarge();
     if (size > m_capacity) {
         size_t capacity = std::max<size_t>(m_capacity ? m_capacity * 2 : size * 4, std::max<size_t>(size, 4096));
         m_gates.grow(m_numberOfNodes, capacity);
@@ -358,7 +367,8 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
     });
     if (!number) {
         number = static_cast<uint32_t>(m_masks.size());
-        RELEASE_ASSERT(*number < 1u << 22);
+        if (*number >= 1u << 22) [[unlikely]]
+            exitProgramTooLarge();
         m_numberOfMask.add(hash, *number);
         mask.lowMembersAdmitted = lowMembersOf(admitted, *m_makers[0]);
         m_masks.append(mask);

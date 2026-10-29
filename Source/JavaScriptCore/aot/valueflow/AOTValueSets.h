@@ -227,15 +227,17 @@ public:
 
     void forEachMember(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
     {
-        if (isComplement(set)) {
+        if (isComplement(set)) [[unlikely]] {
+            auto callForRange = [&](uint32_t begin, uint32_t end) NEVER_INLINE {
+                for (uint32_t member = begin; member < end; ++member)
+                    functor(ValueFlowObjectID(member));
+            };
             uint32_t next = 0;
             forEachStoredMember(set, [&](uint32_t member) {
-                for (; next < member; ++next)
-                    functor(ValueFlowObjectID(next));
-                ++next;
+                callForRange(next, member);
+                next = member + 1;
             });
-            for (; next < m_sizeOfUniverse; ++next)
-                functor(ValueFlowObjectID(next));
+            callForRange(next, m_sizeOfUniverse);
             return;
         }
         forEachStoredMember(set, [&](uint32_t member) {
@@ -564,25 +566,61 @@ private:
         return false;
     }
 
+    // At most 64 members: first + n for every bit n of bits.
+    struct WordOfMembers {
+        uint32_t first;
+        uint64_t bits;
+    };
+
+    // The words of a set that is stored as blocks, in ascending order.
+    class WordsOfBlocks {
+    public:
+        void start(const ValueSets&, const Run&);
+        // No bits at the end.
+        WordOfMembers next();
+
+    private:
+        const ValueSets* m_sets;
+        std::span<const uint64_t> m_entries;
+        uint64_t m_presentPlaces;
+        const uint32_t* m_block;
+        uint64_t m_presentWords;
+        const uint64_t* m_word;
+        uint32_t m_firstPlace;
+        uint32_t m_firstOfBlock;
+    };
+
+    // A set of several members is read a word at a time whatever its form, so the functor is inlined twice, not once per form.
     ALWAYS_INLINE bool anyStoredMember(ValueSetID set, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const
     {
         if (holdsOneMember(storedSetOf(set)))
             return functor(onlyMemberOf(storedSetOf(set)));
         const Run& run = m_lists.at(storedSetOf(set));
-        if (isShort(run)) {
-            for (uint64_t bits = run.lowestMembers; bits; bits &= bits - 1) {
-                if (functor(static_cast<uint32_t>(std::countr_zero(bits))))
+        WordOfMembers word { 0, run.lowestMembers };
+        std::span<const uint32_t> highMembers;
+        WordsOfBlocks blocks;
+        bool isStoredAsBlocks = !isShort(run);
+        if (isStoredAsBlocks) {
+            blocks.start(*this, run);
+            word = blocks.next();
+        } else
+            highMembers = highMembersOf(run);
+        for (;;) {
+            for (uint64_t bits = word.bits; bits; bits &= bits - 1) {
+                if (functor(word.first + static_cast<uint32_t>(std::countr_zero(bits))))
                     return true;
             }
-            for (uint32_t member : highMembersOf(run)) {
-                if (functor(member))
-                    return true;
+            if (!highMembers.empty()) {
+                word = { highMembers.front(), 1 };
+                highMembers = highMembers.subspan(1);
+                continue;
             }
-            return false;
+            if (!isStoredAsBlocks)
+                return false;
+            word = blocks.next();
+            if (!word.bits)
+                return false;
         }
-        return anyStoredBlock(run.span(), [&](uint32_t place, uint32_t block) {
-            return anyMemberOfStoredBlock(place, block, functor);
-        });
     }
 
     void forEachStoredMember(ValueSetID set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
