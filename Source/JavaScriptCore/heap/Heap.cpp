@@ -2905,9 +2905,17 @@ StoredCellLog& Heap::storedCellLog()
     return *m_storedCellLog;
 }
 
-bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
+bool Heap::isOutsideCage(AlignedMemoryAllocator* allocator) const
+{
+    return allocator == fastMallocAllocator.get() || allocator == primitiveGigacageAllocator.get();
+}
+
+bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext, AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
+        return false;
+    // A collection takes its own memory from malloc. Where malloc has none for storage, the caller throws.
+    if (isOutsideCage(exhaustedAllocator))
         return false;
     if (deferralContext || isDeferred()) {
         cage().didFindNoRoomWithoutCollecting();
@@ -2941,7 +2949,7 @@ bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocat
 {
     if (!MarkedBlockCage::isRequired())
         return false;
-    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
+    if (isOutsideCage(exhaustedAllocator))
         return false;
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())

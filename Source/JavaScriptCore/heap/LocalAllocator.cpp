@@ -198,7 +198,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     if (!block) [[unlikely]] {
         if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
             failureMode = AllocationFailureMode::Assert;
-        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+        if (heap.tryCollectForExhaustedCage(deferralContext, subspace->alignedMemoryAllocator())) {
             if (m_currentBlock)
                 return allocate(heap, cellSize, deferralContext, failureMode);
             result = tryAllocateWithoutCollecting(cellSize);

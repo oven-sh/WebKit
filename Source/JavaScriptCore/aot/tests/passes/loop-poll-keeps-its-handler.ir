@@ -1,0 +1,59 @@
+# A poll throws the out-of-memory error that an operation has left owed because it could not throw it: a catch, or a call whose callee caught what it threw.
+# So the poll of a loop under a handler keeps the handler, also where nothing in the loop allocates.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveRedundantHandlers
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="nothingAllocates" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+# CHECK: b1(v2: int[0, 100]) handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK: b2(v5: int[0, 99]):
+# CHECK: role=CatchHandler
+}
+
+function f1 name="rarePathCatches" parameters=[{type=int[0, 100]}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4) handler=b7():
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7) handler=b7():
+    Branch v1 -> taken b3(), notTaken b5()
+  b3() frequency=Rare handler=b4():
+    v8 = Call v2
+    Jump -> next b5()
+  b4() role=CatchHandler frequency=Rare handler=b7():
+    v9 = CatchValue
+    Jump -> next b5()
+  b5() handler=b7():
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b6():
+    Return v4
+  b7() role=CatchHandler:
+    v12 = CatchValue
+    Return v12
+# CHECK: b1(v4: int[0, 100]) handler=b7():
+# CHECK-NEXT: LoopHint
+# CHECK: b3() frequency=Rare handler=b4():
+# CHECK: b4() role=CatchHandler frequency=Rare handler=b7():
+}

@@ -14,6 +14,7 @@
 #include "AOTStringTable.h"
 #include <optional>
 #include <span>
+#include <wtf/Int128.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,8 +22,10 @@ class WordHasher {
 public:
     void add(uint32_t first, uint32_t second = 0)
     {
-        m_hash = (m_hash ^ (static_cast<uint64_t>(first) << 32 | second)) * 0x9e3779b97f4a7c15ull;
-        m_hash ^= m_hash >> 29;
+        // A provisional id and a final id can differ in their highest bits alone. The low half of a product keeps such a
+        // difference in the highest bits, where the id in the next word can cancel it. The high half spreads it.
+        UInt128 product = static_cast<UInt128>(m_hash ^ (static_cast<uint64_t>(first) << 32 | second)) * 0x9e3779b97f4a7c15ull;
+        m_hash = static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64);
     }
 
     void addNonIDWords(uint32_t first, uint32_t second = 0) { add(first, second); }

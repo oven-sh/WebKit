@@ -24,6 +24,7 @@ import type {
   IntrinsicPosition,
   IterationKind,
   KeyedProtocol,
+  LinkedFunctionExpansion,
   Mutability,
   NativeCallKind,
   OperandRole,
@@ -672,7 +673,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "PrependArgument"; callee: ModelName; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
-  | { intrinsic: "LinkedFunction"; function: ModelFunction }
+  | { intrinsic: "LinkedFunction"; function: ModelFunction; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"

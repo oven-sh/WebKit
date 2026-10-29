@@ -1,5 +1,5 @@
-# What allocates and finds no room throws where it returns, under its own handler, so the poll of a loop has nothing to throw to a handler. Behind selection it has none, whatever the turns of the loop do.
-# A store that adds a field throws nothing: in a loop that holds one, the poll of the loop keeps the handler.
+# A poll throws the out-of-memory error that an operation has left owed, so after selection, as before it, the poll of a loop under a handler keeps the handler.
+# A store that adds a field throws nothing: a poll after it throws for it.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass Select
@@ -25,7 +25,7 @@ function f0 name="likelyTurnsAllocate" parameters=[{type=int[0, 100]}] results=[
   b4() role=CatchHandler:
     v9 = CatchValue
     Return v9
-# CHECK: b1(v2: int[0, 100]):
+# CHECK: b1(v2: int[0, 100]) handler=b4():
 # CHECK-NEXT: LoopHint
 # CHECK: b2(v5: int[0, 99]) handler=b4():
 # CHECK-NEXT: = NewObject
@@ -54,5 +54,29 @@ function f1 name="turnsAddFields" parameters=[{type=L1}, {type=int[0, 100]}] res
 # CHECK-NEXT: LoopHint
 # CHECK: b2(v6: int[0, 99]) handler=b4():
 # CHECK: LoopHint [followsStores]
+# CHECK: role=CatchHandler
+}
+
+function f2 name="callsBeforeTheLoop" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: anything) handler=b4():
+    v2 = Call v1
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4) handler=b4():
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7) handler=b4():
+    v8 = Integer integer=1
+    v9 = Add v7, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+# CHECK: b1(v4: int[0, 100]) handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: LoopHint
 # CHECK: role=CatchHandler
 }

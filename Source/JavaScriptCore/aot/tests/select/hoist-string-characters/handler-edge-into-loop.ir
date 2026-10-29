@@ -39,11 +39,11 @@ function f0 name="handler-in-loop" parameters=[{type=string}, {type=number}, {ty
     Return v7
 }
 
-# The loop is covered by a handler and the block in front of it is not: the string is flattened in a block of its own under that handler. Nothing in the loop allocates any more, so the loop has no handler
+# The loop is covered by a handler and the block in front of it is not: the string is flattened in a block of its own under that handler
 # CHECK-LABEL: function f1 name="covered-loop-entered-from-outside"
 # CHECK-NOT: FlattenString
 # CHECK: Jump -> next [[entry1]]()
-# CHECK-NEXT: b1(v5: int|whole, v6: undefined|number):
+# CHECK-NEXT: b1(v5: int|whole, v6: undefined|number) handler=b4():
 # CHECK-NEXT: LoopHint
 # CHECK: b2():
 # CHECK-NEXT: v9: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5

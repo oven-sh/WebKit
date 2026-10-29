@@ -20,6 +20,7 @@
 #include "AOTElideStackChecks.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTMethodTableEntrypoints.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRelocation.h"
@@ -616,6 +617,11 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
                 continue;
             }
             nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
+        }
+        // A call through the method table enters the lookup or any entrypoint of its selector, and reads the result from where the lookup returns it.
+        for (uint32_t index : findIndicesInParallel(loops, count, [&](unsigned index) { return program.functions[index].hasBody() && program.functions[index].role == FunctionRole::TableEntrypoint; })) {
+            if (FunctionID lookup = inputs.derivedFunctions->find(tableLookupKey(selectorOfTableFunction(program.functions[index]))))
+                nodes[index].unify(&nodes[lookup.index()]);
         }
 
         Vector<uint32_t> roots(count + 1);

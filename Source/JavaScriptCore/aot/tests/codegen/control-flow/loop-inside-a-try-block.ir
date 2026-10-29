@@ -9,6 +9,7 @@
 # }
 # declare const input: any;
 # (globalThis as any).answer = total(new Float64Array(input));
+# TODO: nobody: the poll of a loop inside a try block keeps its handler, because it may throw an out-of-memory error that is owed, so the back end leaves the loop as written
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized loops f1

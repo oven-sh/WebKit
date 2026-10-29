@@ -732,6 +732,8 @@ export type ErrorKind = (typeof errorKinds)[number];
 export const nativeCallKinds = ["Cpp", "Rust", "NewCppFunction", "NewRustFunction", "Bindgen"] as const;
 export type NativeCallKind = (typeof nativeCallKinds)[number];
 
+export type LinkedFunctionExpansion = "IteratorGenericClose" | "IteratorGenericNext";
+
 export type IntrinsicSpec =
   | { intrinsic: "Operation"; opcode: string }
   | { intrinsic: "Conversion"; conversion: Exclude<Conversion, "None" | "Dictionary"> }
@@ -750,6 +752,7 @@ export type IntrinsicSpec =
   | { intrinsic: "PrependArgument"; callee: string; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
+  | { intrinsic: "LinkedFunction"; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"
@@ -764,7 +767,6 @@ export type IntrinsicSpec =
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
         | "ModulePrivateName"
-        | "LinkedFunction"
         | "Erased"
         | "BundleError";
     };

@@ -3649,7 +3649,8 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
-// An operation whose allocation fails throws when it returns.
+// An operation whose allocation fails throws when it returns. A poll throws the out-of-memory error that an operation has left owed because it could not throw it:
+// a store that adds a field, a catch, or a call whose callee caught what it threw. So a loop poll keeps its handler, also where nothing in the loop allocates.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
     auto needsHandler = [](const EffectsOnEdges& effects) {
@@ -3710,98 +3711,6 @@ static constexpr Rule redundantHandlerRules[] {
     { TerminatorKindSet { TerminatorKind::Throw, TerminatorKind::Rethrow }, skipRethrowingHandler },
 };
 
-static bool isRare(const Block& block)
-{
-    return block.frequency.predicted() == BlockFrequency::Rare;
-}
-
-static bool isPollOfLoop(const Function& function, ValueID id)
-{
-    return function.at(id).opcode == Opcode::LoopHint && !function.at(id).followsStores();
-}
-
-static bool likelyIterationsDoNotAllocate(FunctionAnalyses& analyses, const NaturalLoop& loop)
-{
-    const Function& function = analyses.function();
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        const Block& block = function.at(loop.at(index));
-        if (isRare(block))
-            continue;
-        for (ValueID value : block.values) {
-            if (!isPollOfLoop(function, value) && analyses.effectsOf(value).onAnyEdge().mayCollect)
-                return false;
-        }
-        if (analyses.effectsOfTerminator(loop.at(index)).onAnyEdge().mayCollect)
-            return false;
-    }
-    return true;
-}
-
-// A store that adds a field does not throw when its allocation fails: a poll under the handler throws for it, and in a loop that may be the loop's poll.
-static bool addsFields(const Function& function, const NaturalLoop& loop)
-{
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        for (ValueID id : function.at(loop.at(index)).values) {
-            const Value& value = function.at(id);
-            if (value.opcode == Opcode::PutSlotOrAdd || (value.opcode == Opcode::LoopHint && value.followsStores()))
-                return true;
-            if (value.opcode == Opcode::PutSlots && std::ranges::any_of(value.placedKeys(), &PlacedKey::mayAdd))
-                return true;
-        }
-    }
-    return false;
-}
-
-enum class PollRemovalMode : uint8_t { LikelyIterationsDoNotAllocate, NoFieldIsAdded };
-
-// Any other failed allocation throws when the operation returns, under its own handler, so a loop's poll has nothing to throw to a handler: it only stops the thread for the collector or terminates it.
-// Outside the handler, the back end treats the loop as it would outside a try block. Until selection, a header under a handler shows that the loop is inside the try block, which lets selection
-// hoist what may throw in the loop to before it. So before selection a poll is only removed if the likely iterations do not allocate, and after selection whenever the loop adds no field.
-static bool removeLoopPollsFromHandlers(FunctionPassContext& context, PollRemovalMode pollRemovalMode)
-{
-    Function& function = context.function;
-    FunctionAnalyses& analyses = context.analyses;
-    if (!analyses.cfg().hasCycle())
-        return false;
-    auto needsHandler = [](const EffectsOnEdges& effects) {
-        return effects.mayThrow() || effects.onAnyEdge().mayCollect;
-    };
-    struct Poll {
-        ProgramPoint point;
-        bool restNeedsHandler;
-    };
-    Vector<Poll, 4> polls;
-    const NaturalLoops& loops = analyses.naturalLoops();
-    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
-        const NaturalLoop& loop = loops.loop(loopIndex);
-        std::optional<bool> canRemovePoll;
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            BlockID id = loop.at(index);
-            const Block& block = function.at(id);
-            if (!block.handler || loops.innerMostLoopOf(id) != &loop)
-                continue;
-            size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
-            if (position == notFound || !isPollOfLoop(function, block.values[position]))
-                continue;
-            if (!canRemovePoll)
-                canRemovePoll = pollRemovalMode == PollRemovalMode::NoFieldIsAdded ? !addsFields(function, loop) : likelyIterationsDoNotAllocate(analyses, loop);
-            if (!*canRemovePoll)
-                break;
-            bool restNeedsHandler = needsHandler(analyses.effectsOfTerminator(id)) || std::ranges::any_of(block.values.span().subspan(position + 1), [&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
-            polls.append({ { id, static_cast<uint32_t>(position) }, restNeedsHandler });
-        }
-    }
-    IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    for (const Poll& poll : polls) {
-        if (poll.restNeedsHandler) {
-            builder.setOrigin(function.at(function.at(poll.point.block).values[poll.point.index]).origin());
-            builder.splitBlock({ poll.point.block, poll.point.index + 1 });
-        }
-        builder.removeHandler(poll.point.block);
-    }
-    return !polls.isEmpty();
-}
-
 // A store that adds a field allocates and may not collect, so it does not throw when its allocation fails. Under a handler, a poll after the last such store of a block throws for them.
 static bool pollAfterFieldAddingStores(FunctionPassContext& context)
 {
@@ -3829,10 +3738,10 @@ static bool pollAfterFieldAddingStores(FunctionPassContext& context)
     return hasChanged;
 }
 
-static PassOutcome removeRedundantHandlers(FunctionPassContext& context, bool hasMovedPolls)
+static PassOutcome removeRedundantHandlers(FunctionPassContext& context, bool hasAddedPolls)
 {
     if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return hasMovedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
+        return hasAddedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
     Rewrite(context).builder().emptyUnreachableBlocks();
     return PassOutcome::Changed;
 }
@@ -3841,20 +3750,18 @@ PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    bool hasMovedPolls = pollAfterFieldAddingStores(context);
-    hasMovedPolls |= removeLoopPollsFromHandlers(context, PollRemovalMode::LikelyIterationsDoNotAllocate);
-    return removeRedundantHandlers(context, hasMovedPolls);
+    bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    return removeRedundantHandlers(context, hasAddedPolls);
 }
 
 PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext& context, bool removedAllocationUnderHandler)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    bool hasMovedPolls = pollAfterFieldAddingStores(context);
-    hasMovedPolls |= removeLoopPollsFromHandlers(context, PollRemovalMode::NoFieldIsAdded);
-    if (!hasMovedPolls && !removedAllocationUnderHandler)
+    bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    if (!hasAddedPolls && !removedAllocationUnderHandler)
         return PassOutcome::Unchanged;
-    return removeRedundantHandlers(context, hasMovedPolls);
+    return removeRedundantHandlers(context, hasAddedPolls);
 }
 
 // TestNarrowerTypesFirst.

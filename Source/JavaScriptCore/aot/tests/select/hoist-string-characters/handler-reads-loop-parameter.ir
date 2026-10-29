@@ -73,6 +73,6 @@ function f2 name="only-the-exit-reads-loop-parameter" parameters=[{type=string},
     v11 = CatchValue
     Return v2
 # The handler does not reach the exit of the loop, so the string is still flattened on the loop entry.
-# CHECK: handler=b4():
+# CHECK: b5() handler=b4():
 # CHECK-NEXT: flatstring = FlattenString v0
 }
