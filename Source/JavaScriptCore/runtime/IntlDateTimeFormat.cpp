@@ -110,7 +110,7 @@ static std::unique_ptr<UDateFormat, UDateFormatDeleter> openDateFormat(const ASC
     // Failure here means unsupported calendar, and can safely be ignored.
     UErrorCode calStatus = U_ZERO_ERROR;
     UCalendar* cal = const_cast<UCalendar*>(udat_getCalendar(dateFormat));
-    ucal_setGregorianChange(cal, minECMAScriptTime, &calStatus);
+    ucal_setGregorianChange(cal, prolepticGregorianChange, &calStatus);
 
     return std::unique_ptr<UDateFormat, UDateFormatDeleter>(dateFormat);
 }

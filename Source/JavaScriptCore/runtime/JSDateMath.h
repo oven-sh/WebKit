@@ -65,6 +65,10 @@ class VM;
 
 static constexpr double minECMAScriptTime = -8.64E15;
 
+// For ucal_setGregorianChange. ICU reads fields that name a date of the few years after the change as a Julian date,
+// so the change is long before the first date of Temporal, which is the day before minECMAScriptTime.
+static constexpr double prolepticGregorianChange = -9007199254740992; // -(2 ** 53)
+
 // We do not expose icu::TimeZone in this header file. And we cannot use icu::TimeZone forward declaration
 // because icu namespace can be an alias to icu$verNum namespace.
 struct OpaqueICUTimeZoneDeleter {
