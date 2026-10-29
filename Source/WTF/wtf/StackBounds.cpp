@@ -78,7 +78,8 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
         // FIXME: <rdar://problem/13741204>
         // pthread_get_size lies to us when we're the main thread, use get_rlimit instead
         void* origin = pthread_get_stackaddr_np(pthread_self());
-        rlimit limit;
+        // A call that fails writes nothing: the limit then counts as no limit.
+        rlimit limit { RLIM_INFINITY, RLIM_INFINITY };
         getrlimit(RLIMIT_STACK, &limit);
         rlim_t size = limit.rlim_cur;
         if (size == RLIM_INFINITY)
@@ -166,8 +167,10 @@ static void* endOfMainThreadStack()
 
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
+#if OS(LINUX)
     bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
+#endif
+#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
     void* endOfStack = isMainThread ? endOfMainThreadStack() : nullptr;
     auto ret = endOfStack ? StackBounds { endOfStack, endOfStack } : newThreadStackBounds(pthread_self());
 #else
@@ -179,10 +182,14 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
     // on musl, it will return the currently reserved size - since the stack bounds are expected to
     // be constant (and they are for every thread except main, which is allowed to grow), check
     // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
-    if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
+    if (isMainThread) {
+        // A seccomp filter can deny prlimit64(), which getrlimit() calls, and a call that fails writes nothing.
+        // The limit then counts as no limit, as it does to glibc when it sizes the stacks of threads.
+        rlimit limit { RLIM_INFINITY, RLIM_INFINITY };
+        // glibc and bionic need the limit for this thread's stack too. With neither, nothing is known of the stack.
+        if (getrlimit(RLIMIT_STACK, &limit) && !ret.m_bound)
+            return emptyBounds();
         void* origin = ret.origin();
-        rlimit limit;
-        getrlimit(RLIMIT_STACK, &limit);
         rlim_t size = limit.rlim_cur;
         if (size == RLIM_INFINITY)
             size = 8 * MB;
