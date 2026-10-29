@@ -266,6 +266,8 @@ public:
 #endif
 
     static WorkQueue& queue();
+    // Creates the queue on first use. Returns nullptr while the system refuses its thread (Thread::survivesFailedCreation()).
+    static WorkQueue* tryQueue();
 
 #if ENABLE(C_LOOP)
     ALWAYS_INLINE CLoopStack& cloopStack() { return m_stack.cloopStack(); }

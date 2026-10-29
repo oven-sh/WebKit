@@ -94,6 +94,8 @@ class WTF_CAPABILITY("is current") WTF_EXPORT_PRIVATE WorkQueue : public WorkQue
 public:
     static WorkQueue& mainSingleton();
     static Ref<WorkQueue> LEGACY_NODELETE create(ASCIILiteral name, QOS = QOS::Default);
+    // Returns nullptr if the queue's thread could not be created (Thread::tryCreate).
+    static RefPtr<WorkQueue> LEGACY_NODELETE tryCreate(ASCIILiteral name, QOS = QOS::Default);
 
 
     // WorkQueueBase
