@@ -897,6 +897,16 @@ Identifier BuiltinTable::identifierOf(VM& vm, BuiltinName name) const
     return identifierOfSymbol(vm, *symbol);
 }
 
+String BuiltinTable::functionNameOf(BuiltinName name) const
+{
+    ASCIILiteral text = literalOf(m_data.names, name);
+    if (!isSymbolName(name))
+        return text;
+    if (isRegisteredSymbolName(name))
+        return makeString('[', text, ']');
+    return makeString("[Symbol."_s, text, ']');
+}
+
 std::optional<double> BuiltinTable::numberOf(BuiltinID id) const
 {
     const BuiltinNumberConstant* found = findRecord(m_data.attachments.numberConstants, &BuiltinNumberConstant::builtin, id);
