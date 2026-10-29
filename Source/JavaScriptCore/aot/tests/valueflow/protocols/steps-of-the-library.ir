@@ -1,0 +1,60 @@
+# The library's own operations: StepArrayIterator([one].values())(); map = new Map; map.set(key, two); MapNext(map)(); set = new Set; set.add(three); SetNext(set)()
+# StepArrayIterator answers what the iterator hands out, MapNext the keys and the values of the map, SetNext the elements of the set. None of them lets its operand escape.
+# RUN: valueflow-solve calls
+# CHECK: f1 v8 -> f2
+# CHECK: f1 v20 -> f3 f4
+# CHECK: f1 v31 -> f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="steps" role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ArrayPrototypeValues
+    v3 = Call v2, v1
+    v4 = Convert v3 declared={type=object flags=[IsFromCompiler]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Call v7
+    v9 = Builtin builtin=Map
+    v10 = Construct v9
+    v11 = Convert v10 declared={type=object flags=[IsFromCompiler]}
+    v12 = Builtin builtin=MapPrototypeSet
+    v13 = NewClosure function=f3
+    v14 = NewClosure function=f4
+    v15 = Call v12, v11, v13, v14
+    v16 = Undefined
+    v17 = Integer
+    v18 = MapNext v11, v16, v17
+    v19 = ResultAt v18 index=3
+    v20 = Call v19
+    v21 = Builtin builtin=Set
+    v22 = Construct v21
+    v23 = Convert v22 declared={type=object flags=[IsFromCompiler]}
+    v24 = Builtin builtin=SetPrototypeAdd
+    v25 = NewClosure function=f5
+    v26 = Call v24, v23, v25
+    v27 = Undefined
+    v28 = Integer
+    v29 = SetNext v23, v27, v28
+    v30 = ResultAt v29 index=2
+    v31 = Call v30
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+    Return
+}
+function f3 name="key" results=[{type=anything}] {
+    Return
+}
+function f4 name="two" results=[{type=anything}] {
+    Return
+}
+function f5 name="three" results=[{type=anything}] {
+    Return
+}

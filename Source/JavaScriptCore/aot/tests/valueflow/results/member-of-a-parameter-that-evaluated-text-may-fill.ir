@@ -1,0 +1,52 @@
+# The same function with one more caller: text that a direct eval runs finds f by its name and may pass anything. Nothing is said of the parameter and of the callee, and the record names the eval
+# RUN: valueflow-apply
+# CHECK: function f1 name="f" {{*}}parameters=[{type=undefined|null|string|L0 flags=[IsExpected]}]
+# CHECK-NOT: callees=[builtin(StringPrototypeCharCodeAt)]
+# RUN(RESULTS): valueflow-results
+# RESULTS: unseen-code EvaluatesText f0:v5
+
+layout L0 fields=[{key="charCodeAt" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired]}] flags=[HasMembersWithoutLayout] ownFieldCount=1 flow={allocation=NeverAllocated}
+data d0 root=Array{contents=undefined|null|string elements=[String{value="a"}, String{value="bc"}, String{value="def"}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="f" module=m0 declared={type=anything} initialization=Uninitialized
+evalscope e0 bindings=[{name="f" variable=g0}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    v6 = Integer
+    v7 = Data data=d0
+    v8 = IteratorOpen v7
+    Jump -> next b1(v6)
+  b1(v9):
+    LoopHint
+    v11 = IteratorResume v8
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="console" [isFreeName]
+    v16 = PropGet v15 key="log"
+    v17 = Call v16, v15, v9 calleeKey="log"
+    v18 = Undefined
+    Return v18
+  b3() handler=b4():
+    v19 = Call v0, -, v13
+    v20 = Add v9, v19
+    Jump -> next b1(v20)
+  b4() role=IterationCleanup subject=v8:
+    v21 = CatchException
+    IteratorClose v8 completion=Throw
+    Rethrow v21
+}
+function f1 name="f" module=m0 parameters=[{type=undefined|null|string|L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="charCodeAt"
+    v2 = Integer
+    v3 = Call v1, v0, v2 calleeKey="charCodeAt"
+    ReturnCall v3
+}

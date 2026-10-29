@@ -1,0 +1,36 @@
+# class C { static $call(o) { return o + 1 } }  const k = same(C)  print(k.$call(1))
+# Nothing outside the library can write the name, so the method does not leave with the class. The read through what the shell hands back finds it on the class that has left.
+# OPTIONS: check=VerifyEachPass
+# RUN: run-in-shell globalThis.same = value => value;
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="C" module=m0 position=10 constructor=f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key=@"call"
+    v4 = FinishClass v1 layout=L0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="same" [isFreeName]
+    v7 = Call v6, -, v4 calleeName="same"
+    v8 = PropGet v7 key=@"call"
+    v9 = Integer integer=1
+    v10 = Call v8, v7, v9 calleeKey=@"call" calleeName="call"
+    v11 = PropGet v5 key="print" [isFreeName]
+    v12 = Call v11, -, v10 calleeName="print"
+    Return
+}
+function f1 name="C" module=m0 position=10 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="call" module=m0 position=20 kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

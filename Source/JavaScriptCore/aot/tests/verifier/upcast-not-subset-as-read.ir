@@ -1,0 +1,25 @@
+# On the wire the source of an Upcast is inside its type, and an expected layout puts no value inside a layout
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: UpcastNotSubset 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 fields=[{key="x" declared={type=number}}]
+function f0 name="badNarrower" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Upcast v0 castType=number
+    Return
+}
+function f1 name="badExpectedLayout" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
+    v1 = Upcast v0 castType=L0
+    Return
+}
+function f2 name="good" parameters=[{type=number}, {type=L0}, {type=L0 flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: number, v1: L0, v2: anything ~ L0):
+    v3 = Upcast v0 castType=undefined|number
+    v4 = Upcast v1 castType=L0
+    v5 = Upcast v1 castType=object
+    v6 = Upcast v2 castType=anything
+    Return
+}

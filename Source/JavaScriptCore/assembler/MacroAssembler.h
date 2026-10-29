@@ -518,7 +518,15 @@ public:
 
     void oops()
     {
-        abortWithReason(B3Oops);
+        switch (policy().oops) {
+        case OopsForm::AbortWithReason:
+            abortWithReason(B3Oops);
+            return;
+        case OopsForm::Breakpoint:
+            breakpoint();
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     // B3 has additional pseudo-opcodes for returning, when it wants to signal that the return
@@ -532,7 +540,7 @@ public:
     static constexpr unsigned BlindingModulus = 64;
     bool shouldConsiderBlinding()
     {
-        return !(random() & (BlindingModulus - 1));
+        return blindsConstants() && !(random() & (BlindingModulus - 1));
     }
 
     void move(Address src, Address dest, RegisterID scratch)
@@ -1595,7 +1603,7 @@ public:
     
     struct RotatedImmPtr {
         RotatedImmPtr(uintptr_t v1, uint8_t v2)
-            : value(v1)
+            : value(reinterpret_cast<const void*>(v1))
             , rotation(v2)
         {
         }

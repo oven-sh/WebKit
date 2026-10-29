@@ -1,0 +1,29 @@
+# A small literal costs less at the start than a function of its own and a test at each read.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 0
+# CHECK: variable g0 name="small" module=m0 declared={type=L0}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[small]]: L0 = NewObject
+# CHECK-NEXT: PutModuleVariable [[small]] variable=g0
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+variable g0 name="small" module=m0 declared={type=L0}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = NewClosure function=f1
+    v6 = Call v4, -, v5
+    Return
+}
+function f1 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0, -, v1
+    Return v2
+}

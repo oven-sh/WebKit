@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 namespace JSC { namespace B3 {
 
@@ -38,4 +38,4 @@ bool eliminateWasmGCAllocations(Procedure&);
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

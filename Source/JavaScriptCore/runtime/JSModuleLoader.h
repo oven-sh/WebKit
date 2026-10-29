@@ -102,15 +102,17 @@ public:
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue);
-    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
+    JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
+    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif
 
     // Platform dependent hooked APIs.
     JSPromise* importModule(JSGlobalObject*, JSString* moduleName, JSValue parameters, const SourceOrigin& referrer, bool deferred = false);
+    static std::expected<RefPtr<ScriptFetchParameters>, JSPromise*> fetchParametersFromImportOptions(JSGlobalObject*, JSValue options);
     Identifier resolve(JSGlobalObject*, JSValue name, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     Identifier resolve(JSGlobalObject*, const Identifier& name, const Identifier& referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     JSPromise* fetch(JSGlobalObject*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
@@ -168,7 +170,7 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
-    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap);
+    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, JSPromise* deferredPromise = nullptr);
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
@@ -177,6 +179,7 @@ public:
     // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
     // and JSC is responsible for turning it into a usable module. Otherwise, the host has already
     // turned it into a module, and JSC should take that as the module's default export value.
+    // An AbstractModuleRecord is the module itself.
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
@@ -240,6 +243,9 @@ public:
         m_resolutionFailures.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+#if ENABLE(AOT)
+    bool isMakingRecordInline(const Identifier& key) const { return m_moduleWhoseRecordIsMadeInline && m_moduleWhoseRecordIsMadeInline == key.impl(); }
+#endif
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 
     // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
@@ -267,14 +273,18 @@ public:
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     void removeFailedFetchEntry(ModuleRegistryEntry*);
+#if ENABLE(AOT)
+    void removeEntryOfRecord(AbstractModuleRecord*);
+#endif
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
+
+    void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 
 private:
     JSModuleLoader(VM&, Structure*, JSScope* moduleScope);
     void finishCreation(JSGlobalObject*, VM&);
 
-    void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 #if USE(BUN_JSC_ADDITIONS)
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
@@ -304,6 +314,11 @@ private:
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
+#if ENABLE(AOT)
+    bool m_realmLoadedModuleUnderAnotherKey { false };
+    UniquedStringImpl* m_rootThatTakesOwnLoadSteps { nullptr };
+    UniquedStringImpl* m_moduleWhoseRecordIsMadeInline { nullptr };
+#endif
 
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)

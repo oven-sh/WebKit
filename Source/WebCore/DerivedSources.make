@@ -254,6 +254,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/applepay/ApplePayPaymentTokenContext.idl \
     $(WebCore)/Modules/applepay/ApplePayRecurringPaymentDateUnit.idl \
     $(WebCore)/Modules/applepay/ApplePayRecurringPaymentRequest.idl \
+    $(WebCore)/Modules/applepay/ApplePayReferenceRequest.idl \
+    $(WebCore)/Modules/applepay/ApplePayReferenceSession.idl \
     $(WebCore)/Modules/applepay/ApplePayRequestBase.idl \
     $(WebCore)/Modules/applepay/ApplePaySession.idl \
     $(WebCore)/Modules/applepay/ApplePaySessionError.idl \
@@ -785,6 +787,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webauthn/PublicKeyCredentialType.idl \
     $(WebCore)/Modules/webauthn/ResidentKeyRequirement.idl \
     $(WebCore)/Modules/webauthn/UserVerificationRequirement.idl \
+    $(WebCore)/Modules/webauthn/WebAuthnOperationErrorCode.idl \
+    $(WebCore)/Modules/webauthn/WebAuthnOperationException.idl \
     $(WebCore)/Modules/webauthn/UnknownCredentialOptions.idl \
     $(WebCore)/Modules/webauthn/AllAcceptedCredentialsOptions.idl \
     $(WebCore)/Modules/webauthn/CurrentUserDetailsOptions.idl \
@@ -1821,6 +1825,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/testing/MockPaymentContactFields.idl \
     $(WebCore)/testing/MockPaymentCoordinator.idl \
     $(WebCore)/testing/MockPaymentError.idl \
+    $(WebCore)/testing/MockPhoneNumberPossessionConfiguration.idl \
     $(WebCore)/testing/MockWebAuthenticationConfiguration.idl \
     $(WebCore)/testing/RequestedGPU.idl \
     $(WebCore)/testing/ServiceWorkerInternals.idl \
@@ -2628,7 +2633,6 @@ QUIRK_BEHAVIORS_INPUT_FILES = \
 GENERATE_QUIRK_BEHAVIORS = \
     QuirkBehaviorDeclarations.cpp \
     QuirkBehaviorDeclarations.h \
-    QuirkBehaviorDefinitions.h \
     QuirkBehaviorID.h \
     QuirkBehaviorID.serialization.in \
     QuirksAccessors.cpp \

@@ -1,0 +1,24 @@
+# A function of the library that stands behind a built-in is reached once the program calls the built-in, not from the start:
+# Array.from is called and Array.fromAsync is not (runtimefunction 48 and 51)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=46 function=f1
+runtimefunction id=49 function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Builtin builtin=Array
+    v2 = Builtin builtin=ArrayFrom
+    v3 = Call v2, v1, v0
+    Return
+}
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=46 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f2 name="fromAsync" role=Library flags=[HasThis] enclosingRuntimeFunction=49 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

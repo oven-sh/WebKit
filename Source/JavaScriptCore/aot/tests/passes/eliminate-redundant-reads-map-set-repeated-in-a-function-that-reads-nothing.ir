@@ -1,0 +1,14 @@
+# `map.set(key, value)` right behind the same call goes, also from a function that reads no variable and no field
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sameCallTwice" parameters=[{type=Map<anything, anything>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1, v1 overload=MapPrototypeSet/0
+    v3 = CallBuiltin v0, v1, v1 overload=MapPrototypeSet/0
+    Return v3
+# CHECK: v2:{{*}}= CallBuiltin v0, v1, v1 overload=MapPrototypeSet/0
+# CHECK-NOT: CallBuiltin
+# CHECK: Return v2
+}

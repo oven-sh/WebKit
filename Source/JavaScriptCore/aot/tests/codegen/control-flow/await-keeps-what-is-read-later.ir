@@ -1,0 +1,94 @@
+# async function scaled(source: Promise<number>, scale: number, unused: number): Promise<number> {
+#   const before = unused * 2;
+#   const value = await source;
+#   return value * scale;
+# }
+# declare const input: any;
+# (globalThis as any).answer = scaled(input, +input, +input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=47 kind=Parameter function=f1
+typesite w1 module=m0 position=62 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=105 kind=Variable
+typesite w4 module=m0 position=142 kind=PromiseValue
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|Promise<number> flags=[IsExpected]}
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="input" [isFreeName]
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = ToNumber v11
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="input" [isFreeName]
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = ToNumber v15
+    v17 = Call v1, -, v8, v12, v16 calleeName="scaled"
+    v18 = Convert v17 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    PropSet v5, v18 key="answer"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="scaled" module=m0 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w0}, {type=number site=w1}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|Promise<number>, v2: number, v3: number):
+    Jump -> next b1()
+  b1():
+    v4 = Integer integer=2
+    v5 = Mul v3, v4
+    v6 = Convert v5 declared={type=number site=w3}
+    v7 = Await v1, v1, v2, v3
+    v8 = Convert v7 declared={type=number site=w4} illTypedCause=ContainerWriterUnseen
+    v9 = Mul v8, v2
+    v10 = Convert v9 declared={type=number|object site=w2}
+    Return v10
+}
+
+# An await is one operation in the middle of the function: it saves the frame, and the function goes on behind it when the value has arrived. There is no switch over a state at the entry,
+# and `scale` is the same value in front of the await and behind it: nothing stores it into an object or loads it from one. `unused` is not read at all.
+# CHECK-LABEL: name="scaled" role=CoroutineBody
+# CHECK-NEXT: BB#0:
+# CHECK-NOT: Branch(
+# CHECK-NOT: Switch(
+# CHECK: Int64 b@[[value]] = Patchpoint<CloningForbidden>(b@{{*}}:Register({{*}}isSuspension{{*}}:AwaitBySavingFrame)
+# CHECK-NOT: isSuspension
+# CHECK-NOT: Reads:InternalFields
+# CHECK-NOT: Reads:ObjectFields
+# CHECK: Double b@[[scale]] = ArgumentReg(
+# CHECK-NOT: Double b@{{*}} = ArgumentReg(
+# CHECK: Double b@{{*}} = Mul(b@[[scale]], b@{{*}}, {{*}}:Mul)
+# CHECK-LABEL: end of function
+# Three words go into the frame in front of the await: the promise of the function, the awaited value and `scale`. Behind it `scale` is read from its slot.
+# X64-LABEL: role=CoroutineBody
+# X64: EnterFrame
+# X64-NEXT: Move %{{*}}, -{{*}}(%rbp)
+# X64-NEXT: Move %{{*}}, -{{*}}(%rbp)
+# X64-NEXT: MoveDouble %xmm0, -[[slot]](%rbp)
+# X64-NEXT: Patch &Patchpoint0
+# X64: MulDouble -[[slot]](%rbp), %xmm
+# X64-LABEL: end of function
+# ARM64-LABEL: role=CoroutineBody
+# ARM64: EnterFrame
+# ARM64-NEXT: StorePair64 %x{{*}}, %x{{*}}, -{{*}}(%fp)
+# ARM64-NEXT: MoveDouble %q0, -[[slot]](%fp)
+# ARM64-NEXT: Patch &Patchpoint0
+# ARM64: MoveDouble -[[slot]](%fp), %q
+# ARM64-LABEL: end of function

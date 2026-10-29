@@ -1,0 +1,31 @@
+# holder = { $state: kept, @state: kept, open: kept }; given.$state(); given.@state(); given.open()
+# Nobody knows `given`, and the holder has escaped to nobody. Only the JavaScript modules of the library spell `$state`, and each of their stores is seen:
+# the read finds what one of them stored, on whichever holder, or nothing. Native code may spell `@state`, and any code `open`: those reads find a value nobody knows.
+# RUN: valueflow-why values=f0:v5 values=f0:v6 values=f0:v7
+# CHECK: values=f0:v5
+# CHECK: result {{*}} 2 members: primitive0 f1
+# CHECK: values=f0:v6
+# CHECK: result {{*}} unknown
+# CHECK: values=f0:v7
+# CHECK: result {{*}} unknown
+
+layout L0 fields=[{key=@#"state" declared={type=anything}}, {key=@"state" declared={type=anything}}, {key="open" declared={type=anything}}] ownFieldCount=3
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2, v2, v2 layout=L0 fields=[0, 1, 2]
+    v4 = Undefined
+    v5 = PropGet v1 key=@#"state"
+    v6 = PropGet v1 key=@"state"
+    v7 = PropGet v1 key="open"
+    v8 = Call v5, -
+    v9 = Call v6, -
+    v10 = Call v7, -
+    Return
+}
+function f1 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}

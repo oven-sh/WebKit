@@ -1,0 +1,36 @@
+# An access by key that reaches selection calls a stub. What its receiver is expected to be is written on it there, where expected types end: the stub that tests for that first is called
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+
+# CHECK-LABEL: function f0 name="reads"
+# CHECK: v6: anything = ElemGet v0, v5 expectedElements=Int32Array
+# CHECK: v7: anything = ElemGet v1, v5 expectedElements=Uint8Array
+# CHECK-NOT: expectedElements
+# CHECK: v10: anything = ElemGet v4, v5
+function f0 name="reads" parameters=[{type=Int32Array flags=[IsExpected]}, {type=undefined|null|Uint8Array flags=[IsExpected]}, {type=Array<number> flags=[IsExpected]}, {type=Array<string> flags=[IsExpected]}, {type=anything}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: anything ~ Int32Array, v1: anything ~ undefined|null|Uint8Array, v2: anything ~ Array<number>, v3: anything ~ Array<string>, v4: anything, v5: int[0, 9]):
+    v6 = ElemGet v0, v5
+    v7 = ElemGet v1, v5
+    v8 = ElemGet v2, v5
+    v9 = ElemGet v3, v5
+    v10 = ElemGet v4, v5
+    Return v6
+}
+
+# An array is no expectation, whatever storage its type names, and neither are two classes.
+# CHECK-LABEL: function f1 name="stores"
+# CHECK: ElemSet v0, v5, v6 expectedElements=Int32Array
+# CHECK-NOT: expectedElements
+# CHECK: ElemSet v4, v5, v6
+function f1 name="stores" parameters=[{type=Int32Array flags=[IsExpected]}, {type=Array<anything, Double> flags=[IsExpected]}, {type=Array<number, Int32> flags=[IsExpected]}, {type=Int32Array|Uint8Array flags=[IsExpected]}, {type=Float64Array flags=[IsExpected]}, {type=int[0, 9]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: anything ~ Int32Array, v1: anything ~ Array<anything, Double>, v2: anything ~ Array<number, Int32>, v3: anything ~ Int32Array|Uint8Array, v4: anything ~ Float64Array, v5: int[0, 9], v6: number):
+    ElemSet v0, v5, v6 mode=Strict
+    ElemSet v1, v5, v6 mode=Sloppy
+    ElemSet v2, v5, v6 mode=Strict
+    ElemSet v3, v5, v6 mode=Strict
+    ElemSet v4, v5, v6 mode=Strict
+    v12 = Undefined
+    Return v12
+}

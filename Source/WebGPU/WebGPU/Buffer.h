@@ -29,10 +29,8 @@
 #import "Device.h"
 #import "Instance.h"
 #import <Metal/Metal.h>
-#import <WebGPU/WGPUBufferImpl.h>
 #import <WebGPU/WebGPU.h>
 #import <WebGPU/WebGPUCpp.h>
-#import <WebGPU/WebGPUExt.h>
 #import <optional>
 #import <utility>
 #import <wtf/CanBorrow.h>
@@ -60,7 +58,7 @@ class Device;
 class RenderBundle;
 
 // https://gpuweb.github.io/gpuweb/#gpubuffer
-class Buffer final : public WebGPU::Buffer, public WGPUBufferImpl, public CanBorrow, public TrackedResource {
+class Buffer final : public WebGPU::Buffer, public CanBorrow, public TrackedResource {
     WTF_MAKE_TZONE_ALLOCATED(Buffer);
 public:
     enum class State : uint8_t;

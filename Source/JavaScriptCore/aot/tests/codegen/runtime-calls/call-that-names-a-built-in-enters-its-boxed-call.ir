@@ -1,0 +1,55 @@
+# A call that names a built-in with a boxed call enters the stub of that built-in. A call by value finds the same stub through the executable of its callee: here the build knows it.
+# With a number of arguments that the stub does not take, and for a built-in without such a stub, the call enters the host function.
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="setPrototypeOf" parameters=[{type=object}, {type=null|object}] results=[{type=object}] {
+  b0(v0: object, v1: null|object):
+    v2 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
+    Return v2
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.ObjectSetPrototypeOf.n2 x1
+function f1 name="textOf" parameters=[{type=anything}, {type=undefined}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined):
+    v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
+    Return v2
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.JSONStringify.n2 x1
+# The row of trim() names inline code and nothing to call otherwise: the call went through the stub that calls any value.
+function f2 name="trimOfAnything" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin v0 overload=StringPrototypeTrim/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: stub CallValue
+# CHECK: stub CallBoxedBuiltin.StringTrim.n0 x1
+function f3 name="pushOnAnything" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.ArrayPush.n1 x1
+function f4 name="pushOfTwo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+# CHECK-LABEL: f4: size=
+# CHECK-NOT: stub CallBoxedBuiltin
+# CHECK: stub CallHostFunctionWithoutBoxedCall.n2 x1
+function f5 name="builtinWithoutBoxedCall" parameters=[{type=object}, {type=null|object}] results=[{type=boolean}] {
+  b0(v0: object, v1: null|object):
+    v2 = CallBuiltin -, v0, v1 overload=ReflectSetPrototypeOf/0
+    Return v2
+}
+# CHECK-LABEL: f5: size=
+# CHECK-NOT: stub CallBoxedBuiltin
+# CHECK: stub CallHostFunctionWithoutBoxedCall.n2 x1

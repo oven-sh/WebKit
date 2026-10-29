@@ -493,6 +493,23 @@ static void addImageBufferProperties(const VideoInfo& videoInfo, Add&& add)
     }
 }
 
+// FIXME: only 32-bit floating point is recognised for 32-bit PCM (the only producer is the WebM parser), and PCM is assumed little-endian.
+static std::optional<AudioStreamDescription::PCMFormat> encodedPCMFormat(const AudioInfo& info)
+{
+    switch (info.bitDepth()) {
+    case 8:
+        return AudioStreamDescription::Uint8;
+    case 16:
+        return AudioStreamDescription::Int16;
+    case 24:
+        return AudioStreamDescription::Int24;
+    case 32:
+        return AudioStreamDescription::Float32;
+    default:
+        return { };
+    }
+}
+
 RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const TrackInfo& info)
 {
     ASSERT(info.isVideo() || info.isAudio());
@@ -511,11 +528,22 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
                 return nullptr;
             return createAudioFormatDescription(*audioInfo);
 #endif
+        case kAudioFormatFLAC:
+            if (!audioInfo->cookieData() || !audioInfo->cookieData()->size())
+                return nullptr;
+            return createAudioFormatDescription(*audioInfo);
         case kAudioFormatLinearPCM: {
-            if (audioInfo->isDecoded() && audioInfo->sampleFormat() != AudioSampleFormat::F32)
+            std::optional<AudioStreamDescription::PCMFormat> format;
+            if (audioInfo->isDecoded()) {
+                if (audioInfo->sampleFormat() != AudioSampleFormat::F32)
+                    return nullptr;
+                format = AudioStreamDescription::Float32;
+            } else
+                format = encodedPCMFormat(*audioInfo);
+            if (!format)
                 return nullptr;
 
-            auto absd = CAAudioStreamDescription { static_cast<double>(audioInfo->rate()), audioInfo->channels(), AudioStreamDescription::Float32, CAAudioStreamDescription::IsInterleaved::Yes }.streamDescription();
+            auto absd = CAAudioStreamDescription { static_cast<double>(audioInfo->rate()), audioInfo->channels(), *format, CAAudioStreamDescription::IsInterleaved::Yes }.streamDescription();
 
             RetainPtr extensions = createExtensionsDictionary(info);
             CMFormatDescriptionRef newFormat = nullptr;
@@ -858,7 +886,8 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
     packetTimings.reserveInitialCapacity(samples.size());
     Vector<size_t> packetSizes;
     packetSizes.reserveInitialCapacity(samples.size());
-    auto cumulativeTrimDuration = MediaTime::zeroTime();
+    auto cumulativeTrimDurationAtStart = MediaTime::zeroTime();
+    auto cumulativeTrimDurationAtEnd = MediaTime::zeroTime();
     for (auto& sample : samples) {
         RefPtr sampleData = sample.data;
         auto blockBuffer = sampleData->createCMBlockBuffer();
@@ -872,9 +901,13 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
             if (err != kCMBlockBufferNoErr)
                 return makeUnexpected("CMBlockBufferAppendBufferReference failed"_s);
         }
-        packetTimings.append({ PAL::toCMTime(sample.duration), PAL::toCMTime(sample.presentationTime), PAL::toCMTime(sample.decodeTime) });
+        auto [trimAtStart, trimAtEnd] = sample.trimInterval;
+        if (!trimAtStart.isFinite() || !trimAtEnd.isFinite() || trimAtStart < MediaTime::zeroTime() || trimAtEnd < MediaTime::zeroTime() || sample.duration < MediaTime::zeroTime())
+            return makeUnexpected("Invalid trim interval"_s);
+        packetTimings.append({ PAL::toCMTime(sample.duration + trimAtStart + trimAtEnd), PAL::toCMTime(sample.presentationTime - trimAtStart), PAL::toCMTime(sample.decodeTime - trimAtStart) });
         packetSizes.append(sampleData->size());
-        cumulativeTrimDuration += sample.trimInterval.first;
+        cumulativeTrimDurationAtStart += trimAtStart;
+        cumulativeTrimDurationAtEnd += trimAtEnd;
     }
 
     CMSampleBufferRef rawSampleBuffer = nullptr;
@@ -902,10 +935,14 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
     } else if (samples.isAudio() && samples.discontinuity())
         PAL::CMSetAttachment(rawSampleBuffer, PAL::kCMSampleBufferAttachmentKey_FillDiscontinuitiesWithSilence, *samples.discontinuity() ? kCFBooleanTrue : kCFBooleanFalse, kCMAttachmentMode_ShouldPropagate);
 
-    if (cumulativeTrimDuration > MediaTime::zeroTime()) {
-        auto trimDurationDict = adoptCF(PAL::softLink_CoreMedia_CMTimeCopyAsDictionary(PAL::toCMTime(cumulativeTrimDuration), kCFAllocatorDefault));
-        PAL::CMSetAttachment(rawSampleBuffer, PAL::kCMSampleBufferAttachmentKey_TrimDurationAtStart, trimDurationDict.get(), kCMAttachmentMode_ShouldPropagate);
-    }
+    auto setTrimDurationAttachment = [&](CFStringRef key, const MediaTime& trimDuration) {
+        if (trimDuration <= MediaTime::zeroTime())
+            return;
+        RetainPtr trimDurationDict = adoptCF(PAL::CMTimeCopyAsDictionary(PAL::toCMTime(trimDuration), kCFAllocatorDefault));
+        PAL::CMSetAttachment(rawSampleBuffer, key, trimDurationDict.get(), kCMAttachmentMode_ShouldPropagate);
+    };
+    setTrimDurationAttachment(PAL::kCMSampleBufferAttachmentKey_TrimDurationAtStart, cumulativeTrimDurationAtStart);
+    setTrimDurationAttachment(PAL::kCMSampleBufferAttachmentKey_TrimDurationAtEnd, cumulativeTrimDurationAtEnd);
 
 #if ENABLE(ENCRYPTED_MEDIA)
     if (!samples.info() || !samples.info()->encryptionDataCollection())
@@ -953,16 +990,23 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
         }
     }
 
-    auto mediaSampleItemForSample = [](auto&& sample) {
-        MediaTime duration = sample->duration();
+    auto trimDurationAttachment = [&](CFStringRef key) {
+        if (RetainPtr trimDurationDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMGetAttachment(cmSample, key, nullptr)))
+            return PAL::toMediaTime(PAL::CMTimeMakeFromDictionary(trimDurationDict.get()));
+        return MediaTime::zeroTime();
+    };
+    auto trimDurationAtStart = trimDurationAttachment(PAL::kCMSampleBufferAttachmentKey_TrimDurationAtStart);
+    auto trimDurationAtEnd = trimDurationAttachment(PAL::kCMSampleBufferAttachmentKey_TrimDurationAtEnd);
+
+    // Non-zero when the output presentation timestamp was set explicitly.
+    auto outputTimeOffset = MediaTime::zeroTime();
+    if (auto outputPresentationTime = PAL::CMSampleBufferGetOutputPresentationTimeStamp(cmSample); CMTIME_IS_VALID(outputPresentationTime))
+        outputTimeOffset = PAL::toMediaTime(outputPresentationTime) - PAL::toMediaTime(PAL::CMSampleBufferGetPresentationTimeStamp(cmSample)) - trimDurationAtStart;
+
+    // The item's times are those of the trimmed output, as MediaSample reports them.
+    auto mediaSampleItemForSample = [outputTimeOffset](auto&& sample, const MediaTime& trimAtStart, const MediaTime& trimAtEnd) {
         RetainPtr sampleBuffer = sample->sampleBuffer();
         RetainPtr blockBuffer = PAL::CMSampleBufferGetDataBuffer(sampleBuffer);
-        auto trimDurationAtStart = MediaTime::zeroTime();
-        if (RetainPtr trimDurationDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMGetAttachment(sampleBuffer, PAL::kCMSampleBufferAttachmentKey_TrimDurationAtStart, nullptr)))
-            trimDurationAtStart = PAL::toMediaTime(PAL::CMTimeMakeFromDictionary(trimDurationDict.get()));
-        auto trimDurationAtEnd = MediaTime::zeroTime();
-        if (RetainPtr trimDurationDict = dynamic_cf_cast<CFDictionaryRef>(PAL::CMGetAttachment(sampleBuffer, PAL::kCMSampleBufferAttachmentKey_TrimDurationAtEnd, nullptr)))
-            trimDurationAtEnd = PAL::toMediaTime(PAL::CMTimeMakeFromDictionary(trimDurationDict.get()));
 #if ENABLE(ENCRYPTED_MEDIA)
         SInt32 bytesOfClearDataCount = 0;
         RefPtr<SharedBuffer> cryptorIV;
@@ -980,11 +1024,18 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
             }
         }
 #endif
+        auto presentationTime = PAL::CMSampleBufferGetPresentationTimeStamp(sampleBuffer.get());
+        auto decodeTime = PAL::CMSampleBufferGetDecodeTimeStamp(sampleBuffer.get());
+        if (CMTIME_IS_INVALID(decodeTime))
+            decodeTime = presentationTime;
+        auto outputTime = [&](const CMTime& time) {
+            return PAL::toMediaTime(time) + trimAtStart + outputTimeOffset;
+        };
         return MediaSamplesBlock::MediaSampleItem {
-            .presentationTime = sample->presentationTime(),
-            .decodeTime = sample->decodeTime(),
-            .duration = sample->duration() + trimDurationAtStart + trimDurationAtEnd,
-            .trimInterval = { trimDurationAtStart, trimDurationAtEnd },
+            .presentationTime = outputTime(presentationTime),
+            .decodeTime = outputTime(decodeTime),
+            .duration = PAL::toMediaTime(PAL::CMSampleBufferGetDuration(sampleBuffer.get())) - trimAtStart - trimAtEnd,
+            .trimInterval = { trimAtStart, trimAtEnd },
             .data = sharedBufferFromCMBlockBuffer(blockBuffer.get()),
             .flags = sample->flags(),
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -998,13 +1049,30 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
     if (info && info->codecName() == kAudioFormatLinearPCM) {
         MediaSamplesBlock::SamplesVector sample;
         sample.reserveInitialCapacity(1);
-        sample.append(mediaSampleItemForSample(MediaSampleAVFObjC::create(cmSample, info->trackID())));
+        sample.append(mediaSampleItemForSample(MediaSampleAVFObjC::create(cmSample, info->trackID()), trimDurationAtStart, trimDurationAtEnd));
         return makeUniqueRef<MediaSamplesBlock>(info.get(), WTF::move(sample));
     }
 
+    // Dividing drops the trim attachments, so the leading samples take the start trim and the trailing ones the end trim.
     auto subSamples = MediaSampleAVFObjC::create(cmSample, info ? info->trackID() : 0)->divide();
+    Vector<std::pair<MediaTime, MediaTime>> trims;
+    if (trimDurationAtStart || trimDurationAtEnd)
+        trims.grow(subSamples.size());
+    auto fullDuration = [&](size_t index) {
+        return PAL::toMediaTime(PAL::CMSampleBufferGetDuration(protect(subSamples[index]->sampleBuffer())));
+    };
+    for (size_t index = 0; index < subSamples.size() && trimDurationAtStart > MediaTime::zeroTime(); ++index) {
+        trims[index].first = std::min(trimDurationAtStart, fullDuration(index));
+        trimDurationAtStart -= trims[index].first;
+    }
+    for (size_t index = subSamples.size(); index-- && trimDurationAtEnd > MediaTime::zeroTime();) {
+        trims[index].second = std::min(trimDurationAtEnd, fullDuration(index) - trims[index].first);
+        trimDurationAtEnd -= trims[index].second;
+    }
     MediaSamplesBlock::SamplesVector samples(subSamples.size(), [&](auto index) {
-        return mediaSampleItemForSample(subSamples[index]);
+        if (trims.isEmpty())
+            return mediaSampleItemForSample(subSamples[index], MediaTime::zeroTime(), MediaTime::zeroTime());
+        return mediaSampleItemForSample(subSamples[index], trims[index].first, trims[index].second);
     });
     return makeUniqueRef<MediaSamplesBlock>(info.get(), WTF::move(samples));
 }

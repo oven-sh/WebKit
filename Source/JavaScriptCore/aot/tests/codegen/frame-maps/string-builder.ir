@@ -1,0 +1,20 @@
+# A string builder is a cell, so it is a root when it is live across a suspension
+# RUN: frame-maps
+# CHECK: f0:
+# CHECK-NEXT: v3: v2:cell
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="string-builder" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything @JSValue, v1: undefined|Promise @JSValue):
+    v2 @Cell = StringBuilderBegin
+    v3 @JSValue = AwaitBySavingFrame v0, v1
+    StringBuilderAppendConstant v2 string="a"
+    v5 @Cell = StringBuilderFinish v2
+    v6 @JSValue = Box v5
+    PutModuleVariable v6 variable=g0
+    v8 @JSValue = Undefined
+    Return v8
+}
+function f1 name="string-builder" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

@@ -1,0 +1,53 @@
+# The way through a handler may have marked a young environment, whether the handler takes what was thrown or not, and so may the place where that way meets the way on which nothing was thrown
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="store-where-both-ways-meet" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = RequireObjectCoercible v0 nullishAccess=Read
+    Jump -> next b2()
+  b2():
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b2()
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+}
+function f1 name="store-in-a-handler-that-takes-nothing" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = RequireObjectCoercible v0 nullishAccess=Read
+    Jump -> next b2()
+  b2():
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+  b3() role=CatchHandler:
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+# CHECK: PutEnvironmentField v1, v0 layout=L0 field=1
+# CHECK-NOT: ownerCannotBeMarked
+}
+function f2 name="store-in-a-cleanup" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = RequireObjectCoercible v0 nullishAccess=Read
+    Return
+  b2() role=CleanupHandler:
+    v3 = CatchException
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    Rethrow v3
+# CHECK: CatchException
+# CHECK-NEXT: PutEnvironmentField v1, v0 layout=L0 field=1
+# CHECK-NOT: ownerCannotBeMarked
+}

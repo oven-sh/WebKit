@@ -1,0 +1,84 @@
+# A field that is declared to hold numbers, or anything, takes 4 bytes where every store that the program shows puts an int32 into it: a constant, the result of a bit operation, a sum of int32s, or what comes from
+# another such field, a variable, a parameter or a result that holds nothing else. The int32s become the type of the field in front of flow, so none of its results is needed.
+# One store of another number, or of a value that only unseen code makes, and the field holds numbers. So does a field that nothing stores
+# A field that is counted up holds integers too. Nothing bounds them, so it takes the bytes that the cell leaves unused
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=NarrowFieldTypes disable=flow-results
+# RUN: plan-slots
+# RUN(TYPES): pipeline NarrowFieldTypes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="none" module=m0 declared={type=undefined|null|number|absent} flags=[IsImmutable]
+layout L0 name="Shown" module=m0 fields=[{key="bits" declared={type=undefined|null|number} flags=[IsRequired]}, {key="mirrored" declared={type=undefined|null|number} flags=[IsRequired]}, {key="counter" declared={type=undefined|null|number} flags=[IsRequired]}, {key="passed" declared={type=undefined|null|number} flags=[IsRequired]}, {key="returned" declared={type=undefined|null|number} flags=[IsRequired]}, {key="untyped" declared={type=anything} flags=[IsRequired]}, {key="ratio" declared={type=undefined|null|number} flags=[IsRequired]}, {key="given" declared={type=undefined|null|number} flags=[IsRequired]}]
+layout L1 name="NeverStored" module=m0 fields=[{key="never" declared={type=undefined|null|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = Integer integer=4
+    PutModuleVariable v3 variable=g0
+    v6 = NewObject -, v3, v3, v3, v3, v3, v3, v3, v3 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7]
+    v7 = FinishObject v6
+    v8 = GetModuleVariable variable=g0
+    PropSet v7, v8 key="bits" mode=Strict
+    v10 = PropGet v7 key="bits"
+    v11 = BitOr v10, v4
+    PropSet v7, v11 key="bits" mode=Strict
+    v13 = PropGet v7 key="bits"
+    PropSet v7, v13 key="mirrored" mode=Strict
+    PropSet v7, v3 key="counter" mode=Strict
+    v16 = PropGet v7 key="counter"
+    v17 = Increment v16
+    PropSet v7, v17 key="counter" mode=Strict
+    v19 = NewClosure function=f1
+    v20 = Call v19, -, v7, v4
+    v21 = NewClosure function=f2
+    v22 = Call v21, -, v2
+    PropSet v7, v22 key="returned" mode=Strict
+    PropSet v7, v4 key="untyped" mode=Strict
+    PropSet v7, v4 key="ratio" mode=Strict
+    v26 = PropGet v7 key="ratio"
+    v27 = Div v26, v4
+    PropSet v7, v27 key="ratio" mode=Strict
+    PropSet v7, v3 key="given" mode=Strict
+    PropSet v7, v2 key="given" mode=Strict
+    v31 = NewObject layout=L1
+    v32 = FinishObject v31
+    Return
+}
+function f1 name="store" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="passed" mode=Strict
+    Return
+}
+function f2 name="mask" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=255
+    v2 = BitAnd v0, v1
+    Return v2
+}
+# TYPES: layout L0 name="Shown"
+# TYPES: key="bits" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="mirrored" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="counter" declared={type=int[-4503599627370496, 4503599627370495]
+# TYPES: key="passed" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="returned" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="untyped" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="ratio" declared={type=undefined|null|number
+# TYPES: key="given" declared={type=undefined|null|number
+# TYPES: layout L1 name="NeverStored"
+# TYPES: key="never" declared={type=undefined|null|number
+# The allocation lists every field of L0, so all of them lie in the cell: the counter and the two numbers from 16 on, the five int32s from 40 on, the word for extra properties at 60.
+# With six int32s 4 bytes would be left: the counter has them.
+# CHECK: L0 CompiledObject size=64
+# CHECK-NEXT: "bits" OptionalInt32 @40
+# CHECK-NEXT: "mirrored" OptionalInt32 @44
+# CHECK-NEXT: "counter" OptionalInt64 @16
+# CHECK-NEXT: "passed" OptionalInt32 @48
+# CHECK-NEXT: "returned" OptionalInt32 @52
+# CHECK-NEXT: "untyped" OptionalInt32 @56
+# CHECK-NEXT: "ratio" OptionalDouble @24
+# CHECK-NEXT: "given" OptionalDouble @32
+# CHECK-NEXT: extra Cell32 @60
+# CHECK: L1 CompiledObject
+# CHECK-NOT: "never" OptionalInt

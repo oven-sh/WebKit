@@ -1,0 +1,25 @@
+# input(Function); input(function () {}.constructor)
+# The program hands `Function` itself to a callee nobody knows, and calls a value nobody knows: `Function` counts as called.
+# a-closure-in-unknown-hands-whose-constructor-is-read-is-no-event.ir hands over a closure alone. function-constructor-that-is-called-is-an-event.ir is the twin that calls it
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Function
+# CHECK: unseen-code yes
+# RUN(WHY): valueflow-why escaped-builtin=Function
+# WHY: escaped-builtin=Function
+# WHY-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="Function" [isFreeName]
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f1
+    v5 = PropGet v4 key="constructor"
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="any" results=[{type=anything}] {
+    Return
+}

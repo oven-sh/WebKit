@@ -1,0 +1,201 @@
+# A handler edge carries the fields of a virtual object like any edge, and nothing is built on it
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 3
+# STATISTIC: AllocationsSunk = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="swapInCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = NewArray v1, v0 contents=anything
+    v3 = DestructureIterable v2 count=2
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Call v4, -, v5
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+# CHECK-NOT: NewArray
+# CHECK-NOT: DestructureIterable
+# CHECK: b1() handler=b3():
+# CHECK: v4: anything = Upcast v1 castType=anything
+# CHECK-NEXT: v5: anything = Upcast v0 castType=anything
+# CHECK-NEXT: = Call v4, -, v5
+# CHECK-NEXT: Jump -> next b2()
+}
+
+function f1 name="writtenBetweenCallsReadInHandler" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v0
+    PropSet v3, v1 key="x" receivers=[L0]
+    v6 = Call v0
+    PropSet v3, v2 key="x" receivers=[L0]
+    v8 = Call v0
+    PropSet v3, v0 key="x" receivers=[L0]
+    Jump -> next b2()
+  b2():
+    Return v8
+  b3() role=CatchHandler:
+    v10 = CatchValue
+    v11 = PropGet v3 key="x" receivers=[L0]
+    Return v11
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropSet
+# CHECK: b1() handler=b3(v0):
+# CHECK-NEXT: v4: anything = Call v0
+# CHECK-NEXT: Jump -> next [[second1]]()
+# CHECK: b3([[x1]]: anything) role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: v11: anything = Upcast [[x1]] castType=anything
+# CHECK: [[second1]]() handler=b3(v1):
+# CHECK-NEXT: v6: anything = Call v0
+# CHECK-NEXT: Jump -> next [[third1]]()
+# CHECK: [[third1]]() handler=b3(v2):
+# CHECK-NEXT: v8: anything = Call v0
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NOT: handler=
+}
+
+function f2 name="valueOfCoveredBlockReachesHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0
+    PropSet v2, v3 key="x" receivers=[L0]
+    v5 = Call v1
+    Jump -> next b2()
+  b2():
+    Return v5
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Call v6, -, v2
+    Return v7
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b1() handler=b3(v0):
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: Jump -> next [[second2]]()
+# CHECK: b3([[x2]]: anything) role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: [[cell2]]:{{*}}= NewObject -, [[x2]] layout=L0 fields=[0]
+# CHECK-NEXT: = Call v6, -, [[cell2]]
+# CHECK: [[second2]]() handler=b3(v3):
+# CHECK-NEXT: v5: anything = Call v1
+# CHECK-NOT: NewObject
+}
+
+function f3 name="handlerBuildsByTag" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0
+    PropDefine v2, v1 key="y" receivers=[L0]
+    v5 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v5
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Call v6, -, v2
+    Return v7
+# CHECK: b0(
+# CHECK-NEXT: [[short3]]: 1 = Integer integer=1
+# CHECK-NEXT: [[none3]]: anything|unspecified = Unspecified valueType=anything
+# CHECK-NEXT: [[long3]]: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b1() handler=b3([[short3]], v0, [[none3]]):
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: Jump -> next [[second3]]()
+# CHECK: b3([[tag3]]: i32, [[x3]]: anything, [[y3]]: anything|unspecified) role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: Switch [[tag3]] cases=[1] -> case [[shortArm3]](), otherwise [[longArm3]]()
+# CHECK: [[second3]]() handler=b3([[long3]], v0, v1):
+# CHECK-NEXT: v5: anything = Call v0
+# CHECK: [[continuation3]]([[cell3]]: L0):
+# CHECK-NEXT: = Call v6, -, [[cell3]]
+# CHECK: [[shortArm3]]():
+# CHECK-NEXT: = NewObject -, [[x3]] layout=L0 fields=[0]
+# CHECK: [[longArm3]]():
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[y3There]]: anything = AssumeType [[y3]], [[filled1]] provenType=anything
+# CHECK-NEXT: = NewObject -, [[x3]], [[y3There]] layout=L0 fields=[0, 1]
+}
+
+function f4 name="coveredEntryBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b1():
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Call v0
+    v4 = PropGet v2 key="x" receivers=[L0]
+    Return v4
+  b1() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK-NOT: NewObject
+# CHECK: b0(v0: anything, v1: anything):
+# CHECK-NEXT: Jump -> next [[covered4]]()
+# CHECK: [[covered4]]() handler=b1():
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: v4: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v4
+}
+
+function f5 name="passedToCallInCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = PropGet v2 key="x" receivers=[L0]
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: = Call v0, -, v2
+# CHECK: b3() role=CatchHandler:
+# CHECK: = PropGet v2 key="x"
+}
+
+function f6 name="passedToCallInCoveredBlockOnOnePath" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b4()
+  b1() handler=b3():
+    v4 = Call v0, -, v3
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = Call v5, -, v3
+    Return v6
+  b4():
+    Return v1
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: b1() handler=b3(
+# CHECK-NEXT: [[cell6]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Jump -> next [[call6]]()
+# CHECK: b3([[tag6]]: i32, [[carried6]]: unspecified|L0, {{*}}: anything|unspecified) role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: Switch [[tag6]]
+# CHECK: b4():
+# CHECK-NEXT: Return v1
+# CHECK: [[call6]]() handler=b3({{*}}, [[cell6]], {{*}}):
+# CHECK-NEXT: = Call v0, -, [[cell6]]
+# CHECK: [[continuation6]]([[passed6]]: unspecified|L0):
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[passed6There]]: L0 = AssumeType [[passed6]], [[filled2]] provenType=L0
+# CHECK-NEXT: = Call v5, -, [[passed6There]]
+# CHECK: Jump -> next [[continuation6]]([[carried6]])
+}

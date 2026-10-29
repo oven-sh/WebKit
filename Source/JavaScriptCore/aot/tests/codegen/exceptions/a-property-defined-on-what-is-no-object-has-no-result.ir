@@ -1,0 +1,68 @@
+# DefineOwnProperty takes any value boxed. Where the operand is no object the call does not come back: no result is made of the operand, whatever form it has, and nothing follows.
+# Where the operand may be an object the result is that object.
+# FORM: Selected
+# RUN: lower-to-b3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="on-a-text" parameters=[{type=string}, {type=anything}] results=[{type=undefined}] {
+    v2 = String string="text"
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f1 name="on-an-integer" parameters=[{type=string}, {type=anything}, {type=int[0, 100]}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f2 name="on-a-large-integer" parameters=[{type=string}, {type=anything}, {type=int[0, 4294967296]}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f3 name="on-a-number" parameters=[{type=string}, {type=anything}, {type=number}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f4 name="on-a-boolean" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f5 name="on-a-number-or-nothing" parameters=[{type=string}, {type=anything}, {type=undefined|number}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f6 name="on-nothing" parameters=[{type=string}, {type=anything}] results=[{type=undefined}] {
+    v2 = Undefined
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f7 name="on-any-text" parameters=[{type=string}, {type=anything}, {type=string}] results=[{type=undefined}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Unreachable
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Oops(Terminal, v3:DefineOwnProperty)
+}
+function f8 name="on-anything" parameters=[{type=string}, {type=anything}, {type=anything}] results=[{type=object}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Return v3
+# CHECK: Void b@{{*}} = Patchpoint(b@[[object]]:{{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Return(b@[[object]], Terminal)
+}
+function f9 name="on-a-list-or-a-text" parameters=[{type=string}, {type=anything}, {type=string|Array}] results=[{type=Array}] {
+    v3 = DefineOwnProperty v2, v0, v1 descriptorFlags=[HasValue]
+    Return v3
+# CHECK: Void b@{{*}} = Patchpoint({{*}}v3:DefineOwnProperty)
+# CHECK-NEXT: Return(
+}

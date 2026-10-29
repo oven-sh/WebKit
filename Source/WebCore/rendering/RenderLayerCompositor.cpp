@@ -804,7 +804,7 @@ FloatRect RenderLayerCompositor::visibleRectForLayerFlushing() const
 {
     const Ref frameView = m_renderView.frameView();
 #if PLATFORM(IOS_FAMILY)
-    return frameView->exposedContentRect();
+    return frameView->exposedContentRect().raw();
 #else
 
     // Having a m_scrolledContentsLayer indicates that we're doing scrolling via GraphicsLayers.
@@ -3033,7 +3033,7 @@ std::optional<String> RenderLayerCompositor::platformLayerTreeAsText(Element& el
 
 static RenderView* frameContentsRenderView(RenderWidget& renderer)
 {
-    if (RefPtr contentDocument = renderer.frameOwnerElement().contentDocument())
+    if (auto* contentDocument = renderer.frameOwnerElement().contentDocument())
         return contentDocument->renderView();
 
     return nullptr;
@@ -3160,7 +3160,7 @@ bool RenderLayerCompositor::layerRepaintTargetsBackingSharingLayer(RenderLayer& 
     if (sharingState.backingProviderCandidates().isEmpty())
         return false;
 
-    for (CheckedPtr<const RenderLayer> currLayer = &layer; currLayer; currLayer = currLayer->paintOrderParent()) {
+    for (const RenderLayer* currLayer = &layer; currLayer; currLayer = currLayer->paintOrderParent()) {
         if (compositedWithOwnBackingStore(*currLayer))
             return false;
         
@@ -3744,7 +3744,11 @@ Vector<CompositedClipData> RenderLayerCompositor::computeAncestorClippingStack(c
                 auto offset = layer.convertToLayerCoords(&ancestorLayer, { }, RenderLayer::AdjustForColumns);
                 clipRoundedRect.moveBy(-offset);
 
-                CompositedClipData clipData { const_cast<RenderLayer*>(&ancestorLayer), clipRoundedRect, true };
+                RectCorners<float> cornerCurvatures { 1.0f, 1.0f, 1.0f, 1.0f };
+                if (box->style().border().hasBorderRadius())
+                    cornerCurvatures = BorderShape::shapeForBorderRect(box->style(), box->borderBoxRect()).cornerCurvatures();
+
+                CompositedClipData clipData { const_cast<RenderLayer*>(&ancestorLayer), clipRoundedRect, true, cornerCurvatures };
                 newStack.insert(0, WTF::move(clipData));
                 currentClippedLayer = &ancestorLayer;
             } else if (box->hasNonVisibleOverflow() && box->style().border().hasBorderRadius()) {
@@ -3761,7 +3765,7 @@ Vector<CompositedClipData> RenderLayerCompositor::computeAncestorClippingStack(c
                 rect.moveBy(-offset);
                 clipRoundedRect.setRect(rect);
 
-                CompositedClipData clipData { const_cast<RenderLayer*>(&ancestorLayer), clipRoundedRect, false };
+                CompositedClipData clipData { const_cast<RenderLayer*>(&ancestorLayer), clipRoundedRect, false, borderShape.cornerCurvatures() };
                 newStack.insert(0, WTF::move(clipData));
                 currentClippedLayer = &ancestorLayer;
             } else
@@ -3908,7 +3912,7 @@ bool RenderLayerCompositor::requiresCompositingForTransform(RenderLayerModelObje
 
     auto compositingPolicy = m_compositingPolicy;
 #if !USE(COMPOSITING_FOR_SMALL_CANVASES)
-    if (RefPtr canvas = dynamicDowncast<HTMLCanvasElement>(renderer.element())) {
+    if (auto* canvas = dynamicDowncast<HTMLCanvasElement>(renderer.element())) {
         auto canvasArea = canvas->size().area<RecordOverflow>();
         if (!canvasArea.hasOverflowed() && canvasArea < canvasAreaThresholdRequiringCompositing)
             compositingPolicy = CompositingPolicy::Conservative;
@@ -4682,7 +4686,7 @@ FloatSize RenderLayerCompositor::enclosingFrameViewVisibleSize() const
 {
     const Ref frameView = m_renderView.frameView();
 #if PLATFORM(IOS_FAMILY)
-    return frameView->exposedContentRect().size();
+    return frameView->exposedContentRect().raw().size();
 #else
     if (m_scrolledContentsLayer)
         return frameView->sizeForVisibleContent(scrollbarInclusionForVisibleRect());

@@ -1,0 +1,30 @@
+# A call that can only collect has no site: nobody asks where in the source it stands or which handler is in force there, and the collector finds the frame by the return address. A call that may throw keeps its site
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-cold disable=pass:InlineCalls check=validate-back-end
+# CHECK: f1: size={{*}} sites=0 handlers=0
+# CHECK: f2: size={{*}} sites=1 handlers=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="allocates" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    PropSet v1, v0 key="x" mode=Strict
+    Return v1
+}
+function f2 name="allocatesAndMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireObjectCoercible v0 name="length"
+    v2 = NewObject layout=L0 fields=[]
+    PropSet v2, v1 key="x" mode=Strict
+    Return v2
+}

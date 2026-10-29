@@ -1,0 +1,117 @@
+# function area(width: number, height: number): number {
+#   return width * height;
+# }
+# function areaOfSquare(side: number): number {
+#   return area(side, side) + 1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = input(area) + areaOfSquare(+input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1 f2
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f2
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=14 kind=Parameter function=f1
+typesite w1 module=m0 position=29 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=104 kind=Parameter function=f2
+typesite w4 module=m0 position=82 kind=Result
+typesite w5 module=m0 position=230 kind=CallResult
+typesite w6 module=m0 position=137 kind=CallResult
+variable g0 name="area" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v8, -, v9 calleeName="input"
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    v15 = ToNumber v14
+    v16 = Call v1, -, v15 calleeName="areaOfSquare"
+    v17 = Convert v16 declared={type=number site=w5}
+    v18 = Add v11, v17
+    PropSet v5, v18 key="answer"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="area" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Mul v0, v1
+    v3 = Convert v2 declared={type=number site=w2}
+    Return v3
+}
+function f2 name="areaOfSquare" module=m0 position=82 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0, v0 calleeName="area"
+    v3 = Convert v2 declared={type=number site=w6}
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    v6 = Convert v5 declared={type=number site=w4}
+    Return v6
+}
+
+# The function escapes, so it has two ways in. A caller that nobody knows comes in with any values: each is tested, an integer is converted and a double unboxed, and the result is boxed.
+# CHECK-LABEL: name="area" role=EntryChecks
+# CHECK: AboveEqual(
+# CHECK: IToD(
+# CHECK: AboveEqual(
+# CHECK: IToD(
+# CHECK: Double b@[[checkedArea]] = Mul(
+# CHECK: Return(
+# What is no number leaves by a jump to the copy that takes any value.
+# CHECK: Void b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|{{*}}:CallDirect)
+# CHECK-LABEL: end of function
+# The typed body takes two floating-point registers and tests nothing.
+# CHECK-LABEL: name="area" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[width]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[height]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[area]] = Mul(b@[[width]], b@[[height]],
+# CHECK-NEXT: Return(b@[[area]], Terminal)
+# CHECK-NEXT: end of function
+# A caller whose arguments are proven to be numbers calls the typed body.
+# CHECK-LABEL: name="areaOfSquare" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[side]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[square]] = Patchpoint(b@[[side]]:Register({{*}}), b@[[side]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="areaOfSquare" role=Source
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: IToD(
+# NONE-NOT: Branch(
+# NONE-LABEL: end of function
+# CALLS: f1: size={{*}} frame=none
+# CALLS-LABEL: f2: size=
+# CALLS-NEXT: function [[typedBody]] x1
+# CALLS: [[typedBody]]: size={{*}} frame=none
+# X64-LABEL: role=Source
+# X64-NEXT: instructions: 2, patchpoints: 0
+# ARM64-LABEL: role=Source
+# ARM64-NEXT: instructions: 2, patchpoints: 0

@@ -1,0 +1,36 @@
+# the storage of an eval binding fits its kind
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 22
+
+module m0 path="main" displayPath="main"
+entry module=m0
+layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
+layout L1 fields=[{key="c" declared={type=anything}}]
+layout L2 kind=Instance fields=[{key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key="q" declared={type=anything}}]
+variable g0 name="x" module=m0 declared={type=anything}
+evalscope e0 bindings=[{name="goodVariable" variable=g0}, {name="goodOperand" operand=0}, {name="goodField" layout=L0 field=0 operand=0}, {name="goodMappedArgument" kind=MappedArgument field=1 operand=0}]
+evalscope e1 bindings=[{name="goodPrivateName" kind=PrivateName layout=L2 field=0 operand=0}, {name="goodPrivateNameOfToken" kind=PrivateName operand=0}, {name="goodStaticPrivateName" kind=PrivateName layout=L0 field=0 operand=0}]
+evalscope e2 bindings=[{name="goodPrivateMethod" kind=PrivateMethod layout=L2 field=0 operand=0 function=1}, {name="goodGetter" kind=PrivateAccessor layout=L2 field=0 operand=0 function=1}, {name="goodSetter" kind=PrivateAccessor layout=L2 field=0 operand=0 setter=1}]
+evalscope e3 bindings=[{name="badNeitherVariableNorOperand"}]
+evalscope e4 bindings=[{name="badVariableAndOperand" variable=g0 operand=0}]
+evalscope e5 bindings=[{name="badLayoutWithVariable" layout=L0 field=0 variable=g0}]
+evalscope e6 bindings=[{name="badLayoutWithoutField" layout=L0 operand=0}]
+evalscope e7 bindings=[{name="badFieldPastEnvironment" layout=L0 field=1 operand=0}]
+evalscope e8 bindings=[{name="badFieldWithoutLayout" field=0 operand=0}]
+evalscope e9 bindings=[{name="badLayoutIsRecord" layout=L1 field=0 operand=0}]
+evalscope e10 bindings=[{name="badFunctionOnVariable" variable=g0 function=0}]
+evalscope e11 bindings=[{name="badSetterOnVariable" variable=g0 setter=0}]
+evalscope e12 bindings=[{name="badMappedArgumentWithoutIndex" kind=MappedArgument operand=0}]
+evalscope e13 bindings=[{name="badMappedArgumentWithLayout" kind=MappedArgument layout=L0 field=0 operand=0}]
+evalscope e14 bindings=[{name="badMappedArgumentWithVariable" kind=MappedArgument field=0 variable=g0 operand=0}]
+evalscope e15 bindings=[{name="badMappedArgumentWithoutOperand" kind=MappedArgument field=0}]
+evalscope e16 bindings=[{name="badPrivateNameWithoutOperand" kind=PrivateName layout=L2 field=0}]
+evalscope e17 bindings=[{name="badPrivateNameWithFunction" kind=PrivateName layout=L2 field=0 operand=0 function=1}]
+evalscope e18 bindings=[{name="badPrivateNameOfPublicField" kind=PrivateName layout=L2 field=1 operand=0}]
+evalscope e19 bindings=[{name="badPrivateNameWithoutField" kind=PrivateName layout=L2 operand=0}]
+evalscope e20 bindings=[{name="badPrivateNameInRecord" kind=PrivateName layout=L1 field=0 operand=0}]
+evalscope e21 bindings=[{name="badPrivateMethodWithoutFunction" kind=PrivateMethod layout=L2 field=0 operand=0}]
+evalscope e22 bindings=[{name="badPrivateMethodWithSetter" kind=PrivateMethod layout=L2 field=0 operand=0 function=1 setter=2}]
+evalscope e23 bindings=[{name="badPrivateMethodInEnvironment" kind=PrivateMethod layout=L0 field=0 operand=0 function=1}]
+evalscope e24 bindings=[{name="badPrivateAccessorWithoutFunctions" kind=PrivateAccessor layout=L2 field=0 operand=0}]

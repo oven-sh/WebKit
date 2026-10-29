@@ -1,0 +1,59 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
+#include <wtf/Compiler.h>
+
+namespace JSC { namespace AOT {
+
+class JSONRuntime;
+
+inline constexpr size_t jsonSourcePadding = 64;
+inline constexpr int64_t stackReservedForJSONParsers = 64 * 1024;
+inline constexpr unsigned numberOfJSONShapeBits = 256;
+
+enum class JSONSourceEncoding : uint8_t {
+    Latin1,
+    UTF16,
+    UTF8,
+};
+
+struct JSONWords {
+    const uint8_t* sourceStart;
+    const uint8_t* sourceEnd;
+    void* sourceOwnerStackPointer;
+    JSONRuntime* runtime;
+    JSONSourceEncoding sourceEncoding;
+    // No source waits below the open one and the run time owns no text for it, so clearing this and sourceOwnerStackPointer ends it.
+    bool canEndSourceInline;
+    // The parser of untyped values has failed in the open source. It would fail again on every value around that place.
+    bool valueParserFailed;
+    uint32_t shapesSeenWithExtraMembers[numberOfJSONShapeBits / 32];
+
+    ALWAYS_INLINE void didUnwindTo(void* handlerStackPointer)
+    {
+        if (sourceOwnerStackPointer && std::bit_cast<uintptr_t>(sourceOwnerStackPointer) < std::bit_cast<uintptr_t>(handlerStackPointer)) [[unlikely]]
+            dropSourcesBelow(handlerStackPointer);
+    }
+
+    // Compiled code opens a source under its frame pointer.
+    ALWAYS_INLINE void didLeaveFramesUpTo(void* framePointer) { didUnwindTo(static_cast<char*>(framePointer) + 1); }
+
+private:
+    void dropSourcesBelow(void* stackPointer);
+};
+
+static_assert(std::is_trivially_default_constructible_v<JSONWords> && std::is_standard_layout_v<JSONWords>);
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

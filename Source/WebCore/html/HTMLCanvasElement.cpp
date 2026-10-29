@@ -245,8 +245,21 @@ void HTMLCanvasElement::requestPaint()
 
 void HTMLCanvasElement::dispatchPaintEvent()
 {
-    // FIXME: Populate changedElements.
-    dispatchEvent(CanvasPaintEvent::create(eventNames().paintEvent, { }, Event::IsTrusted::Yes));
+    Vector<Ref<Element>> changedElements;
+    for (Ref element : std::exchange(m_changedDrawableElements, { })) {
+        if (element->isDescendantOf(*this) && element->isCanvasDrawable())
+            changedElements.append(WTF::move(element));
+    }
+
+    CanvasPaintEvent::Init init;
+    init.changedElements = WTF::move(changedElements);
+    dispatchEvent(CanvasPaintEvent::create(eventNames().paintEvent, WTF::move(init), Event::IsTrusted::Yes));
+}
+
+void HTMLCanvasElement::drawableElementDidChange(Element& drawableElement)
+{
+    m_changedDrawableElements.add(drawableElement);
+    protect(document())->requestCanvasPaintEvent(*this);
 }
 
 std::optional<CanvasElementSnapshot> HTMLCanvasElement::canvasDrawableSnapshot(Element& element) const
@@ -707,9 +720,9 @@ void HTMLCanvasElement::paint(GraphicsContext& context, const LayoutRect& r)
                 RefPtr buffer = renderingContext->surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
                 if (buffer) {
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-                    ImagePaintingOptions options { renderingContext->paintingOptionsForDisplay(), context.compositeOperation() };
+                    ImageDrawingOptions options { renderingContext->drawingOptionsForDisplay(), context.compositeOperation() };
 #else
-                    ImagePaintingOptions options { context.compositeOperation() };
+                    ImageDrawingOptions options { context.compositeOperation() };
 #endif
                     context.drawImageBuffer(*buffer, snappedIntRect(r), options);
                 }

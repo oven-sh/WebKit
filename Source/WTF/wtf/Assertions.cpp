@@ -51,6 +51,7 @@
 #endif // USE(CF)
 
 #if OS(WINDOWS)
+#include <atomic>
 #include <crtdbg.h>
 #include <windows.h>
 #endif
@@ -351,6 +352,10 @@ void WTFReportBacktraceWithPrefixAndPrintStream(PrintStream& out, const char* pr
         out.print("%sno stacktrace available", prefix);
 }
 
+#if ASAN_ENABLED
+extern "C" void __sanitizer_print_stack_trace(void);
+#endif
+
 void WTFReportBacktrace()
 {
     std::array<void*, kDefaultFramesToShow + kDefaultFramesToSkip> samples;
@@ -359,8 +364,13 @@ void WTFReportBacktrace()
     WTFGetBacktrace(samples.data(), &frames);
     if (frames > kDefaultFramesToSkip)
         WTFPrintBacktrace(std::span { samples }.subspan(kDefaultFramesToSkip, frames - kDefaultFramesToSkip));
-    else
+    else {
+#if ASAN_ENABLED
+        __sanitizer_print_stack_trace();
+#else
         CrashLogPrintStream { }.print("no stacktrace available");
+#endif
+    }
 }
 
 void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, std::span<void* const> stack, const char* prefix)
@@ -373,6 +383,22 @@ void WTFPrintBacktrace(std::span<void* const> stack)
     CrashLogPrintStream out;
     WTFPrintBacktraceWithPrefixAndPrintStream(out, stack, "");
 }
+
+#if OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+static std::atomic<void (*)(void)> s_abortReporter;
+
+void WTFSetAbortReporter(void (*reporter)(void))
+{
+    s_abortReporter.store(reporter);
+}
+
+void WTFAbort()
+{
+    if (auto* reporter = s_abortReporter.load()) [[unlikely]]
+        reporter();
+    std::abort();
+}
+#endif
 
 #if !defined(NDEBUG) || !(OS(DARWIN) || PLATFORM(PLAYSTATION))
 void WTFCrash()

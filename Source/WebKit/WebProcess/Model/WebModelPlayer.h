@@ -109,6 +109,9 @@ private:
         bool isLooping { false };
 
         std::optional<WebCore::ModelPlayerAnimationState> animationStateToRestore;
+#if ENABLE(SPATIAL_PORTAL)
+        std::optional<WebCore::TransformationMatrix> childTransform;
+#endif
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
         RefPtr<WebCore::Model> cachedModelSource;
 #endif
@@ -185,7 +188,17 @@ private:
     void notifyEntityTransformUpdated();
     void setEnvironmentMap(Ref<WebCore::SharedBuffer>&&, const URL&) final;
 #if ENABLE(SPATIAL_PORTAL)
+    void disableEnvironmentMap() final;
+    void enableSystemEnvironmentMap() final;
+#endif
+    String environmentMapForTesting() const final;
+    void pushEnvironmentMapToModel();
+    WebCore::StageModeOperation effectiveStageMode() const;
+#if ENABLE(SPATIAL_PORTAL)
     void setPortalTransform(const WebCore::UsedPortalTransform&) final;
+    void setPortalAction(WebCore::PortalActionKind) final;
+    bool isSpatialPortal() const { return !!m_portalTransform; }
+    void notifyPortalTransformUpdated();
 #endif
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
@@ -213,10 +226,14 @@ private:
     WebCore::IntSize m_currentPixelSize;
     std::optional<WebCore::LayoutPoint> m_initialPoint;
     std::optional<Ref<WebCore::SharedBuffer>> m_environmentMap;
+    URL m_environmentMapURL;
+    WebCore::EnvironmentMapKind m_environmentMapKind { WebCore::EnvironmentMapKind::Default };
+    bool m_environmentMapPushedToCurrentModel { false };
     const RetainPtr<WKStageModeOrbitSimulator> m_orbitSimulator;
     MonotonicTime m_lastUpdateTime;
 #if ENABLE(SPATIAL_PORTAL)
-    bool m_isSpatialPortal { false };
+    std::optional<WebCore::UsedPortalTransform> m_portalTransform;
+    WebCore::PortalActionKind m_portalAction { WebCore::PortalActionKind::None };
 #endif
 
     bool m_isUpdateLoopRunning { false };

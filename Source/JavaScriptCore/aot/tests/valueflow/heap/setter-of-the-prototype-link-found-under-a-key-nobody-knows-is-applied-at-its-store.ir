@@ -1,0 +1,33 @@
+# handedOut = {}; kept = {}; somethingNoTableLists(handedOut); handedOut[key] = first; kept[key] = second
+# A store under a key nobody knows may find the setter of `__proto__`, which puts the stored value above the receiver of that store and above no other object.
+# Code that nobody compiles holds the first object and whatever lies in or above it. The second object and what is stored there stay in the program.
+# RUN: valueflow-why escaped=f1 escaped=f2
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# RUN(USED): valueflow-solve used
+# USED: ObjectPrototype__proto__
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HandedOut"
+layout L1 name="Kept"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = NewObject layout=L0
+    v3 = NewObject layout=L1
+    v4 = Call v1, -, v2
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    ElemSet v2, v4, v5
+    ElemSet v3, v4, v6
+    Return
+}
+function f1 name="first" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="second" kind=Arrow results=[{type=anything}] {
+    Return
+}

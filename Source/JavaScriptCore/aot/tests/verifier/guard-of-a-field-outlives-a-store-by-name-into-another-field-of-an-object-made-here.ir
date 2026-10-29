@@ -1,0 +1,38 @@
+# node.next = node stands between a test of node.count and a read that relies on it, and node is an object literal of this function that a call has seen.
+# The store runs no other code, however the receiver is named.
+# FORM: Prepared
+# RUN: verify
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true}
+function f0 name="receiverNamedByTheAllocation" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
+    v2 = Null
+    v3 = NewObject -, v2, v0 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = Call v1, v4
+    v6 = IsSlotFilled v4 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7: guard):
+    PropSet v4, v4 key="next" mode=Sloppy
+    v9 = GetSlot v4, v7 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v9
+  b2():
+    Return
+}
+function f1 name="receiverNamedByTheResultOfATypeTest" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
+    v2 = Null
+    v3 = NewObject -, v2, v0 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = Call v1, v4
+    v6 = IsSlotFilled v4 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7: guard):
+    v8 = TypeTest v4 testedType=L0
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: L0):
+    PropSet v9, v4 key="next" mode=Sloppy
+    v11 = GetSlot v4, v7 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v11
+  b3():
+    Return
+}

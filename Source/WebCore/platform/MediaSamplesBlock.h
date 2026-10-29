@@ -56,6 +56,14 @@ public:
         RefPtr<SharedBuffer> cryptorIV { };
         RefPtr<SharedBuffer> cryptorSubsampleAuxiliaryData { };
 #endif
+        bool isProtected() const
+        {
+#if ENABLE(ENCRYPTED_MEDIA)
+            return cryptorIV || cryptorSubsampleAuxiliaryData;
+#else
+            return false;
+#endif
+        }
     };
 
     using MediaSampleDataType = MediaSampleItem::MediaSampleDataType;
@@ -70,7 +78,15 @@ public:
 
     void setInfo(RefPtr<const TrackInfo>&& info) { m_info = WTF::move(info); }
     const TrackInfo* info() const { return m_info.get(); }
-    MediaTime presentationTime() const { return isEmpty() ? MediaTime::invalidTime() : first().presentationTime; }
+    // Leading items whose output is entirely trimmed don't start the block's output.
+    MediaTime presentationTime() const
+    {
+        for (auto& sample : *this) {
+            if (sample.duration || !sample.trimInterval.first)
+                return sample.presentationTime;
+        }
+        return isEmpty() ? MediaTime::invalidTime() : last().presentationTime;
+    }
     MediaTime duration() const
     {
         MediaTime duration = MediaTime::zeroTime();
@@ -80,6 +96,7 @@ public:
     }
     MediaTime presentationEndTime() const { return presentationTime() + duration(); }
     bool isSync() const { return size() ? (first().flags & MediaSample::IsSync) : false; }
+    bool isProtected() const { return std::ranges::any_of(m_samples, [](auto& item) { return item.isProtected(); }); }
     TrackID trackID() const { return m_info ? m_info->trackID() : -1; }
     bool isVideo() const { return m_info && m_info->isVideo(); }
     bool isAudio() const { return m_info && m_info->isAudio(); }
@@ -91,6 +108,7 @@ public:
     bool isEmpty() const { return m_samples.isEmpty(); }
     void clear() { m_samples.clear(); }
     SamplesVector takeSamples() { return std::exchange(m_samples, { }); }
+    MediaSamplesBlock isolatedCopy() && { return WTF::move(*this); }
 
     // Indicate that this MediaSampleBlock follows a discontinuity from the previous block.
     std::optional<bool> discontinuity() const { return m_discontinuity; }

@@ -1,0 +1,108 @@
+# function method(name: string): number {
+#   switch (name) {
+#     case "GET": return 1;
+#     case "POST": return 2;
+#     case "PUT": return 3;
+#     case "DELETE": return 4;
+#     case "PATCH": return 5;
+#     default: return 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = method(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=16 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=278 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="method"
+    v10 = Convert v9 declared={type=number site=w2}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="method" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    SwitchString v0 strings=["GET", "POST", "PUT", "DELETE", "PATCH"] -> case b2(| 0), case b4(| 0), case b6(| 0), case b8(| 0), case b10(| 0), otherwise b12()
+  b2(v1):
+    Jump -> next b3()
+  b3():
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number site=w1}
+    Return v3
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number site=w1}
+    Return v6
+  b6(v7):
+    Jump -> next b7()
+  b7():
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number site=w1}
+    Return v9
+  b8(v10):
+    Jump -> next b9()
+  b9():
+    v11 = Integer integer=4
+    v12 = Convert v11 declared={type=number site=w1}
+    Return v12
+  b10(v13):
+    Jump -> next b11()
+  b11():
+    v14 = Integer integer=5
+    v15 = Convert v14 declared={type=number site=w1}
+    Return v15
+  b12():
+    Jump -> next b13()
+  b13():
+    v16 = Integer
+    v17 = Convert v16 declared={type=number site=w1}
+    Return v17
+}
+
+# A switch whose cases are texts of at most eight 8-bit characters packs the subject into one 64-bit word, by one stub that only reads, and then decides among integers: a comparison in the middle, then equalities. 44182075 stands for "GET", 11317967492 for "POST".
+# CHECK-LABEL: name="method" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[name]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[word]] = Patchpoint(b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Reads:{argumentBuffer, StringStorage})
+# CHECK: Int32 b@{{*}} = LessThan(b@[[word]], $11317967492(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $44182075(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $44214915(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $11317967492(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $2482937924229(
+# CHECK: Int32 b@{{*}} = Equal(b@[[word]], $609825937566246(
+# CHECK-LABEL: end of function
+# There is one call for five cases. No text is compared with a text, no cell is made for a case, and nothing may throw or allocate.
+# NONE-LABEL: name="method" role=Source
+# NONE: Patchpoint(
+# NONE-NOT: Patchpoint(
+# NONE-NOT: Load
+# NONE-LABEL: end of function
+# CALLS-LABEL: f3: size=
+# CALLS-NEXT: stub ShortStringOfValue x1
+# CALLS-NEXT: f4: size=

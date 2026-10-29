@@ -1,0 +1,152 @@
+enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObjectLayout: Bool, hasOrdinaryOwnKeys: Bool, supportsRemoval: Bool, hasObjectsThatCodeAlters: Bool) {
+    Record(false, true, true, true, true, true) Instance(false, false, true, true, true, true) Container(false, false, true, false, false, true) Environment(true, false, false, false, true, false)
+    | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
+}
+flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
+flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
+enum MethodKind { Method Getter Setter }
+enum ClassSide { Prototype Static }
+record Field wire {
+    key: PropertyKey? computedKey: UInt32? declared: DeclaredType flags: FieldFlags form: FieldForm originLayout: Layout? originField: UInt32?
+    | engine flow: FieldFlow slotType: Type? setterType: Type? typeBeforeNarrowing: Type?
+}
+record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
+record Layout wire extendedEngine {
+    kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
+    fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
+    declaredOrder: Span<UInt32>
+    | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 flow: LayoutFlow classFlow: ClassFlow
+}
+
+enum VariableInitialization { Uninitialized Undefined Function }
+flags VariableFlags { IsImmutable }
+record Variable wire {
+    name: String? module: Module(Referrer) declared: DeclaredType initialization: VariableInitialization function: Function(Closure)? owner: Layout?
+    flags: VariableFlags
+    | engine flow: LocationFlow
+}
+
+enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
+    Plain(true, false) Arrow(true, false) Method(true, false) Getter(false, false) Setter(false, false) BaseConstructor(false, true) DerivedConstructor(false, true) Initializer(false, false) Module(false, false) CommonJsModule(false, false)
+}
+flags FunctionFlags {
+    IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey
+    | engine AllocatesOwnThis IsSplitOffGenericVersion
+}
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript }
+enum EntryParameter (presentWith: FunctionFlags) {
+    Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
+}
+record SourceRange wire { start: UInt32 end: UInt32 }
+record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
+record Function wire extendedEngine {
+    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 syntax: FunctionSyntax
+    enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredType> thisType: DeclaredType parameters: Span<DeclaredType>
+    results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
+    | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>
+}
+
+enum ECMAMode { Strict Sloppy }
+flags EvalScopeFlags { IsInFunction IsInArrowFunction IsInFieldInitializer IsInDerivedConstructor AllowsSuperProperty AllowsSuperCall AllowsNewTarget }
+enum EvalBindingKind {
+    Variable Constant FunctionName This NewTarget HomeObject ClassObject Arguments PrivateName PrivateMethod PrivateAccessor WithObject EvalVariables
+    MappedArgument SimpleCatchParameter
+}
+record EvalBinding wire {
+    name: String? kind: EvalBindingKind depth: UInt32 layout: Layout? field: UInt32? variable: Variable? operand: UInt32? function: UInt32?
+    setter: UInt32?
+}
+record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> }
+
+enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, canOwnVariables: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
+    SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, true, false, false, false, false) External(false, false, false, false, false, false)
+}
+enum CommonJsParameter { Exports Require Module Filename Dirname }
+enum ExternalKind { UncompiledCode HostValue }
+enum SyntheticExportRule { None CommonJs CommonJsIgnoringAnnotation RuntimeModule }
+enum RequireResult { Namespace ModuleExports DefaultExport }
+enum ImportPhase { Evaluation Defer }
+enum ModuleRequestKind { Import Require }
+enum ModuleExportKind { Variable Namespace Indirect }
+flags ModuleFlags {
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns
+    | engine EvaluatesItself IsEvaluatedByRequire
+}
+record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
+record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> }
+record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
+record ModuleExport wire {
+    name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
+}
+record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool }
+record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? }
+record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? }
+record Module wire {
+    path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
+    externalKind: ExternalKind runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
+    requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
+    requiredNames: Span<RequiredName> positions: SourcePositions functionText: Span<Byte>
+    | engine namespaceLayout: Layout?
+}
+record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 }
+record Entry wire { module: Module(Target) hostReads: Span<HostRead> }
+
+variant DataNode wire {
+    Undefined Null Hole Boolean { value: Bool } Number { value: Double } String { value: String } BigInt { digits: String }
+    Array { contents: Type elements: Span<DataNode> } Object { layout: Layout members: Span<DataMember> }
+}
+record DataMember wire { key: PropertyKey value: DataNode }
+record Data wire { root: DataNode module: Module(Referrer)? }
+
+record TemplateString wire { cooked: String? raw: String }
+enum FunctionVisibility { Public Private PrivateRecursive }
+record RuntimeFunctionEntry wire { id: RuntimeFunction function: Function(Closure) visibility: FunctionVisibility }
+record WebAssemblyModule wire { module: Module(Target) bytes: Span<Byte> }
+
+enum ResumeMode { Next Throw Return }
+enum IteratorKind { Sync Async }
+enum IteratorCompletion { Normal Throw }
+enum HomeObjectKind { Object ClassPrototype }
+enum NullishAccess { Read Write Iterate Spread Update }
+enum ErrorKind { Error EvalError RangeError ReferenceError SyntaxError TypeError URIError AggregateError }
+enum RuntimeErrorKind {
+    UninitializedBinding ConstantAssignment UninitializedThis ThisAlreadyBound DeleteSuperProperty UnresolvableReference ImportAssignment NotDestructurable
+    DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorIsNotAnObject InvalidPrivateRead
+    InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter PrivateStaticTestOfNonObject
+    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled NoSyncIteratorForAsyncIteration SyncIteratorForAsyncIterationIsNotAnObject
+}
+flags RegExpFlags { HasIndices Global IgnoreCase Multiline DotAll Unicode UnicodeSets Sticky }
+
+list layouts : Layout as layout prefix L
+list fields : Field
+list staticFields : StaticField
+list variables : Variable as variable prefix g
+list modules : Module as module prefix m
+list moduleRequests : ModuleRequest
+list moduleExports : ModuleExport
+list syntheticExports : SyntheticExport
+list requiredNames : RequiredName
+list columnAdjustments : ColumnAdjustment
+list moduleFailures : ModuleFailure as modulefailure prefix q
+list evalScopes : EvalScope as evalscope prefix e
+list evalBindings : EvalBinding
+list functions : Function as function prefix f
+list code : CodeWord
+list dataNodes : DataNode
+list dataMembers : DataMember
+list data : Data as data prefix d
+list entries : Entry as entry
+list hostReads : HostRead
+list runtimeFunctions : RuntimeFunctionEntry as runtimefunction sorted by id
+list webAssemblyModules : WebAssemblyModule as webassemblymodule
+
+enum BlockRole { Ordinary CatchHandler CleanupHandler IterationCleanup DisposalCleanup }
+enum BlockFrequency { Normal Unlikely | engine Rare }
+enum CodeShape { | engine Unchosen Compact Balanced Fast }
+record BlockHead wire wireOnly { parameterCount: UInt32 valueCount: UInt32 role: BlockRole subject: Value? frequency: BlockFrequency hasHandler: Bool }
+record ParameterHead wire wireOnly { type: Type? }
+record ValueHead wire wireOnly { opcode: UInt32 position: UInt32? }
+record TerminatorHead wire wireOnly { kind: UInt32 position: UInt32? targetCount: UInt32 }
+record TargetHead wire wireOnly { block: Block argumentCount: UInt32 proofCount: UInt32 }

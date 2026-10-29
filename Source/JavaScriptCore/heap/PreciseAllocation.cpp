@@ -29,6 +29,7 @@
 #include "AlignedMemoryAllocator.h"
 #include "IsoCellSetInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "Scribble.h"
 #include "SubspaceInlines.h"
 #include "WeakSetInlines.h"
@@ -166,6 +167,8 @@ PreciseAllocation* PreciseAllocation::tryCreateForLowerTierPrecise(JSC::Heap& he
     static_assert(halfAlignment == 8, "We assume that memory returned by malloc has alignment >= 8.");
 
     void* space = subspace->alignedMemoryAllocator()->tryAllocateMemory(adjustedAlignmentAllocationSize);
+    if (!space && MarkedBlockCage::isRequired()) [[unlikely]]
+        return nullptr;
     RELEASE_ASSERT(space);
 
     unsigned adjustment = halfAlignment;
@@ -280,6 +283,8 @@ void PreciseAllocation::sweep()
         if (isLowerTierPrecise())
             static_cast<IsoSubspace*>(m_subspace)->clearIsoCellSetBit(this);
         m_hasValidCell = false;
+        if (Options::useZombieMode()) [[unlikely]]
+            scribble(cell(), m_cellSize);
     }
 }
 

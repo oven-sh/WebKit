@@ -73,6 +73,7 @@
 #include "HTMLBDIElement.h"
 #include "HTMLBodyElement.h"
 #include "HTMLCanvasElement.h"
+#include "HTMLDataListElement.h"
 #include "HTMLDialogElement.h"
 #include "HTMLDocument.h"
 #include "HTMLFrameOwnerElement.h"
@@ -823,13 +824,11 @@ void Element::setBooleanAttribute(const QualifiedName& name, bool value)
 
 NamedNodeMap& Element::attributesMap() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST ElementRareData& rareData = const_cast<Element*>(this)->ensureElementRareData();
+    ElementRareData& rareData = const_cast<Element*>(this)->ensureElementRareData();
     if (NamedNodeMap* attributeMap = rareData.attributeMap())
         return *attributeMap;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST rareData.setAttributeMap(makeUniqueWithoutRefCountedCheck<NamedNodeMap>(const_cast<Element&>(*this)));
+    rareData.setAttributeMap(makeUniqueWithoutRefCountedCheck<NamedNodeMap>(const_cast<Element&>(*this)));
     return *rareData.attributeMap();
 }
 
@@ -850,8 +849,7 @@ void Element::synchronizeAllAttributes() const
         uncheckedDowncast<StyledElement>(*this).synchronizeStyleAttributeInternal();
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAllAttributes();
+        const_cast<SVGElement&>(*svgElement).synchronizeAllAttributes();
     }
 }
 
@@ -866,8 +864,7 @@ ALWAYS_INLINE void Element::synchronizeAttribute(const QualifiedName& name) cons
     }
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAttribute(name);
+        const_cast<SVGElement&>(*svgElement).synchronizeAttribute(name);
     }
 }
 
@@ -891,8 +888,7 @@ ALWAYS_INLINE void Element::synchronizeAttribute(const AtomString& localName) co
     }
 
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<SVGElement&>(*svgElement).synchronizeAttribute(QualifiedName(nullAtom(), localName, nullAtom()));
+        const_cast<SVGElement&>(*svgElement).synchronizeAttribute(QualifiedName(nullAtom(), localName, nullAtom()));
     }
 }
 
@@ -948,8 +944,7 @@ bool Element::hasFocusableStyle() const
         return isFocusableStyle(renderStyle());
 
     // Compute style in yet unstyled subtree without resolving full style.
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST CheckedPtr style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
+    CheckedPtr style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
     return isFocusableStyle(style.get());
 }
 
@@ -1255,22 +1250,20 @@ static HTMLSelectElement* LEGACY_NODELETE owningSelectElement(const Element& ele
     return nullptr;
 }
 
-static bool isListBoxItem(const Element& element)
+static HTMLSelectElement* LEGACY_NODELETE listBoxSelectElement(const Element& element)
 {
     auto* selectElement = owningSelectElement(element);
-    return selectElement && is<RenderListBox>(selectElement->renderer());
+    return selectElement && is<RenderListBox>(selectElement->renderer()) ? selectElement : nullptr;
 }
 
 static std::optional<std::pair<SingleThreadWeakPtr<RenderElement>, LayoutRect>> listBoxElementScrollIntoView(const Element& element)
 {
-    RefPtr selectElement = owningSelectElement(element);
+    RefPtr selectElement = listBoxSelectElement(element);
     if (!selectElement)
         return std::nullopt;
 
-    CheckedPtr renderListBox = dynamicDowncast<RenderListBox>(selectElement->renderer());
-    if (!renderListBox)
-        return std::nullopt;
-    
+    CheckedPtr renderListBox = downcast<RenderListBox>(selectElement->renderer());
+
     auto itemIndex = selectElement->listItems().find(&element);
     if (itemIndex != notFound)
         renderListBox->scrollToRevealElementAtListIndex(itemIndex);
@@ -2131,13 +2124,11 @@ LayoutRect Element::absoluteEventHandlerBounds(bool& includesFixedPositionElemen
 
 static std::optional<std::pair<CheckedRef<RenderListBox>, LayoutRect>> listBoxElementBoundingBox(const Element& element)
 {
-    RefPtr selectElement = owningSelectElement(element);
+    RefPtr selectElement = listBoxSelectElement(element);
     if (!selectElement)
         return std::nullopt;
 
-    CheckedPtr listBoxRenderer = dynamicDowncast<RenderListBox>(selectElement->renderer());
-    if (!listBoxRenderer)
-        return std::nullopt;
+    CheckedPtr listBoxRenderer = downcast<RenderListBox>(selectElement->renderer());
 
     std::optional<LayoutRect> boundingBox;
     if (RefPtr optionElement = dynamicDowncast<HTMLOptionElement>(element))
@@ -2205,7 +2196,11 @@ std::optional<std::pair<CheckedPtr<RenderElement>, FloatRect>> Element::bounding
 FloatRect Element::boundingClientRect()
 {
     Ref document = this->document();
-    document->updateLayoutIfDimensionsOutOfDate(*this, { DimensionsCheck::Left, DimensionsCheck::Top, DimensionsCheck::Width, DimensionsCheck::Height, DimensionsCheck::IgnoreOverflow }, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::CanDeferUpdateLayerPositions, LayoutOptions::IgnorePendingStylesheets });
+    OptionSet<DimensionsCheck> dimensionsCheck { DimensionsCheck::Left, DimensionsCheck::Top, DimensionsCheck::Width, DimensionsCheck::Height, DimensionsCheck::IgnoreOverflow };
+    OptionSet<LayoutOptions> layoutOptions { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::CanDeferUpdateLayerPositions, LayoutOptions::IgnorePendingStylesheets };
+    document->updateLayoutIfDimensionsOutOfDate(*this, dimensionsCheck, layoutOptions);
+    if (RefPtr selectElement = listBoxSelectElement(*this))
+        document->updateLayoutIfDimensionsOutOfDate(*selectElement, dimensionsCheck, layoutOptions);
     LocalFrameView::AutoPreventLayerAccess preventAccess(document->view());
     auto pair = boundingAbsoluteRectWithoutLayout();
     if (!pair)
@@ -2608,8 +2603,7 @@ static RefPtr<Element> getElementByIdIncludingDisconnected(const Element& startE
     if (auto* root = startElement.rootElement()) {
         for (auto& element : descendantsOfType<Element>(*root)) {
             if (element.getIdAttribute() == id) {
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(&element);
+                return const_cast<Element*>(&element);
             }
         }
     }
@@ -3146,6 +3140,18 @@ void Element::updateEffectiveLangState()
     ensureElementRareData().setEffectiveLang(lang);
 }
 
+void Element::updateIsInSelectOrDataListSubtree()
+{
+    auto* parent = parentElement();
+    setStateFlag(StateFlag::IsInSelectOrDataListSubtree, (parent && parent->isInSelectOrDataListSubtree()) || isAnyOf<HTMLSelectElement, HTMLDataListElement>(*this));
+}
+
+void Element::notifyDescendantsChanged()
+{
+    for (RefPtr element = this; element && element->isInSelectOrDataListSubtree(); element = element->parentElement())
+        element->descendantsChanged();
+}
+
 bool Element::hasAttributes() const
 {
     synchronizeAllAttributes();
@@ -3255,6 +3261,8 @@ Node::NeedsPostConnectionSteps Element::insertionSteps(InsertionType insertionTy
             shadowRoot->hostChildElementDidChange(*this);
     }
 
+    updateIsInSelectOrDataListSubtree();
+
     if (parentNode() == &parentOfInsertedTree && is<Document>(*parentNode())) {
         clearEffectiveLangStateOnNewDocumentElement();
         protect(document())->setDocumentElementLanguage(langFromAttribute());
@@ -3358,6 +3366,9 @@ void Element::removingSteps(RemovalType removalType, ContainerNode& oldParentOfR
             shadowRoot->hostChildElementDidChange(*this);
     }
 
+    if (isInSelectOrDataListSubtree())
+        updateIsInSelectOrDataListSubtree();
+
     if (!parentNode()) {
         if (is<Document>(oldParentOfRemovedTree)) {
             setEffectiveLangStateOnOldDocumentElement();
@@ -3399,6 +3410,8 @@ void Element::movingSteps(MovingType movingType, ContainerNode& oldParent)
         updateEffectiveTextDirectionIfNeeded();
 
     updateEffectiveLangState();
+
+    updateIsInSelectOrDataListSubtree();
 
     if (!movingType.isSubtreeRoot || !hasFocusWithin())
         return;
@@ -3640,8 +3653,7 @@ RefPtr<ShadowRoot> Element::openOrClosedShadowRoot() const
 RefPtr<Element> Element::resolveReferenceTarget() const
 {
     if (!document().settings().shadowRootReferenceTargetEnabled()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(this);
+        return const_cast<Element*>(this);
     }
 
     RefPtr element = this;
@@ -3651,8 +3663,7 @@ RefPtr<Element> Element::resolveReferenceTarget() const
         element = shadow->referenceTargetElement();
         shadow = element ? element->shadowRoot() : nullptr;
     }
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(element.get());
+    return const_cast<Element*>(element.get());
 }
 
 RefPtr<Element> Element::retargetReferenceTargetForBindings(RefPtr<Element> element) const
@@ -4984,8 +4995,7 @@ const Style::ComputedStyle& Element::resolvePseudoElementStyle(const Style::Pseu
     }
 
     CheckedPtr computedStyle = style.get();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<Style::ComputedStyle*>(parentStyle.get())->addPseudoElementStyle(WTF::move(style));
+    const_cast<Style::ComputedStyle*>(parentStyle.get())->addPseudoElementStyle(WTF::move(style));
     ASSERT(parentStyle->pseudoElementStyle(pseudoElementIdentifier));
     return *computedStyle.unsafeGet();
 }
@@ -5147,8 +5157,7 @@ RefPtr<PseudoElement> Element::pseudoElementIfExists(Style::PseudoElementIdentif
 
 RefPtr<const PseudoElement> Element::pseudoElementIfExists(Style::PseudoElementIdentifier pseudoElementIdentifier) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element&>(*this).pseudoElementIfExists(pseudoElementIdentifier);
+    return const_cast<Element&>(*this).pseudoElementIfExists(pseudoElementIdentifier);
 }
 
 static void disconnectPseudoElement(PseudoElement* pseudoElement)
@@ -6611,7 +6620,7 @@ bool Element::checkVisibility(const CheckVisibilityOptions& options)
     protect(document())->updateStyleIfNeeded();
 
     // List box items are painted by the list box renderer and have no renderer of their own.
-    if (!renderer() && !isListBoxItem(*this))
+    if (!renderer() && !listBoxSelectElement(*this))
         return false;
 
     CheckedPtr style = computedStyle();
@@ -6677,8 +6686,7 @@ bool Element::hasCustomState(const AtomString& state) const
 
 CustomStateSet& Element::ensureCustomStateSet()
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto& rareData = const_cast<Element*>(this)->ensureElementRareData();
+    auto& rareData = const_cast<Element*>(this)->ensureElementRareData();
     if (!rareData.customStateSet())
         rareData.initializeCustomStateSet(CustomStateSet::create(*this));
     return *rareData.customStateSet();
@@ -6803,8 +6811,7 @@ RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayer
 
 double Element::lookupCSSRandomBaseValue(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier, const CSSCalc::RandomCachingKey& key) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(this)->ensureElementRareData().ensureRandomCachingKeyMap(pseudoElementIdentifier)->lookupCSSRandomBaseValue(key);
+    return const_cast<Element*>(this)->ensureElementRareData().ensureRandomCachingKeyMap(pseudoElementIdentifier)->lookupCSSRandomBaseValue(key);
 }
 
 bool Element::hasRandomCachingKeyMap() const

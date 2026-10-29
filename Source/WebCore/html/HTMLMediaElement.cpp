@@ -861,10 +861,11 @@ HTMLMediaElement::~HTMLMediaElement()
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    if (RefPtr mediaKeys = m_mediaKeys) {
+    if (RefPtr mediaKeys = std::exchange(m_mediaKeys, nullptr)) {
         mediaKeys->detachCDMClient(*this);
         if (RefPtr player = m_player)
             player->cdmInstanceDetached(mediaKeys->cdmInstance());
+        updateMediaState();
     }
 #endif
 
@@ -3682,6 +3683,7 @@ void HTMLMediaElement::setMediaKeys(MediaKeys* mediaKeys, Ref<DeferredPromise>&&
         // 5.6. Resolve promise.
         element.m_mediaKeys = WTF::move(mediaKeys);
         element.m_attachingMediaKeys = false;
+        element.updateMediaState();
         promise->resolve();
     });
 
@@ -5804,7 +5806,7 @@ void HTMLMediaElement::setSelectedTextTrack(TextTrack* trackToSelect)
             m_textTracks->scheduleChangeEvent();
     } else if (trackToSelect == &TextTrack::captionMenuOffItemSingleton()) {
         for (int i = 0, length = trackList->length(); i < length; ++i)
-            RefPtr { trackList->item(i) }->setMode(TextTrack::Mode::Disabled);
+            RefPtr { trackList->item(i) }->setMode(TextTrack::Mode::Disabled, TextTrack::ModeChangeType::AutomaticSelection);
 
         if (captionDisplayMode() != CaptionUserPreferences::CaptionDisplayMode::ForcedOnly && !trackList->isChangeEventScheduled())
             m_textTracks->scheduleChangeEvent();
@@ -5821,7 +5823,7 @@ void HTMLMediaElement::setSelectedTextTrack(TextTrack* trackToSelect)
             if (RefPtr page = document().page()) {
                 Ref captionPreferences = protect(page->group())->ensureCaptionPreferences();
                 if (RefPtr trackToEnable = captionPreferences->bestTextTrackToEnable(*trackList))
-                    trackToEnable->setMode(TextTrack::Mode::Showing);
+                    trackToEnable->setMode(TextTrack::Mode::Showing, TextTrack::ModeChangeType::AutomaticSelection);
             }
         }
 
@@ -7579,7 +7581,7 @@ void HTMLMediaElement::enqueuePlaybackTargetAvailabilityChangedEvent(EnqueueBeha
     if (behavior == EnqueueBehavior::OnlyWhenChanged && hasTargets == m_lastTargetAvailabilityEventState)
         return;
 
-    ALWAYS_LOG(LOGIDENTIFIER, "hasTargets = ", hasTargets);
+    HTMLMEDIAELEMENT_RELEASE_LOG(EnqueuePlaybackTargetAvailabilityChangedEvent, hasTargets);
     m_lastTargetAvailabilityEventState = hasTargets;
 #if ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
     Ref event = WebKitPlaybackTargetAvailabilityEvent::create(eventNames().webkitplaybacktargetavailabilitychangedEvent, hasTargets);
@@ -9644,7 +9646,7 @@ bool HTMLMediaElement::isSuspended() const
 
 void HTMLMediaElement::suspendPlayback()
 {
-    ALWAYS_LOG(LOGIDENTIFIER, "paused = ", paused());
+    HTMLMEDIAELEMENT_RELEASE_LOG(SuspendPlayback, paused());
     if (!paused())
         pauseInternal();
 }
@@ -9962,6 +9964,11 @@ MediaProducerMediaStateFlags HTMLMediaElement::mediaState() const
 #if ENABLE(MEDIA_SOURCE)
     if (RefPtr mediaSource = m_mediaSource; mediaSource && mediaSource->isStreamingContent())
         state.add(MediaProducerMediaState::HasStreamingActivity);
+#endif
+
+#if ENABLE(ENCRYPTED_MEDIA)
+    if (m_mediaKeys)
+        state.add(MediaProducerMediaState::HasProtectedMedia);
 #endif
 
     if (!isPlaying())
@@ -10520,8 +10527,7 @@ void HTMLMediaElement::setShowPosterFlag(bool flag)
 MediaElementSession& HTMLMediaElement::mediaSession() const
 {
     if (!m_mediaSession) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLMediaElement&>(*this).initializeMediaSession();
+        const_cast<HTMLMediaElement&>(*this).initializeMediaSession();
     }
     return *m_mediaSession;
 }

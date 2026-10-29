@@ -429,13 +429,13 @@ ALWAYS_INLINE const JSONCache::StringEntry* JSONCache::StringTable::match(unsign
     return &entry;
 }
 
-ALWAYS_INLINE void JSONCache::StringTable::insert(unsigned set, JSString* string, std::span<const Latin1Character> source, unsigned textLength)
+ALWAYS_INLINE void JSONCache::StringTable::insert(unsigned set, JSString* string, std::span<const Latin1Character> source, unsigned textLength, bool textIsASCII)
 {
     for (unsigned way = stringWays - 1; way; --way) {
         m_entries[set + way] = m_entries[set + way - 1];
         m_texts[set + way] = m_texts[set + way - 1];
     }
-    m_entries[set] = { string, textLength };
+    m_entries[set] = { string, textLength, textIsASCII };
     WTF::copyElements(std::span<Latin1Character> { m_texts[set] }, source.first(maxNameTextLength));
 }
 
@@ -451,11 +451,11 @@ ALWAYS_INLINE const JSONCache::StringEntry* JSONCache::findString(std::span<cons
     return nullptr;
 }
 
-ALWAYS_INLINE void JSONCache::addString(std::span<const Latin1Character> source, unsigned textLength, JSString* string)
+ALWAYS_INLINE void JSONCache::addString(std::span<const Latin1Character> source, unsigned textLength, JSString* string, bool textIsASCII)
 {
     if (textLength > maxNameTextLength || source.size() < maxNameTextLength)
         return;
-    m_strings.insert(stringIndex(source), string, source, textLength);
+    m_strings.insert(stringIndex(source), string, source, textLength, textIsASCII);
 }
 
 template<typename Visitor>

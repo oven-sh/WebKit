@@ -1,0 +1,28 @@
+# The creation of an environment and PutEnvironmentField are the stores to its fields. A field whose every read is the callee of a call is only called.
+# No operation deletes or redefines a field of an environment. So a field whose writers are all known holds its type for good, and one that the creation fills is always filled
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}{key="called" {{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="unused" {{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation {{*}}reads=NeverRead isUnchangedDuringActivation=true} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="main" fields=[{key="called" declared={type=anything}}, {key="count" declared={type=anything}}, {key="unused" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewClosure v2 function=f1
+    v4 = Call v3
+    Return v4
+}
+function f1 name="inner" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v4 = GetEnvironmentField v0 layout=L0 field=1
+    Return v4
+}
+function f2 name="called" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

@@ -1,0 +1,88 @@
+# `{ ...defaults, ...options }` and `Object.assign({}, defaults, options)`: nothing but the copies reaches the new object until they are over,
+# so a name that a source surely holds is in the object at every read: its field is always filled, whether the layout declares it or the analysis appends it.
+# Not so: a name of a source that may be undefined, a name that is deleted from a source, a name that only one of two sources holds,
+# a target that is used beside the assignment, and a layout that another allocation leaves empty.
+# No allocation lists those fields, so the order of the keys is not that of the allocation.
+# RUN: valueflow-apply
+# CHECK: layout L2 name="Spread" fields=[{key="a"{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled{{*}}{key="c"{{*}}occupancy=AlwaysFilled
+# CHECK-NOT: fieldCreation=OnlyAtConstruction
+# CHECK: layout L3 name="Assigned" fields=[{key="a"{{*}}flags=[IsAddedLate{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled{{*}}{key="c"{{*}}occupancy=AlwaysFilled
+# CHECK: layout L4 name="FromWhatMayBeUndefined" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="c"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L6 name="FromShrinking" fields=[{key="d"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L7 name="FromEither" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="c"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L8 name="UsedBeside" fields=[{key="a"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L9 name="AlsoLeftEmpty" fields=[{key="a"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Defaults" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Options" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Spread" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+layout L3 name="Assigned"
+layout L4 name="FromWhatMayBeUndefined"
+layout L5 name="Shrinking" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="FromShrinking"
+layout L7 name="FromEither"
+layout L8 name="UsedBeside"
+layout L9 name="AlsoLeftEmpty"
+data d0 root=Object{layout=L3}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectAssign
+    v1 = Integer integer=1
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    v4 = NewObject layout=L2
+    CopyDataProperties v4, v2
+    CopyDataProperties v4, v3
+    v7 = FinishObject v4
+    v8 = Data data=d0
+    v9 = Call v0, -, v8, v2, v3
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3, v2)
+  b2():
+    v13 = Undefined
+    Jump -> next b3(v13, v3)
+  b3(v14: anything, v15: anything):
+    v16 = NewObject layout=L4
+    CopyDataProperties v16, v2
+    CopyDataProperties v16, v14
+    v19 = FinishObject v16
+    v20 = NewObject -, v1 layout=L5 fields=[0]
+    v21 = NewObject layout=L6
+    CopyDataProperties v21, v20
+    v23 = FinishObject v21
+    v24 = PropDelete v20 key="d"
+    v25 = NewObject layout=L7
+    CopyDataProperties v25, v2
+    CopyDataProperties v25, v15
+    v28 = FinishObject v25
+    v29 = NewObject layout=L8
+    v30 = FinishObject v29
+    v31 = Call v0, -, v30, v2
+    v32 = PropGet v30 key="a"
+    v33 = NewObject layout=L9
+    CopyDataProperties v33, v2
+    v35 = FinishObject v33
+    v36 = NewObject layout=L9
+    v37 = FinishObject v36
+    v38 = PropGet v7 key="a"
+    v39 = PropGet v9 key="c"
+    v40 = PropGet v19 key="c"
+    v41 = PropGet v23 key="d"
+    v42 = PropGet v28 key="c"
+    v43 = PropGet v35 key="a"
+    v44 = PropGet v37 key="a"
+    Return
+}

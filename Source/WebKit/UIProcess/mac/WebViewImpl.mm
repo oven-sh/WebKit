@@ -106,6 +106,7 @@
 #import <WebCore/AXObjectTypes.h>
 #import <WebCore/ActivityState.h>
 #import <WebCore/AttributedString.h>
+#import <WebCore/BitmapImage.h>
 #import <WebCore/CGWindowUtilities.h>
 #import <WebCore/CaretRectComputation.h>
 #import <WebCore/CharacterRange.h>
@@ -212,10 +213,6 @@
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
 #import <pal/cocoa/WritingToolsUISoftLink.h>
 #import <pal/mac/DataDetectorsSoftLink.h>
-
-#if ENABLE(WRITING_TOOLS) && USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebViewImplWritingToolsAdditions.mm>)
-#import <WebKitAdditions/WebViewImplWritingToolsAdditions.mm>
-#endif
 
 #if HAVE(TOUCH_BAR) && ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
 SOFT_LINK_FRAMEWORK(AVKit)
@@ -1569,7 +1566,7 @@ void WebViewImpl::didRelaunchProcess()
 void WebViewImpl::scrollingCoordinatorWasCreated()
 {
 #if HAVE(NSREFRESHCONTROLLER)
-    if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy()) {
+    if (RefPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy()) {
         scrollingCoordinator->setHasRefreshController(!!m_refreshController);
         scrollingCoordinator->setRefreshControllerSnappingThreshold(refreshControllerSnappingThreshold());
     }
@@ -1927,7 +1924,7 @@ bool WebViewImpl::isPointOnPDFHUD(WebCore::FloatPoint locationInView)
 
 bool WebViewImpl::isPointInScrollbar(CGPoint locationInView)
 {
-    CheckedPtr scrollingCoordinatorProxy = m_page->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinatorProxy = m_page->scrollingCoordinatorProxy();
     if (!scrollingCoordinatorProxy)
         return false;
 
@@ -5185,7 +5182,7 @@ static bool matchesExtensionOrEquivalent(const String& filename, const String& e
         || (equalLettersIgnoringASCIICase(extension, "jpeg"_s) && filename.endsWithIgnoringASCIICase(".jpg"_s));
 }
 
-void WebViewImpl::setPromisedDataForImage(Ref<WebCore::Image>&& image, const String& filename, const String& extension, const String& title, const String& url, const String& visibleURL, RefPtr<WebCore::FragmentedSharedBuffer>&& archiveBuffer, const String&, const String& originIdentifier)
+void WebViewImpl::setPromisedDataForImage(Ref<WebCore::BitmapImage>&& image, const String& filename, const String& extension, const String& title, const String& url, const String& visibleURL, RefPtr<WebCore::FragmentedSharedBuffer>&& archiveBuffer, const String&, const String& originIdentifier)
 {
     String filenameWithExtension = filename;
     if (!matchesExtensionOrEquivalent(filename, extension))
@@ -5234,7 +5231,7 @@ void WebViewImpl::writePromisedImageDragDataToPasteboard(NSPasteboard *pasteboar
             [pasteboard setData:imageData.get() forType:data.imageUTI.createNSString().get()];
     }
 
-    if (RetainPtr tiffData = image->adapter().tiffRepresentation())
+    if (RetainPtr tiffData = image->adapter().tiffRepresentation(WebCore::ConcreteObjectSize::fixed(image->size())))
         [pasteboard setData:bridge_cast(WTF::move(tiffData)) forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
 
     if (RefPtr archiveBuffer = data.archiveBuffer) {
@@ -5268,7 +5265,7 @@ void WebViewImpl::provideDataForPasteboard(NSPasteboard *pasteboard, NSString *t
 
     // FIXME: Need to support NSRTFDPboardType.
     if ([type isEqual:WebCore::legacyTIFFPasteboardTypeSingleton()])
-        [pasteboard setData:(__bridge NSData *)RetainPtr { promisedImage->adapter().tiffRepresentation() }.get() forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
+        [pasteboard setData:(__bridge NSData *)RetainPtr { promisedImage->adapter().tiffRepresentation(WebCore::ConcreteObjectSize::fixed(promisedImage->size())) }.get() forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
 }
 
 static BOOL fileExists(NSString *path)
@@ -7838,8 +7835,8 @@ bool WebViewImpl::canHandleContextMenuWritingTools() const
     if (!PAL::isWritingToolsUIFrameworkAvailable() || ![PAL::getWTWritingToolsViewControllerClassSingleton() isAvailable] || m_page->writingToolsBehavior() == WebCore::WritingTools::Behavior::None)
         return false;
 
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebViewImplWritingToolsAdditions.mm>)
-    if (!shouldShowWritingToolsInContextMenu())
+#if HAVE(APPKIT_SIRI_AFFORDANCE)
+    if ([PAL::getWTWritingToolsViewControllerClassSingleton() isEnhancedSiriAvailable])
         return false;
 #endif
 
@@ -8477,7 +8474,7 @@ void WebViewImpl::setRefreshController(NSRefreshController *refreshController)
 #endif
     }
 
-    if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy()) {
+    if (RefPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy()) {
         scrollingCoordinator->setHasRefreshController(!!m_refreshController);
         scrollingCoordinator->setRefreshControllerSnappingThreshold(refreshControllerSnappingThreshold());
     }
@@ -8494,7 +8491,7 @@ void WebViewImpl::applyRefreshControllerHeight(CGFloat height, bool animated)
     if (!height && m_cachedTopScrollStretch > 0)
         m_suppressRefreshControllerUpdates = true;
 
-    if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
+    if (RefPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setTopScrollStretchForRefreshController(height);
 }
 
@@ -8543,7 +8540,7 @@ void WebViewImpl::updateRefreshControllerFrame()
     if (!m_suppressRefreshControllerUpdates)
         [[m_refreshController refreshControl] update];
 
-    if (CheckedPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
+    if (RefPtr scrollingCoordinator = m_page->scrollingCoordinatorProxy())
         scrollingCoordinator->setRefreshControllerSnappingThreshold(refreshControllerSnappingThreshold());
 }
 

@@ -199,6 +199,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRecurringPaymentDateUnit.
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRecurringPaymentDateUnit.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRecurringPaymentRequest.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRecurringPaymentRequest.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayReferenceRequest.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayReferenceRequest.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayReferenceSession.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayReferenceSession.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRequest.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRequest.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSApplePayRequestBase.cpp
@@ -2078,6 +2082,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPaymentCoordinator.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPaymentCoordinator.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPaymentError.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPaymentError.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPhoneNumberPossessionConfiguration.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockPhoneNumberPossessionConfiguration.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockWebAuthenticationConfiguration.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMockWebAuthenticationConfiguration.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSMouseEvent.cpp
@@ -3314,6 +3320,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWaveShaperOptions.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWaveShaperOptions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAnimation.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAnimation.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAuthnOperationErrorCode.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAuthnOperationErrorCode.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAuthnOperationException.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebAuthnOperationException.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebCodecsAlphaOption.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebCodecsAlphaOption.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWebCodecsAudioData.cpp
@@ -3807,7 +3817,6 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/NodeName.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/PaintWorkletGlobalScopeConstructors.idl
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorDeclarations.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorDeclarations.h
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorDefinitions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorID.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorID.serialization.in
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirksAccessors.cpp

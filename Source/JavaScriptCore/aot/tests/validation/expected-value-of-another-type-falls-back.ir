@@ -1,0 +1,54 @@
+# function readX(point: Point) { return point.x }  function guessX(point) { return point.x }, with Point inferred from its uses  const points: Point[] = [{ x: 1.5 }]  function firstX() { return points[0].x }
+# Nobody lies here. A validating build ends the process where a value has another type than the one that is proven of it. Where a type is only expected, a test stands in front of the typed code,
+# and a value of another type is an ordinary event: the test fails, the generic code runs, and the program prints what plain JavaScript prints. A validating build takes that way out like any build.
+# The three places where a test stands: the entry of a typed function (`readX`), the use of a parameter whose type nothing checks (`guessX`), and a conversion in the middle of a body (`firstX`).
+# Each gets a value of its type first, then an object of another layout, and the first two a primitive
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (readX, guessX, firstX, points, point, label) => { print(readX(point), readX(label), readX("text")); print(guessX(point), guessX(label), guessX(7)); print(firstX()); points[0] = label; print(firstX()); };
+# OPTIONS: validate
+# STATISTIC: FunctionsWithTypesCheckedAtEntry = 1
+# STATISTIC: RequestsResolvedToCheck = 2
+# CHECK-NOT: AOT validation
+# CHECK: 1.5 undefined undefined
+# CHECK-NEXT: 1.5 undefined undefined
+# CHECK-NEXT: 1.5
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=15 kind=Parameter
+typesite w1 module=m0 position=170 kind=Element
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Label" fields=[{key="text" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = String string="label"
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewArray v2 contents=L0 holes=[]
+    v7 = NewClosure function=f1
+    v8 = NewClosure function=f2
+    v9 = NewClosure v6 function=f3
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="register" [isFreeName]
+    v12 = Call v11, -, v7, v8, v9, v6, v2, v5
+    Return
+}
+function f1 name="readX" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="guessX" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="firstX" captures=[{type=Array<L0>}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = Convert v2 declared={type=L0 site=w1} illTypedCause=ContainerWriterUnseen
+    v4 = PropGet v3 key="x"
+    Return v4
+}

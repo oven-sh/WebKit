@@ -1066,6 +1066,13 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::logicalHeightForGridItem(RenderBox&
             return *cachedLogicalHeight;
     }
 
+    auto intrinsicLogicalHeightRequirement = ItemLayoutRequirement::NeedsLayoutForIntrinsicLogicalHeight;
+    if (gridLayoutState.containsLayoutRequirementForGridItem(gridItem, intrinsicLogicalHeightRequirement)) {
+        gridLayoutState.clearLayoutRequirementForGridItem(gridItem, intrinsicLogicalHeightRequirement);
+        if (!gridItem.needsLayout())
+            gridItem.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    }
+
     // If |gridItem| has a relative logical height, we shouldn't let it override its intrinsic height, which is
     // what we are interested in here. Thus we need to set the block-axis override size to nullopt (no possible resolution).
     auto hasOverridingContainingBlockContentSizeForGridItem = [&] {
@@ -1335,7 +1342,11 @@ LayoutUnit GridTrackSizingAlgorithm::baselineOffsetForGridItem(const RenderBox& 
     if (!participateInBaselineAlignment(gridItem, alignmentContextType))
         return LayoutUnit();
 
-    ASSERT_IMPLIES(alignmentContextType == Style::GridTrackSizingDirection::Rows, !m_renderGrid->isSubgridRows());
+    // In a subgridded axis the baseline alignment context belongs to the outer grid, see
+    // RenderGrid::columnAxisBaselineOffsetForGridItem().
+    if (m_renderGrid->isSubgrid(alignmentContextType))
+        return LayoutUnit();
+
     auto align = baselineAlignmentPositionForGridItem(gridItem, alignmentContextType);
     const auto& span = m_renderGrid->gridSpanForGridItem(gridItem, alignmentContextType);
     auto alignmentContext = GridLayoutFunctions::alignmentContextForBaselineAlignment(span, align);
@@ -2135,6 +2146,12 @@ bool GridTrackSizingAlgorithm::isValidTransition() const
 void GridTrackSizingAlgorithm::setup(Style::GridTrackSizingDirection direction, unsigned numTracks, SizingOperation sizingOperation, std::optional<LayoutUnit> availableSpace)
 {
     ASSERT(m_needsSetup);
+    // The baselines come from the items' layout, which computing an item's intrinsic widths can leave stale.
+    for (CheckedPtr gridItem = m_renderGrid->firstChildBox(); gridItem; gridItem = gridItem->nextSiblingBox()) {
+        if (!gridItem->isOutOfFlowPositioned() && gridItem->needsLayout() && m_renderGrid->isBaselineAlignmentForGridItem(*gridItem))
+            gridItem->layoutIfNeeded();
+    }
+
     m_direction = direction;
     setAvailableSpace(direction, availableSpace ? std::max(0_lu, *availableSpace) : availableSpace);
 

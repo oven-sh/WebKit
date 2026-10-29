@@ -170,6 +170,13 @@ void UserMediaPermissionRequestManagerProxy::invalidatePendingRequests()
     for (auto& request : pregrantedRequests)
         request->invalidate();
 
+    // Speech recognition and capture state requests are never the current request.
+    auto requestsWaitingForDelegate = WTF::move(m_requestsWaitingForDelegate);
+    for (auto& request : requestsWaitingForDelegate)
+        request->invalidate();
+    if (RefPtr requestAwaitingDelegateDecision = m_requestAwaitingDelegateDecision)
+        requestAwaitingDelegateDecision->invalidate();
+
     m_pendingDeviceRequests.clear();
 }
 
@@ -803,24 +810,79 @@ void UserMediaPermissionRequestManagerProxy::processUserMediaPermissionValidRequ
     });
 }
 
+#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+void UserMediaPermissionRequestManagerProxy::showMediaCapturePermissionPrompt(MediaPermissionPromptCustomization&& customization, UserMediaPermissionRequestProxy::PromptResultHandler&& completionHandler)
+{
+    // Only one delegate decision is outstanding at a time, so this is the request the application is answering.
+    RefPtr currentUserMediaRequest = m_requestAwaitingDelegateDecision;
+    if (!currentUserMediaRequest || !currentUserMediaRequest->isPending()) {
+        // Report a dismissal rather than never calling back.
+        RELEASE_LOG_ERROR(WebRTC, "UserMediaPermissionRequestManagerProxy::showMediaCapturePermissionPrompt: no request is being decided");
+        return completionHandler({ });
+    }
+
+    // The prompt only offers cameras and microphones for now, so it would ask about the wrong thing.
+    if (currentUserMediaRequest->requiresDisplayCapture()) {
+        RELEASE_LOG_ERROR(WebRTC, "UserMediaPermissionRequestManagerProxy::showMediaCapturePermissionPrompt: the request being decided is for display capture");
+        return completionHandler({ });
+    }
+
+    currentUserMediaRequest->showCapturePromptWithoutDeciding(WTF::move(customization), WTF::move(completionHandler));
+}
+#endif
+
 void UserMediaPermissionRequestManagerProxy::decidePolicyForUserMediaPermissionRequest()
 {
     RefPtr currentUserMediaRequest = m_currentUserMediaRequest;
     if (!currentUserMediaRequest)
         return;
 
+    askDelegateToDecide(*currentUserMediaRequest);
+}
+
+void UserMediaPermissionRequestManagerProxy::askDelegateToDecide(UserMediaPermissionRequestProxy& request)
+{
+#if PLATFORM(COCOA)
+    if (m_requestAwaitingDelegateDecision) {
+        m_requestsWaitingForDelegate.append(request);
+        return;
+    }
+    m_requestAwaitingDelegateDecision = request;
+#endif
+
     // If page navigated, there is no need to call the page client for authorization.
-    RefPtr webFrame = WebFrameProxy::webFrame(currentUserMediaRequest->frameID());
+    RefPtr webFrame = WebFrameProxy::webFrame(request.frameID());
     RefPtr page = m_page.get();
-    if (!webFrame || !page || !protocolHostAndPortAreEqual(page->pageLoadState().activeURL(), currentUserMediaRequest->topLevelDocumentSecurityOrigin().data().toURL())) {
-        denyRequest(*currentUserMediaRequest, UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::NoConstraints);
+    if (!webFrame || !page || !protocolHostAndPortAreEqual(page->pageLoadState().activeURL(), request.topLevelDocumentSecurityOrigin().data().toURL())) {
+        request.deny(UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::NoConstraints);
         return;
     }
 
     // FIXME: Remove webFrame, userMediaOrigin and topLevelOrigin from this uiClient API call.
-    Ref userMediaOrigin = API::SecurityOrigin::create(currentUserMediaRequest->userMediaDocumentSecurityOrigin());
-    Ref topLevelOrigin = API::SecurityOrigin::create(currentUserMediaRequest->topLevelDocumentSecurityOrigin());
-    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *webFrame, WTF::move(userMediaOrigin), WTF::move(topLevelOrigin), *currentUserMediaRequest);
+    Ref userMediaOrigin = API::SecurityOrigin::create(request.userMediaDocumentSecurityOrigin());
+    Ref topLevelOrigin = API::SecurityOrigin::create(request.topLevelDocumentSecurityOrigin());
+    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *webFrame, WTF::move(userMediaOrigin), WTF::move(topLevelOrigin), request);
+}
+
+void UserMediaPermissionRequestManagerProxy::delegateDecisionEnded(UserMediaPermissionRequestProxy& request)
+{
+    if (m_requestAwaitingDelegateDecision.get() != &request)
+        return;
+    m_requestAwaitingDelegateDecision = nullptr;
+
+    RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->askDelegateAboutNextWaitingRequest();
+    });
+}
+
+void UserMediaPermissionRequestManagerProxy::askDelegateAboutNextWaitingRequest()
+{
+    while (!m_requestAwaitingDelegateDecision && !m_requestsWaitingForDelegate.isEmpty()) {
+        Ref request = m_requestsWaitingForDelegate.takeFirst();
+        if (request->isPending())
+            askDelegateToDecide(request);
+    }
 }
 
 void UserMediaPermissionRequestManagerProxy::checkUserMediaPermissionForSpeechRecognition(WebCore::FrameIdentifier mainFrameIdentifier, FrameInfoData&& frameInfo, const WebCore::SecurityOrigin& requestingOrigin, const WebCore::SecurityOrigin& topOrigin, const WebCore::CaptureDevice& device, CompletionHandler<void(bool)>&& completionHandler)
@@ -834,7 +896,7 @@ void UserMediaPermissionRequestManagerProxy::checkUserMediaPermissionForSpeechRe
 
     // We use no UserMediaRequestIdentifier because this does not correspond to a UserMediaPermissionRequest in web process.
     // We create the RequestProxy only to check the media permission for speech.
-    Ref request = UserMediaPermissionRequestProxy::create(*this, std::nullopt, mainFrameIdentifier, WTF::move(frameInfo), requestingOrigin.isolatedCopy(), topOrigin.isolatedCopy(), Vector<WebCore::CaptureDevice> { device }, { }, { }, WTF::move(completionHandler));
+    Ref request = UserMediaPermissionRequestProxy::create(*this, std::nullopt, mainFrameIdentifier, WTF::move(frameInfo), requestingOrigin.isolatedCopy(), topOrigin.isolatedCopy(), Vector<WebCore::CaptureDevice> { device }, { }, { }, WTF::move(completionHandler), UserMediaPermissionRequestProxy::Kind::SpeechRecognition);
 
     // FIXME: Use switch on action.
     auto action = getRequestAction(request.get());
@@ -848,9 +910,7 @@ void UserMediaPermissionRequestManagerProxy::checkUserMediaPermissionForSpeechRe
         return;
     }
 
-    Ref apiRequestingOrigin = API::SecurityOrigin::create(requestingOrigin);
-    Ref apiTopOrigin = API::SecurityOrigin::create(topOrigin);
-    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *frame, WTF::move(apiRequestingOrigin), WTF::move(apiTopOrigin), request.get());
+    askDelegateToDecide(request);
 }
 
 bool UserMediaPermissionRequestManagerProxy::shouldChangeDeniedToPromptForCamera(const ClientOrigin& origin) const

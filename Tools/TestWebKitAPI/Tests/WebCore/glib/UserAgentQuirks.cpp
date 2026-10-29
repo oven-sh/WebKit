@@ -121,6 +121,8 @@ TEST(UserAgentTest, Quirks)
     assertUserAgentForURLHasChromeBrowserQuirk("http://luna.amazon.es/");
     assertUserAgentForURLHasChromeBrowserQuirk("http://luna.amazon.fr/");
 
+    assertUserAgentForURLHasChromeBrowserQuirk("http://tv.orange.fr/");
+
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://bugzilla.redhat.com/");
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://www.bilibili.com/");
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://claude.ai/");
@@ -133,6 +135,8 @@ TEST(UserAgentTest, Quirks)
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://auth.hbomax.com/");
     assertUserAgentForURLHasFirefoxBrowserQuirk("http://play.hbomax.com/");
 #endif
+
+    assertUserAgentForURLHasFirefoxBrowserQuirk("http://play.geforcenow.com/");
 
 #if ENABLE(WEBXR) && PLATFORM(WPE)
     assertUserAgentForURLHasAndroidQuirk("https://www.ikea.com/");

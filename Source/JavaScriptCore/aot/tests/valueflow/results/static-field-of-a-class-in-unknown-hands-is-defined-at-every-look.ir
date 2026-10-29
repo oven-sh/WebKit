@@ -1,0 +1,77 @@
+# class Handed { static early = 1 }  publish(Handed, readEarly, readBehind)          class HandedEarly { static { publish(HandedEarly) } static behind = 1 }
+# Unknown JavaScript that holds a class object may store to a static field, delete it or redefine it, so nobody knows the writers of the field. It cannot look before it holds the class object:
+# a field that is defined by then is defined at every look, and an access reads the variable under the guard of the member. A field that is defined behind the hand-over has no order and is read by name
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: variable g0 {{*}}flow={initialization=StoredBeforeEveryRead cause=UnknownWriter}
+# CHECK-NEXT: variable g1 {{*}}flow={cause=UnknownWriter}
+# RUN(READ): pipeline PlaceTypeTests
+# READ-LABEL: function f5 name="readEarly"
+# READ: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="early"}]
+# READ-NEXT: Branch [[unchanged]] -> taken
+# READ: = GetModuleVariable variable=g0
+# READ: frequency=Unlikely:
+# READ-NEXT: = PropGet {{*}} key="early"
+# READ-LABEL: function f6 name="readBehind"
+# READ-NOT: AreMembersUnchanged
+# READ-NOT: GetModuleVariable variable=g1
+# READ: = PropGet {{*}} key="behind"
+# READ-NOT: GetModuleVariable variable=g1
+# READ-LABEL: function f7
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Handed" module=m0 constructor=f1 staticFields=[{key="early" variable=g0}]
+layout L1 kind=Instance name="HandedEarly" module=m0 constructor=f2 staticFields=[{key="behind" variable=g1}]
+variable g0 name="early" module=m0 declared={type=number} owner=L0
+variable g1 name="behind" module=m0 declared={type=number} owner=L1
+variable g2 name="Handed" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="HandedEarly" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = CallDirect v4 function=f3
+    PutModuleVariable v4 variable=g2
+    v7 = NewClosure function=f2
+    v8 = NewClass v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    PutModuleVariable v9 variable=g3
+    v11 = Call v1, -, v9
+    v12 = CallDirect v9 function=f4
+    v13 = NewClosure function=f5
+    v14 = NewClosure function=f6
+    v15 = Call v1, -, v4, v13, v14
+    Return
+}
+function f1 name="Handed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="HandedEarly" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="initializer" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="early"
+    Return
+}
+function f4 name="initializer" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="behind"
+    Return
+}
+function f5 name="readEarly" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = PropGet v0 key="early"
+    Return v1
+}
+function f6 name="readBehind" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = PropGet v0 key="behind"
+    Return v1
+}

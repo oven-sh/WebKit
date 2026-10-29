@@ -1,0 +1,88 @@
+# function add(n) { return n + 1 + n - n + n - n }   let kept = add   function bindAgain() { kept = kept.bind(null) }   function run(n) { return kept(n) }
+# function putAdd() { kept = add }
+# The variable holds the function and then the result of binding it, like the field in `this.add = this.add.bind(this)`. The target of the bind is not proven, but flow saw closures of only
+# one function arrive: the bind tests for one and creates a closure of the bound function, and the engine binds anything else.
+# Flow saw the result of that bind reach the call in `run`: the call tests for such a closure and enters the function directly. Anything else in the variable is called as a value.
+# The call of `bind` itself creates such a closure and does not receive one, so it expects none as its callee.
+# Two calls hand the functions over: what is handed over once is expected to run once, and code that runs once tests for no expected function. `add` is too long to be copied into `run`.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN(RESULTS): valueflow-results
+# RUN: run-in-shell globalThis.register = (run, bindAgain, putAdd, read) => { print(run(1), read().name); bindAgain(); print(run(2), read().name); bindAgain(); print(run(3), read().name); putAdd(); print(run(4), read().name); bindAgain(); print(run(5), read().name, read().length, "prototype" in read()) };
+# RESULTS: bound-function-called-at S{{*}} f1 0
+# RESULTS: bound-function-made-at S{{*}} f1 0
+# IR: name="bindAgain"
+# IR: = TypeTest {{*}}testedType=f1
+# IR: = NewClosure {{*}}function=[[bound]]
+# IR: FunctionPrototypeBind/0
+# IR-NOT: = IsClosureOf {{*}}function=[[bound]]
+# IR: name="run"{{*}}role=GenericEntrypoint
+# IR: = IsClosureOf {{*}}function=[[bound]]
+# IR: = CallDirect {{*}}function=f1
+# CHECK: 2 add
+# CHECK-NEXT: 3 bound add
+# CHECK-NEXT: 4 bound bound add
+# CHECK-NEXT: 5 add
+# CHECK-NEXT: 6 bound add 1 false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything}
+variable g1 name="add" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g0
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v3, v4, v5, v6
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1():
+    v11 = Call v8, -, v3, v4, v5, v6
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f1 name="add" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = Add v2, v0
+    v4 = Sub v3, v0
+    v5 = Add v4, v0
+    v6 = Sub v5, v0
+    Return v6
+}
+function f2 name="run" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="bindAgain" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="bind"
+    v2 = Null
+    v3 = Call v1, v0, v2 calleeKey="bind"
+    PutModuleVariable v3 variable=g0
+    Return
+}
+function f4 name="putAdd" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f5 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

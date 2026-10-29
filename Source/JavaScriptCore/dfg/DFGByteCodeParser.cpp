@@ -1413,9 +1413,7 @@ private:
                 node->mergeFlags(NodeMayHaveNonNumericResult);
             if (observed.didObserveInt32Overflow())
                 node->mergeFlags(NodeMayOverflowInt32InBaseline);
-            if (observed.didObserveBigInt32())
-                node->mergeFlags(NodeMayHaveBigInt32Result);
-            if (observed.didObserveHeapBigInt() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BigInt32Overflow))
+            if (observed.didObserveHeapBigInt())
                 node->mergeFlags(NodeMayHaveHeapBigIntResult);
             break;
         }
@@ -1452,9 +1450,7 @@ private:
                 node->mergeFlags(NodeMayHaveDoubleResult);
             if (arithProfile->didObserveNonNumeric())
                 node->mergeFlags(NodeMayHaveNonNumericResult);
-            if (arithProfile->didObserveBigInt32())
-                node->mergeFlags(NodeMayHaveBigInt32Result);
-            if (arithProfile->didObserveHeapBigInt() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BigInt32Overflow))
+            if (arithProfile->didObserveHeapBigInt())
                 node->mergeFlags(NodeMayHaveHeapBigIntResult);
             break;
         }
@@ -1477,9 +1473,7 @@ private:
                 node->mergeFlags(NodeMayOverflowInt32InBaseline);
             if (arithProfile->didObserveNonNumeric())
                 node->mergeFlags(NodeMayHaveNonNumericResult);
-            if (arithProfile->didObserveBigInt32())
-                node->mergeFlags(NodeMayHaveBigInt32Result);
-            if (arithProfile->didObserveHeapBigInt() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BigInt32Overflow))
+            if (arithProfile->didObserveHeapBigInt())
                 node->mergeFlags(NodeMayHaveHeapBigIntResult);
             break;
         }
@@ -1523,9 +1517,7 @@ private:
 
         BinaryArithProfile* arithProfile = m_inlineStackTop->m_profiledBlock->binaryArithProfileForBytecodeIndex(m_currentIndex);
 
-        if (arithProfile->didObserveBigInt32())
-            node->mergeFlags(NodeMayHaveBigInt32Result);
-        if (arithProfile->didObserveHeapBigInt() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BigInt32Overflow))
+        if (arithProfile->didObserveHeapBigInt())
             node->mergeFlags(NodeMayHaveHeapBigIntResult);
 
         return node;
@@ -2214,9 +2206,7 @@ void ByteCodeParser::inlineCall(Node* callTargetNode, Operand result, CallVarian
     case InlineCallFrame::SetterCall:
     case InlineCallFrame::ProxyObjectLoadCall:
     case InlineCallFrame::ProxyObjectStoreCall:
-    case InlineCallFrame::ProxyObjectInCall:
-    case InlineCallFrame::BoundFunctionCall:
-    case InlineCallFrame::BoundFunctionTailCall: {
+    case InlineCallFrame::ProxyObjectInCall: {
         // When inlining getter and setter calls, we setup a stack frame which does not appear in the bytecode.
         // Because Inlining can switch on executable, we could have a graph like this.
         //
@@ -2650,7 +2640,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 if (executable->intrinsic() == WasmFunctionIntrinsic && !Options::forceICFailure())
                     return inliningResult;
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
                 if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
                     && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
@@ -2983,7 +2973,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 {
     VERBOSE_LOG("       The intrinsic is ", intrinsic, "\n");
     UNUSED_PARAM(callOp);
-    UNUSED_PARAM(kind);
     UNUSED_PARAM(specializationKind);
 
     if (!isOpcodeShape<OpCallShape>(m_currentInstruction)) {
@@ -3090,7 +3079,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 break;
             case F16RoundIntrinsic:
                 nodeType = ArithF16Round;
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return CallOptimizationResult::DidNothing;
                 break;
             case SqrtIntrinsic:
@@ -5222,7 +5211,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
-            if (!MacroAssembler::supportsFloatingPointRounding())
+            if (!MacroAssembler::supportsFloatingPointRounding(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -5298,7 +5287,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -5404,7 +5393,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -5866,14 +5855,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             // Bound function itself is completely wiped. And we should behave as if the current caller is directly calling this function.
             // If the current caller is calling the callee in a tail-call form, then it should be a tail-call.
-            InlineCallFrame::Kind targetKind = callOp == Call ? InlineCallFrame::BoundFunctionCall : InlineCallFrame::BoundFunctionTailCall;
-            // The kind picks the return PC of the target's frame after OSR exit. Array#sort's comparator must keep returning
-            // to arraySortComparatorReturnTrampoline: the current instruction is the call to sort, not a call to the comparator.
-            if (kind == InlineCallFrame::ArraySortComparatorCall) {
-                ASSERT(callOp == Call);
-                targetKind = InlineCallFrame::ArraySortComparatorCall;
-            }
-            Terminality terminality = handleCall(resultOperand, callOp, targetKind, osrExitIndex, jsConstant(boundFunction->targetFunction()), numberOfParameters - 1, newRegisterOffset, CallLinkStatus(CallVariant(boundFunction->targetFunction())), prediction, nullptr);
+            Terminality terminality = handleCall(resultOperand, callOp, kind, osrExitIndex, jsConstant(boundFunction->targetFunction()), numberOfParameters - 1, newRegisterOffset, CallLinkStatus(CallVariant(boundFunction->targetFunction())), prediction, nullptr);
             didSetResult = true;
             return terminality == NonTerminal ? CallOptimizationResult::Inlined : CallOptimizationResult::InlinedTerminal;
         }
@@ -6901,6 +6883,13 @@ bool ByteCodeParser::handleConstantFunction(
         }
     }
 
+    auto hasNoOpIterable = [&] {
+        if (argumentCountIncludingThis <= 1)
+            return true;
+        Node* iterable = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+        return iterable->hasConstant() && iterable->asJSValue().isUndefinedOrNull();
+    };
+
     if (function->classInfo() == MapConstructor::info() && kind == CodeSpecializationKind::CodeForConstruct) {
         Node* newTargetNode = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
         // We cannot handle the case where new.target != callee (i.e. a construct from a super call) because we
@@ -6910,7 +6899,7 @@ bool ByteCodeParser::handleConstantFunction(
             return false;
 
         auto* structure = function->realm()->mapStructureConcurrently();
-        if (argumentCountIncludingThis <= 1 && structure) {
+        if (structure && hasNoOpIterable()) {
             insertChecks();
             Node* resultNode = addToGraph(NewMap, OpInfo(m_graph.registerStructure(structure)));
             set(result, resultNode);
@@ -6927,7 +6916,7 @@ bool ByteCodeParser::handleConstantFunction(
             return false;
 
         auto* structure = function->realm()->setStructureConcurrently();
-        if (argumentCountIncludingThis <= 1 && structure) {
+        if (structure && hasNoOpIterable()) {
             insertChecks();
             Node* resultNode = addToGraph(NewSet, OpInfo(m_graph.registerStructure(structure)));
             set(result, resultNode);
@@ -6944,7 +6933,7 @@ bool ByteCodeParser::handleConstantFunction(
             return false;
 
         auto* structure = function->realm()->weakMapStructureConcurrently();
-        if (argumentCountIncludingThis <= 1 && structure) {
+        if (structure && hasNoOpIterable()) {
             insertChecks();
             Node* resultNode = addToGraph(NewWeakMap, OpInfo(m_graph.registerStructure(structure)));
             set(result, resultNode);
@@ -6961,7 +6950,7 @@ bool ByteCodeParser::handleConstantFunction(
             return false;
 
         auto* structure = function->realm()->weakSetStructureConcurrently();
-        if (argumentCountIncludingThis <= 1 && structure) {
+        if (structure && hasNoOpIterable()) {
             insertChecks();
             Node* resultNode = addToGraph(NewWeakSet, OpInfo(m_graph.registerStructure(structure)));
             set(result, resultNode);
@@ -9300,17 +9289,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_is_number);
         }
 
-        case op_is_big_int: {
-#if USE(BIGINT32)
-            auto bytecode = currentInstruction->as<OpIsBigInt>();
-            Node* value = get(bytecode.m_operand);
-            set(bytecode.m_dst, addToGraph(IsBigInt, value));
-            NEXT_OPCODE(op_is_big_int);
-#else
-            RELEASE_ASSERT_NOT_REACHED();
-#endif
-        }
-
         case op_is_cell_with_type: {
             auto bytecode = currentInstruction->as<OpIsCellWithType>();
             Node* value = get(bytecode.m_operand);
@@ -11050,6 +11028,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 if (status.numVariants() != 1
                     || status[0].kind() != PutByVariant::Replace
                     || status[0].structure().size() != 1) {
+#if USE(BUN_JSC_ADDITIONS)
+                    // A store by id adds a property that is gone. This store throws a ReferenceError then.
+                    if (uid && getPutInfo.resolveMode() == ThrowIfNotFound) {
+                        addToGraph(PutDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
+                        break;
+                    }
+#endif
                     addToGraph(PutById, OpInfo(CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid)), OpInfo(bytecode.m_getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
                     break;
                 }
@@ -11397,7 +11382,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto bytecode = currentInstruction->as<OpHasPrivateName>();
             Node* base = get(bytecode.m_base);
             Node* property = get(bytecode.m_property);
-            bool compiledAsInById = false;
+            bool compiledAsMatchStructure = false;
 
             if (!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIdent)
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
@@ -11412,12 +11397,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     ASSERT(identifier.isSymbolCell());
                     FrozenValue* frozen = m_graph.freezeStrong(identifier.cell());
                     addToGraph(CheckIsConstant, OpInfo(frozen), property);
-                    handleInById(bytecode.m_dst, base, identifier, status, nextOpcodeIndex());
-                    compiledAsInById = true;
+                    compiledAsMatchStructure = handleInByAsMatchStructure(bytecode.m_dst, base, status);
                 }
             }
 
-            if (!compiledAsInById)
+            if (!compiledAsMatchStructure)
                 set(bytecode.m_dst, addToGraph(HasPrivateName, base, property));
             NEXT_OPCODE(op_has_private_name);
         }

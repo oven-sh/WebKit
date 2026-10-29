@@ -31,10 +31,17 @@
 #include "B3BackwardsDominators.h"
 #include "B3Dominators.h"
 #include "B3EnsureLoopPreHeaders.h"
+#include "B3LikelyPaths.h"
+#include "B3Limits.h"
+#include "B3LoopUtilities.h"
+#include "B3MovedLoadCheck.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
+#include "B3RegisterPressure.h"
 #include "B3ValueInlines.h"
+#include <array>
+#include <wtf/HashSet.h>
 #include <wtf/RangeSet.h>
 
 namespace JSC { namespace B3 {
@@ -61,6 +68,12 @@ static bool isTrappingLoad(const Value* value)
     default:
         return false;
     }
+}
+
+// Whether a poll leaves depends on nothing that the procedure computes, so it guards no value behind it.
+static bool isBarrier(const Value* value, const Effects& effects)
+{
+    return effects.isTrapBarrier() && !isLoopPoll(value);
 }
 
 static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block, const IndexSet<BasicBlock*>& blockBarriers)
@@ -121,7 +134,8 @@ bool hoistLoopInvariantValues(Procedure& proc)
 
     proc.resetValueOwners();
     Dominators& dominators = proc.dominators();
-    BackwardsDominators& backwardsDominators = proc.backwardsDominators();
+    const bool hoistsOnlyFromLikelyPaths = proc.policy().loops.hoistsOnlyFromLikelyPaths;
+    const bool hoistsImmutableLoadsPastWrites = proc.policy().loops.hoistsImmutableLoadsPastWrites;
     
     // FIXME: We should have a reusable B3::EffectsSet data structure.
     // https://bugs.webkit.org/show_bug.cgi?id=174762
@@ -131,10 +145,27 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool writesPinned { false };
         bool exitsSideways { false };
         BasicBlock* preHeader { nullptr };
+        UncheckedKeyHashSet<BasicBlock*> blocksOnEveryLikelyPath;
+        UncheckedKeyHashSet<BasicBlock*> likelyBlocks;
+        RegisterBudget registerBudget;
+        UncheckedKeyHashSet<Value*> loadsLiveThroughLoop;
+        std::array<unsigned, numBanks> numberOfLoadsLiveThroughLoop { };
+        unsigned numberOfHoistedLoads { 0 };
+        bool didReachLoadLimit { false };
     };
 
     IndexMap<NaturalLoop, LoopData> data(loops.numLoops());
+    auto bankOfLoad = [](const Value* load) {
+        return load->type().isNumeric() ? load->resultBank() : GP;
+    };
+    auto addLoadLiveThroughLoop = [&](const NaturalLoop& loop, Value* load) {
+        if (data[loop].loadsLiveThroughLoop.add(load).isNewEntry)
+            ++data[loop].numberOfLoadsLiveThroughLoop[bankOfLoad(load)];
+    };
     IndexSet<BasicBlock*> blockBarriers;
+    std::optional<LikelyPathAnalysis> likelyPaths;
+    if (hoistsOnlyFromLikelyPaths)
+        likelyPaths.emplace(proc, loops);
 
     for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
         const NaturalLoop& loop = loops.loop(loopIndex);
@@ -144,6 +175,19 @@ bool hoistLoopInvariantValues(Procedure& proc)
             RELEASE_ASSERT(!data[loop].preHeader);
             data[loop].preHeader = predecessor;
         }
+        if (hoistsOnlyFromLikelyPaths) {
+            auto keepBlocksOfLoop = [&](const IndexSet<BasicBlock*>& blocks, UncheckedKeyHashSet<BasicBlock*>& result) {
+                for (unsigned index = loop.size(); index--;) {
+                    if (blocks.contains(loop.at(index)))
+                        result.add(loop.at(index));
+                }
+            };
+            IndexSet<BasicBlock*> blocksOnEveryLikelyPath;
+            likelyPaths->findBlocksOnEveryLikelyPath(loop, blocksOnEveryLikelyPath);
+            keepBlocksOfLoop(blocksOnEveryLikelyPath, data[loop].blocksOnEveryLikelyPath);
+            keepBlocksOfLoop(findLikelyBlocks(loops, loop), data[loop].likelyBlocks);
+            data[loop].registerBudget = allocatableRegisters(proc);
+        }
     }
     
     for (BasicBlock* block : proc) {
@@ -152,11 +196,21 @@ bool hoistLoopInvariantValues(Procedure& proc)
             continue;
         for (Value* value : *block) {
             Effects effects = value->effects();
-            data[*loop].writes.add(effects.writes);
+            effects.writes.addTo(data[*loop].writes);
             data[*loop].writesLocalState |= effects.writesLocalState;
             data[*loop].writesPinned |= effects.writesPinned;
-            data[*loop].exitsSideways |= effects.exitsSideways;
-            if (effects.isTrapBarrier())
+            data[*loop].exitsSideways |= effects.exitsSideways && !isLoopPoll(value);
+            if (hoistsOnlyFromLikelyPaths && data[*loop].likelyBlocks.contains(block))
+                data[*loop].registerBudget.restrictTo(registersPreservedBy(proc, value));
+            if (hoistsOnlyFromLikelyPaths) {
+                for (Value* child : value->children()) {
+                    if (loops.belongsTo(child->owner, *loop) || !child->effects().reads)
+                        continue;
+                    for (const NaturalLoop* current = loop; current && !loops.belongsTo(child->owner, *current); current = loops.innerMostOuterLoop(*current))
+                        addLoadLiveThroughLoop(*current, child);
+                }
+            }
+            if (isBarrier(value, effects))
                 blockBarriers.add(block);
         }
     }
@@ -168,6 +222,8 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[*current].writesLocalState |= data[loop].writesLocalState;
             data[*current].writesPinned |= data[loop].writesPinned;
             data[*current].exitsSideways |= data[loop].exitsSideways;
+            if (data[*current].likelyBlocks.contains(loop.header()))
+                data[*current].registerBudget.restrictTo(data[loop].registerBudget);
         }
     }
     
@@ -175,9 +231,16 @@ bool hoistLoopInvariantValues(Procedure& proc)
     
     // Pre-order ensures that we visit our dominators before we visit ourselves. Otherwise we'd miss some
     // hoisting opportunities in complex CFGs.
-    for (BasicBlock* block : proc.blocksInPreOrder()) {
-        Vector<const NaturalLoop*> blockLoops = loops.loopsOf(block);
+    for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
+        Vector<const NaturalLoop*, 8> blockLoops;
+        for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
+            blockLoops.append(loop);
         if (blockLoops.isEmpty())
+            continue;
+        bool mayHoistFromBlock = !hoistsOnlyFromLikelyPaths || blockLoops.containsIf([&](const NaturalLoop* loop) {
+            return data[*loop].blocksOnEveryLikelyPath.contains(block);
+        });
+        if (!mayHoistFromBlock)
             continue;
 
         // Values that stay in this block run before everything later in it, so once one of them is a
@@ -185,6 +248,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool trapBarrierInBlock = false;
         for (Value*& value : *block) {
             Effects effects = value->effects();
+            bool isControlDependent = effects.controlDependent && proc.effectsOf(value).controlDependent;
             bool trappingLoad = isTrappingLoad(value);
             bool hoisted = false;
 
@@ -196,6 +260,26 @@ bool hoistLoopInvariantValues(Procedure& proc)
                 for (unsigned i = blockLoops.size(); i--;) {
                     const NaturalLoop& loop = *blockLoops[i];
 
+                    if (hoistsOnlyFromLikelyPaths) {
+                        if (!data[loop].blocksOnEveryLikelyPath.contains(block) || data[loop].preHeader->last()->opcode() != Jump)
+                            continue;
+                        if (effects.reads) {
+                            Bank bank = bankOfLoad(value);
+                            bool hasRegisterInEveryLoop = true;
+                            for (unsigned inner = 0; inner <= i; ++inner) {
+                                const LoopData& innerData = data[*blockLoops[inner]];
+                                hasRegisterInEveryLoop &= innerData.numberOfLoadsLiveThroughLoop[bank] < innerData.registerBudget.of(bank);
+                            }
+                            if (!hasRegisterInEveryLoop)
+                                continue;
+                            if (data[loop].numberOfHoistedLoads >= proc.limit(Limit::MaxHoistedLoadsPerLoop)) {
+                                if (!std::exchange(data[loop].didReachLoadLimit, true))
+                                    proc.didReachLimit(Limit::MaxHoistedLoadsPerLoop, value->origin());
+                                continue;
+                            }
+                        }
+                    }
+
                     bool ok = true;
                     for (Value* child : value->children()) {
                         if (!dominators.dominates(child->owner, data[loop].preHeader)) {
@@ -206,10 +290,20 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     if (!ok)
                         continue;
 
-                    if (effects.controlDependent || trappingLoad) {
+                    if (effects.readsPinned && data[loop].writesPinned)
+                        continue;
+
+                    if (effects.readsLocalState && data[loop].writesLocalState)
+                        continue;
+
+                    bool ignoresWrites = hoistsImmutableLoadsPastWrites && effects.readsMutability == Mutability::Immutable;
+                    if (!ignoresWrites && effects.reads.overlaps(data[loop].writes))
+                        continue;
+
+                    if (isControlDependent || trappingLoad) {
                         // The block is backward-dominating the pre-header.
                         // The value needs to be guaranteed to run on every iteration.
-                        if (!backwardsDominators.dominates(block, data[loop].preHeader))
+                        if (!proc.backwardsDominators().dominates(block, data[loop].preHeader))
                             continue;
 
                         if (data[loop].exitsSideways) {
@@ -221,24 +315,30 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         }
                     }
 
-                    if (effects.readsPinned && data[loop].writesPinned)
-                        continue;
-
-                    if (effects.readsLocalState && data[loop].writesLocalState)
-                        continue;
-
-                    if (data[loop].writes.overlaps(effects.reads))
-                        continue;
-
                     data[loop].preHeader->appendNonTerminal(value);
+                    if (hoistsOnlyFromLikelyPaths && effects.reads) {
+                        ++data[loop].numberOfHoistedLoads;
+                        for (unsigned inner = 0; inner <= i; ++inner)
+                            addLoadLiveThroughLoop(*blockLoops[inner], value);
+                    }
+                    if (std::optional<MovedLoad> moved = MovedLoad::of(proc, value)) {
+                        proc.movedLoadLog().add(*moved, block, static_cast<unsigned>(&value - block->values().begin()), value->lastChild(), value);
+                        // A load that a branch leads to says nothing of the ways that do not come by it: nothing uses it there, and another kind of thing may lie at its address.
+                        for (unsigned inLoop = 0; inLoop < loop.size(); ++inLoop) {
+                            if (dominators.dominates(block, loop.at(inLoop)))
+                                proc.movedLoadLog().addBehindEachValueThatStaysIn(loop.at(inLoop), *moved, value->lastChild(), value);
+                        }
+                    }
                     value = proc.add<Value>(Nop, Void, value->origin());
                     changed = true;
                     hoisted = true;
+                    if (hoistsOnlyFromLikelyPaths)
+                        break;
                 }
             }
 
             if (!hoisted)
-                trapBarrierInBlock |= effects.isTrapBarrier();
+                trapBarrierInBlock |= isBarrier(value, effects);
         }
     }
     

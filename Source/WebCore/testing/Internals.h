@@ -44,6 +44,7 @@
 #include "RenderingMode.h"
 #include "ResourceMonitorChecker.h"
 #include "SleepDisabler.h"
+#include "StyleGradientImage.h"
 #include "TextIndicator.h"
 #include "VP9Utilities.h"
 #include <JavaScriptCore/Forward.h>
@@ -202,6 +203,7 @@ class WebCodecsVideoDecoder;
 
 template<typename IDLType> class DOMPromiseDeferred;
 
+struct MockPhoneNumberPossessionConfiguration;
 struct MockWebAuthenticationConfiguration;
 
 class Internals final
@@ -289,6 +291,8 @@ public:
     unsigned imageBlankDrawCount(HTMLImageElement&);
     AtomString imageLastDecodingOptions(HTMLImageElement&);
     unsigned imageCachedSubimageCreateCount(HTMLImageElement&);
+    using BackgroundGradientCacheEntry = Style::GradientImage::CachedGradientForTesting;
+    Vector<BackgroundGradientCacheEntry> backgroundGradientCache(Element&);
     unsigned remoteImagesCountForTesting() const;
     void setAsyncDecodingEnabledForTesting(HTMLImageElement&, bool enabled);
     void LEGACY_NODELETE setForceUpdateImageDataEnabledForTesting(HTMLImageElement&, bool enabled);
@@ -597,6 +601,7 @@ public:
         LAYER_TREE_INCLUDES_ROOT_LAYERS = 4096,
     };
     ExceptionOr<String> layerTreeAsText(Document&, unsigned short flags) const;
+    String viewTransitionOldCaptureState(Document&, const AtomString& name) const;
     ExceptionOr<uint64_t> layerIDForElement(Element&);
     ExceptionOr<String> repaintRectsAsText() const;
 
@@ -1549,6 +1554,10 @@ public:
     void setMockWebAuthenticationConfiguration(const MockWebAuthenticationConfiguration&);
 #endif
 
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    void setMockPhoneNumberPossessionConfiguration(const MockPhoneNumberPossessionConfiguration&);
+#endif
+
     int processIdentifier() const;
 
     Ref<InternalsSetLike> createInternalsSetLike();
@@ -1588,6 +1597,8 @@ public:
     int readPreferenceInteger(const String& domain, const String& key);
     String encodedPreferenceValue(const String& domain, const String& key);
 
+    void setPresentationIntentHTMLInterchangeEnabled(bool);
+
     bool supportsPictureInPicture();
 
     String focusRingColor();
@@ -1622,9 +1633,14 @@ public:
 
     enum class ContentSizeCategory { L, XXXL };
     void setContentSizeCategory(ContentSizeCategory);
+    void setTextScaleFactor(float);
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
     unsigned telephoneNumberRangesChangedCount() const;
+#endif
+
+#if ENABLE(SERVICE_CONTROLS)
+    void setHasRelevantSelectionServicesForTesting(bool);
 #endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -1711,6 +1727,7 @@ public:
     void unlockPDFDocumentForTesting(Element&, const String&) const;
     bool sendEditingCommandToPDFForTesting(Element&, const String& commandName, const String& argument) const;
     Vector<String> pdfContextMenuItemTitlesForTesting(Element&, int x, int y) const;
+    Ref<DOMRect> pdfBoundsOnScreenForTesting(Element&) const;
     void registerPDFTest(Ref<VoidCallback>&&, Element&);
 
     String LEGACY_NODELETE defaultSpatialTrackingLabel() const;
@@ -1808,6 +1825,10 @@ private:
 #endif
 
     static RefPtr<SharedBuffer> pngDataForTesting();
+
+#if PLATFORM(COCOA)
+    static void resetPresentationIntentHTMLInterchangeEnabled();
+#endif
 
     CachedResource* resourceFromMemoryCache(const String& url);
 

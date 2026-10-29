@@ -1,0 +1,60 @@
+# A position of slice, substring or substr whose type says on which side of zero it lies is clamped on that side alone: against the length if it is never negative, from the end or to zero if it always is. Every other position is tested for its sign first
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-8: : size=
+# CHECK-NOT: no code
+# One each in f0, f1, f2 and f5, two in f6
+# STATISTIC: StringPositionsWithKnownSign = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="neverNegative" parameters=[{type=int[0, 2147483647]}, {type=int[0, 100]}] results=[{type=i32}] {
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f1 name="alwaysNegative" parameters=[{type=int[0, 2147483647]}, {type=int[-100, -1]}] results=[{type=i32}] {
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f2 name="negativeConstant" parameters=[{type=int[0, 2147483647]}] results=[{type=i32}] {
+    v1 = Integer integer=-2
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f3 name="integerOfEitherSign" parameters=[{type=int[0, 2147483647]}, {type=i32}] results=[{type=i32}] {
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f4 name="number" parameters=[{type=int[0, 2147483647]}, {type=number}] results=[{type=i32}] {
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f5 name="onePositionOfTwo" parameters=[{type=int[0, 2147483647]}, {type=int[0, 100]}, {type=i32}] results=[{type=i32}] {
+    v3 = StringRange v0, v1, v2 method=Substring
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Return v5
+}
+function f6 name="startAndCount" parameters=[{type=int[0, 2147483647]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=i32}] {
+    v3 = StringRange v0, v1, v2 method=Substr
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Return v5
+}
+# The index of one character is not clamped
+function f7 name="singleIndex" parameters=[{type=int[0, 2147483647]}, {type=int[0, 100]}] results=[{type=i32}] {
+    v2 = StringRange v0, v1 method=SingleIndex
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}

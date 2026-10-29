@@ -1,0 +1,14 @@
+# input[input]()
+# RUN: valueflow-results
+# CHECK: feature 9 StringPrototypeLocaleCompare Unnamed
+# CHECK: feature 11 DatePrototypeToLocaleString Unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ElemGet v1, v1
+    v3 = Call v2, v1
+    Return
+}

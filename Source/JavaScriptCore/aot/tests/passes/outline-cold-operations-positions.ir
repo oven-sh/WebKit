@@ -1,0 +1,62 @@
+# In a stack trace the call of an outlined body stands for every operation of its site, so what a trace can show of a site, the operations that throw or run other code, has one position.
+# An operation that is shown at one place where it throws and at another where it calls stays where it is: the call of a body always calls
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="runAtOnePosition" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @9
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @9
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="runAtOnePosition"
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[whole0]]:{{*}}= CallDirect v1, v2 function=[[wholeRun]] @9
+# CHECK-NEXT: Return [[whole0]]
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+
+function f1 name="runAtTwoPositions" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @7
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @9
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="runAtTwoPositions"
+# CHECK-NOT: function=[[wholeRun]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[called1]]: anything = {{*}} @7
+# CHECK-NEXT: [[sum1]]:{{*}}[[called1]]{{*}} @9
+# CHECK-NEXT: Return [[sum1]]
+# CHECK-NOT: function=[[wholeRun]]
+
+function f2 name="shownElsewhereAsCaller" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @19 @17 callers
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @19 @17 callers
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="shownElsewhereAsCaller"
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = Call v1, -, v2, v2, v2, v2
+# CHECK-NOT: CallDirect

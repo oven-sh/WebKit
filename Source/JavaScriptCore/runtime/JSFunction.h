@@ -52,6 +52,12 @@ class Signature;
 
 JS_EXPORT_PRIVATE JSC_DECLARE_HOST_FUNCTION(callHostFunctionAsConstructor);
 
+struct BuiltinCode {
+    FunctionExecutable* executable;
+    uint32_t id;
+    FunctionExecutable* (*linkFromText)(VM&) { nullptr };
+};
+
 JS_EXPORT_PRIVATE String getCalculatedDisplayName(VM&, JSObject*);
 
 class JSFunction : public JSCallee {
@@ -88,6 +94,9 @@ public:
 
     JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*);
     static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*, Structure*);
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*);
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*, Structure*);
+    static FunctionExecutable* linkBuiltinCodeFromText(VM&, BuiltinCode);
 
     JS_EXPORT_PRIVATE String name(VM&);
     JS_EXPORT_PRIVATE String displayName(VM&);
@@ -117,6 +126,11 @@ public:
     DECLARE_EXPORT_INFO;
 
     DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(JSFunction* thisObject, Visitor& visitor)
+    {
+        visitor.appendUnbarriered(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(thisObject->m_executableOrRareData) & ~rareDataTag));
+    }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
@@ -157,6 +171,7 @@ public:
     JS_EXPORT_PRIVATE bool LEGACY_NODELETE isHostFunctionNonInline() const;
     bool isClassConstructorFunction() const;
     bool isRemoteFunction() const;
+    bool isCompiledClosure() const { return type() == CompiledClosureType; }
 
     void setFunctionName(JSGlobalObject*, JSValue name);
 
@@ -179,6 +194,8 @@ public:
     JSString* originalName(JSGlobalObject*);
 
     bool mayHaveNonReifiedPrototype();
+
+    bool canPerformFastEnumerablePropertyEnumeration(VM&);
 
     // This method may be called for host functions, in which case it
     // will return an arbitrary value. This should only be used for

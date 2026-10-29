@@ -1,0 +1,62 @@
+# A check that stands beside the call only after the body was simplified names a type that flow did not model at the call, so the result stays plain
+# FORM: AsRead
+# OPTIONS: report=Declines only-passes=ResolveBuiltins,SimplifyControlFlow,RemoveTrivialParameters,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# CHECK: decline TypedResultNotSelected f1 v{{*}} None [0] reason=TargetIsNotModeledByFlow
+# CHECK-NEXT: decline TypedResultNotSelected f3 v{{*}} None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = CallDirect v2 function=f1
+    v5 = Call v3, -, v4
+    v6 = CallDirect v2 function=f2
+    v7 = Call v3, -, v6
+    v8 = CallDirect v2 function=f3
+    v9 = Call v3, -, v8
+    Return
+}
+
+function f1 name="conversionBehindBlockParameterAsRead" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Boolean boolean=true
+    Branch v3 -> taken b1(v2), notTaken b2()
+  b1(v4):
+    v5 = Convert v4 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="id"
+    Return v6
+  b2():
+    v7 = NewObject layout=L0
+    Jump -> next b1(v7)
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = Expect {{*}} expectedType=undefined|null|L0
+# CHECK-NOT: JSONSourceOpen
+}
+
+function f2 name="conversionBesideTheCallAsRead" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    Return v3
+# CHECK: = JSONSourceOpen v0
+}
+
+function f3 name="noConversion" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
+# CHECK-NOT: JSONSourceOpen
+}

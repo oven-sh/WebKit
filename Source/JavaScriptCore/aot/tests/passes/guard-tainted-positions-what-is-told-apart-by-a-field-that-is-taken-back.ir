@@ -1,0 +1,91 @@
+# type Low = { tone: "low"; depth: number }  type Mute = { tone?: undefined; hush: number }  type Bright = { tone: "flat" | "high" | "mid"; shine: number }  type Bell = { tone: "flat" | "high" | "low" | "mid"; rings: number }  type Drum = { tone: "deep" | "mid"; skin: string }
+# function toBell(note: Low | Mute | Bright, rings: number): Bell { return { tone: (note as Bright).tone as "high" | "mid", rings } }   function makeDrum(tone, skin): Drum { return { tone, skin } }
+# function play(it: Bell | Drum) { switch (it.tone) { case "deep": return it.skin  default: return "other" } }
+# Flow follows every text that reaches `tone` of a Bell, and "deep" is none of them: under `case "deep"` a Bell is left out, by the type of its field.
+# In `toBell` the text that is listed in the allocation has passed a check that may turn a text away. Typed without its checks it is read from any of the three notes, and a Mute need not have the name: it may be anything.
+# Flow says that the field is stored once, so the value cannot leave the allocation, and `tone` of a Bell is only expected from then on.
+# `play` reads the name out of a Bell or a Drum, and nobody knows what a Drum was given: that read is typed as anything all along. What tells the two apart has read the type of the field all the same: it is typed anew and lets the Bell through.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# OPTIONS: check=VerifyEachPass
+# CHECK: layout L1 name="Bell" {{*}}{key="tone" declared={type=undefined|"flat"|"high"|"low" flags=[IsExpected]} flags=[IsRequired]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Drum" module=m0 fields=[{key="skin" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="tone" declared={type=undefined|null|"deep"|"mid" flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 name="Bell" module=m0 fields=[{key="rings" declared={type=number} flags=[IsRequired]}, {key="tone" declared={type=undefined|null|"flat"|"high"|"low"|"mid" flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 name="Bright" module=m0 fields=[{key="shine" declared={type=number} flags=[IsRequired]}, {key="tone" declared={type=undefined|null|"flat"|"high"|"mid" flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L3 name="Low" module=m0 fields=[{key="depth" declared={type=number} flags=[IsRequired]}, {key="tone" declared={type=undefined|null|"low" flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L4 name="Mute" module=m0 fields=[{key="hush" declared={type=number} flags=[IsRequired]}, {key="tone" declared={type=undefined flags=[IsExpected]}}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Object{layout=L3 members=[{key="tone" value=String{value="low"}}, {key="depth" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L4 members=[{key="hush" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="tone" value=String{value="high"}}, {key="shine" value=Number{value=1}}]} module=m0
+data d3 root=Object{layout=L2 members=[{key="tone" value=String{value="flat"}}, {key="shine" value=Number{value=2}}]} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Integer integer=1
+    v7 = Data data=d0
+    v8 = Call v1, -, v7, v6
+    v9 = Data data=d1
+    v10 = Call v1, -, v9, v6
+    v11 = Data data=d2
+    v12 = Call v1, -, v11, v6
+    v13 = Data data=d3
+    v14 = Call v1, -, v13, v6
+    v15 = Call v5, -, v8
+    v16 = Call v5, -, v10
+    v17 = Call v5, -, v12
+    v18 = Call v5, -, v14
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="given" [isFreeName]
+    v21 = String string="a"
+    v22 = Call v3, -, v20, v21
+    v23 = Call v5, -, v22
+    Return v23
+}
+function f1 name="toBell" module=m0 flags=[IsChecked] length=2 parameters=[{type=undefined|null|L2|L3|L4}, {type=number}] results=[{type=undefined|null|L1}] {
+  b0(v0: undefined|null|L2|L3|L4, v1: number):
+    v2 = Convert v0 declared={type=undefined|null|L2} illTypedCause=Assertion
+    v3 = PropGet v2 key="tone"
+    v4 = Convert v3 declared={type=undefined|null|"high"|"mid"}
+    v5 = Convert v1 declared={type=number}
+    v6 = NewObject -, v4, v5 layout=L1 fields=[1, 0]
+    v7 = FinishObject v6
+    v8 = Convert v7 declared={type=undefined|null|L1}
+    Return v8
+# CHECK: [[listed]]: {{*}} = Check {{*}} expectedType=undefined|null|"high"|"mid"
+}
+function f2 name="makeDrum" module=m0 flags=[IsChecked] length=2 parameters=[{type=undefined|null|"deep"|"mid" flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|L0}] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|"deep"|"mid"}
+    v3 = Convert v1 declared={type=undefined|null|string}
+    v4 = NewObject -, v2, v3 layout=L0 fields=[1, 0]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0}
+    Return v6
+}
+function f3 name="play" module=m0 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0|L1}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = PropGet v0 key="tone"
+    SwitchString v1 strings=["deep"] -> case b1(| 0), otherwise b3()
+  b1(v2):
+    v3 = NarrowByField v0, v2 key="tone"
+    Jump -> next b2()
+  b2():
+    v4 = Convert v3 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v5 = PropGet v4 key="skin"
+    Return v5
+  b3():
+    v6 = String string="other"
+    Return v6
+# CHECK: : anything{{*}} = PropGet {{*}} key="tone"
+# CHECK: : L0|L1 ~ L0 = NarrowByField
+# CHECK: : L0 = Check
+}

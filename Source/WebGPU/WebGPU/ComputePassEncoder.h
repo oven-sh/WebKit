@@ -29,7 +29,6 @@
 #import "CommandsMixin.h"
 #import <WebGPU/WebGPU.h>
 #import <WebGPU/WebGPUCpp.h>
-#import <WebGPU/WebGPUExt.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/Ref.h>
@@ -38,8 +37,6 @@
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUComputePassEncoderImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -52,7 +49,7 @@ class QuerySet;
 struct BindableResources;
 
 // https://gpuweb.github.io/gpuweb/#gpucomputepassencoder
-class ComputePassEncoder final : public WebGPU::ComputePassEncoder, public WGPUComputePassEncoderImpl, public CommandsMixin {
+class ComputePassEncoder final : public WebGPU::ComputePassEncoder, public CommandsMixin {
     WTF_MAKE_TZONE_ALLOCATED(ComputePassEncoder);
 public:
     static Ref<ComputePassEncoder> create(id<MTLComputeCommandEncoder> computeCommandEncoder, const WebGPU::ComputePassDescriptor& descriptor, CommandEncoder& parentEncoder, Device& device)

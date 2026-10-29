@@ -49,6 +49,7 @@ namespace WebCore {
     macro(AnimationEffect) \
     macro(AnimationPlaybackEvent) \
     macro(AnimationTimeline) \
+    macro(ApplePayReferenceSession) \
     macro(ApplePaySession) \
     macro(ApplePaySetup) \
     macro(ApplePaySetupFeature) \
@@ -483,6 +484,7 @@ namespace WebCore {
     macro(WakeLock) \
     macro(WakeLockSentinel) \
     macro(WaveShaperNode) \
+    macro(WebAuthnOperationException) \
     macro(WebGL2RenderingContext) \
     macro(WebGLActiveInfo) \
     macro(WebGLBuffer) \

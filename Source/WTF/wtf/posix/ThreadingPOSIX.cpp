@@ -483,6 +483,9 @@ bool Thread::establishHandle(NewThreadContext& context, StackAllocationSpecifica
             LOG_ERROR("Failed to set custom stack at %p size %zu: %s",
                 bounds.data(), bounds.size_bytes(), safeStrerror(result));
             pthread_attr_destroy(&attr);
+#if ENABLE(AOT)
+            errno = result;
+#endif
             return false;
         } } break;
     }
@@ -491,6 +494,9 @@ bool Thread::establishHandle(NewThreadContext& context, StackAllocationSpecifica
     pthread_attr_destroy(&attr);
     if (error) {
         LOG_ERROR("Failed to create pthread at entry point %p with context %p", wtfThreadEntryPoint, &context);
+#if ENABLE(AOT)
+        errno = error;
+#endif
         return false;
     }
 

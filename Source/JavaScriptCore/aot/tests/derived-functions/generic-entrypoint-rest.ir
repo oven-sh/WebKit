@@ -1,0 +1,16 @@
+# The generic entrypoint of a function with a rest parameter reads every argument from the argument list
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="rest" flags=[HasRestParameter] parameters=[{type=number site=w0}, {type=Array}] results=[{type=anything}] {
+    Return
+}
+# CHECK: role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}]{{*}}creator=Entrypoint{target=f0} {
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything):
+# CHECK-NEXT: [[first]]: anything = GetArgument
+# CHECK-NEXT: [[rest]]: Array{{*}} = CreateRest firstArgument=1
+# CHECK-NEXT: [[number]]: number = AssumeType [[first]] provenType=number
+# CHECK-NEXT: = CallDirect [[number]], [[rest]] function=f0

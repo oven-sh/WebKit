@@ -1,0 +1,38 @@
+# function* numbers() { yield 1 }  g = numbers(); g.next(); g.throw(2)
+# A call of next or throw of a generator is stepped over at the call. The functions of the library behind them are reached with the calls (runtimefunction 71 and 93), the one behind return is not (87).
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=69 function=f2 visibility=Private
+runtimefunction id=85 function=f3 visibility=Private
+runtimefunction id=91 function=f4 visibility=Private
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = PropGet v1 key="throw"
+    v5 = Integer integer=2
+    v6 = Call v4, v1, v5 calleeKey="throw"
+    Return
+}
+function f1 name="numbers" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=69 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f3 name="return" role=Library flags=[HasThis] enclosingRuntimeFunction=85 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f4 name="throw" role=Library flags=[HasThis] enclosingRuntimeFunction=91 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

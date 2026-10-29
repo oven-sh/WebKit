@@ -124,7 +124,7 @@ std::optional<Ref<Image>> Image::create(RefPtr<ShareableBitmap>&& bitmap)
 {
     if (!bitmap)
         return std::nullopt;
-    RefPtr image = bitmap->createImage();
+    RefPtr image = BitmapImage::create(*bitmap);
     if (!image)
         return std::nullopt;
     return image.releaseNonNull();
@@ -179,6 +179,23 @@ long long Image::expectedContentLength() const
     return imageObserver() ? imageObserver()->expectedContentLength() : 0;
 }
 
+ImageDrawResult Image::draw(GraphicsContext& context, ConcreteObjectSize concreteObjectSize, FloatPoint destination, ImageDrawingOptions options, const ImageDrawingExtras* extras)
+{
+    return draw(context, concreteObjectSize, FloatRect(destination, concreteObjectSize.size()), FloatRect({ }, concreteObjectSize.size()), options, extras);
+}
+
+ImageDrawResult Image::draw(GraphicsContext& context, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, ImageDrawingOptions options, const ImageDrawingExtras* extras)
+{
+    return draw(context, concreteObjectSize, destination, FloatRect({ }, concreteObjectSize.size()), options, extras);
+}
+
+ImageDrawResult Image::draw(GraphicsContext& context, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, const ImageDrawingExtras* extras)
+{
+    if (context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
+    return drawImage(context, concreteObjectSize, destination, source, options, extras);
+}
+
 void Image::fillWithSolidColor(GraphicsContext& ctxt, const FloatRect& dstRect, const Color& color, CompositeOperator op)
 {
     if (!color.isVisible())
@@ -210,7 +227,7 @@ RefPtr<NativeImage> Image::currentPreTransformedNativeImage(ConcreteObjectSize c
     return currentNativeImage(concreteObjectSize, extras);
 }
 
-void Image::drawPattern(GraphicsContext& ctxt, ConcreteObjectSize concreteObjectSize, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, const ImageDrawingExtras* extras)
+void Image::drawPattern(GraphicsContext& ctxt, ConcreteObjectSize concreteObjectSize, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, const ImageDrawingExtras* extras)
 {
     RefPtr tileImage = currentPreTransformedNativeImage(concreteObjectSize, options.orientation(), extras);
     if (!tileImage)
@@ -250,8 +267,7 @@ RefPtr<ShareableBitmap> Image::toShareableBitmap(ConcreteObjectSize concreteObje
     if (!graphicsContext)
         return nullptr;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST graphicsContext->drawImage(const_cast<Image&>(*this), concreteObjectSize, IntPoint());
+    const_cast<Image&>(*this).draw(*graphicsContext, concreteObjectSize);
     return bitmap;
 }
 

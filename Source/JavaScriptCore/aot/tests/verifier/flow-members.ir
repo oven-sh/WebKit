@@ -1,0 +1,12 @@
+# the members that flow found for a layout ascend and are object layouts
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FlowMembersInvalid 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="good" flow={members=[L0, L1]}
+layout L1 kind=Instance name="goodWithoutMembers"
+layout L2 kind=Environment name="environment"
+layout L3 kind=Instance name="badDescending" flow={members=[L1, L0]}
+layout L4 kind=Instance name="badTwice" flow={members=[L0, L0]}
+layout L5 kind=Instance name="badEnvironment" flow={members=[L2]}

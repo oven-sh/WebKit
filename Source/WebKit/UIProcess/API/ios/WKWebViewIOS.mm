@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "APIFindClient.h"
+#import "ContentInversion.h"
 #import "DataDetectionResult.h"
 #import "FrontBoardServicesSPI.h"
 #import "ImageOptions.h"
@@ -1122,7 +1123,7 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
     [_scrollView setMaximumZoomScale:maximumScaleFactor];
     [_scrollView _setZoomEnabledInternal:allowsUserScaling && self._allowsMagnification];
 
-    CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
     if ([_scrollView showsHorizontalScrollIndicator] && [_scrollView showsVerticalScrollIndicator]) {
         [_scrollView setShowsHorizontalScrollIndicator:(scrollingCoordinator->mainFrameScrollbarWidth() != WebCore::ScrollbarWidth::None)];
         [_scrollView setShowsVerticalScrollIndicator:(scrollingCoordinator->mainFrameScrollbarWidth() != WebCore::ScrollbarWidth::None)];
@@ -1585,7 +1586,8 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
         return;
 
     // Don't allow content to do programmatic scrolls for non-scrollable pages when zoomed.
-    if (!protect(_page->scrollingCoordinatorProxy())->hasScrollableMainFrame() && !WebKit::scalesAreEssentiallyEqual([_scrollView zoomScale], [_scrollView minimumZoomScale])) {
+    RefPtr scrollingCoordinatorProxy = _page->scrollingCoordinatorProxy();
+    if (scrollingCoordinatorProxy && !scrollingCoordinatorProxy->hasScrollableMainFrame() && !WebKit::scalesAreEssentiallyEqual([_scrollView zoomScale], [_scrollView minimumZoomScale])) {
         [self _scheduleForcedVisibleContentRectUpdate];
         return;
     }
@@ -2143,7 +2145,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
     // FIXME: We will want to detect whether snapping will occur before beginning to drag. See WebPageProxy::didCommitLayerTree.
     ASSERT(scrollView == _scrollView.get());
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         [_scrollView _setDecelerationRateInternal:(coordinator->shouldSetScrollViewDecelerationRateFast()) ? UIScrollViewDecelerationRateFast : UIScrollViewDecelerationRateNormal];
         coordinator->setRootNodeIsInUserScroll(true);
 
@@ -2176,7 +2178,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     _page->scheduleAccessibilityFrameGeometryUpdate();
 #endif
 
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         coordinator->setRootNodeIsInUserScroll(false);
 
         auto scrollOffset = [self _scrollOffsetAdjustedForObscuredInset:scrollView.contentOffset];
@@ -2198,7 +2200,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
             targetContentOffset->y = scrollView.contentOffset.y;
     }
 
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         UIEdgeInsets obscuredInsets;
         id<WKUIDelegatePrivate> uiDelegatePrivate = static_cast<id <WKUIDelegatePrivate>>([self UIDelegate]);
         if ([uiDelegatePrivate respondsToSelector:@selector(_webView:finalObscuredInsetsForScrollView:withVelocity:targetContentOffset:)])
@@ -2224,7 +2226,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         if (coordinator->scrollingPerformanceTestingEnabled()) {
             if (_scrollPerfIntervalState == ScrollPerfIntervalState::FingerDown) {
                 WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
@@ -2244,7 +2246,7 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
-    if (CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
+    if (RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy())) {
         if (coordinator->scrollingPerformanceTestingEnabled()) {
             if (_scrollPerfIntervalState == ScrollPerfIntervalState::Momentum) {
                 WTFEndSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
@@ -3306,7 +3308,7 @@ static bool scrollViewCanScroll(UIScrollView *scrollView)
     auto contentInsets = [self currentlyVisibleContentInsetsWithScale:scaleFactor obscuredInsets:computedContentInsetUnadjustedForKeyboard];
 
     if (viewStability.isEmpty()) {
-        CheckedPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy());
+        RefPtr coordinator = downcast<WebKit::RemoteScrollingCoordinatorProxyIOS>(_page->scrollingCoordinatorProxy());
         if (coordinator && coordinator->hasActiveSnapPoint()) {
             CGPoint currentScrollOffset = [self _scrollOffsetAdjustedForObscuredInset:[_scrollView contentOffset]];
             CGPoint snappedScrollOffset = coordinator->scrollOffsetSnappedToNearestSnapPoint(currentScrollOffset, scaleFactor);
@@ -5374,6 +5376,50 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
 {
 }
 
+- (_WKEffectivePageAppearance)_effectivePageAppearance
+{
+    switch (_page->effectivePageAppearance()) {
+    case WebKit::WebPageProxy::EffectivePageAppearance::Unknown:
+        return _WKEffectivePageAppearanceUnknown;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Light:
+        return _WKEffectivePageAppearanceLight;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Dark:
+        return _WKEffectivePageAppearanceDark;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKEffectivePageAppearanceUnknown;
+}
+
+- (_WKContentInversion)_contentInversionForAccessibility
+{
+    switch (_page->contentInversion()) {
+    case WebKit::ContentInversion::System:
+        return _WKContentInversionSystem;
+    case WebKit::ContentInversion::Inverted:
+        return _WKContentInversionInverted;
+    case WebKit::ContentInversion::NotInverted:
+        return _WKContentInversionNotInverted;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKContentInversionSystem;
+}
+
+- (void)_setContentInversionForAccessibility:(_WKContentInversion)contentInversion
+{
+    _page->setContentInversion([&] {
+        switch (contentInversion) {
+        case _WKContentInversionSystem:
+            return WebKit::ContentInversion::System;
+        case _WKContentInversionInverted:
+            return WebKit::ContentInversion::Inverted;
+        case _WKContentInversionNotInverted:
+            return WebKit::ContentInversion::NotInverted;
+        }
+        ASSERT_NOT_REACHED();
+        return WebKit::ContentInversion::System;
+    }());
+}
+
 - (UIView *)_fullScreenPlaceholderView
 {
 #if ENABLE(FULLSCREEN_API)
@@ -5714,9 +5760,9 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     [_contentView _commitPotentialTapFailed];
 }
 
-- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
 {
-    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads topLeftRadius:topLeftRadius topRightRadius:topRightRadius bottomLeftRadius:bottomLeftRadius bottomRightRadius:bottomRightRadius nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
+    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
 - (BOOL)_isPotentialTapInProgress

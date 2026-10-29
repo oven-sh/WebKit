@@ -2197,11 +2197,9 @@ void AXObjectCache::childrenChanged(AccessibilityObject* object)
 
     // Adding or removing rows from a table can cause it to change from layout table to AX data table and vice versa, so queue up recomputation of that for the parent table.
     if (RefPtr tableElement = dynamicDowncast<HTMLTableElement>(object->element())) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
+        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
     } else if (RefPtr tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(object->element())) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
+        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
     }
 
     if (!m_performCacheUpdateTimer.isActive())
@@ -4572,8 +4570,7 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
             // do a cheap dynamicDowncast check for an HTMLTablePartElement rather than calling AccessibilityNodeObject::parentTable().
             // (ARIA tables are inherently always exposed).
             if (auto* tablePartElement = dynamicDowncast<HTMLTablePartElement>(element)) {
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
+                deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
             }
         } else if (RefPtr object = getOrCreate(element); object && object->isTableCell()) {
             if (RefPtr parentTable = dynamicDowncast<AccessibilityNodeObject>(object->parentTable())) {
@@ -4592,6 +4589,17 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
 
     if (isRelationAttribute(attrName))
         updateRelations(*element, attrName);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (attrName == aria_labelAttr || attrName == titleAttr) {
+        // The hosted frame's web area is named by its <iframe>, which may be in another process.
+        if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            RefPtr contentFrame = frameOwner->contentFrame();
+            if (RefPtr frameHost = dynamicDowncast<AccessibilityScrollView>(get(contentFrame ? contentFrame->virtualView() : nullptr)))
+                frameHost->updateHostedFrameInheritedState();
+        }
+    }
+#endif
 
     if (attrName == hrefAttr) {
         // An anchor's role depends on whether it is a link (Element::isLink(), i.e. whether it has an
@@ -5679,8 +5687,7 @@ std::optional<TextMarkerData> AXObjectCache::textMarkerDataForVisiblePosition(co
         }
         AX_ASSERT(domOffset >= differenceBetweenDomAndRenderedOffsets);
         unsigned renderedOffset = domOffset - differenceBetweenDomAndRenderedOffsets;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
+        return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
     }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
@@ -6122,8 +6129,7 @@ LayoutRect AXObjectCache::localCaretRectForCharacterOffset(RenderObject*& render
 
     auto boxAndOffset = makeContainerOffsetPosition(range->start).inlineBoxAndOffset(Affinity::Downstream);
     if (boxAndOffset.box) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
+        renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
     }
 
     if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer); renderLineBreak && InlineIterator::boxFor(*renderLineBreak) != boxAndOffset.box)
@@ -7058,7 +7064,7 @@ void AXObjectCache::startUpdateTreeSnapshotTimer()
         m_updateTreeSnapshotTimer.startOneShot(updateTreeSnapshotTimerDuration);
 }
 
-void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) const
+void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect, const AffineTransform* localToPaintRect) const
 {
     if (std::optional axID = getAXID(const_cast<RenderObject&>(renderer))) {
         auto paintRectOrigin = paintRect.location();
@@ -7092,6 +7098,19 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
             // clip-path boxes. Multi-line inlines compute their path on-demand from
             // text runs (see AXIsolatedObject::elementPath).
             if (auto* renderBox = dynamicDowncast<RenderBox>(renderer)) {
+                // The path is computed in local coordinates. Map it like the box was painted, if we know how,
+                // which accounts for transforms (e.g. scale and rotation) without walking the box's ancestors.
+                // Otherwise, scale it like the box and position it at the paint rect's origin, which has
+                // already gone through contentsToRootView and matches the relativeFrame coordinate system.
+                auto mapPathToPaintRect = [&](Path& path) {
+                    if (localToPaintRect) {
+                        path.transform(*localToPaintRect);
+                        return;
+                    }
+                    path.transform(localToAbsoluteLinearTransform(*renderBox));
+                    path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                };
+
                 if (renderBox->hasClipPath()) {
                     WTF::switchOn(renderBox->style().clipPath(),
                         [&](const Style::BasicShapePath& clipPath) {
@@ -7100,7 +7119,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                             // FIXME: Remove suppression once rdar://189998444 is fixed.
                             SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(WTF::move(borderRect));
                             auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
-                            path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                            mapPathToPaintRect(path);
                             m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));
                         },
                         [](const auto&) { }
@@ -7110,10 +7129,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                     borderRect.inflate(shapePathInflationPx);
                     auto borderShape = BorderShape::shapeForBorderRect(renderBox->usedStyle(), WTF::move(borderRect));
                     auto path = borderShape.pathForOuterShape(renderer.document().deviceScaleFactor());
-                    // borderBoxRect() is in local coordinates starting at (0, 0). Use the paint
-                    // rect's origin to position the path, since it's already gone through
-                    // contentsToRootView and matches the relativeFrame coordinate system.
-                    path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                    mapPathToPaintRect(path);
                     m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));
                 }
             }

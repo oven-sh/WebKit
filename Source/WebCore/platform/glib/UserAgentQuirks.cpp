@@ -78,6 +78,10 @@ static bool urlRequiresChromeBrowser(StringView domain, StringView baseDomain)
     if (domain.startsWith("luna."_s) && PublicSuffixStore::singleton().domainWithoutPublicSuffix(baseDomain) == "amazon"_s)
         return true;
 
+    // DRM playback fails on tv.orange.fr with WebKitGTK's standard user agent.
+    if (domain == "tv.orange.fr"_s)
+        return true;
+
     return false;
 }
 
@@ -112,6 +116,11 @@ static bool urlRequiresFirefoxBrowser(StringView domain, StringView baseDomain)
     if (baseDomain == "hbomax.com"_s)
         return true;
 #endif
+
+    // GeForceNow currently requires a Firefox UA because its keyboard-lock implementation matches
+    // with ours.
+    if (domain == "play.geforcenow.com"_s)
+        return true;
 
     return false;
 }

@@ -1,0 +1,83 @@
+# whole = [1, 2]; walksWhole(whole); walksGiven(given); another = [1, 2]; walksAnother(another)
+# The kind of storage of `whole` is decided for the whole program. The reads that an iteration becomes have no site to ask flow by, so the open says it: no array of a decided kind arrives at `walksGiven`.
+# RUN: valueflow-apply
+# CHECK-LABEL: name="walksWhole"
+# CHECK: IteratorOpen v0
+# CHECK-NOT: storageIsUndecided
+# CHECK-LABEL: name="walksGiven"
+# CHECK: IteratorOpen v0 [storageIsUndecided]
+# CHECK-LABEL: name="walksAnother"
+# CHECK: IteratorOpen v0
+# CHECK-NOT: storageIsUndecided
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="given" [isFreeName]
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v6
+    v9 = NewArray v0, v1 contents=anything
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v9
+    Return
+}
+
+function f1 name="walksWhole" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v1
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}
+
+function f2 name="walksGiven" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v1
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}
+
+function f3 name="walksAnother" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    v5 = IteratorResume v1
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b3():
+    Return v3
+}

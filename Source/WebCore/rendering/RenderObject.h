@@ -159,7 +159,6 @@ public:
         MultiColumnSet,
         MultiColumnSpannerPlaceholder,
         Progress,
-        Quote,
         Replica,
         ScrollbarPart,
         SearchField,
@@ -208,6 +207,7 @@ public:
         SVGPath,
         SVGRect,
         SVGResourceClipper,
+        SVGResourceFEImage,
         SVGResourceFilter,
         SVGResourceFilterPrimitive,
         SVGResourceLinearGradient,
@@ -228,6 +228,7 @@ public:
         LegacySVGPath,
         LegacySVGRect,
         LegacySVGResourceClipper,
+        LegacySVGResourceFEImage,
         LegacySVGResourceFilter,
         LegacySVGResourceFilterPrimitive,
         LegacySVGResourceLinearGradient,
@@ -443,7 +444,6 @@ public:
 
     bool isRenderCounter() const { return type() == Type::Counter; }
     bool isRenderGlyph() const { return type() == Type::Glyph; }
-    bool isRenderQuote() const { return type() == Type::Quote; }
 
     bool isRenderEmbeddedObject() const { return type() == Type::EmbeddedObject; }
     bool LEGACY_NODELETE isFieldset() const;
@@ -588,8 +588,10 @@ public:
     bool isRenderSVGResourcePaintServer() const { return isRenderSVGResourceFilter() || isRenderSVGResourceGradient() || isRenderSVGResourcePattern(); }
     bool isRenderSVGResourcePattern() const { return type() == Type::SVGResourcePattern; }
     bool isRenderSVGResourceClipper() const { return type() == Type::SVGResourceClipper; }
-    bool isLegacyRenderSVGResourceFilterPrimitive() const { return type() == Type::LegacySVGResourceFilterPrimitive; }
-    bool isRenderSVGResourceFilterPrimitive() const { return type() == Type::SVGResourceFilterPrimitive; }
+    bool isLegacyRenderSVGResourceFEImage() const { return type() == Type::LegacySVGResourceFEImage; }
+    bool isRenderSVGResourceFEImage() const { return type() == Type::SVGResourceFEImage; }
+    bool isLegacyRenderSVGResourceFilterPrimitive() const { return type() == Type::LegacySVGResourceFilterPrimitive || type() == Type::LegacySVGResourceFEImage; }
+    bool isRenderSVGResourceFilterPrimitive() const { return type() == Type::SVGResourceFilterPrimitive || type() == Type::SVGResourceFEImage; }
     bool isRenderSVGResourceLinearGradient() const { return type() == Type::SVGResourceLinearGradient; }
     bool isRenderSVGResourceMarker() const { return type() == Type::SVGResourceMarker; }
     bool isRenderSVGResourceMasker() const { return type() == Type::SVGResourceMasker; }
@@ -1489,8 +1491,7 @@ inline bool RenderObject::usesBoundaryCaching() const
 inline CachedImageClient& RenderObject::cachedImageClient() const
 {
     if (!m_cachedImageClient) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST lazyInitialize(m_cachedImageClient, CachedImageListener::create(*const_cast<RenderObject*>(this)));
+        lazyInitialize(m_cachedImageClient, CachedImageListener::create(*const_cast<RenderObject*>(this)));
     }
     return *m_cachedImageClient.get();
 }

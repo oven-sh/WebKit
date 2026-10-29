@@ -1,0 +1,40 @@
+# data = JSON.parse(text) as Data; data.name.run(handed); data.other.run(handed)
+# parsed-text-is-plain-data.ir with a type behind the call. A compiled parser makes an object with the layout of the type. A member of the text that the layout does not declare becomes a property of that object,
+# and what lies there is what JSON.parse makes of any text: plain data of this call. So no read of the object answers a value that nobody knows, and no call of a member has a callee to hand its operand to.
+# RUN: valueflow-solve calls
+# CHECK-NOT: unknown
+# RUN(ESCAPED): valueflow-why escaped=f1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: unknown 0 untracked 0
+# RUN(WRITES): valueflow-why flag=h6 flag=h23
+# WRITES: flag=h6
+# WRITES-NEXT: not held
+# WRITES-NEXT: flag=h23
+# WRITES-NEXT: not held
+# RUN(MADE): valueflow-why values=f0:v5
+# MADE: PropGet
+# MADE: operand 0 {{*}} object{{*}}@f0 object{{*}}@f0 object{{*}}@f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Data" module=m0 position=10 fields=[{key="name" declared={type=undefined|null|string}}]
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Builtin builtin=JSON
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="{}"
+    v3 = Call v1, v0, v2
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = PropGet v4 key="name"
+    v6 = PropGet v5 key="run"
+    v7 = NewClosure function=f1
+    v8 = Call v6, v5, v7
+    v9 = PropGet v4 key="other"
+    v10 = PropGet v9 key="run"
+    v11 = Call v10, v9, v7
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+    Return
+}

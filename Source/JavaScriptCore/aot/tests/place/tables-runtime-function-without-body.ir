@@ -1,0 +1,49 @@
+# A registered runtime function with a body is listed. One without a body is not, whether it was sent without one or lost it because nothing reaches it: the host creates its ordinary built-in for an id that is not listed
+# LIBRARY: own
+# OPTIONS: disable=pass:InlineCalls
+# RUN: tables
+# RUN(ROWS): tables modules functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=0 function=f3
+runtimefunction id=30 function=f2
+runtimefunction id=43 function=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    v2 = PropGet v1 key="forEach"
+    v3 = NewClosure function=f4
+    v4 = Call v2, v1, v3 calleeKey="forEach"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f1 name="reached" role=Library flags=[HasThis] enclosingRuntimeFunction=43 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3
+    Return
+}
+function f2 name="unreached" role=Library flags=[HasThis] enclosingRuntimeFunction=30 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1, -, v3
+    Return v4
+}
+function f3 name="sentWithoutBody" role=Library enclosingRuntimeFunction=0 results=[{type=anything}]
+function f4 name="callback" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+# CHECK: magic ok
+# CHECK: compiledRuntimeFunctions 1 12
+# ROWS: runtimeFunction id=43 function=[[entrypoint]] visibility=Public
+# ROWS-NOT: runtimeFunction
+# ROWS: function [[entrypoint]] name="forEach" {{*}}inRuntimeModule {{*}}length=

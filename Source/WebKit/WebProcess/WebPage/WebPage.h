@@ -369,6 +369,7 @@ struct SystemPreviewInfo;
 struct TargetedElementAdjustment;
 struct TargetedElementInfo;
 struct TargetedElementRequest;
+struct TargetedTextSearchResult;
 struct TextAnimationData;
 struct TextCheckingResult;
 struct TextEffectData;
@@ -510,7 +511,7 @@ class WebUndoStep;
 class WebUserContentController;
 class WebWheelEvent;
 
-enum class ContentAsStringIncludesChildFrames : bool;
+enum class ContentInversion : uint8_t;
 enum class DragControllerAction : uint8_t;
 #if ENABLE(TILED_CA_DRAWING_AREA)
 enum class DrawingAreaType : bool;
@@ -739,6 +740,7 @@ public:
     String rootFrameOriginString();
     bool LEGACY_NODELETE shouldTriggerRenderingUpdate(unsigned rescheduledRenderingUpdateCount) const;
     void finalizeRenderingUpdate(OptionSet<WebCore::FinalizeRenderingUpdateFlags>);
+    void serviceCanvasPaintEvents();
 
     void willStartRenderingUpdateDisplay();
     void didCompleteRenderingUpdateDisplay();
@@ -1068,6 +1070,7 @@ public:
 #endif
 
     void setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel);
+    void setContentInversion(ContentInversion);
 
     bool LEGACY_NODELETE windowIsFocused() const;
     bool LEGACY_NODELETE windowAndWebPageAreFocused() const;
@@ -1748,8 +1751,8 @@ public:
 #if ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION)
     void handleTelephoneNumberClick(const String& number, const WebCore::IntPoint&, const WebCore::IntRect&);
     void handleSelectionServiceClick(WebCore::FrameIdentifier, WebCore::FrameSelection&, const Vector<String>& telephoneNumbers, const WebCore::IntPoint&);
-    void handleImageServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::Image&, WebCore::HTMLImageElement&);
-    void handlePDFServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::HTMLAttachmentElement&);
+    bool handleImageServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::HTMLImageElement&);
+    bool handlePDFServiceClick(WebCore::FrameIdentifier, const WebCore::IntPoint&, WebCore::HTMLAttachmentElement&);
 #endif
 
     void didChangeScrollOffsetForFrame(WebCore::LocalFrame&);
@@ -2245,6 +2248,7 @@ public:
     void didAdjustVisibilityWithSelectors(Vector<String>&&);
 
     void takeSnapshotForTargetedElement(WebCore::NodeIdentifier, WebCore::ScriptExecutionContextIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
+    void takeRemoteSnapshotForTargetedElement(WebCore::NodeIdentifier, WebCore::ScriptExecutionContextIdentifier, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
 
     OptionSet<LayerTreeFreezeReason> layerTreeFreezeReasons() const { return m_layerTreeFreezeReasons; }
 
@@ -2543,9 +2547,11 @@ private:
     void viewWillStartLiveResize();
     void viewWillEndLiveResize();
 
-    void getContentsAsString(ContentAsStringIncludesChildFrames, CompletionHandler<void(const String&)>&&);
+    void getContentsAsString(CompletionHandler<void(const String&)>&&);
+    void getContentsOfAllFramesAsString(CompletionHandler<void(HashMap<WebCore::FrameIdentifier, String>&&)>&&);
 #if PLATFORM(COCOA)
     void getContentsAsAttributedString(CompletionHandler<void(const WebCore::AttributedString&)>&&);
+    void getSelectionAsAttributedStringForTesting(CompletionHandler<void(const WebCore::AttributedString&)>&&);
 #endif
 #if ENABLE(MHTML)
     void getContentsAsMHTMLData(CompletionHandler<void(const IPC::SharedBufferReference&)>&& callback);
@@ -2629,6 +2635,7 @@ private:
     void updateLastNodeBeforeWritingSuggestions(const WebCore::KeyboardEvent&);
 
     void findString(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, uint32_t, int32_t, bool)>&&);
+    void countStringMatchesByFrame(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, uint32_t>>&&)>&&);
     void selectLastFoundRange(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, int32_t, bool)>&&);
 #if ENABLE(IMAGE_ANALYSIS)
     void findStringIncludingImages(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>, Vector<WebCore::IntRect>&&, uint32_t, int32_t, bool)>&&);
@@ -2896,6 +2903,7 @@ private:
     void requestAllTextAndRects(CompletionHandler<void(Vector<std::pair<String, WebCore::FloatRect>>&&)>&&);
 
     void requestTargetedElement(WebCore::TargetedElementRequest&&, CompletionHandler<void(Vector<WebCore::TargetedElementInfo>&&)>&&);
+    void requestTargetedElementsForText(WebCore::TargetedElementRequest&&, CompletionHandler<void(WebCore::TargetedTextSearchResult&&)>&&);
     void requestAllTargetableElements(float, CompletionHandler<void(Vector<Vector<WebCore::TargetedElementInfo>>&&)>&&);
 
     void hasTextExtractionFilterRules(CompletionHandler<void(bool)>&&);

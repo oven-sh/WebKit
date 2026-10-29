@@ -1,0 +1,35 @@
+# The command operator-forms: the form that selection chooses for each operator, with its result, its effects and whether it may call the run time
+# FORM: Prepared
+# RUN: operator-forms
+# RUN(COMPACT): operator-forms shape=Compact
+# RUN(LEGAL): operator-forms legal
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="operators" parameters=[{type=i32}, {type=number}, {type=string}, {type=anything}, {type=undefined|number}] results=[{type=anything}] {
+    v5 = Add v0, v0
+    v6 = Add v0, v1
+    v7 = Add v2, v2
+    v8 = Add v3, v1
+    v9 = Less v0, v1
+    v10 = StrictEq v2, v2
+    v11 = StrictEq v3, v0
+    v12 = ToNumber v4
+    v13 = BitOr v1, v0
+    v14 = NewArray v5, v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Return v14
+}
+# CHECK: function f0
+# CHECK-NEXT: v5 Add Integers : int[-4294967296, 4294967294] ; none ; calls=0
+# CHECK-NEXT: v6 Add Numbers : number ; none ; calls=0
+# CHECK-NEXT: v7 Add Strings : string ; {{*}} ; calls=1
+# CHECK-NEXT: v8 Add Generic : number|string|bigint ; {{*}} ; calls=1
+# CHECK-NEXT: v9 Less Numbers : boolean ; none ; calls=0
+# CHECK-NEXT: v10 StrictEq Strings : boolean ; {{*}} ; calls=1
+# CHECK-NEXT: v11 StrictEq Int32AndValue : boolean ; none ; calls=0
+# CHECK-NEXT: v12 ToNumber Numbers : number ; none ; calls=0
+# CHECK-NEXT: v13 BitOr Numbers : i32 ; none ; calls=1
+# COMPACT: v10 StrictEq Strings : boolean ; {{*}} ; calls=1
+# COMPACT-NEXT: v11 StrictEq Generic : boolean ; none ; calls=1
+# LEGAL: Add: Generic calls=1, Integers calls=0, CheckedIntegers calls=0, Numbers calls=0, NumberAndValue calls=1, BigInts calls=1, Strings calls=1
+# LEGAL: ToNumber: Generic calls=1, Integers calls=0, Numbers calls=0, Booleans calls=0, NullableNumber calls=0
+# LEGAL: StrictEq: Generic calls=1, Integers calls=0, Numbers calls=0, NumberAndValue calls=1, Bits calls=0, Booleans calls=0

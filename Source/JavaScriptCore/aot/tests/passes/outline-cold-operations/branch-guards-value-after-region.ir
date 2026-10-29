@@ -1,0 +1,169 @@
+# A region does not take a branch away from the block that its edge passes a proof to
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 2
+# STATISTIC: ColdSitesOutlined = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="edgePassesProof" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5(| 0)
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5(v8):
+    Return v8
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK: [[test0]]: boolean = TypeTest v1 testedType=undefined|null
+# CHECK-NEXT: Branch [[test0]] -> taken b2(), notTaken [[exit0]](| 0)
+# CHECK: = CallDirect v2 function=f6
+# CHECK: [[exit0]]([[narrowed0]]:
+# CHECK-NEXT: Return [[narrowed0]]
+
+function f1 name="edgePassesProof2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5(| 0)
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5(v8):
+    Return v8
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: [[test1]]: boolean = TypeTest v1 testedType=undefined|null
+# CHECK-NEXT: Branch [[test1]] -> taken b2(), notTaken [[exit1]](| 0)
+# CHECK: = CallDirect v2 function=f6
+# CHECK: [[exit1]]([[narrowed1]]:
+# CHECK-NEXT: Return [[narrowed1]]
+
+function f2 name="edgePassesProof3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5(| 0)
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5(v8):
+    Return v8
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: [[test2]]: boolean = TypeTest v1 testedType=undefined|null
+# CHECK-NEXT: Branch [[test2]] -> taken b2(), notTaken [[exit2]](| 0)
+# CHECK: = CallDirect v2 function=f6
+# CHECK: [[exit2]]([[narrowed2]]:
+# CHECK-NEXT: Return [[narrowed2]]
+
+function f3 name="edgePassesNothing" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5()
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5():
+    Return v1
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1, v2 function=f7
+# CHECK-NEXT: Jump -> next
+
+function f4 name="edgePassesNothing2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5()
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5():
+    Return v1
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1, v2 function=f7
+# CHECK-NEXT: Jump -> next
+
+function f5 name="edgePassesNothing3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b2(), notTaken b5()
+  b2():
+    v4 = PropGet v2 key="return"
+    v5 = TypeTest v4 testedType=object
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewRuntimeError runtimeError=IteratorResultNotObject
+    Throw v6
+  b4():
+    v7 = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+    Throw v7
+  b5():
+    Return v1
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1, v2 function=f7
+# CHECK-NEXT: Jump -> next
+
+# CHECK-LABEL: function f6 {{*}}role=OutlinedBody
+# CHECK-NOT: testedType=undefined|null
+# CHECK-LABEL: function f7 {{*}}role=OutlinedBody
+# CHECK: = TypeTest v0 testedType=undefined|null
+# CHECK-COUNT-2: Throw

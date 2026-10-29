@@ -1,0 +1,78 @@
+# A counter that steps down is bounded from below
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="subtractsOne" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Sub v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v0 step -1 Decreasing stepped [v7] tests [b1 v2 GreaterEq v1 Invariant BeforeStep entry Holds exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f1 name="decrements" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Decrement v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v0 step -1 Decreasing stepped [v6] tests [b1 v2 GreaterEq v1 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f2 name="boundOnLeft" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = Less v1, v2
+    Branch v4 -> taken b2(| 1), notTaken b3()
+  b2(v5):
+    v6 = Decrement v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v0 step -1 Decreasing stepped [v6] tests [b1 v2 Greater v1 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f3 name="stepsAwayFromBound" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Decrement v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step -1 Decreasing stepped [v6] tests [b1 v2 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: none

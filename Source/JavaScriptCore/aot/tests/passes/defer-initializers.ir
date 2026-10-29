@@ -1,0 +1,69 @@
+# A variable that a body that runs once stores once, with what nobody can tell when it was made, stays empty until its first read. What makes the value moves into a function of its own, and each read that finds the variable empty calls it.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 1
+# STATISTIC: VariablesFilledByInitializers = 1
+# STATISTIC: VariablesAddedForInitializers = 0
+
+# CHECK: variable g0 name="deferred" module=m0 declared={type=absent|L0} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# CHECK-NEXT: variable g1 name="usedAtStart" module=m0 declared={type=L0}
+# CHECK-NEXT: variable g2 name="madeByUnknownCode" module=m0 declared={type=anything}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: variable=g0
+# CHECK: [[used]]: L0 = NewObject
+# CHECK-NEXT: PutModuleVariable [[used]] variable=g1
+# CHECK-NOT: NewObject
+# CHECK: PutModuleVariable {{*}} variable=g2
+# CHECK: Return
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: [[held]]: absent|L0 = GetModuleVariable variable=g0
+# CHECK-NEXT: [[isEmpty]]: boolean = TypeTest [[held]] testedType=absent
+# CHECK-NEXT: Branch [[isEmpty]] -> taken [[make]](), notTaken [[filled]]()
+# CHECK: [[rest]]([[value]]: L0):
+# CHECK-NEXT: = GetModuleVariable variable=g1
+# CHECK-NEXT: = GetModuleVariable variable=g2
+# CHECK-NEXT: = Call v0, -, [[value]],
+# CHECK: [[make]]() frequency=Rare:
+# CHECK-NEXT: [[made]]: L0 = CallDirect function=[[initializer]]
+# CHECK-NEXT: Jump -> next [[rest]]([[made]])
+# CHECK: [[filled]]():
+# CHECK-NEXT: [[here31]]: fact = Specified
+# CHECK-NEXT: [[found]]: L0 = AssumeType [[held]], [[here31]] provenType=L0
+# CHECK-NEXT: Jump -> next [[rest]]([[found]])
+# CHECK: function [[initializer]] name="" module=m0 {{*}}role=OutlinedBody {{*}}results=[{type=L0}] {{*}}derivation={source=f0}
+# CHECK: [[object]]: L0 = NewObject
+# CHECK-NEXT: PropSet [[object]],
+# CHECK-NEXT: PropSet [[object]],
+# CHECK-NEXT: PutModuleVariable [[object]] variable=g0
+# CHECK-NEXT: Return [[object]]
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+variable g0 name="deferred" module=m0 declared={type=L0}
+variable g1 name="usedAtStart" module=m0 declared={type=L0}
+variable g2 name="madeByUnknownCode" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="a" mode=Strict
+    PropSet v1, v0 key="a" mode=Strict
+    PutModuleVariable v1 variable=g0
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v5
+    PutModuleVariable v9 variable=g2
+    v11 = NewClosure function=f1
+    v12 = Call v8, -, v11
+    Return
+}
+function f1 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v0, -, v1, v2, v3
+    Return v4
+}

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3WasmRefTypeCheckValue.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3ValueInlines.h"
 
@@ -53,4 +53,4 @@ void WasmRefTypeCheckValue::dumpMeta(CommaPrinter& comma, PrintStream& out) cons
 
 } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

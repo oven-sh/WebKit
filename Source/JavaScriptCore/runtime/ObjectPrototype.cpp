@@ -23,7 +23,7 @@
 
 #include "ArrayConstructor.h"
 #include "GetterSetter.h"
-#include "HasOwnPropertyCache.h"
+#include "HasOwnPropertyCacheInlines.h"
 #include "IntegrityInlines.h"
 #include "JSCInlines.h"
 #include "ObjectPrototypeInlines.h"
@@ -32,6 +32,8 @@
 #if PLATFORM(IOS) || PLATFORM(VISION)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
+
+#include "AOTPropertyWalk.h"
 
 namespace JSC {
 
@@ -105,6 +107,18 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (thisObject->structure()->isCompiledStructure()) {
+        switch (AOT::PropertyWalk::hasOwnProperty(thisObject, propertyName.uid())) {
+        case AOT::PropertyWalk::Presence::Present:
+            return true;
+        case AOT::PropertyWalk::Presence::Absent:
+            return false;
+        case AOT::PropertyWalk::Presence::Unknown:
+            break;
+        }
+    }
+#endif
     Structure* structure = thisObject->structure();
     HasOwnPropertyCache& hasOwnPropertyCache = vm.ensureHasOwnPropertyCache();
     if (std::optional<bool> result = hasOwnPropertyCache.get(structure, propertyName)) {

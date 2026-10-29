@@ -1,0 +1,133 @@
+# A callee with several results: each result becomes a parameter of the block after the call, and every exit of the copy passes all of them
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 5
+# STATISTIC: InlineDecisionBarrier = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutBody" parameters=[{type=number}] results=[{type=number}, {type=string}]
+
+function f1 name="returnsTuple" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+    v2 = Mul v0, v0
+    v3 = Results v2, v1
+    Return v3
+}
+
+function f2 name="returnsTupleOnTwoPaths" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=number}, {type=string}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Mul v0, v0
+    v4 = Results v3, v1
+    Return v4
+  b2():
+    v5 = Add v1, v1
+    v6 = Results v0, v5
+    Return v6
+}
+
+function f3 name="returnsTupleOfCall" parameters=[{type=number}] results=[{type=number}, {type=string}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+
+function f4 name="readsBothResults" parameters=[{type=number}, {type=string}] results=[{type=string}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = Add v4, v3
+    Return v5
+}
+# CHECK-LABEL: name="readsBothResults"
+# CHECK-NOT: CallDirect
+# CHECK-NOT: ResultAt
+# CHECK: Jump -> next
+# CHECK: [[after4]]([[first4]]: number, [[second4]]: string):
+# CHECK: = Add [[second4]], [[first4]]
+# CHECK-NOT: CallDirect
+# CHECK-NOT: Result
+# CHECK: [[product4]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next [[after4]]([[product4]], v1)
+
+function f5 name="readsSecondResultOnly" parameters=[{type=number}, {type=string}] results=[{type=string}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = ResultAt v2 index=1
+    Return v3
+}
+# CHECK-LABEL: name="readsSecondResultOnly"
+# CHECK-NOT: CallDirect
+# CHECK-NOT: ResultAt
+# CHECK: Jump -> next
+# CHECK: [[after5]]([[first5]]: number, [[second5]]: string):
+# CHECK: Return [[second5]]
+# CHECK-NOT: Result
+# CHECK: [[product5]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next [[after5]]([[product5]], v1)
+
+function f6 name="passesTupleOn" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: name="passesTupleOn"
+# CHECK-NOT: CallDirect
+# CHECK: Jump -> next
+# CHECK: [[after6]]([[first6]]: number, [[second6]]: string):
+# CHECK-NEXT: v2{{*}} = Results [[first6]], [[second6]]
+# CHECK-NEXT: Return v2
+# CHECK-NOT: Result
+# CHECK: [[product6]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next [[after6]]([[product6]], v1)
+
+function f7 name="calleeHasTwoExits" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=string}] {
+    v3 = CallDirect v0, v1, v2 function=f2
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Add v5, v4
+    Return v6
+}
+# CHECK-LABEL: name="calleeHasTwoExits"
+# CHECK-NOT: CallDirect
+# CHECK-NOT: ResultAt
+# CHECK: Jump -> next
+# CHECK: [[after7]]([[first7]]: number, [[second7]]: string):
+# CHECK: = Add [[second7]], [[first7]]
+# CHECK-NOT: Result
+# CHECK: [[product7]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next [[after7]]([[product7]], v1)
+# CHECK-NOT: Result
+# CHECK: [[doubled7]]: string = Add v1, v1
+# CHECK-NEXT: Jump -> next [[after7]](v0, [[doubled7]])
+
+function f8 name="calleePassesTupleOn" parameters=[{type=number}] results=[{type=string}] {
+    v1 = CallDirect v0 function=f3
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = Add v3, v2
+    Return v4
+}
+# CHECK-LABEL: name="calleePassesTupleOn"
+# CHECK-NOT: function=f3
+# CHECK-NOT: ResultAt
+# CHECK: Jump -> next
+# CHECK: [[after8]]([[first8]]: number, [[second8]]: string):
+# CHECK: = Add [[second8]], [[first8]]
+# CHECK-NOT: function=f3
+# CHECK: [[tuple8]]{{*}} = CallDirect v0 function=f0
+# CHECK-NEXT: [[zero8]]: number = ResultAt [[tuple8]]
+# CHECK-NEXT: [[one8]]: string = ResultAt [[tuple8]] index=1
+# CHECK-NEXT: Jump -> next [[after8]]([[zero8]], [[one8]])
+
+function f9 name="calleeIsNotInlined" parameters=[{type=number}] results=[{type=string}] {
+    v1 = CallDirect v0 function=f0
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = Add v3, v2
+    Return v4
+}
+# CHECK-LABEL: name="calleeIsNotInlined"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1{{*}} = CallDirect v0 function=f0
+# CHECK-NEXT: v2: number = ResultAt v1
+# CHECK-NEXT: v3: string = ResultAt v1 index=1
+# CHECK-NEXT: v4: string = Add v3, v2
+# CHECK-NEXT: Return v4

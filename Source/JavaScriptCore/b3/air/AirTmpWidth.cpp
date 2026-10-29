@@ -52,9 +52,12 @@ void TmpWidth::recompute(Code& code)
 void TmpWidth::fixpointMoves(const Vector<Inst*>& moves)
 {
     bool changed = true;
+    bool goesDown = false;
     while (changed) {
         changed = false;
-        for (Inst* move : moves) {
+        goesDown = !goesDown;
+        for (size_t step = 0; step < moves.size(); ++step) {
+            Inst* move = moves[goesDown ? step : moves.size() - 1 - step];
             ASSERT(move->kind.opcode == Move);
             ASSERT(move->args()[0].isTmp());
             ASSERT(move->args()[1].isTmp());

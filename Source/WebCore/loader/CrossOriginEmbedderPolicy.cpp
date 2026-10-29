@@ -45,6 +45,21 @@
 
 namespace WebCore {
 
+static constexpr auto coepUnsafeNoneToken { "unsafe-none"_s };
+static constexpr auto coepRequireCORPToken { "require-corp"_s };
+static constexpr auto coepCredentiallessToken { "credentialless"_s };
+
+bool isRecognizedCrossOriginEmbedderPolicyToken(StringView token)
+{
+    return token == coepRequireCORPToken || token == coepUnsafeNoneToken;
+}
+
+bool isUnsupportedCrossOriginEmbedderPolicyToken(StringView token)
+{
+    // FIXME: Support credentialless, then treat it as recognized.
+    return token == coepCredentiallessToken;
+}
+
 // https://html.spec.whatwg.org/multipage/origin.html#obtain-an-embedder-policy
 CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse& response, IsSecureContext isSecureContext, const ScriptExecutionContext* context)
 {
@@ -53,7 +68,7 @@ CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse
         if (!coepParsingResult)
             return;
         auto* policyString = std::get_if<RFC8941::Token>(&coepParsingResult->first);
-        if (!policyString || policyString->string() != "require-corp"_s)
+        if (!policyString || policyString->string() != coepRequireCORPToken)
             return;
 
         value = CrossOriginEmbedderPolicyValue::RequireCORP;
@@ -131,7 +146,12 @@ void sendCOEPInheritenceViolation(ReportingClient& reportingClient, const URL& e
 // https://fetch.spec.whatwg.org/#queue-a-cross-origin-embedder-policy-corp-violation-report
 void sendCOEPCORPViolation(ReportingClient& reportingClient, const URL& embedderURL, const String& endpoint, COEPDisposition disposition, FetchOptions::Destination destination, const URL& blockedURL)
 {
-    Ref reportBody = CORPViolationReportBody::create(disposition, blockedURL, destination);
+    // https://fetch.spec.whatwg.org/#serialize-a-response-url-for-reporting
+    URL serializedBlockedURL = blockedURL;
+    serializedBlockedURL.removeCredentials();
+    serializedBlockedURL.removeFragmentIdentifier();
+
+    Ref reportBody = CORPViolationReportBody::create(disposition, serializedBlockedURL, destination);
     Ref report = Report::create("coep"_s, embedderURL.string(), WTF::move(reportBody));
     reportingClient.notifyReportObservers(WTF::move(report));
 
@@ -141,7 +161,7 @@ void sendCOEPCORPViolation(ReportingClient& reportingClient, const URL& embedder
     Ref reportFormData = Report::createReportFormDataForViolation("coep"_s, embedderURL, reportingClient.httpUserAgent(), endpoint, [&](auto& body) {
         body.setString("disposition"_s, disposition == COEPDisposition::Reporting ? "reporting"_s : "enforce"_s);
         body.setString("type"_s, "corp"_s);
-        body.setString("blockedURL"_s, PingLoader::sanitizeURLForReport(blockedURL));
+        body.setString("blockedURL"_s, serializedBlockedURL.string());
         body.setString("destination"_s, convertEnumerationToString(destination));
     });
     reportingClient.sendReportToEndpoints(embedderURL, { }, singleElementSpan(endpoint), WTF::move(reportFormData), ViolationReportType::CORPViolation);

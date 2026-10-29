@@ -31,8 +31,8 @@
 #include <WebCore/DecodingOptions.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/ImageAdapter.h>
+#include <WebCore/ImageDrawingOptions.h>
 #include <WebCore/ImageOrientation.h>
-#include <WebCore/ImagePaintingOptions.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/NaturalDimensions.h>
 #include <wtf/ForbidHeapAllocation.h>
@@ -45,8 +45,6 @@ namespace WebCore {
 
 class AffineTransform;
 class Document;
-class FloatPoint;
-class FloatSize;
 class FragmentedSharedBuffer;
 class GraphicsContext;
 class ImageDrawingExtras;
@@ -61,7 +59,6 @@ class ImageObserver;
 
 class Image : public RefCountedAndCanMakeWeakPtr<Image> {
     friend class CachedSubimage;
-    friend class GraphicsContext;
 public:
     virtual ~Image();
     
@@ -157,12 +154,16 @@ public:
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, FloatPoint destination = { }, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
+
     virtual RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr);
     virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned, ConcreteObjectSize, const ImageDrawingExtras* = nullptr);
     virtual RefPtr<NativeImage> currentNativeImage(ConcreteObjectSize, const ImageDrawingExtras* = nullptr);
     virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ConcreteObjectSize, ImageOrientation = ImageOrientation::Orientation::FromImage, const ImageDrawingExtras* = nullptr);
 
-    virtual void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr);
+    virtual void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr);
 
 #if ASSERT_ENABLED
     virtual bool hasSolidColor() { return false; }
@@ -193,7 +194,7 @@ protected:
 
     virtual bool shouldDrawFromCachedSubimage(GraphicsContext&) const { return false; }
     virtual bool mustDrawFromCachedSubimage(GraphicsContext&) const { return false; }
-    virtual ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) = 0;
+    virtual ImageDrawResult drawImage(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, const ImageDrawingExtras*) = 0;
 
     virtual bool canReplaceData() const { return false; }
     virtual void dataReplaced() { }

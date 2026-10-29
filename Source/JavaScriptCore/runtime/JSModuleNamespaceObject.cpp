@@ -28,11 +28,15 @@
 
 #include "AbstractModuleRecord.h"
 #include "CyclicModuleRecord.h"
+#include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
+#endif
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
 #endif
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyGlobal.h"
@@ -63,6 +67,9 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
         m_exports.add(pair.first.impl(), ExportEntry {
             pair.second.localName,
             WriteBarrier { pair.second.moduleRecord, WriteBarrierEarlyInit },
+#if ENABLE(AOT)
+            pair.second.compiledExportIndex,
+#endif
         });
     }
 }
@@ -184,6 +191,16 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     switch (slot.internalMethodType()) {
     case PropertySlot::InternalMethodType::GetOwnProperty:
     case PropertySlot::InternalMethodType::Get: {
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(exportEntry.moduleRecord.get())) {
+            JSValue value = exportEntry.localName == vm.propertyNames->starNamespacePrivateName
+                ? JSValue(compiled->moduleNamespaceObject(globalObject, AbstractModuleRecord::ModulePhase::Evaluation))
+                : compiled->readExport(globalObject, exportEntry.localName, exportEntry.compiledExportIndex);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+            return true;
+        }
+#endif
         if (exportEntry.localName == vm.propertyNames->starNamespacePrivateName) {
             // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
             // 10. If binding.[[BindingName]] is "*namespace*", then
@@ -381,28 +398,28 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     // 4. If IsAccessorDescriptor(Desc) is true, return false.
     if (descriptor.isAccessorDescriptor()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to accessor"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToAccessorError);
         return false;
     }
 
     // 5. If Desc.[[Writable]] is present and has value false, return false.
     if (descriptor.writablePresent() && !descriptor.writable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to non-writable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonWritableError);
         return false;
     }
 
     // 6. If Desc.[[Enumerable]] is present and has value false, return false.
     if (descriptor.enumerablePresent() && !descriptor.enumerable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with non-enumerable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonEnumerableError);
         return false;
     }
 
     // 7. If Desc.[[Configurable]] is present and has value true, return false.
     if (descriptor.configurablePresent() && descriptor.configurable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with configurable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToConfigurableError);
         return false;
     }
 
@@ -412,7 +429,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, false);
         if (!result) {
             if (shouldThrow)
-                throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding's value"_s);
+                throwTypeError(globalObject, scope, NamespaceBindingValueError);
             return false;
         }
     }
@@ -422,6 +439,16 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+
+static bool isLiveBindingExport(AbstractModuleRecord* record)
+{
+#if ENABLE(AOT)
+    return record->inherits<AOT::ModuleRecord>();
+#else
+    UNUSED_PARAM(record);
+    return false;
+#endif
+}
 
 void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue& result)>& iter)
 {
@@ -433,6 +460,10 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
         const Identifier& name = pair.value.localName;
 
         if (iter(globalObject, name, value)) {
+            if (isLiveBindingExport(pair.value.moduleRecord.get())) {
+                throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
+                return;
+            }
             auto* moduleNamespaceObject = pair.value.moduleRecord->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
             bool putResult = false;
@@ -468,6 +499,10 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
+    if (isLiveBindingExport(record)) {
+        throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
+        return false;
+    }
     auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 

@@ -230,7 +230,7 @@ ArrayMode ArrayMode::refine(
         return ArrayMode(Array::Generic, action());
     
     // If we had exited because of an exotic object behavior or a sparse index, then don't try to specialize.
-    if (graph.hasExitSite(node->origin.semantic, ExoticObjectMode) || graph.hasExitSite(node->origin.semantic, SparseIndex))
+    if ((!isJSArray() && graph.hasExitSite(node->origin.semantic, ExoticObjectMode)) || graph.hasExitSite(node->origin.semantic, SparseIndex))
         return ArrayMode(Array::Generic, action());
 
     if (isInBounds() && graph.hasExitSite(node->origin.semantic, LoadFromHole))

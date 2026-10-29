@@ -1,0 +1,59 @@
+# A direct call has the summary of its callee, with what happens before a return and before a throw on separate edges; without summaries it is unknown code
+# FORM: Prepared
+# RUN: effects summaries f3 f4
+# RUN(PLAIN): effects f3 f4
+# RUN(ONLY): effects summaries f3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} initialization=Undefined
+function f0 name="pure" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+function f1 name="writesVariable" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="log" [isFreeName]
+    v3 = Call v2, -, v0
+    Throw v0
+}
+# CHECK: f0 return: none throw: none
+# CHECK: f1 return: writes(ModuleVariables/1) throw: none
+# CHECK: f2 return: throws collects terminates throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+function f3 name="callsWithoutHandler" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = CallDirect v0 function=f0
+    v3 = CallDirect v0 function=f1
+    v4 = CallDirect v1 function=f2
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v2 CallDirect: none
+# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1)
+# CHECK-NEXT: v4 CallDirect: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+# PLAIN-LABEL: function f3
+# PLAIN-NEXT: v2 CallDirect: unknownCode
+# PLAIN-NEXT: v3 CallDirect: unknownCode
+# PLAIN-NEXT: v4 CallDirect: unknownCode
+# ONLY-LABEL: function f3
+# ONLY-NOT: v3 CallDirect:{{*}}throw
+function f4 name="callsUnderHandler" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number, v1: boolean) handler=b1():
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v1 function=f2
+    Return
+  b1() role=CatchHandler:
+    v4 = CatchValue
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v2 CallDirect: writes(ModuleVariables/1)
+# CHECK-NEXT: v3 CallDirect: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+# PLAIN-LABEL: function f4
+# PLAIN-NEXT: v2 CallDirect: unknownCode
+# PLAIN-NEXT: v3 CallDirect: unknownCode

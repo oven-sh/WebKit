@@ -1,0 +1,72 @@
+# A comparison of an integer with a number that is invariant in the loop compares with an integer computed in front of the loop
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FLAG): pass Select
+# FLAG-NOT: numberIsOnLeft
+# STATISTIC: IntegerBoundGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="invariant-number" parameters=[{type=int}, {type=number}] results=[{type=int}] {
+    v2 = Integer integer=1
+    v3 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v4, v2
+    v8 = BitOr v7, v3
+    Jump -> next b1(v8)
+  b3():
+    Return v4
+# CHECK: [[bound]]: int = IntegerBound v1 comparison=Less
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = Less v4, [[bound]]
+}
+
+function f1 name="outside-loop" parameters=[{type=int}, {type=number}] results=[{type=boolean}] {
+    v2 = Less v0, v1
+    Return v2
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = Less v0, v1
+}
+
+function f2 name="number-counter" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=1
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v2
+    Jump -> next b1(v6)
+  b3():
+    Return v3
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = Less v3, v1
+}
+
+function f3 name="two-entry-edges" parameters=[{type=int}, {type=number}, {type=boolean}] results=[{type=int}] {
+    v3 = Integer integer=1
+    v4 = Integer integer=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    v8 = Add v5, v3
+    v9 = BitOr v8, v4
+    Jump -> next b3(v9)
+  b5():
+    Return v5
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = Less v5, v1
+}

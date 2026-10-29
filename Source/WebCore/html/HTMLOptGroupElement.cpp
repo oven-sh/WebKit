@@ -125,9 +125,6 @@ auto HTMLOptGroupElement::insertionSteps(InsertionType insertionType, ContainerN
 {
     auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
-    if (!document().settings().htmlEnhancedSelectParsingEnabled())
-        return result;
-
     if (insertionType.connectedToDocument && m_shadowTreeNeedsUpdate)
         protect(document())->addElementWithPendingUserAgentShadowTreeUpdate(*this);
 
@@ -149,7 +146,7 @@ void HTMLOptGroupElement::removingSteps(RemovalType removalType, ContainerNode& 
     if (removalType.disconnectedFromDocument && m_shadowTreeNeedsUpdate)
         protect(document())->removeElementWithPendingUserAgentShadowTreeUpdate(*this);
 
-    if (!document().settings().htmlEnhancedSelectParsingEnabled() || !m_ownerSelect)
+    if (!m_ownerSelect)
         return;
 
     if (auto* select = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes)) {
@@ -166,9 +163,6 @@ void HTMLOptGroupElement::removingSteps(RemovalType removalType, ContainerNode& 
 void HTMLOptGroupElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
 {
     HTMLElement::movingSteps(movingType, oldParent);
-
-    if (!document().settings().htmlEnhancedSelectParsingEnabled())
-        return;
 
     RefPtr oldSelect = m_ownerSelect;
     RefPtr newSelect = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes);
@@ -217,23 +211,12 @@ const AtomString& HTMLOptGroupElement::formControlType() const
 
 void HTMLOptGroupElement::childrenChanged(const ChildChange& change)
 {
-    if (document().settings().htmlEnhancedSelectParsingEnabled()) {
-        if (change.affectsElements != ChildChange::AffectsElements::No)
-            invalidateShadowTree();
-        HTMLElement::childrenChanged(change);
-        return;
+    if (change.affectsElements != ChildChange::AffectsElements::No) {
+        if (RefPtr legend = legendElement(); m_legendElement != legend) {
+            m_legendElement = legend;
+            legendElementChanged();
+        }
     }
-
-    bool isRelevant = change.affectsElements == ChildChange::AffectsElements::Yes;
-    RefPtr select = isRelevant ? ownerSelectElement() : nullptr;
-    if (!isRelevant || !select) {
-        HTMLElement::childrenChanged(change);
-        return;
-    }
-
-    auto selectOptionIfNecessaryScope = select->optionToSelectFromChildChangeScope(change, this);
-
-    recalcSelectOptions();
     HTMLElement::childrenChanged(change);
 }
 
@@ -250,6 +233,12 @@ void HTMLOptGroupElement::attributeChanged(const QualifiedName& name, const Atom
 
     if (name == labelAttr)
         invalidateShadowTree();
+}
+
+void HTMLOptGroupElement::legendElementChanged()
+{
+    recalcSelectOptions();
+    invalidateShadowTree();
 }
 
 void HTMLOptGroupElement::parseDisabledAttribute(const AtomString& value)
@@ -309,9 +298,6 @@ HTMLOptGroupElement* HTMLOptGroupElement::optGroupForLabel(const Element& elemen
 
 HTMLSelectElement* HTMLOptGroupElement::ownerSelectElement() const
 {
-    if (!document().settings().htmlEnhancedSelectParsingEnabled())
-        return dynamicDowncast<HTMLSelectElement>(parentNode());
-
     return m_ownerSelect.get();
 }
 

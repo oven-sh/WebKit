@@ -49,6 +49,15 @@
 #  define ZMIJ_DEFAULT(...)
 #endif
 
+// Makes the shortest `write` and `write_scientific` for float and double
+// produce ECMAScript Number::toString output: fixed notation for decimal
+// exponents in [-6, 20], exponents without leading zeros (1e-7, 1e+21), "NaN"
+// and "Infinity", and zero and NaN without a sign. It must have the same value
+// in every translation unit that includes this header.
+#ifndef ZMIJ_ECMASCRIPT
+#  define ZMIJ_ECMASCRIPT 1
+#endif
+
 namespace zmij {
 
 enum {
@@ -73,9 +82,11 @@ enum class format {
 };
 
 // Minimum buffer sizes for the shortest `write`, one per floating-point type.
+// Fixed notation shifts a 16-byte (double) or 8-byte (float) chunk of digits
+// right of the decimal point, so the size follows the largest fixed exponent.
 enum {
-  float_buffer_size = 17,
-  double_buffer_size = 34,
+  float_buffer_size = ZMIJ_ECMASCRIPT ? 31 : 17,
+  double_buffer_size = ZMIJ_ECMASCRIPT ? 39 : 34,
   // Worst case is IEEE binary128: 1 sign + 36 digits + '.' + "e-dddd".
   long_double_buffer_size = 44,
 };
@@ -237,9 +248,10 @@ template <typename Float> struct float_traits : std::numeric_limits<Float> {
   static constexpr int exp_mask = (1 << num_exp_bits) - 1;
   static constexpr int exp_bias = (1 << (num_exp_bits - 1)) - 1;
   static constexpr int exp_offset = exp_bias + num_sig_bits;
-  static constexpr int min_fixed_dec_exp = -4;
+  // Shortest output uses fixed notation for decimal exponents in this range.
+  static constexpr int min_fixed_dec_exp = ZMIJ_ECMASCRIPT ? -6 : -4;
   static constexpr int max_fixed_dec_exp =
-      compute_dec_exp(float_traits::digits + 1) - 1;
+      ZMIJ_ECMASCRIPT ? 20 : compute_dec_exp(float_traits::digits + 1) - 1;
 
   using sig_type = typename std::conditional<
       num_bits <= 32, uint32_t,
@@ -304,7 +316,7 @@ template <typename = void> struct pow10_data {
       0xd3c21bcecceda100, 0x84595161401484a0, 0xa56fa5b99019a5c8,
       0xcecb8f27f4200f3a,
   };
-  static constexpr uint128 major[] = {
+  static constexpr uint128 major[25] = {
       {0xaddcb9e83c6b1793, 0xdf4abe242a1bbf3e},  // -331 (+1 ULP: see fixups)
       {0xaf8e5410288e1b6f, 0x07ecf0ae5ee44dda},  // -303
       {0xb1442798f49ffb4a, 0x99cd11cfdf41779d},  // -275
@@ -331,7 +343,7 @@ template <typename = void> struct pow10_data {
       {0xd94ad8b1c7380874, 0x18375281ae7822bd},  //  313 (+1 ULP: see fixups)
       {0xdb68c2ca82ed2a05, 0xa67398db9f6820e1},  //  341
   };
-  static constexpr uint32_t fixups[] = {
+  static constexpr uint32_t fixups[21] = {
       0x8d8fc810, 0x06100293, 0x19000000, 0x00100000, 0x00000908, 0x00000000,
       0x04e00300, 0x3807e0b2, 0x3d83d793, 0x0006f5cc, 0x00000000, 0xffff0000,
       0x8076337d, 0x4ff45ba0, 0x09405033, 0x034376d9, 0x09000000, 0x4e100501,
@@ -445,9 +457,15 @@ inline ZMIJ_CONSTEXPR20 auto write_constexpr(char* out, Float value) noexcept
   auto bin_sig = uint64_t(traits::get_sig(bits));
 
   if (traits::is_negative(bits)) *out++ = '-';
+  if (ZMIJ_ECMASCRIPT && raw_exp == traits::exp_mask) {
+    if (bin_sig == 0) return copy_n(out, "Infinity", 8);
+    out -= traits::is_negative(bits);
+    return copy_n(out, "NaN", 3);
+  }
   if (raw_exp == traits::exp_mask)
     return copy_n(out, bin_sig != 0 ? "nan" : "inf", 3);
   if (raw_exp == 0 && bin_sig == 0) {
+    if (ZMIJ_ECMASCRIPT) out -= traits::is_negative(bits);
     *out++ = '0';
     return out;
   }
@@ -493,11 +511,12 @@ inline ZMIJ_CONSTEXPR20 auto write_constexpr(char* out, Float value) noexcept
   *out++ = 'e';
   *out++ = lead_exp >= 0 ? '+' : '-';
   unsigned abs_exp = unsigned(lead_exp >= 0 ? lead_exp : -lead_exp);
+  bool has_tens = !ZMIJ_ECMASCRIPT || abs_exp >= 10;
   if (abs_exp >= 100) {
     *out++ = char('0' + abs_exp / 100);
     abs_exp %= 100;
   }
-  *out++ = char('0' + abs_exp / 10);
+  if (has_tens) *out++ = char('0' + abs_exp / 10);
   *out++ = char('0' + abs_exp % 10);
   return out;
 }
@@ -529,7 +548,7 @@ template <typename Float> auto to_decimal(Float value) noexcept -> dec_fp<>;
 template <typename Float>
 auto to_decimal_big(Float value) noexcept -> dec_fp<uint128_t>;
 
-template <typename Float>
+template <typename Float, bool scientific = false>
 auto write(char* buffer, Float value) noexcept -> char*;
 
 // Writes the shortest decimal representation of `value`, correctly rounded
@@ -708,6 +727,21 @@ inline ZMIJ_CONSTEXPR20 auto write(char* out, size_t n, float value) noexcept
 inline auto write(char* out, size_t n, long double value) noexcept -> char* {
   if (LDBL_MANT_DIG == DBL_MANT_DIG) return write(out, n, double(value));
   return detail::clamp_end(out, detail::write_big(out, n, value), n);
+}
+
+/// Writes the shortest correctly rounded decimal representation of `value` to
+/// `out` in scientific notation (e.g. 1e+00 or 1.5e+20), without a null
+/// terminator, like std::to_chars with chars_format::scientific and no
+/// precision.
+///
+/// Returns a pointer past the last character written; if the representation
+/// exceeds `n` characters, only the first `n` are written.
+inline auto write_scientific(char* out, size_t n, double value) noexcept
+    -> char* {
+  char buffer[double_buffer_size];
+  if (n >= sizeof(buffer)) return detail::write<double, true>(out, value);
+  return detail::copy_clamped(out, n, buffer,
+                              detail::write<double, true>(buffer, value));
 }
 
 /// Writes `value` in scientific format with `precision` digits after the

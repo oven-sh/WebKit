@@ -1,0 +1,226 @@
+# A function that returns a fresh aggregate is cut into a worker that returns the parts and a wrapper that allocates
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 10
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="pairArray" parameters=[{type=number}] results=[{type=Array<number>}] {
+    v1 = Add v0, v0
+    v2 = NewArray v0, v1 contents=number
+    Return v2
+}
+# CHECK-LABEL: function f0 name="pairArray" module=m0 role=ResultWrapper
+# CHECK: results=[{type=Array<number>}] {{*}}creator=ResultWrapper{worker=[[arrayWorker]]} {
+# CHECK-NOT: Add
+# CHECK: [[arrayCall]]:{{*}}= CallDirect v0 function=[[arrayWorker]]
+# CHECK-NEXT: [[first]]: number = ResultAt [[arrayCall]]
+# CHECK-NEXT: [[second]]: number = ResultAt [[arrayCall]] index=1
+# CHECK-NEXT: [[array]]: Array<number> = NewArray [[first]], [[second]] contents=number
+# CHECK-NEXT: Return [[array]]
+
+function f1 name="point" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = Add v0, v0
+    v2 = NewObject -, v1, v0 layout=L0 fields=[1, 0]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="point" module=m0 role=ResultWrapper
+# CHECK: creator=ResultWrapper{worker=[[pointWorker]] layout=L0} {
+# CHECK: [[pointCall]]:{{*}}= CallDirect v0 function=[[pointWorker]]
+# CHECK-NEXT: [[y]]: number = ResultAt [[pointCall]]
+# CHECK-NEXT: [[x]]: number = ResultAt [[pointCall]] index=1
+# CHECK-NEXT: [[point]]:{{*}}= NewObject -, [[y]], [[x]] layout=L0 fields=[1, 0]
+# CHECK-NEXT: Return [[point]]
+
+function f2 name="onePart" parameters=[{type=number}] results=[{type=Array<number>}] {
+    v1 = Add v0, v0
+    v2 = NewArray v1 contents=number
+    Return v2
+}
+# CHECK-LABEL: function f2 name="onePart" module=m0 role=ResultWrapper
+# CHECK: [[onlyPart]]: number = CallDirect v0 function=[[onePartWorker]]
+# CHECK-NOT: ResultAt
+# CHECK: = NewArray [[onlyPart]] contents=number
+
+function f3 name="storesAfterCreation" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x" receivers=[L0]
+    v3 = Add v0, v0
+    PropDefine v1, v3 key="y" receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f3 name="storesAfterCreation" module=m0 role=ResultWrapper
+# CHECK-NOT: PropDefine
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
+
+function f4 name="nineNumbers" parameters=[{type=number}] results=[{type=Array<number>}] {
+    v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    Return v1
+}
+# CHECK-LABEL: function f4 name="nineNumbers" module=m0 role=ResultWrapper
+# CHECK: = ResultAt {{*}} index=8
+
+function f5 name="constantPart" parameters=[{type=number}] results=[{type=Array<number>}] {
+    v1 = Integer integer=7
+    v2 = NewArray v1, v0 contents=number
+    Return v2
+}
+# CHECK-LABEL: function f5 name="constantPart" module=m0 role=ResultWrapper
+
+function f6 name="literalOrAllowedTailCall" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v3
+  b2():
+    v4 = Call v1, -, v0
+    ReturnCall v4 requirement=Allowed
+}
+# CHECK-LABEL: function f6 name="literalOrAllowedTailCall" module=m0 role=ResultWrapper
+# CHECK-NOT: ReturnCall
+# CHECK: Switch
+
+function f7 name="literalOrRequiredTailCall" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v3
+  b2():
+    v4 = Call v1, -, v0
+    ReturnCall v4
+# CHECK-NOT: role=
+# CHECK: b1():
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK: ReturnCall v4
+}
+
+function f8 name="closureOfSplitFunction" parameters=[{type=number}] results=[{type=function}] {
+    v1 = NewClosure v0 function=f9
+    Return v1
+}
+# CHECK-LABEL: function f8 name="closureOfSplitFunction" module=m0 role=ResultWrapper
+# CHECK: [[capture]]: number = CallDirect v0 function=[[closureWorker]]
+# CHECK-NEXT: [[closure]]:{{*}}= NewClosure [[capture]] function=f9
+# CHECK-NEXT: Return [[closure]]
+
+function f9 name="capturesNumber" captures=[{type=number}] results=[{type=Array<number>}] {
+    v1 = NewArray v0, v0 contents=number
+    Return v1
+}
+# CHECK-LABEL: function f9 name="capturesNumber" module=m0 role=ResultWrapper captures=[{type=number}]
+# CHECK: = CallDirect v0 function=
+
+function f10 name="getter" kind=Getter flags=[HasThis] results=[{type=Array<number>}] {
+    v1 = Integer integer=1
+    v2 = NewArray v1, v1 contents=number
+    Return v2
+# CHECK-NOT: role=
+# CHECK: = NewArray v1, v1
+}
+
+function f11 name="restParameter" flags=[HasRestParameter] parameters=[{type=number}, {type=Array}] results=[{type=Array<number>}] {
+    v2 = NewArray v0, v0 contents=number
+    Return v2
+# CHECK-NOT: role=
+# CHECK: = NewArray v0, v0
+}
+
+function f12 name="returnsParameter" parameters=[{type=Array<number>}] results=[{type=Array<number>}] {
+    v1 = NewArray contents=number
+    v2 = PropGet v1 key="length"
+    Return v0
+# CHECK-NOT: role=
+# CHECK: Return v0
+}
+
+function f13 name="passedOnBeforeReturn" parameters=[{type=number}, {type=anything}] results=[{type=L0}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = Call v1, -, v2
+    Return v2
+# CHECK-NOT: role=
+# CHECK: v2:{{*}}= NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK: Return v2
+}
+
+function f14 name="testFoldedInWorker" parameters=[{type=number}, {type=anything}] results=[{type=L0}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = StrictEq v2, v1
+    PutModuleVariable v3 variable=g0
+    Return v2
+}
+# CHECK-LABEL: function f14 name="testFoldedInWorker" module=m0 role=ResultWrapper
+# CHECK-NOT: StrictEq
+# CHECK-NOT: PutModuleVariable
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
+
+# CHECK: function [[arrayWorker]] name="pairArray" module=m0 role=ResultWorker {{*}}parameters=[{type=number}] results=[{type=number}, {type=number}] {{*}}derivation={source=f0 {{*}}creator=ResultWorker{origin=f0} {
+# CHECK-NOT: NewArray
+# CHECK: [[sum]]: number = Add v0, v0
+# CHECK: [[arrayParts]]:{{*}}= Results v0, [[sum]]
+# CHECK-NEXT: Return [[arrayParts]]
+# CHECK: function [[pointWorker]] name="point" module=m0 role=ResultWorker {{*}}results=[{type=number}, {type=number}] {{*}}creator=ResultWorker{origin=f1} {
+# CHECK-NOT: NewObject
+# CHECK: [[sum1]]: number = Add v0, v0
+# CHECK: = Results [[sum1]], v0
+# CHECK: function [[onePartWorker]] name="onePart" module=m0 role=ResultWorker {{*}}results=[{type=number}] {{*}}creator=ResultWorker{origin=f2} {
+# CHECK-NOT: NewArray
+# CHECK-NOT: Results
+# CHECK: [[sum2]]: number = Add v0, v0
+# CHECK-NOT: Results
+# CHECK: Return [[sum2]]
+# CHECK: name="storesAfterCreation" module=m0 role=ResultWorker
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropDefine
+# CHECK: [[sum3]]: number = Add v0, v0
+# CHECK: = Results v0, [[sum3]]
+# CHECK: name="nineNumbers" module=m0 role=ResultWorker
+# CHECK-NOT: NewArray
+# CHECK: = Results v0, v0, v0, v0, v0, v0, v0, v0, v0
+# CHECK: name="constantPart" module=m0 role=ResultWorker {{*}}results=[{type=7}, {type=number}]
+# CHECK: [[seven]]: 7 = Integer integer=7
+# CHECK: = Results [[seven]], v0
+# CHECK: name="literalOrAllowedTailCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything|unspecified}, {type=number|unspecified}, {type=number|unspecified}]
+# CHECK-NOT: NewObject
+# CHECK-NOT: ReturnCall
+# CHECK: = Results {{*}}, {{*}}, v0, v0
+# CHECK-NOT: ReturnCall
+# CHECK: [[other]]: anything = Call v1, -, v0
+# CHECK-NOT: ReturnCall
+# CHECK: = Results {{*}}, [[other]], 
+# CHECK: function [[closureWorker]] name="closureOfSplitFunction" module=m0 role=ResultWorker
+# CHECK-NOT: NewClosure
+# CHECK: Return v0
+# CHECK: name="capturesNumber" module=m0 role=ResultWorker captures=[{type=number}]
+# CHECK-NOT: NewArray
+# CHECK: = Results v0, v0
+# CHECK: name="testFoldedInWorker" module=m0 role=ResultWorker
+# CHECK-NOT: NewObject
+# CHECK-NOT: StrictEq
+# CHECK: PutModuleVariable {{*}} variable=g0
+# CHECK: = Results v0, v0
+
+# Whoever calls them needs no object
+function f15 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=anything}, {type=number}, {type=anything}, {type=number}, {type=number}, {type=Array<number>}, {type=number}, {type=anything}, {type=number}, {type=anything}] results=[{type=undefined}] {
+    v17 = CallDirect v0 function=f0
+    v18 = CallDirect v1 function=f1
+    v19 = CallDirect v2 function=f2
+    v20 = CallDirect v3 function=f3
+    v21 = CallDirect v4 function=f4
+    v22 = CallDirect v5 function=f5
+    v23 = CallDirect v6, v7 function=f6
+    v24 = CallDirect v8, v9 function=f7
+    v25 = CallDirect v10 function=f8
+    v26 = CallDirect v11 function=f9
+    v27 = CallDirect v12 function=f12
+    v28 = CallDirect v13, v14 function=f13
+    v29 = CallDirect v15, v16 function=f14
+    v30 = Undefined
+    Return v30
+}

@@ -309,6 +309,7 @@ UIProcess/API/Cocoa/_WKInspectorTesting.mm @nonARC
 UIProcess/API/Cocoa/_WKInspectorWindow.mm @nonARC
 UIProcess/API/Cocoa/_WKInternalDebugFeature.mm @nonARC
 UIProcess/API/Cocoa/_WKLinkIconParameters.mm @nonARC
+UIProcess/API/Cocoa/_WKMediaCapturePermissionPromptConfiguration.mm @nonARC
 UIProcess/API/Cocoa/_WKModalContainerInfo.mm @nonARC
 UIProcess/API/Cocoa/_WKNotificationData.mm @nonARC
 UIProcess/API/Cocoa/_WKNSStringExtras.mm @nonARC
@@ -493,6 +494,7 @@ UIProcess/Cocoa/WebProcessCacheCocoa.mm @nonARC
 UIProcess/Cocoa/WebProcessPoolCocoa.mm @nonARC @cost:5
 UIProcess/Cocoa/WebProcessProxyCocoa.mm @nonARC
 UIProcess/Cocoa/WebURLSchemeHandlerCocoa.mm @nonARC
+UIProcess/Cocoa/WKClickHighlightController.mm @nonARC
 UIProcess/Cocoa/WKClickHighlightView.mm @nonARC
 UIProcess/Cocoa/WKColorExtensionView.mm @nonARC
 UIProcess/Cocoa/WKContactPicker.mm @nonARC
@@ -786,8 +788,6 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIScriptingCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPISidebarActionCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPISidePanelCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPIStorageAreaCocoa.mm
-WebProcess/Extensions/API/Cocoa/WebExtensionAPIStorageCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPITabsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPITestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
@@ -796,8 +796,6 @@ WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestEventCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsCocoa.mm
 WebProcess/Extensions/API/Cocoa/WebExtensionAPIWindowsEventCocoa.mm
-
-WebProcess/Extensions/Bindings/JSWebExtensionWrapper.cpp
 
 WebProcess/Extensions/Bindings/Cocoa/JSWebExtensionWrapperCocoa.mm
 

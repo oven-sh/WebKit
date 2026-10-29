@@ -1,0 +1,38 @@
+# made = new RegExp("a"); made.test("a"); other = new RegExp("b"); other.lastIndex = { valueOf: converted }; other.test("b")
+# `test` converts what the expression holds as lastIndex. A new one holds 0, so nothing of the program and nothing that nobody knows is called. What the program stores there is converted.
+# RUN: valueflow-solve calls
+# CHECK: f0 v2 -> RegExp
+# CHECK-NEXT: f0 v4 -> RegExpPrototypeTest
+# CHECK-NEXT: f0 v6 -> RegExp
+# CHECK-NEXT: f0 v10 -> RegExpPrototypeTest
+# RUN(SEEDS): valueflow-why seeds
+# SEEDS-NOT: UndescribedNativeResult by Construct
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Index" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = Construct v0, -, v1
+    v3 = Builtin builtin=RegExpPrototypeTest
+    v4 = Call v3, v2, v1
+    v5 = String string="b"
+    v6 = Construct v0, -, v5
+    v7 = NewClosure function=f1
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    PropSet v6, v8 key="lastIndex" mode=Strict
+    v10 = Call v3, v6, v5
+    v11 = NewClosure function=f2
+    Return
+}
+function f1 name="converted" results=[{type=anything}] {
+    v0 = Integer integer=0
+    Return v0
+}
+function f2 name="neverStored" results=[{type=anything}] {
+    Return
+}

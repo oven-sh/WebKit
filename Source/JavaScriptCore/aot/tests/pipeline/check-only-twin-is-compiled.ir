@@ -1,0 +1,7 @@
+# The program of check-only-makes-no-image.ir without the word: it is compiled and there is an image
+# RUN: compile CodeBytesEmitted
+# CHECK-NOT: diagnostic
+# CHECK: image not empty
+# CHECK-NOT: statistic CodeBytesEmitted 0
+# CHECK: statistic CodeBytesEmitted
+# PROGRAM-OF: check-only-makes-no-image.ir

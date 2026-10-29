@@ -1,0 +1,35 @@
+# Where no unseen code can run, nothing is called from unknown code: native code stands behind the node, and what it calls flow lists. A function that escapes to it has an edge from the function that hands it over.
+# A call of what is read under a name enters the functions that the program puts under the name: here none
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="escapes" results=[{type=undefined}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+# CHECK: f0 size {{*}} f1*1.000000
+# CHECK-NEXT: f1 size 4 mass 4.000000:
+# CHECK-NEXT: host: f0*1.000000
+# CHECK-NEXT: unknown:
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 1.000000
+# CLASSES: f0 size {{*}} f1*1.000000
+# CLASSES: host: f0*1.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:
+# CLASSES-NEXT: f0 1.000000
+# CLASSES-NEXT: f1 1.000000

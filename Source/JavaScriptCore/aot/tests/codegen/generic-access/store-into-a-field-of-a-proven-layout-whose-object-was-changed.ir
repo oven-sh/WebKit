@@ -1,0 +1,56 @@
+# The layout of the receiver is proven, and other code has had the object in its hands: it froze or sealed it, deleted the field, made it read-only, put a setter in its place, gave it a value that the slot does not admit.
+# The stub that is told the field stores only into a field that lies in its slot, in an object that takes stores. Everything else goes on as a store by name and does what a store by name does.
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(GO): run-in-shell globalThis.publish = (fresh, store) => { const attempt = (what, change, value) => { const object = fresh("first"); let seen = ""; change(object, text => { seen += text; }); let outcome = "stored"; try { store(true, value); } catch (error) { outcome = error.constructor.name; } print(what + ":", outcome, String(object.label), Object.keys(object).join(), seen); }; attempt("as made", () => { }, "second"); attempt("frozen", object => Object.freeze(object), "second"); attempt("sealed", object => Object.seal(object), "second"); attempt("not extensible", object => Object.preventExtensions(object), "second"); attempt("deleted", object => { delete object.label; }, "second"); attempt("deleted, not extensible", object => { delete object.label; Object.preventExtensions(object); }, "second"); attempt("read-only", object => Object.defineProperty(object, "label", { writable: false }), "second"); attempt("a setter", (object, note) => Object.defineProperty(object, "label", { get() { return "got"; }, set(value) { note("set " + value); } }), "second"); attempt("a getter alone", object => Object.defineProperty(object, "label", { get() { return "got"; } }), "second"); attempt("hidden", object => Object.defineProperty(object, "label", { enumerable: false }), "second"); attempt("another type before", object => { object.label = 5; }, "second"); attempt("another type", () => { }, 7); attempt("undefined", () => { }, undefined); attempt("an object", () => { }, { toString() { return "object"; } }); attempt("a setter above", (object, note) => Object.setPrototypeOf(object, { set label(value) { note("above " + value); } }), "second"); attempt("deleted, a setter above", (object, note) => { delete object.label; Object.setPrototypeOf(object, { set label(value) { note("above " + value); } }); }, "second"); };
+# GO: as made: stored second done,label
+# GO-NEXT: frozen: TypeError first done,label
+# GO-NEXT: sealed: stored second done,label
+# GO-NEXT: not extensible: stored second done,label
+# GO-NEXT: deleted: stored second done,label
+# GO-NEXT: deleted, not extensible: TypeError undefined done
+# GO-NEXT: read-only: TypeError first done,label
+# GO-NEXT: a setter: stored got done,label set second
+# GO-NEXT: a getter alone: TypeError got done,label
+# GO-NEXT: hidden: stored second done
+# GO-NEXT: another type before: stored second done,label
+# GO-NEXT: another type: stored 7 done,label
+# GO-NEXT: undefined: stored undefined done,label
+# GO-NEXT: an object: stored object done,label
+# GO-NEXT: a setter above: stored second done,label
+# GO-NEXT: deleted, a setter above: stored undefined done above second
+# GO-NEXT: exited with 0
+# CHECK-LABEL: f2: size=
+# CHECK: stub PutKnownField.Strict.n0 x1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Entry" module=m0 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=undefined|L0} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="publish" [isFreeName]
+    v4 = Call v3, -, v1, v2
+    Return
+}
+function f1 name="fresh" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Boolean
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = GetModuleVariable variable=g0
+    v4 = Check v3 expectedType=L0
+    PropSet v4, v1 key="label" mode=Strict
+    Return v1
+  b2():
+    Return v0
+}

@@ -1,0 +1,60 @@
+# function Made() {}  Object.setPrototypeOf(Made.prototype, Base.prototype)
+# The base of a constructor function is the class from whose prototype object its own is expected to inherit: a lookup from an instance goes on there, and each such link is tested for.
+# Its function object inherits from no class object, as that of a class with a heritage does. Once flow has looked at the function, only what flow says about the prototype object counts
+# FORM: Prepared
+# RUN(METHOD): member-lookup layout=L1 key="on"
+# METHOD: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L1, Prototype)]
+# RUN(ABSENT): member-lookup layout=L1 key="missing"
+# ABSENT: Absent level=Expected conditions=[PrototypeLinkUnchanged(L1, Prototype)]
+# RUN(CREATINGSTORE): member-lookup layout=L1 key="missing" access=Store
+# CREATINGSTORE: Absent level=Expected conditions=[PrototypeLinkUnchanged(L1, Prototype)]
+# RUN(SETTER): member-lookup layout=L1 key="size" access=Store
+# SETTER: Accessor level=Expected holder=L0 getter=none setter=F2 conditions=[PrototypeLinkUnchanged(L1, Prototype)]
+# RUN(STATIC): member-lookup start=ClassObject layout=L1 key="make"
+# STATIC: Absent level=Proven
+# RUN(CLASSMETHOD): member-lookup layout=L2 key="on"
+# CLASSMETHOD: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L2, Prototype)]
+# RUN(CLASSSTATIC): member-lookup start=ClassObject layout=L2 key="make"
+# CLASSSTATIC: Method level=Expected holder=L0 method=F3 conditions=[PrototypeLinkUnchanged(L2, Static)]
+# RUN(AFTERFLOW): member-lookup layout=L3 key="on"
+# AFTERFLOW: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L3, Prototype)]
+# RUN(AFTERFLOWSTATIC): member-lookup start=ClassObject layout=L3 key="make"
+# AFTERFLOWSTATIC: Absent level=Proven
+# RUN(NOCLASSAFTERFLOW): member-lookup layout=L4 key="on"
+# NOCLASSAFTERFLOW: Absent level=Proven
+# RUN(TWOLINKS): member-lookup layout=L5 key="on"
+# TWOLINKS: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L1, Prototype), PrototypeLinkUnchanged(L5, Prototype)]
+# RUN(BELOWCLASS): member-lookup layout=L6 key="on"
+# BELOWCLASS: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L2, Prototype), PrototypeLinkUnchanged(L6, Prototype)]
+# RUN(BELOWCLASSSTATIC): member-lookup start=ClassObject layout=L6 key="make"
+# BELOWCLASSSTATIC: Absent level=Proven
+# RUN(CIRCLE): member-lookup layout=L7 key="on"
+# CIRCLE: Unknown level=Unknown cause=UnknownBase
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None members=[L0] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="on" function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="make" side=Static function=f3 mutability=Fixed}]}
+layout L1 kind=Instance name="Made" base=L0 constructor=f4 flags=[IsConstructorFunction] flow={members=[L1] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Derived" base=L0 constructor=f5 flags=[HasHeritage] flow={members=[L2] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="MadeAfterFlow" base=L0 constructor=f6 flags=[IsConstructorFunction] flow={baseState=None members=[L3] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true prototypeBase=L0}
+layout L4 kind=Instance name="InheritsFromNoClassAfterFlow" base=L0 constructor=f7 flags=[IsConstructorFunction] flow={baseState=None members=[L4] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="MadeBelowMade" base=L1 constructor=f8 flags=[IsConstructorFunction] flow={members=[L5] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="MadeBelowClass" base=L2 constructor=f9 flags=[IsConstructorFunction] flow={members=[L6] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L7 kind=Instance name="FirstInCircle" base=L8 constructor=f10 flags=[IsConstructorFunction] flow={members=[L7] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="SecondInCircle" base=L7 constructor=f11 flags=[IsConstructorFunction] flow={members=[L8] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+
+function f0 name="Base" flags=[HasThis] results=[{type=anything}] constructedClass=L0
+function f1 name="on" flags=[HasThis] results=[{type=anything}]
+function f2 name="size" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f3 name="make" flags=[HasThis] results=[{type=anything}]
+function f4 name="Made" flags=[HasThis] results=[{type=anything}] constructedClass=L1
+function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f6 name="MadeAfterFlow" flags=[HasThis] results=[{type=anything}] constructedClass=L3
+function f7 name="InheritsFromNoClassAfterFlow" flags=[HasThis] results=[{type=anything}] constructedClass=L4
+function f8 name="MadeBelowMade" flags=[HasThis] results=[{type=anything}] constructedClass=L5
+function f9 name="MadeBelowClass" flags=[HasThis] results=[{type=anything}] constructedClass=L6
+function f10 name="FirstInCircle" flags=[HasThis] results=[{type=anything}] constructedClass=L7
+function f11 name="SecondInCircle" flags=[HasThis] results=[{type=anything}] constructedClass=L8
+function f12 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    Return v1
+}

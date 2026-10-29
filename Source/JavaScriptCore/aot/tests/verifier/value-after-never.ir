@@ -1,0 +1,59 @@
+# A value typed never is the last value of a block that ends in Unreachable, and a block with a parameter typed never is empty
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: ValueAfterNever 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badFollowedByValue" results=[{type=undefined}] {
+    v0 = CallDirect function=f8
+    v1 = Undefined
+    Unreachable
+}
+function f1 name="badReturns" results=[{type=undefined}] {
+    v0 = CallDirect function=f8
+    Return
+}
+function f2 name="badJumps" results=[{type=undefined}] {
+  b0() handler=b2():
+    v0 = CallDirect function=f8
+    Jump -> next b1()
+  b1():
+    Return
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    Return
+}
+function f3 name="badCodeUnderImpossibleProof" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Strcat v2
+    Return
+  b2():
+    Return
+}
+function f4 name="goodUnreachable" results=[{type=undefined}] {
+    v0 = CallDirect function=f8
+    Unreachable
+}
+function f5 name="goodThrows" results=[{type=undefined}] {
+    v0 = ThrowNewError errorKind=TypeError message="no"
+    Unreachable
+}
+function f6 name="goodUnderHandler" results=[{type=undefined}] {
+  b0() handler=b1():
+    v0 = CallDirect function=f8
+    Unreachable
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Return
+}
+function f7 name="goodImpossibleProof" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Unreachable
+  b2():
+    Return
+}
+function f8 name="callee" results=[{type=never}]

@@ -1,0 +1,23 @@
+# A pass lost the type of an operand (the word f0:v3 retypes that value to anything behind the parser), so the type holds values that the representation its operation takes cannot hold.
+# No conversion is legal there and none is made up: the build ends, and the message says which type, kept how, was wanted how
+# FORM: Placed
+# RUN: pass f0:v3 ChooseRepresentations
+# DIAGNOSTIC: UnsupportedConversion
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
+    v2 = TypeTest v0 testedType=Array
+    TestAndBranch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3: Array):
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    TestAndBranch v4 -> taken b2(), notTaken b5()
+  b2():
+    TryCallInline v3, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b4(), miss b3()
+  b3() frequency=Rare:
+    v5 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Jump -> next b4(v5)
+  b4(v6: string):
+    Return v6
+  b5():
+    Return v1
+}

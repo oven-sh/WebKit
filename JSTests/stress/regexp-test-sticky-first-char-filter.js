@@ -185,3 +185,72 @@ for (let i = 0; i < testLoopCount; ++i)
         shouldBe(re7.lastIndex, 0);
     }
 })();
+
+// Bun: from here on the fork's own. A leading lookbehind, forward reference or lookahead, and a group nested more than eight deep, are
+// filterable since the bitmap comes from the first sets of the pattern's alternatives. Where an
+// assertion decides the match, a byte that passes the filter must still reach the matcher.
+(function () {
+    const reLookbehind = /(?<=x)a/y;
+    const reForwardReference = /\1(a)/y;
+    const reLookahead = /(?=a)\w/y;
+    const reNested = /(((((((((a)))))))))/y;
+    const reNestedAlternatives = /(?:(?:(?:(?:(?:(?:(?:(?:(?:a|b)+)+)+)+)+)+)+)+)+c/y;
+    for (let i = 0; i < testLoopCount; ++i) {
+        reLookbehind.lastIndex = 1;
+        shouldBe(reLookbehind.test("xa"), true);
+        shouldBe(reLookbehind.lastIndex, 2);
+        reLookbehind.lastIndex = 1;
+        shouldBe(reLookbehind.test("xb"), false);   // 'b' filtered
+        shouldBe(reLookbehind.lastIndex, 0);
+        reLookbehind.lastIndex = 1;
+        shouldBe(reLookbehind.test("ya"), false);   // 'a' passes the filter, the lookbehind fails
+        shouldBe(reLookbehind.lastIndex, 0);
+        reLookbehind.lastIndex = 0;
+        shouldBe(reLookbehind.test("a"), false);    // nothing precedes index 0
+        shouldBe(reLookbehind.lastIndex, 0);
+
+        reForwardReference.lastIndex = 0;
+        shouldBe(reForwardReference.test("a"), true);    // \1 is unset where it is read, so it matches empty
+        shouldBe(reForwardReference.lastIndex, 1);
+        shouldBe(RegExp.$1, "a");
+        reForwardReference.lastIndex = 0;
+        shouldBe(reForwardReference.test("b"), false);   // 'b' filtered
+        shouldBe(reForwardReference.lastIndex, 0);
+        shouldBe(RegExp.$1, "a");
+        reForwardReference.lastIndex = 1;
+        shouldBe(reForwardReference.test("ba"), true);
+        shouldBe(reForwardReference.lastIndex, 2);
+
+        reLookahead.lastIndex = 0;
+        shouldBe(reLookahead.test("ab"), true);
+        shouldBe(reLookahead.lastIndex, 1);
+        reLookahead.lastIndex = 0;
+        shouldBe(reLookahead.test("ba"), false);    // 'b' is a word character, the lookahead wants 'a'
+        shouldBe(reLookahead.lastIndex, 0);
+        reLookahead.lastIndex = 0;
+        shouldBe(reLookahead.test("-a"), false);    // '-' is in neither set
+        shouldBe(reLookahead.lastIndex, 0);
+        reLookahead.lastIndex = 1;
+        shouldBe(reLookahead.test("ba"), true);
+        shouldBe(reLookahead.lastIndex, 2);
+
+        reNested.lastIndex = 0;
+        shouldBe(reNested.test("a"), true);
+        shouldBe(reNested.lastIndex, 1);
+        shouldBe(RegExp.$9, "a");
+        reNested.lastIndex = 0;
+        shouldBe(reNested.test("b"), false);        // 'b' filtered
+        shouldBe(reNested.lastIndex, 0);
+        shouldBe(RegExp.$9, "a");
+
+        reNestedAlternatives.lastIndex = 0;
+        shouldBe(reNestedAlternatives.test("abc"), true);
+        shouldBe(reNestedAlternatives.lastIndex, 3);
+        reNestedAlternatives.lastIndex = 0;
+        shouldBe(reNestedAlternatives.test("cab"), false);   // 'c' filtered: the group matches at least once
+        shouldBe(reNestedAlternatives.lastIndex, 0);
+        reNestedAlternatives.lastIndex = 0;
+        shouldBe(reNestedAlternatives.test("ab-"), false);   // 'a' passes the filter, no 'c' follows
+        shouldBe(reNestedAlternatives.lastIndex, 0);
+    }
+})();

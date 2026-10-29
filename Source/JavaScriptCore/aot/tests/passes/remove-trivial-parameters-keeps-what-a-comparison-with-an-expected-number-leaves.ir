@@ -1,0 +1,43 @@
+# What `index < length` leaves of the index stays a value of its own while the declared type of the length is only expected: it says more once the length is tested or known. In code that the checker has not typed it goes, as every parameter that says no more than its argument
+# FORM: Prepared optimizing
+# RUN: pass RemoveTrivialParameters
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="typed" flags=[IsChecked] parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2: int|whole):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5: int|whole):
+    v6 = Increment v5
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="typed"
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: int|whole):
+# CHECK-NEXT: = Increment v5
+
+function f1 name="untyped" parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2: int|whole):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5: int|whole):
+    v6 = Increment v5
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="untyped"
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: = Increment v2

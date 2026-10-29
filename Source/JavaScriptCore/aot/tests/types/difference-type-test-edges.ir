@@ -1,0 +1,17 @@
+# What the false edge of a type test keeps: the difference removes what is certainly in the tested type and nothing else
+# RUN: intersect
+# CHECK: t0 - t1 = boolean|number|string|symbol|bigint|object
+# CHECK: t0 - t2 = undefined|null|boolean|number|string|symbol|bigint
+# CHECK: t0 - t3 = anything
+# CHECK: t2 - t3 = object
+# CHECK: t3 - t2 = never
+# CHECK: t4 - t3 = never
+# CHECK: t4 - t5 = f2
+# CHECK: t5 - t4 = never
+# CHECK: t6 - t1 = string
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=anything}, {type=undefined|null}, {type=object}, {type=function}, {type=f1|f2}, {type=f1}, {type=undefined|string}] results=[{type=undefined}]
+function f1 name="first" results=[{type=anything}]
+function f2 name="second" results=[{type=anything}]

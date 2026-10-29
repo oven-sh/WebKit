@@ -58,7 +58,6 @@ auto HTMLSelectedContentElement::insertionSteps(InsertionType insertionType, Con
 {
     HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
-    ASSERT(document().settings().htmlEnhancedSelectParsingEnabled());
     ASSERT(document().settings().htmlEnhancedSelectEnabled());
     ASSERT(!document().settings().mutationEventsEnabled());
 
@@ -82,15 +81,6 @@ void HTMLSelectedContentElement::removingSteps(RemovalType removalType, Containe
     HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 
     recalculateDisabledness();
-}
-
-void HTMLSelectedContentElement::childrenChanged(const ChildChange& change)
-{
-    HTMLElement::childrenChanged(change);
-
-    // The contents reflect into the first child button's text, which the select may render.
-    if (RefPtr select = m_owningSelect)
-        select->buttonElementChildrenChanged();
 }
 
 void HTMLSelectedContentElement::movingSteps(MovingType movingType, ContainerNode& oldParent)

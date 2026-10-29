@@ -1,0 +1,340 @@
+# The code for the protocol also walks a string that nobody expected: its subject is the string itself or the iterator of anything else, and the open, each step and each close ask which
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(TESTS): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 8
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# An array is tested for first, and its copy of the loop knows nothing of strings.
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[isArray0]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[rest0]](| 0)
+# CHECK-NEXT: b1({{*}}: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = PropGet [[elements0]] key="length"
+# CHECK-NOT: testedType=string
+# The unlikely copy. A step asks what the subject is.
+# CHECK: [[entry0]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[header0]]([[start0]])
+# CHECK-NEXT: [[header0]]([[position0]]: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[isStringAtStep0]]: boolean = TypeTest [[subject0]] testedType=string
+# CHECK-NEXT: Branch [[isStringAtStep0]] -> taken [[stringStep0]](| 0), notTaken [[iteratorStep0]](| 0)
+# The open. The position is made in front of the test, so it reaches both sides.
+# CHECK-NEXT: [[protocol0]]([[iterable0]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[open0]]([[zero0]])
+# CHECK: [[array0]]([[elements0]]: Array):
+# CHECK-NEXT: = IsPristine [[elements0]] builtinClass=Array aspects=[Names]
+# CHECK: [[rest0]]([[notArray0]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol0]]([[notArray0]])
+# CHECK: [[open0]]([[start0]]: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: [[opened0]]: undefined = CallDirect [[iterable0]] function=[[openStringOrIterator]] [isNeverInlined]
+# CHECK-NEXT: [[subject0]]: string|object = ResultAt [[opened0]]
+# CHECK-NEXT: [[next0]]: anything = ResultAt [[opened0]] index=1
+# CHECK-NEXT: Jump -> next [[entry0]]()
+# The two sides of a step meet where the step of one form ends. The side of the iterator carries the position on as it is.
+# CHECK-NEXT: [[after0]]([[done0]]: boolean, [[value0]]: anything, [[carried0]]: int[0, 2147483648]) frequency=Unlikely:
+# CHECK: Branch [[done0]] -> taken b2([[value0]]), notTaken [[header0]]([[carried0]])
+# CHECK-NEXT: [[stringStep0]]([[walked0]]: string) frequency=Unlikely:
+# CHECK-NEXT: [[step0]]: undefined = CallDirect [[walked0]], [[position0]] function=[[stepString]] [isNeverInlined]
+# CHECK-NEXT: [[doneOfString0]]: boolean = ResultAt [[step0]]
+# CHECK-NEXT: [[character0]]: anything = ResultAt [[step0]] index=1
+# CHECK-NEXT: [[stop0]]: int[0, 2147483648] = ResultAt [[step0]] index=2
+# CHECK-NEXT: Jump -> next [[after0]]([[doneOfString0]], [[character0]], [[stop0]])
+# CHECK-NEXT: [[iteratorStep0]]([[stepped0]]: object) frequency=Unlikely:
+# CHECK-NEXT: [[result0]]: anything = Call [[next0]], [[stepped0]]
+# CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
+# The string gets no copy of the loop for itself.
+# ABSENT-COUNT-2: LoopHint
+# ABSENT-NOT: LoopHint
+# TESTS-COUNT-1: testedType=string
+# TESTS-NOT: testedType=string
+}
+
+function f1 name="object" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# No object is a string.
+# CHECK: b0(v0: object):
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: Jump -> next [[header1]]()
+# CHECK-NEXT: [[header1]]() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Call [[next1]], [[iterator1]]
+# CHECK: ([[iterable1]]: object) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[iterator1]]: object = ResultAt {{*}}
+# CHECK-NEXT: [[next1]]: anything = ResultAt {{*}} index=1
+# ABSENT-NOT: GetStringLength
+# ABSENT-NOT: Substring
+# TESTS-NOT: testedType=string
+}
+
+function f2 name="yieldStar" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# An iteration that sends values, throws into its iterator or returns from it keeps the iterator of a string.
+# CHECK: = TypeTest v1 testedType=Generator
+# CHECK: function=[[openIterator]] [isNeverInlined]
+# ABSENT-NOT: GetStringLength
+# ABSENT-NOT: Substring
+# TESTS-NOT: testedType=string
+}
+
+function f3 name="stringOrArray" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# A string that the type names has a form and a copy of the loop of its own. What is left for the protocol is an array whose names have changed.
+# CHECK: b0(v0: string|Array<number>):
+# CHECK-NEXT: [[isArray3]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray3]] -> taken [[array3]](| 0), notTaken [[string3]](| 0)
+# CHECK: ({{*}}: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetStringLength [[text3]]
+# CHECK: Jump -> next [[header3]]()
+# CHECK-NEXT: [[header3]]() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Call [[next3]], [[iterator3]]
+# CHECK: ([[iterable3]]: string|Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable3]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[string3]]([[text3]]: string) frequency=Unlikely:
+# CHECK: = Substring [[text3]],
+# ABSENT-COUNT-3: LoopHint
+# ABSENT-NOT: LoopHint
+# TESTS-NOT: testedType=string
+}
+
+function f4 name="forAwait" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = PropGet v6 key="x"
+    Jump -> next b1()
+  b3():
+    Return v1
+# An async iteration over a string steps the wrapper around the iterator of the string.
+# CHECK: = TypeTest v0 testedType=AsyncGenerator
+# CHECK: key=@@asyncIterator
+# ABSENT-NOT: GetStringLength
+# ABSENT-NOT: Substring
+# TESTS-NOT: testedType=string
+}
+
+function f5 name="closes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b7(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b6():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2
+    Jump -> next b5()
+  b5():
+    Return v7
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b7():
+    Return v1
+# CHECK: ({{*}}: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest [[subject5]] testedType=string
+# CHECK: frequency=Unlikely handler=[[landing5]]():
+# CHECK: = CallDirect [[subject5]] function=[[closeStringOrIterator]] [isNeverInlined]
+# CHECK: [[landing5]]() role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: [[exception5]]: exception = CatchException
+# CHECK-NEXT: = CallDirect [[subject5]] function=[[closeStringOrIteratorAfterThrow]] [isNeverInlined]
+# CHECK: [[subject5]]: string|object = ResultAt
+# CHECK: Rethrow [[exception5]]
+# ABSENT-COUNT-2: LoopHint
+# ABSENT-NOT: LoopHint
+# TESTS-COUNT-1: testedType=string
+# TESTS-NOT: testedType=string
+}
+
+function f6 name="testFailedEarlier" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = IteratorOpen v0
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b4(), notTaken b3()
+  b4():
+    Return v6
+# The type of the iterable still admits a string, but control comes to the open only where the program's own test for one has failed.
+# CHECK: b2():
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: ([[iterable6]]: anything) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable6]] function=[[openIterator]] [isNeverInlined]
+# ABSENT-NOT: GetStringLength
+# ABSENT-NOT: Substring
+# TESTS-COUNT-1: testedType=string
+# TESTS-NOT: testedType=string
+}
+
+function f7 name="noClassArm" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=Array
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    v4 = IteratorOpen v3
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b4(), notTaken b3()
+  b4():
+    Return v8
+# Where the protocol is the only form the loop is not copied, and the text as written asks for the string.
+# CHECK: b2(v3: anything):
+# CHECK-NEXT: [[zero7]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[open7]]([[zero7]])
+# CHECK-NEXT: b3([[position7]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[isStringAtStep7]]: boolean = TypeTest [[subject7]] testedType=string
+# CHECK-NEXT: Branch [[isStringAtStep7]] -> taken [[stringStep7]](| 0), notTaken [[iteratorStep7]](| 0)
+# CHECK: [[open7]]({{*}}: int[0, 2147483648]):
+# CHECK-NEXT: [[isString7]]: boolean = TypeTest v3 testedType=string
+# CHECK-NEXT: Branch [[isString7]] -> taken {{*}}(| 0), notTaken {{*}}(| 0)
+# CHECK-NEXT: ([[subject7]]: string|object, [[next7]]: anything):
+# CHECK: [[stringStep7]]([[walked7]]: string):
+# CHECK-NEXT: [[length7]]: int[0, 2147483647] = GetStringLength [[walked7]]
+# CHECK-NEXT: = Less [[position7]], [[length7]]
+# CHECK: [[iteratorStep7]]([[stepped7]]: object):
+# CHECK-NEXT: = Call [[next7]], [[stepped7]]
+# CHECK: = Substring [[walked7]],
+# ABSENT-COUNT-1: LoopHint
+# ABSENT-NOT: LoopHint
+# TESTS-COUNT-2: testedType=string
+# TESTS-NOT: testedType=string
+}
+
+function f8 name="patternReadAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v5
+    Return v7
+  b4() role=IterationCleanup subject=v1:
+    v8 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v8
+}
+# A pattern that the run time reads at once is never opened here, so there is nothing to ask: passes/expand-iteration-pattern-one-read.ir
+# CHECK-LABEL: function f8 name="patternReadAtOnce"
+# CHECK: = DestructureIterable [[iterable8]] count=2
+# CHECK: ([[iterable8]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next
+# ABSENT-LABEL: function f8 name="patternReadAtOnce"
+# ABSENT-NOT: GetStringLength
+# ABSENT-NOT: Substring
+# ABSENT-LABEL: function f9
+# TESTS-LABEL: function f8 name="patternReadAtOnce"
+# TESTS-NOT: testedType=string
+# TESTS-LABEL: function f9
+
+# CHECK: function [[openStringOrIterator]] name="openStringOrIterator"
+# CHECK: function [[stepString]] name="stepString"
+# CHECK: = GetStringLength v0
+# CHECK: = Substring v0,
+# CHECK: function [[closeStringOrIterator]] name="closeStringOrIterator"
+# CHECK: function [[closeStringOrIteratorAfterThrow]] name="closeStringOrIteratorAfterThrow"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

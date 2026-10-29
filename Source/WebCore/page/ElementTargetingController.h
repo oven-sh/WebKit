@@ -43,9 +43,11 @@
 
 namespace WebCore {
 
-class BitmapImage;
-class Element;
 class Document;
+class Element;
+class NativeImage;
+class IntRect;
+class LocalFrame;
 class Node;
 class Page;
 
@@ -58,6 +60,8 @@ public:
     WEBCORE_EXPORT Vector<TargetedElementInfo> findTargets(TargetedElementRequest&&);
     WEBCORE_EXPORT Vector<Vector<TargetedElementInfo>> findAllTargets(float);
 
+    WEBCORE_EXPORT TargetedTextSearchResult searchTextInLocalFrames(TargetedElementRequest&&);
+
     WEBCORE_EXPORT bool adjustVisibility(Vector<TargetedElementAdjustment>&&);
     void adjustVisibilityInRepeatedlyTargetedRegions(Document&);
 
@@ -67,7 +71,8 @@ public:
     WEBCORE_EXPORT uint64_t numberOfVisibilityAdjustmentRects();
     WEBCORE_EXPORT bool resetVisibilityAdjustments(const Vector<TargetedElementIdentifiers>&);
 
-    WEBCORE_EXPORT RefPtr<BitmapImage> snapshotIgnoringVisibilityAdjustment(NodeIdentifier, ScriptExecutionContextIdentifier);
+    WEBCORE_EXPORT RefPtr<NativeImage> snapshotIgnoringVisibilityAdjustment(NodeIdentifier, ScriptExecutionContextIdentifier);
+    WEBCORE_EXPORT bool paintSnapshotIgnoringVisibilityAdjustment(NodeIdentifier, ScriptExecutionContextIdentifier, NOESCAPE const Function<void(LocalFrame& mainFrame, Element&, const IntRect& snapshotRect)>& paintSnapshot);
 
     WEBCORE_EXPORT static RefPtr<Element> elementFromSelectors(Document&, const TargetedElementSelectors&);
     WEBCORE_EXPORT static TargetedElementSelectors selectorsForElement(Element&);

@@ -226,6 +226,8 @@ public:
     static void forWebPagesWithOrigin(PAL::SessionID, const WebCore::SecurityOriginData&, NOESCAPE const Function<void(WebPageProxy&)>&);
     void addAllowedFirstPartyForCookies(const WebCore::RegistrableDomain&, LoadedWebArchive);
     const std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>& allowedFirstPartiesForCookiesData() const { return m_allowedFirstPartiesForCookies; }
+    bool hasCommittedWebArchive() const { return m_hasCommittedWebArchive; }
+    void setHasCommittedWebArchive() { m_hasCommittedWebArchive = true; }
 
     void initializeWebProcess(WebProcessCreationParameters&&);
 
@@ -274,6 +276,7 @@ public:
     void disableRemoteWorkers(OptionSet<RemoteWorkerType>);
 
     WebsiteDataStore* websiteDataStore() const { ASSERT(m_websiteDataStore); return m_websiteDataStore.get(); }
+    bool hasWebsiteDataStore() const { return !!m_websiteDataStore; }
     void setWebsiteDataStore(WebsiteDataStore&);
     
     PAL::SessionID LEGACY_NODELETE sessionID() const;
@@ -339,6 +342,9 @@ public:
     std::optional<WebPageProxyIdentifier> remoteWorkerPageProxyID(RemoteWorkerType) const;
 
     bool LEGACY_NODELETE isDummyProcessProxy() const;
+
+    bool isPrintProcess() const { return m_isPrintProcess; }
+    void setIsPrintProcess() { m_isPrintProcess = true; }
 
     void didCreateWebPageInProcess(WebCore::PageIdentifier);
 
@@ -742,7 +748,6 @@ private:
     void didFinishLaunching(ProcessLauncher*, IPC::Connection::Identifier&&) override;
     bool shouldConfigureJSCForTesting() const final;
     bool isJITEnabled() const final;
-    bool shouldEnableSharedArrayBuffer() const final { return crossOriginMode() == WebCore::CrossOriginMode::Isolated; }
     bool shouldEnableLockdownMode() const final { return m_lockdownMode == LockdownMode::Enabled; }
     bool shouldEnableEnhancedSecurity() const final { return isEnhancedSecurityEnabledForState(m_enhancedSecurity); }
     bool shouldDisableJITCage() const final;
@@ -968,7 +973,9 @@ private:
 
     bool m_hasCommittedAnyProvisionalLoads { false };
     bool m_hasCommittedAnyMeaningfulProvisionalLoads { false }; // True if the process has committed a provisional load to a URL that was not about:*.
+    bool m_hasCommittedWebArchive { false };
     bool m_isPrewarmed;
+    bool m_isPrintProcess { false };
     LockdownMode m_lockdownMode { LockdownMode::Disabled };
     EnhancedSecurity m_enhancedSecurity { EnhancedSecurity::Disabled };
     const ProcessCrossOriginIsolation m_crossOriginIsolation;

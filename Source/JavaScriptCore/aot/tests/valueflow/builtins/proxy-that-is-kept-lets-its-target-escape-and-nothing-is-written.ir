@@ -1,0 +1,40 @@
+# class Body { constructor() { this.hits = 0 } step(by) { return by } }; body = new Body; body.step(1); kept = new Proxy(body, {}); kept instanceof Body; return body.hits
+# Something is done to the proxy that no rule asks a trap for. From then on whoever holds the proxy reaches the target through it: the target is in unknown hands, and its method is called with
+# operands nobody knows.
+# No code has run that nobody compiles. What has escaped is written only where a statement stores through the unknown object, and none does: the field holds the integer it was made with.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=int}]
+# CHECK: function f2 name="step" {{*}}parameters=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Body" constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handler"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="step"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Integer integer=1
+    v7 = PropGet v5 key="step"
+    v8 = Call v7, v5, v6
+    v9 = NewObject layout=L1
+    v10 = Builtin builtin=Proxy
+    v11 = Construct v10, -, v5, v9
+    PutModuleVariable v11 variable=g0
+    v13 = InstanceOf v11, v4
+    v14 = PropGet v5 key="hits"
+    Return v14
+}
+function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Integer integer=0
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}
+function f2 name="step" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

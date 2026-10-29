@@ -1,0 +1,111 @@
+# Every field here is declared a number, starts at an int32 and is stored nothing but int32s and sums of them, so each is kept as an integer.
+# A cell has a header of 16 bytes and, where a store is tested, a word of 4 for the properties that fail the test.
+# Sum.total is stored its own value plus another number. Nothing bounds such a sum. It is alone in its layout: 24 bytes or 28, the cell has 32 either way. It gets eight bytes and integers whose sums are exact.
+# Steps.count is counted up by one: the same.
+# Full.total is added to as well, and two more integers stand beside it: 32 bytes. With four more the cell would have 48: it keeps four bytes.
+# Pair.first and Pair.second are both added to: 28 bytes, room for one of them.
+# Cursor.position is added to and is the index of an element of an array, which ends where the array ends: four bytes.
+# Ring.next is added to and cut off by `&` before it is stored: four bytes.
+# Span.end is stored the sum of two other numbers, never its own value: four bytes.
+# Base.total has room in a Base. An Heir holds it beside two integers of its own: four bytes.
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# CHECK: layout L0 name="Sum" module=m0 fields=[{key="total" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L1 name="Steps" module=m0 fields=[{key="count" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L2 name="Full" module=m0 fields=[{key="total" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L3 name="Pair" module=m0 fields=[{key="first" declared={type=int[-4503599627370496, 4503599627370495]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}, {key="second" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L4 name="Cursor" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L5 name="Ring" module=m0 fields=[{key="next" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}]
+# CHECK: layout L6 name="Span" module=m0 fields=[{key="end" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] typeBeforeNarrowing=number}]
+# CHECK: layout L7 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="total" declared={type=int[-2147483643, 2147483647]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Sum" module=m0 fields=[{key="total" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Steps" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Full" module=m0 fields=[{key="total" declared={type=number} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Pair" module=m0 fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Cursor" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired]}]
+layout L5 name="Ring" module=m0 fields=[{key="next" declared={type=number} flags=[IsRequired]}]
+layout L6 name="Span" module=m0 fields=[{key="end" declared={type=number} flags=[IsRequired]}]
+layout L7 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}]
+layout L8 kind=Instance name="Heir" module=m0 base=L7 constructor=f2 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Integer integer=0
+    v3 = BitOr v1, v2
+    v4 = NewArray v2, v2 contents=anything
+    v5 = NewObject -, v2 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = PropGet v6 key="total"
+    v8 = Add v7, v3
+    PropSet v6, v8 key="total" mode=Strict
+    v10 = NewObject -, v2 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = PropGet v11 key="count"
+    v13 = ToNumeric v12
+    v14 = Increment v13
+    PropSet v11, v14 key="count" mode=Strict
+    v16 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v17 = FinishObject v16
+    v18 = PropGet v17 key="total"
+    v19 = Add v18, v3
+    PropSet v17, v19 key="total" mode=Strict
+    v21 = NewObject -, v2, v2 layout=L3 fields=[0, 1]
+    v22 = FinishObject v21
+    v23 = PropGet v22 key="first"
+    v24 = Add v23, v3
+    PropSet v22, v24 key="first" mode=Strict
+    v26 = PropGet v22 key="second"
+    v27 = Sub v26, v3
+    PropSet v22, v27 key="second" mode=Strict
+    v29 = NewObject -, v2 layout=L4 fields=[0]
+    v30 = FinishObject v29
+    v31 = PropGet v30 key="position"
+    v32 = Add v31, v3
+    PropSet v30, v32 key="position" mode=Strict
+    v34 = PropGet v30 key="position"
+    v35 = ElemGet v4, v34
+    v36 = NewObject -, v2 layout=L5 fields=[0]
+    v37 = FinishObject v36
+    v38 = PropGet v37 key="next"
+    v39 = Add v38, v3
+    v40 = Integer integer=255
+    v41 = BitAnd v39, v40
+    PropSet v37, v41 key="next" mode=Strict
+    v43 = NewObject -, v2 layout=L6 fields=[0]
+    v44 = FinishObject v43
+    v45 = Add v3, v3
+    PropSet v44, v45 key="end" mode=Strict
+    v47 = NewClosure function=f1
+    v48 = NewClass v47 layout=L7
+    v49 = FinishClass v48 layout=L7
+    v50 = NewClosure function=f2
+    v51 = ResolveHeritage v49
+    v52 = NewClass v50, v49, v51 layout=L8
+    v53 = FinishClass v52 layout=L8
+    Return v35
+}
+
+function f1 name="Base" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] results=[{type=object flags=[IsFromCompiler]}] {
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7
+    v3 = Integer integer=0
+    PropSet v2, v3 key="total"
+    v5 = PropGet v2 key="total"
+    v6 = Integer integer=3
+    v7 = Add v5, v6
+    PropSet v2, v7 key="total"
+    Return v2
+}
+
+function f2 name="Heir" module=m0 position=25 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L8
+    v4 = Integer integer=0
+    PropSet v3, v4 key="a"
+    PropSet v3, v4 key="b"
+    Return v3
+}

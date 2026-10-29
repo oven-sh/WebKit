@@ -247,10 +247,11 @@ private:
 
 class ScheduledLocationChange : public ScheduledURLNavigation {
 public:
-    ScheduledLocationChange(Document& initiatingDocument, SecurityOrigin* securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, bool duringLoad, NavigationHistoryBehavior navigationHandling, bool hasDispatchedNavigateEvent, CompletionHandler<void(bool)>&& completionHandler)
+    ScheduledLocationChange(Document& initiatingDocument, SecurityOrigin* securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, bool duringLoad, NavigationHistoryBehavior navigationHandling, ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded, bool hasDispatchedNavigateEvent, CompletionHandler<void(bool)>&& completionHandler)
         : ScheduledURLNavigation(initiatingDocument, 0.0, securityOrigin, url, referrer, lockHistory, lockBackForwardList, duringLoad, true)
         , m_completionHandler(WTF::move(completionHandler))
         , m_navigationHistoryBehavior(navigationHandling)
+        , m_replaceIfNotCompletelyLoaded(replaceIfNotCompletelyLoaded)
         , m_hasDispatchedNavigateEvent(hasDispatchedNavigateEvent)
     {
     }
@@ -272,6 +273,7 @@ public:
         frameLoadRequest.disableNavigationToInvalidURL();
         frameLoadRequest.setShouldOpenExternalURLsPolicy(shouldOpenExternalURLs());
         frameLoadRequest.setNavigationHistoryBehavior(m_navigationHistoryBehavior);
+        frameLoadRequest.setReplaceIfNotCompletelyLoaded(m_replaceIfNotCompletelyLoaded);
         frameLoadRequest.setSkipNavigateEvent(m_hasDispatchedNavigateEvent);
 
         auto completionHandler = std::exchange(m_completionHandler, nullptr);
@@ -282,6 +284,7 @@ public:
 private:
     CompletionHandler<void(bool)> m_completionHandler;
     NavigationHistoryBehavior m_navigationHistoryBehavior;
+    ReplaceIfNotCompletelyLoaded m_replaceIfNotCompletelyLoaded;
     bool m_hasDispatchedNavigateEvent { false };
 };
 
@@ -432,20 +435,18 @@ public:
 
         Ref historyItem = entry->associatedHistoryItem();
 
-        if (localFrame.isMainFrame())
-            return historyItem;
-
-        // FIXME: heuristic to fix disambigaute-* tests, we should find something more exact.
         bool backwards = entry->index() < protect(protect(protect(localFrame.window())->navigation())->currentEntry())->index();
 
         RefPtr page { localFrame.page() };
         auto items = protect(page->backForward())->allItems();
         for (size_t i = 0 ; i < items.size(); i++) {
             Ref item = items[backwards ? items.size() - 1 - i: i];
-            auto index = item->children().findIf([&historyItem](const auto& child) {
-                return child->itemSequenceNumber() == historyItem->itemSequenceNumber();
-            });
-            if (index != notFound) {
+            bool matches = localFrame.isMainFrame()
+                ? item->itemSequenceNumber() == historyItem->itemSequenceNumber()
+                : item->children().findIf([&historyItem](const auto& child) {
+                    return child->itemSequenceNumber() == historyItem->itemSequenceNumber();
+                }) != notFound;
+            if (matches) {
                 historyItem = item;
                 break;
             }
@@ -504,24 +505,13 @@ public:
         if (!localFrame)
             return false;
 
-        RefPtr page { localFrame->page() };
-        if (!page)
+        // Only the URL matters here, so the entry's own item is enough. Avoid findBackForwardItemByKey(),
+        // which needs a synchronous allItems() IPC and is reached on every token via locationChangePending().
+        RefPtr entry = findEntry(*localFrame);
+        if (!entry)
             return false;
-
-        if (page->settings().useUIProcessForBackForwardItemLoading()) {
-            RefPtr entry = findEntry(*localFrame);
-            if (!entry)
-                return false;
-            Ref historyItem = entry->associatedHistoryItem();
-            return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), historyItem->url());
-        }
-
-        auto historyItem = findBackForwardItemByKey(*localFrame);
-        if (!historyItem)
-            return false;
-
-        URL url { protect(*historyItem)->url() };
-        return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), url);
+        Ref historyItem = entry->associatedHistoryItem();
+        return equalIgnoringFragmentIdentifier(protect(localFrame->document())->url(), historyItem->url());
     }
 
 private:
@@ -564,7 +554,9 @@ public:
         frameLoadRequest.disableShouldReplaceDocumentIfJavaScriptURL();
         m_submission->populateFrameLoadRequest(frameLoadRequest);
         auto navigationHistoryBehavior = m_navigationHistoryBehavior;
-        if (localFrame && localFrame->document() != requestingDocument.ptr())
+        if (!localFrame)
+            navigationHistoryBehavior = NavigationHistoryBehavior::Auto;
+        else if (localFrame->document() != requestingDocument.ptr())
             navigationHistoryBehavior = NavigationHistoryBehavior::Push;
         frameLoadRequest.setNavigationHistoryBehavior(navigationHistoryBehavior);
         if (localFrame)
@@ -725,7 +717,7 @@ LockBackForwardList NavigationScheduler::mustLockBackForwardList(Frame& targetFr
     return LockBackForwardList::No;
 }
 
-void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, SecurityOrigin& securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, NavigationHistoryBehavior historyHandling, CompletionHandler<void(ScheduleLocationChangeResult)>&& completionHandler)
+void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, SecurityOrigin& securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, NavigationHistoryBehavior historyHandling, ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded, CompletionHandler<void(ScheduleLocationChangeResult)>&& completionHandler)
 {
     if (!shouldScheduleNavigation(url))
         return completionHandler(ScheduleLocationChangeResult::Stopped);
@@ -735,6 +727,12 @@ void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, S
 
     RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get());
     RefPtr loader = localFrame ? &localFrame->loader() : nullptr;
+
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#location-object-navigate
+    if (historyHandling == NavigationHistoryBehavior::Auto && replaceIfNotCompletelyLoaded == ReplaceIfNotCompletelyLoaded::Yes && loader && !loader->isDocumentCompletelyLoaded()) {
+        historyHandling = NavigationHistoryBehavior::Replace;
+        lockBackForwardList = LockBackForwardList::Yes;
+    }
 
     // If the URL we're going to navigate to is the same as the current one, except for the
     // fragment part, we don't need to schedule the location change.
@@ -787,7 +785,7 @@ void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, S
     // This may happen when a frame changes the location of another frame.
     bool duringLoad = loader && !loader->stateMachine().committedFirstRealDocumentLoad();
 
-    schedule(makeUnique<ScheduledLocationChange>(initiatingDocument, &securityOrigin, url, referrer, lockHistory, lockBackForwardList, duringLoad, historyHandling, hasDispatchedNavigateEvent, [completionHandler = WTF::move(completionHandler)] (bool hasStarted) mutable {
+    schedule(makeUnique<ScheduledLocationChange>(initiatingDocument, &securityOrigin, url, referrer, lockHistory, lockBackForwardList, duringLoad, historyHandling, replaceIfNotCompletelyLoaded, hasDispatchedNavigateEvent, [completionHandler = WTF::move(completionHandler)](bool hasStarted) mutable {
         completionHandler(hasStarted ? ScheduleLocationChangeResult::Started : ScheduleLocationChangeResult::Stopped);
     }));
 }

@@ -1,0 +1,95 @@
+# function make(n) { return { plain: 1, get doubled() { return n * 2 }, set doubled(v) { this.plain = v } } }   const held = make(seed), spare = make(1)
+# function write(v) { "use strict"; held.doubled = v }   function writeSloppily(v) { held.doubled = v }   function hand() { return held }   function bump(v) { held.doubled += v }
+# A store under the name of an accessor that has a setter gives the property no value: it runs the setter. So the stores take nothing from the field for the accessor, whose slot holds the pair of functions.
+# The run time looks at the getter of a pair that goes into the slot and not at its setter, so the field says which setter to expect and no more: the store is a test that the slot is filled,
+# a load of the setter out of the pair, a test that it is a closure of f6, and the body of f6. Any other setter is called as a value.
+# In `bump` the getter and the setter are read out of one slot, one behind the other: they are two functions, and who has read the one has not read the other.
+# Where the pair has no setter, strict code finds the function that throws in its place, and sloppy code the one that does nothing.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.seed = 4; globalThis.register = (write, writeSloppily, hand, bump) => { const o = hand(); write(5); print(o.plain, o.doubled, Object.keys(o).join()); bump(1); print(o.plain); writeSloppily(6); print(o.plain); const d = Object.getOwnPropertyDescriptor(o, "doubled"); print(typeof d.get, typeof d.set, d.enumerable, d.configurable); Object.defineProperty(o, "doubled", { set(v) { this.plain = "other " + v; } }); write(7); print(o.plain, Object.getOwnPropertyDescriptor(o, "doubled").get === d.get); writeSloppily(8); print(o.plain); Object.defineProperty(o, "doubled", { set: undefined }); try { write(9); } catch (error) { print(error.constructor.name, error.message); } writeSloppily(10); print(o.plain, o.doubled); Object.defineProperty(o, "doubled", d); write(11); print(o.plain); Object.freeze(o); try { write(12); } catch (error) { print(error.constructor.name); } print(o.plain); };
+# FLOW: layout L0 {{*}}key="doubled" {{*}}form=[IsAccessor]{{*}}slotType=f5 setterType=f6
+# IR: name="write"
+# IR: = IsSlotFilled {{*}} key="doubled"
+# IR: = GetSlotSetter {{*}} key="doubled" {{*}}[isInStrictCode]
+# IR: = IsClosureOf {{*}} function=f6
+# IR: name="writeSloppily"
+# IR: = GetSlotSetter {{*}} key="doubled"
+# IR-NOT: isInStrictCode
+# IR: name="hand"
+# CHECK: 5 8 plain,doubled
+# CHECK-NEXT: 9
+# CHECK-NEXT: 6
+# CHECK-NEXT: function function true true
+# CHECK-NEXT: other 7 true
+# CHECK-NEXT: other 8
+# CHECK-NEXT: TypeError Attempted to assign to readonly property.
+# CHECK-NEXT: other 8 8
+# CHECK-NEXT: 11
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 11
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="spare" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="seed" [isFreeName]
+    v6 = Call v0, -, v5
+    PutModuleVariable v6 variable=g0
+    v8 = PropGet v4 key="register" [isFreeName]
+    v9 = Integer integer=1
+    v10 = Call v0, -, v9
+    PutModuleVariable v10 variable=g1
+    v12 = NewClosure function=f7
+    v13 = Call v8, -, v1, v2, v3, v12
+    Return
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v0 function=f5
+    DefineGetter v2, v3 key="doubled"
+    v5 = NewClosure function=f6
+    DefineSetter v2, v5 key="doubled"
+    v7 = FinishObject v2
+    Return v7
+}
+function f2 name="write" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    PropSet v1, v0 key="doubled" mode=Strict
+    Return
+}
+function f3 name="writeSloppily" flags=[IsSloppy] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    PropSet v1, v0 key="doubled" mode=Sloppy
+    Return
+}
+function f4 name="hand" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f5 name="doubled" kind=Getter captures=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f6 name="doubled" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="plain" mode=Strict
+    Return
+}
+function f7 name="bump" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="doubled"
+    v3 = Add v2, v0
+    PropSet v1, v3 key="doubled" mode=Strict
+    Return
+}

@@ -12,6 +12,7 @@ http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-redir
 http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-requests.html [ Timeout ]
 http/tests/workers/service/resultingClientId.https.html [ Timeout ]
 http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Timeout ]
+webkit.org/b/328333 http/tests/history/back-with-fragment-change.py [ Failure Timeout ]
 
 ########################
 # Tests that Text fail #
@@ -28,10 +29,13 @@ imported/w3c/web-platform-tests/html/semantics/interactive-elements/the-details-
 imported/w3c/web-platform-tests/webcodecs/videoFrame-serialization.crossAgentCluster.https.html [ Failure ]
 media/audio-play-with-video-element-interrupted.html [ Pass Failure Timeout ]
 imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Failure ]
-imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/same-origin-top-navigation-without-user-activation.window.html [ Failure ]
+webkit.org/b/327859 imported/w3c/web-platform-tests/content-security-policy/inheritance/history-iframe.sub.html [ Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-getStats.https.html?rest [ Pass Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
 webaudio/MediaElementAudioSource/mediaelementaudiosourcenode-channel-count.html [ Pass Failure ]
+webkit.org/b/327796 http/wpt/fetch/local-network-access/address-space-overrides-apply-to-both-host-forms.html [ Failure ]
+webkit.org/b/328298 http/wpt/fetch/local-network-access/navigating-a-frame-is-checked-against-the-initiator.html [ Failure ]
+webkit.org/b/326577 imported/w3c/web-platform-tests/html/user-activation/propagation-crossorigin.sub.html [ Failure ]
 
 #########################
 # Tests that Image fail #
@@ -62,17 +66,22 @@ imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cach
 imported/w3c/web-platform-tests/html/document-isolation-policy/blob-document-inherits-policy.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/broadcast-channel.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-frame.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated-permissions-policy.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/dedicated-worker.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp-load-from-cache-storage.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/location-replace-keeps-entry.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/message-channel.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/navigate-across-policies.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context-https-iframe.tentative.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context.tentative.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/origin-agent-cluster.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/partial-deployment.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cached-and-service-worker-responses.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-dedicated-worker.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/reporting.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/shared-array-buffer.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/window-reuse.tentative.https.html [ Pass ]
 http/tests/document-isolation-policy/xslt-result-agent-cluster.https.html [ Pass ]

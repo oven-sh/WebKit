@@ -1,0 +1,74 @@
+# A callee that reaches a parameter by name is worth more where the caller knows the layout: it allocates the object, or has a proof
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 2
+# STATISTIC: InlineDecisionCostExceedsBenefit = 3
+# STATISTIC: InlineBenefitKnownReceiver = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}]
+
+function f0 name="defineEight" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    PropDefine v0, v1 key="g"
+    PropDefine v0, v1 key="h"
+    v10 = Undefined
+    Return v10
+}
+
+function f1 name="storeEightInSecond" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    PropSet v1, v0 key="a"
+    PropSet v1, v0 key="b"
+    PropSet v1, v0 key="c"
+    PropSet v1, v0 key="d"
+    PropSet v1, v0 key="e"
+    PropSet v1, v0 key="f"
+    PropSet v1, v0 key="g"
+    PropSet v1, v0 key="h"
+    v10 = Undefined
+    Return v10
+}
+
+function f2 name="allocates" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = CallDirect v1, v0 function=f0
+    Return v1
+# CHECK: = NewObject layout=L0
+# CHECK-NOT: CallDirect
+# CHECK: [[allocated]]: L0 = Upcast v1 castType=object
+# CHECK-NOT: CallDirect
+# CHECK: PropDefine [[allocated]], v0 key="h"
+}
+
+function f3 name="hasProof" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v0
+# CHECK-NOT: CallDirect
+# CHECK: PropDefine [[proven]], v1 key="a"
+# CHECK: PropDefine [[proven]], v1 key="h"
+}
+
+function f4 name="knowsNoLayout" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v0
+# CHECK: = CallDirect v0, v1 function=f0
+}
+
+function f5 name="allocatesOtherArgument" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = CallDirect v1, v0 function=f1
+    Return v1
+# CHECK: = CallDirect v1, v0 function=f1
+}
+
+function f6 name="knowsNeitherLayout" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return v1
+# CHECK: = CallDirect v0, v1 function=f1
+}

@@ -1,0 +1,7 @@
+# Exports in the order of their bytes and not of their UTF-16 code units: U+FFFD comes after the surrogate pair of U+10000
+# RUN: print
+# DIAGNOSTIC: UnsortedList
+
+variable g0 declared={type=anything}
+variable g1 declared={type=anything}
+module m0 path="/a.ts" displayPath="a.ts" exports=[{name="\u{fffd}" variable=g1}, {name="\u{10000}" variable=g0}]

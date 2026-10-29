@@ -36,17 +36,24 @@ namespace WebCore {
 class ImageObserver;
 class ImageSource;
 class NativeImage;
+class ShareableSpatialImage;
 
 class BitmapImage final : public Image {
-    friend class GraphicsContext;
 public:
     WEBCORE_EXPORT static Ref<BitmapImage> LEGACY_NODELETE create(ImageObserver* = nullptr, AlphaOption = AlphaOption::Premultiplied, GammaAndColorProfileOption = GammaAndColorProfileOption::Applied);
     WEBCORE_EXPORT static Ref<BitmapImage> LEGACY_NODELETE create(Ref<NativeImage>&&);
     WEBCORE_EXPORT static RefPtr<BitmapImage> create(RefPtr<NativeImage>&&);
     WEBCORE_EXPORT static RefPtr<BitmapImage> create(PlatformImagePtr&&);
     WEBCORE_EXPORT static std::optional<Ref<BitmapImage>> create(RefPtr<ShareableBitmap>&&); // Uses `std::optional<Ref<...>>` to conform to the interface needed by IPC infrastructure.
+    // The image directly references the shared bitmap data, so the bitmap's contents must not change.
+    WEBCORE_EXPORT static RefPtr<BitmapImage> create(ShareableBitmap&);
 
     WEBCORE_EXPORT static BitmapImage& nullImage();
+
+    using Image::draw;
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, FloatPoint destination = { }, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage });
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage });
+    WEBCORE_EXPORT ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { ImageOrientation::Orientation::FromImage });
 
     // Animation
     void startAnimation() final { m_source->startAnimation(); }
@@ -70,6 +77,8 @@ public:
     RefPtr<NativeImage> primaryNativeImage() { return m_source->primaryNativeImage(); }
     RefPtr<NativeImage> nativeImage(const ColorSpace& = ColorSpace::SRGB()) { return primaryNativeImage(); }
     RefPtr<NativeImage> currentNativeImage() { return m_source->currentNativeImage(); }
+
+    RefPtr<NativeImage> nativeImageForUnpremultipliedPixels() { return m_source->primaryNativeImageForUnpremultipliedPixels(); }
 
     // A bitmap has a size of its own, so these ignore the concrete object size.
     RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr) final { return primaryNativeImage(); }
@@ -95,7 +104,7 @@ public:
     Seconds frameDurationAtIndex(unsigned index) const { return m_source->frameDurationAtIndex(index); }
 
     // NativeImage
-    RefPtr<NativeImage> nativeImageAtIndex(unsigned index) { return m_source->nativeImageAtIndex(index); }
+    RefPtr<NativeImage> nativeImageAtIndex(unsigned index) const { return m_source->nativeImageAtIndex(index); }
     RefPtr<NativeImage> nativeImageAtIndex(unsigned index, ConcreteObjectSize, const ImageDrawingExtras* = nullptr) final { return nativeImageAtIndex(index); }
 
     // Testing support.
@@ -114,6 +123,7 @@ public:
     std::optional<unsigned> spatialLeftEyeFrameIndex() const { return m_source->spatialLeftEyeFrameIndex(); }
     std::optional<unsigned> spatialRightEyeFrameIndex() const { return m_source->spatialRightEyeFrameIndex(); }
     std::optional<SpatialImageEyeProperties> spatialEyePropertiesAtIndex(unsigned index) const { return m_source->spatialEyePropertiesAtIndex(index); }
+    WEBCORE_EXPORT std::optional<ShareableSpatialImage> createShareableSpatialImage() const;
 #endif
 
 private:
@@ -155,9 +165,9 @@ private:
 
     bool hasHDRContentForTesting() const { return m_source->hasHDRContentForTesting(); }
 
-    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
-    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
-    void drawLuminanceMaskPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions);
+    ImageDrawResult drawImage(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions, const ImageDrawingExtras*) final;
+    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+    void drawLuminanceMaskPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions);
 
     void dump(WTF::TextStream&) const final;
 

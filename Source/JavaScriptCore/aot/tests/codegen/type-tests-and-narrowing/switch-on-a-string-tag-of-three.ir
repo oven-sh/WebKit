@@ -1,0 +1,194 @@
+# type Circle = { kind: "circle"; radius: number };
+# type Square = { kind: "square"; side: number };
+# type Box = { kind: "box"; width: number; height: number };
+# function size(shape: Circle | Square | Box): number {
+#   switch (shape.kind) {
+#     case "circle": return shape.radius + shape.radius;
+#     case "square": return shape.side;
+#     case "box": return shape.width + shape.height;
+#   }
+# }
+# declare const input: any;
+# const circle: Circle = { kind: "circle", radius: +input };
+# const square: Square = { kind: "square", side: +input };
+# const box: Box = { kind: "box", width: +input, height: +input };
+# (globalThis as any).answer = size(input > 1 ? circle : input ? square : box);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=417 kind=Variable
+typesite w1 module=m0 position=476 kind=Variable
+typesite w2 module=m0 position=533 kind=Variable
+typesite w3 module=m0 position=171 kind=Parameter function=f1
+typesite w4 module=m0 position=157 kind=Result
+typesite w5 module=m0 position=621 kind=CallResult
+layout L0 name="Circle" module=m0 position=5 fields=[{key="kind" declared={type=undefined|null|"circle" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="radius" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="Square" module=m0 position=55 fields=[{key="kind" declared={type=undefined|null|"square" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="side" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="Box" module=m0 position=103 fields=[{key="height" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|"box" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="circle"
+    v3 = Convert v2 declared={type=undefined|null|"circle" flags=[OmitsNull, OmitsUndefined]}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = ToNumber v6
+    v8 = Convert v7 declared={type=number}
+    v9 = NewObject -, v3, v8 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = String string="square"
+    v13 = Convert v12 declared={type=undefined|null|"square" flags=[OmitsNull, OmitsUndefined]}
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Convert v17 declared={type=number}
+    v19 = NewObject -, v13, v18 layout=L1 fields=[0, 1]
+    v20 = FinishObject v19
+    v21 = Convert v20 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v22 = String string="box"
+    v23 = Convert v22 declared={type=undefined|null|"box" flags=[OmitsNull, OmitsUndefined]}
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="input" [isFreeName]
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    v27 = ToNumber v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="input" [isFreeName]
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = ToNumber v31
+    v33 = Convert v32 declared={type=number}
+    v34 = NewObject -, v23, v28, v33 layout=L2 fields=[1, 2, 0]
+    v35 = FinishObject v34
+    v36 = Convert v35 declared={type=undefined|null|L2 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v37 = Builtin builtin=GlobalThis
+    v38 = PropGet v37 key="globalThis" [isFreeName]
+    v39 = Convert v38 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v40 = Convert v39 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v41 = Builtin builtin=GlobalThis
+    v42 = PropGet v41 key="input" [isFreeName]
+    v43 = Convert v42 declared={type=number flags=[IsExpected]}
+    v44 = Integer integer=1
+    v45 = Greater v43, v44
+    Branch v45 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b8(v11)
+  b3():
+    v46 = Builtin builtin=GlobalThis
+    v47 = PropGet v46 key="input" [isFreeName]
+    v48 = ToBoolean v47
+    Branch v48 -> taken b4(| 0), notTaken b6(| 0)
+  b4(v49):
+    Jump -> next b5()
+  b5():
+    Jump -> next b8(v21)
+  b6(v50):
+    Jump -> next b7()
+  b7():
+    Jump -> next b8(v36)
+  b8(v51):
+    v52 = Call v1, -, v51 calleeName="size"
+    v53 = Convert v52 declared={type=number site=w5}
+    PropSet v40, v53 key="answer"
+    v55 = Undefined
+    Return v55
+}
+function f1 name="size" module=m0 position=157 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1|L2):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="kind"
+    SwitchString v1 strings=["circle", "square", "box"] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+  b2(v2):
+    v3 = NarrowByField v0, v2 key="kind"
+    Jump -> next b3()
+  b3():
+    v4 = Convert v3 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v5 = PropGet v4 key="radius"
+    v6 = PropGet v4 key="radius"
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number site=w4}
+    Return v8
+  b4(v9):
+    v10 = NarrowByField v0, v9 key="kind"
+    Jump -> next b5()
+  b5():
+    v11 = Convert v10 declared={type=undefined|null|L1} illTypedCause=Assertion
+    v12 = PropGet v11 key="side"
+    v13 = Convert v12 declared={type=number site=w4}
+    Return v13
+  b6(v14):
+    v15 = NarrowByField v0, v14 key="kind"
+    Jump -> next b7()
+  b7():
+    v16 = Convert v15 declared={type=undefined|null|L2} illTypedCause=Assertion
+    v17 = PropGet v16 key="width"
+    v18 = PropGet v16 key="height"
+    v19 = Add v17, v18
+    v20 = Convert v19 declared={type=number site=w4}
+    Return v20
+  b8():
+    Jump -> next b9()
+  b9():
+    v21 = Undefined
+    v22 = Convert v21 declared={type=number site=w4} illTypedCause=FromLooseType
+    Return v22
+}
+
+# The tag is loaded once and compared as a word with each of the three literals in turn: the characters are not looked at. The tag decides the layout: every field is a plain load with no shape test. For a tag that is none of the three the function answers undefined.
+# CHECK-LABEL: name="size" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[shape]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[kind]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Int32 b@[[isCircle]] = Equal(b@[[kind]], $
+# CHECK: Branch(b@[[isCircle]], Terminal
+# CHECK-NEXT: Successors: Then:#[[circle]], Else:#[[notCircle]]
+# CHECK-NEXT: BB#[[circle]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: BB#[[notCircle]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK: Int32 b@[[isSquare]] = Equal(b@[[kind]], $
+# CHECK-NEXT: Branch(b@[[isSquare]], Terminal
+# CHECK-NEXT: Successors: Then:#[[square]], Else:#[[notSquare]]
+# CHECK-NEXT: BB#[[square]]:
+# CHECK-NEXT: Predecessors: #[[notCircle]]
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: BB#[[notSquare]]:
+# CHECK-NEXT: Predecessors: #[[notCircle]]
+# CHECK: Int32 b@[[isBox]] = Equal(b@[[kind]], $
+# CHECK-NEXT: Branch(b@[[isBox]], Terminal
+# CHECK-NEXT: Successors: Then:#[[box]], Else:#[[none]]
+# CHECK-NEXT: BB#[[box]]:
+# CHECK-NEXT: Predecessors: #[[notSquare]]
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = {{*}}, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = {{*}}, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: BB#[[none]]:
+# CHECK-NEXT: Predecessors: #[[notSquare]]
+# CHECK: Return($10(b@{{*}}), Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="size" role=Source
+# NONE-NOT: AOTObject_shapeWord
+# NONE-NOT: StringStorage
+# NONE-NOT: :StringEqualsLiteral)
+# NONE-LABEL: end of function
+# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
+# X64-LABEL: name="size" role=Source
+# X64-NEXT: instructions: 14, patchpoints: 3
+# ARM64-LABEL: name="size" role=Source
+# ARM64-NEXT: instructions: 42, patchpoints: 3

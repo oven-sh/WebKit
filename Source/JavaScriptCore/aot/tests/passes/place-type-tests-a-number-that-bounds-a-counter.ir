@@ -1,0 +1,123 @@
+# A number that bounds a counter is tested for int32 in front of the loop where a turn takes the counter's bits, and the counter is an int32 then; where the counter is only added to a number, nothing is tested
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = ToNumber v1
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f2
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v3, v4
+    v7 = PropGet v0 key="list" [isFreeName]
+    v8 = CallDirect v2, v7 function=f3
+    v9 = Call v5, -, v8
+    v10 = Integer integer=9
+    v11 = CallDirect v2, v10 function=f4
+    v12 = Call v5, -, v11
+    Return
+}
+function f1 name="sumOfBits" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=7
+    Jump -> next b1(v1, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitAnd v3, v2
+    v8 = Add v4, v7
+    v9 = BitOr v8, v1
+    v10 = Increment v3
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v4
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = BitAnd {{*}}form=Integers
+}
+
+function f2 name="sumOfCounters" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v2
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+}
+
+# The copy of a failed test counts without a bound. What it has counted up comes back into the loop only as an int32, so the counter of the loop is still one.
+function f3 name="sumOfElements" flags=[IsChecked] parameters=[{type=number}, {type=Array<i32, Int32> flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: number, v1: anything ~ Array<i32, Int32>):
+    v2 = Integer integer=0
+    v3 = Integer integer=7
+    Jump -> next b1(v2, v2)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = BitAnd v4, v3
+    v9 = ElemGet v1, v8
+    v10 = BitOr v9, v2
+    v11 = Add v5, v10
+    v12 = BitOr v11, v2
+    v13 = Increment v4
+    Jump -> next b1(v13, v12)
+  b3():
+    Return v5
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = Increment {{*}}form=Numbers
+# CHECK-NEXT: = TypeTest {{*}}testedType=int[0, 2147483647]
+}
+
+# Around a loop that holds another loop no proof lasts, so the test would stand in the loop and be made at every turn for nothing.
+function f4 name="sumOfSums" parameters=[{type=number}, {type=int[0, 100]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=7
+    Jump -> next b1(v2, v2)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = BitAnd v4, v3
+    Jump -> next b4(v8, v2)
+  b3():
+    Return v5
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v10, v1
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = Add v9, v10
+    v14 = BitOr v13, v2
+    v15 = Increment v10
+    Jump -> next b4(v14, v15)
+  b6():
+    v16 = Add v5, v9
+    v17 = BitOr v16, v2
+    v18 = Increment v4
+    Jump -> next b1(v18, v17)
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+}

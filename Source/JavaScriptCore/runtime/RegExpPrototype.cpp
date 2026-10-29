@@ -21,6 +21,7 @@
 #include "config.h"
 #include "RegExpPrototype.h"
 
+#include "AOTRemovableFeature.h"
 #include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "IntegrityInlines.h"
@@ -38,6 +39,7 @@
 #include "RegExpObjectInlines.h"
 #include "RegExpPrototypeInlines.h"
 #include "StringSplitCacheInlines.h"
+#include "YarrCharacterSetBits.h"
 #include "YarrFlags.h"
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringCommon.h>
@@ -91,15 +93,15 @@ void RegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     JSC_NATIVE_INTRINSIC_GETTER_WITHOUT_TRANSITION(vm.propertyNames->unicodeSets, regExpProtoGetterUnicodeSets, PropertyAttribute::DontEnum | PropertyAttribute::Accessor, RegExpUnicodeSetsIntrinsic);
     JSC_NATIVE_GETTER_WITHOUT_TRANSITION(vm.propertyNames->source, regExpProtoGetterSource, PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
     JSC_NATIVE_GETTER_WITHOUT_TRANSITION(vm.propertyNames->flags, regExpProtoGetterFlags, PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
-    JSFunction* matchFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.match]"_s, regExpProtoFuncMatch, ImplementationVisibility::Public, RegExpMatchIntrinsic);
+    JSFunction* matchFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.match]"_s, JSC_REGISTERED_HOST_FUNCTION(regExpProtoFuncMatch), ImplementationVisibility::Public, RegExpMatchIntrinsic);
     putDirectWithoutTransition(vm, vm.propertyNames->matchSymbol, matchFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    JSFunction* matchAllFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.matchAll]"_s, regExpProtoFuncMatchAll, ImplementationVisibility::Public);
+    JSFunction* matchAllFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.matchAll]"_s, JSC_REGISTERED_HOST_FUNCTION(regExpProtoFuncMatchAll), ImplementationVisibility::Public);
     putDirectWithoutTransition(vm, vm.propertyNames->matchAllSymbol, matchAllFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    JSFunction* replaceFunction = JSFunction::create(vm, globalObject, 2, "[Symbol.replace]"_s, regExpProtoFuncReplace, ImplementationVisibility::Public);
+    JSFunction* replaceFunction = JSFunction::create(vm, globalObject, 2, "[Symbol.replace]"_s, JSC_REGISTERED_HOST_FUNCTION(regExpProtoFuncReplace), ImplementationVisibility::Public);
     putDirectWithoutTransition(vm, vm.propertyNames->replaceSymbol, replaceFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    JSFunction* searchFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.search]"_s, regExpProtoFuncSearch, ImplementationVisibility::Public, RegExpSearchIntrinsic);
+    JSFunction* searchFunction = JSFunction::create(vm, globalObject, 1, "[Symbol.search]"_s, JSC_REGISTERED_HOST_FUNCTION(regExpProtoFuncSearch), ImplementationVisibility::Public, RegExpSearchIntrinsic);
     putDirectWithoutTransition(vm, vm.propertyNames->searchSymbol, searchFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    JSFunction* splitFunction = JSFunction::create(vm, globalObject, 2, "[Symbol.split]"_s, regExpProtoFuncSplit, ImplementationVisibility::Public, RegExpSplitIntrinsic);
+    JSFunction* splitFunction = JSFunction::create(vm, globalObject, 2, "[Symbol.split]"_s, JSC_REGISTERED_HOST_FUNCTION(regExpProtoFuncSplit), ImplementationVisibility::Public, RegExpSplitIntrinsic);
     putDirectWithoutTransition(vm, vm.propertyNames->splitSymbol, splitFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
     JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->test, regExpProtoFuncTest, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public, RegExpTestIntrinsic);
 }
@@ -863,6 +865,59 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
     return JSArray::createWithButterfly(vm, nullptr, arrayStructure, newButterfly->toButterfly());
 }
 
+// What splitAtSeparators() has found: every element is a piece of the input, so the array is made at its length and filled in place.
+static JSArray* createArrayOfPieces(JSGlobalObject* globalObject, VM& vm, JSString* inputString, const Vector<unsigned>& spans)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    unsigned resultLength = splitSpanCount(spans);
+    if (globalObject->isHavingABadTime() || resultLength >= MIN_SPARSE_ARRAY_INDEX)
+        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+
+    JSArray* result = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), resultLength);
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    const unsigned* span = spans.span().data();
+    for (unsigned i = 0; i < resultLength; ++i, span += 2)
+        result->butterfly()->contiguous().at(result, i).set(vm, result, jsSubstringOfResolved(vm, inputString, span[0], span[1]));
+    return result;
+}
+
+struct SeparatorSplit {
+    unsigned limit;
+    unsigned maxSpans;
+    bool runsCountAsOne;
+};
+
+template<typename CharacterType, typename IsSeparator>
+static MatchResult splitAtSeparators(std::span<const CharacterType> characters, const SeparatorSplit& split, NOESCAPE const IsSeparator& isSeparator, Vector<unsigned>& spans, unsigned& position)
+{
+    MatchResult last = MatchResult::failed();
+    const CharacterType* units = characters.data();
+    unsigned size = characters.size();
+    unsigned scan = position;
+    while (scan < size) {
+        if (!isSeparator(units[scan])) {
+            ++scan;
+            continue;
+        }
+        unsigned end = scan + 1;
+        if (split.runsCountAsOne) {
+            while (end < size && isSeparator(units[end]))
+                ++end;
+        }
+        last = MatchResult(scan, end);
+        recordSplitSpan(spans, position, scan - position);
+        position = end;
+        scan = end;
+        if (splitSpanCount(spans) >= split.limit || splitSpanCount(spans) >= split.maxSpans)
+            break;
+    }
+    return last;
+}
+
 // Fast path used by RegExp.prototype[Symbol.split] and String.prototype.split when the
 // receiver is a primordial RegExpObject. Skips the species construct, custom flags, and
 // custom exec — caller must guarantee non-observability via isSymbolSplitFastAndNonObservable().
@@ -1012,23 +1067,40 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
 
     auto& spans = vm.stringSplitIndice;
     spans.shrink(0);
-    MatchResult lastMatchResult = genericSplit(
-        globalObject, regexp, inputString, input, inputSize, position, matchPosition, regExpIsSticky, regExpIsUnicode,
-        [&] () -> SplitControl {
-            if (splitSpanCount(spans) >= maxSizeForDirectPath)
-                return AbortSplit;
-            return ContinueSplit;
-        },
-        [&] (bool isDefined, unsigned start, unsigned length) -> SplitControl {
-            recordSplitSpan(spans, isDefined ? start : undefinedSplitSpanStart, length);
-            if (splitSpanCount(spans) >= limit)
-                return AbortSplit;
-            return ContinueSplit;
-        });
+    MatchResult lastMatchResult;
+    auto splitInputAtSeparators = [&](bool runsCountAsOne, const auto& isSeparator) {
+        SeparatorSplit split { limit, maxSizeForDirectPath, runsCountAsOne };
+        lastMatchResult = input->is8Bit() ? splitAtSeparators(input->span8(), split, isSeparator, spans, position) : splitAtSeparators(input->span16(), split, isSeparator, spans, position);
+        matchPosition = position;
+        if (lastMatchResult)
+            globalObject->regExpGlobalData().recordMatch(vm, globalObject, regexp, inputString, lastMatchResult, false);
+    };
+    bool isSplitAtSeparators = specificPattern == Yarr::SpecificPattern::CharacterClass || specificPattern == Yarr::SpecificPattern::CharacterClassPlus;
+    auto createArray = [&] {
+        return isSplitAtSeparators ? createArrayOfPieces(globalObject, vm, inputString, spans) : createArrayFromSplitSpans(globalObject, vm, inputString, spans);
+    };
+    if (isSplitAtSeparators) [[unlikely]] {
+        Yarr::CharacterSetView separators = *regexp->specificCharacterClass();
+        splitInputAtSeparators(specificPattern == Yarr::SpecificPattern::CharacterClassPlus, [separators](auto character) ALWAYS_INLINE_LAMBDA { return separators.contains(character); });
+    } else {
+        lastMatchResult = genericSplit(
+            globalObject, regexp, inputString, input, inputSize, position, matchPosition, regExpIsSticky, regExpIsUnicode,
+            [&] () -> SplitControl {
+                if (splitSpanCount(spans) >= maxSizeForDirectPath)
+                    return AbortSplit;
+                return ContinueSplit;
+            },
+            [&] (bool isDefined, unsigned start, unsigned length) -> SplitControl {
+                recordSplitSpan(spans, isDefined ? start : undefinedSplitSpanStart, length);
+                if (splitSpanCount(spans) >= limit)
+                    return AbortSplit;
+                return ContinueSplit;
+            });
+    }
     RETURN_IF_EXCEPTION(scope, { });
 
     if (splitSpanCount(spans) >= limit)
-        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+        RELEASE_AND_RETURN(scope, createArray());
 
     if (splitSpanCount(spans) < maxSizeForDirectPath) {
         // 20. Let substring be the substring of string from lastMatchEnd to size.
@@ -1043,7 +1115,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
         }
 
         // 22. Return array.
-        RELEASE_AND_RETURN(scope, createArrayFromSplitSpans(globalObject, vm, inputString, spans));
+        RELEASE_AND_RETURN(scope, createArray());
     }
 
     // Absurdly large results are not cached, and recording every element up front would cost more
@@ -1139,6 +1211,26 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncSplit, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(regExpSplitSlow(globalObject, thisObject, string, limitValue)));
 }
 
+// Construct(speciesConstructor, « regexp, flags »).
+static JSObject* constructFromSpecies(JSGlobalObject* globalObject, JSObject* speciesConstructor, JSObject* regexp, const String& flags)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSString* flagsString = jsString(vm, flags);
+    if (isFeatureRemoved(RemovableFeature::RegExpFromString) && speciesConstructor == globalObject->regExpConstructor()) [[unlikely]] {
+        if (auto* regExpObject = dynamicDowncast<RegExpObject>(regexp))
+            RELEASE_AND_RETURN(scope, constructRegExpWithFlags(globalObject, regExpObject, flagsString));
+    }
+
+    auto constructorArgs = WTF::toArray<EncodedJSValue>({
+        JSValue::encode(regexp),
+        JSValue::encode(flagsString),
+    });
+    auto constructData = JSC::getConstructDataInline(speciesConstructor);
+    RELEASE_AND_RETURN(scope, construct(globalObject, speciesConstructor, constructData, ArgList { constructorArgs.data(), constructorArgs.size() }));
+}
+
 // https://tc39.es/ecma262/#sec-regexp.prototype-%symbol.split%
 // Spec steps 4-22 — invoked after the C++ fast path declines, either because the
 // receiver isn't a primordial RegExpObject or because some watchpoint guarding the
@@ -1147,8 +1239,6 @@ JSValue regExpSplitSlow(JSGlobalObject* globalObject, JSObject* thisObject, JSSt
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue thisValue = thisObject;
 
     // 4. Let speciesCtor be ? SpeciesConstructor(regexp, %RegExp%).
     JSObject* speciesConstructor;
@@ -1195,12 +1285,7 @@ JSValue regExpSplitSlow(JSGlobalObject* globalObject, JSObject* thisObject, JSSt
     }
 
     // 10. Let splitter be ? Construct(speciesCtor, « regexp, newFlags »).
-    auto constructorArgs = WTF::toArray<EncodedJSValue>({
-        JSValue::encode(thisValue),
-        JSValue::encode(jsString(vm, newFlags)),
-    });
-    auto constructData = JSC::getConstructDataInline(speciesConstructor);
-    JSObject* splitter = construct(globalObject, speciesConstructor, constructData, ArgList { constructorArgs.data(), constructorArgs.size() });
+    JSObject* splitter = constructFromSpecies(globalObject, speciesConstructor, thisObject, newFlags);
     RETURN_IF_EXCEPTION(scope, { });
 
     // After Construct, re-check whether the splitter is a primordial RegExpObject with non-observable
@@ -1797,13 +1882,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncMatchAll, (JSGlobalObject* globalObject,
     String flags = flagsValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto constructorArgs = WTF::toArray<EncodedJSValue>({
-        JSValue::encode(thisValue),
-        JSValue::encode(jsString(vm, flags)),
-    });
-
-    auto constructData = JSC::getConstructDataInline(constructor);
-    JSObject* matcher = construct(globalObject, constructor, constructData, ArgList { constructorArgs.data(), constructorArgs.size() });
+    JSObject* matcher = constructFromSpecies(globalObject, constructor, thisObject, flags);
     RETURN_IF_EXCEPTION(scope, { });
 
     JSValue lastIndexValue = thisObject->get(globalObject, vm.propertyNames->lastIndex);

@@ -1,0 +1,39 @@
+# Among the variables that start as zero, those that hold values lie in front of those that hold numbers, whatever their order in the program, so the collector visits one range
+# RUN(STATICS): tables statics
+# RUN(PLACED): place statics
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="firstNumber" module=m0 declared={type=number}
+variable g1 name="firstValue" module=m0 declared={type=anything}
+variable g2 name="secondNumber" module=m0 declared={type=number}
+variable g3 name="secondValue" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v1 variable=g3
+    v7 = NewClosure function=f1
+    v8 = PropGet v0 key="publish" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+function f1 name="later" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = NewArray v0, v1, v2, v3 contents=anything holes=[]
+    Return v4
+}
+
+# STATICS: roots offset=0 size=16
+# STATICS-NOT: roots
+# PLACED: g0 offset=16 representation=Double
+# PLACED-NEXT: g1 offset=0 representation=JSValue
+# PLACED-NEXT: g2 offset=24 representation=Double
+# PLACED-NEXT: g3 offset=8 representation=JSValue
+# PLACED-NOT: module-value

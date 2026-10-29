@@ -1,0 +1,3 @@
+# Functions that let the address of their frame record out and also leave by a jump to another function, and why that is harmless there.
+operationAOTDoubleToString       # the jump to operationAOTIntToString lies on a road that has published nothing, and that operation publishes its own frame
+JSC::AOT::concatenateShortKey    # the jump to concatenateByContents is asked for (musttail), and that function begins the operation in its own frame

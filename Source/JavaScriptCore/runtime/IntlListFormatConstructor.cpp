@@ -66,7 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlListFormat);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlListFormat);
 
 IntlListFormatConstructor::IntlListFormatConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlListFormat, constructIntlListFormat)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlListFormat), JSC_REGISTERED_HOST_FUNCTION(constructIntlListFormat))
 {
 }
 

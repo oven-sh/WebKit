@@ -311,6 +311,9 @@ macro doVMEntry(makeCall)
     ret
 end
 
+endSectionPart()
+section "trampolines"
+
 _llint_throw_stack_overflow_error_from_vm_entry:
     const entry = a0
     const vm = a1
@@ -367,6 +370,8 @@ macro makeHostFunctionCall(entry, protoCallFrame, temp1, temp2)
         storep lr, ReturnPC[sp]
         cloopCallNative temp1
     else
+        # A stack walk reads the return address of this frame to tell it from a frame record of ahead-of-time compiled code.
+        storep 0, ReturnPC[sp]
         call temp1, HostFunctionPtrTag
     end
 end
@@ -400,6 +405,9 @@ op(llint_get_host_call_return_value, macro ()
     functionEpilogue()
     ret
 end)
+
+endSectionPart()
+section "bytecode"
 
 macro prepareStateForCCall()
     addp PB, PC
@@ -1144,7 +1152,6 @@ macro preOp(opcodeName, opcodeStruct, integerOperation)
         get(m_srcDst, t0)
         loadq [cfr, t0, 8], t1
         # srcDst in t1
-        # FIXME: the next line jumps to the slow path for BigInt32. We could instead have a dedicated path in here for them.
         bqb t1, numberTag, .slow
         integerOperation(t1, .slow)
         orq numberTag, t1
@@ -1544,27 +1551,6 @@ llintOpWithReturn(op_is_number, OpIsNumber, macro (size, get, dispatch, return)
     return(t1)
 end)
 
-if BIGINT32
-    llintOpWithReturn(op_is_big_int, OpIsBigInt, macro(size, get, dispatch, return)
-        get(m_operand, t1)
-        loadConstantOrVariable(size, t1, t0)
-        btqnz t0, notCellMask, .notCellCase
-        cbeq JSCell::m_type[t0], HeapBigIntType, t1
-        orq ValueFalse, t1
-        return(t1)
-    .notCellCase:
-        andq MaskBigInt32, t0
-        cqeq t0, TagBigInt32, t0
-        orq ValueFalse, t0
-        return(t0)
-    end)
-else
-# if BIGINT32 is not supported we generate op_is_cell_with_type instead of op_is_big_int
-    llintOp(op_is_big_int, OpIsBigInt, macro(unused, unused, unused)
-        notSupported()
-    end)
-end
-
 llintOpWithReturn(op_is_cell_with_type, OpIsCellWithType, macro (size, get, dispatch, return)
     getu(size, OpIsCellWithType, m_type, t0)
     get(m_operand, t1)
@@ -1834,7 +1820,7 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
 end)
 
 
-llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+macro getByVal(size, get, dispatch, metadata, return, slowPath)
     macro finishGetByVal(result, scratch)
         get(m_dst, scratch)
         storeq result, [cfr, scratch, 8]
@@ -1914,8 +1900,14 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     getByValTypedArray(t0, t1, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, .opGetByValSlow)
 
 .opGetByValSlow:
-    callSlowPath(_llint_slow_path_get_by_val)
-    dispatch()
+    slowPath()
+end
+
+llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+    getByVal(size, get, dispatch, metadata, return, macro ()
+        callSlowPath(_llint_slow_path_get_by_val)
+        dispatch()
+    end)
 
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_get_by_val, size)
@@ -2782,6 +2774,9 @@ commonOp(llint_op_catch, macro () end, macro (size)
     dispatchOp(size, op_catch)
 end)
 
+endSectionPart()
+section "trampolines"
+
 op(llint_throw_from_slow_path_trampoline, macro ()
     getVMFromCallFrame(t1, t2)
     copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(t1, t2)
@@ -2807,6 +2802,8 @@ op(llint_throw_during_call_trampoline, macro ()
     jmp _llint_throw_from_slow_path_trampoline
 end)
 
+endSectionPart()
+section "bytecode"
 
 macro nativeCallTrampoline(executableOffsetToFunction)
     functionPrologue()
@@ -3754,7 +3751,7 @@ llintOpWithReturn(op_get_property_enumerator, OpGetPropertyEnumerator, macro (si
     dispatch()
 end)
 
-llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
+macro enumeratorNext(size, get, dispatch, slowPath)
     # Note: this will always call the slow path on at least the first/last execution of EnumeratorNext for any given loop.
     # The upside this is that we don't have to record any metadata or mode information here as the slow path will do it for us when transitioning from InitMode/IndexedMode to OwnStructureMode, or from OwnStructureMode to GenericMode.
     loadVariable(get, m_mode, t0)
@@ -3781,11 +3778,17 @@ llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
     dispatch()
 
 .nextSlowPath:
-    callSlowPath(_slow_path_enumerator_next)
-    dispatch()
+    slowPath()
+end
+
+llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
+    enumeratorNext(size, get, dispatch, macro ()
+        callSlowPath(_slow_path_enumerator_next)
+        dispatch()
+    end)
 end)
 
-llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
+macro enumeratorGetByVal(size, get, dispatch, metadata, return, slowPath)
     metadata(t5, t0)
 
     loadVariable(get, m_mode, t0)
@@ -3824,8 +3827,14 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     return(t2)
 
 .getSlowPath:
-    callSlowPath(_slow_path_enumerator_get_by_val)
-    dispatch()
+    slowPath()
+end
+
+llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
+    enumeratorGetByVal(size, get, dispatch, metadata, return, macro ()
+        callSlowPath(_slow_path_enumerator_get_by_val)
+        dispatch()
+    end)
 
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_enumerator_get_by_val, size)
@@ -3853,7 +3862,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     bineq t2, JSCell::m_structureID[t0], .putSlowPath
 
     structureIDToStructureWithScratch(t2, t3)
-    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_hasImmutablePropertiesBits)), .putSlowPath
+    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_anyImmutablePropertiesBits)), .putSlowPath
 
     get(m_value, t2)
     loadConstantOrVariable(size, t2, t3)

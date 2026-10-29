@@ -468,7 +468,8 @@ _PATH_RULES_SPECIFIER = [
      os.path.join('Tools', 'MiniBrowser')],
      ["-runtime/wtf_make_unique",
       "-runtime/wtf_move",
-      "-runtime/wtf_to_array"]),
+      "-runtime/wtf_to_array",
+      "-safercpp/dispatch_get_main_queue"]),
 
     ([  # Ignore formatting and whitespace issues in gmock.
      os.path.join('Source', 'ThirdParty', 'gmock')],
@@ -634,7 +635,6 @@ _SKIPPED_FILES_WITH_WARNING = [
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'webkit-web-process-extension.h'),
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'DOM', 'webkitdom.h'),
     os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPU.h'),
-    os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPUExt.h'),
     os.path.join('Source', 'WebGPU', 'WebGPU', 'metal-cpp', 'SingleHeader', 'MakeSingleHeader.py')]
 
 # Files to skip that are more common or obvious.

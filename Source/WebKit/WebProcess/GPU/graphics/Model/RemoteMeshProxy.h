@@ -40,6 +40,10 @@
 #include <simd/simd.h>
 #endif
 
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(GPU_PROCESS_MODEL)
+#include <WebCore/PortalTransform.h>
+#endif
+
 namespace WebModel {
 struct ImageAsset;
 struct Float4x4;
@@ -104,12 +108,11 @@ private:
         return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
-    void update(Vector<WebModel::UpdateMeshDescriptor>&&) final;
+    void updateModel(WebCore::NodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&&) final;
     void updateTexture(Vector<WebModel::UpdateTextureDescriptor>&&) final;
     void updateMaterial(Vector<WebModel::UpdateMaterialDescriptor>&&) final;
 #if PLATFORM(COCOA)
     std::pair<simd_float4, simd_float4> mergedCenterAndExtents() const;
-    void updateModel(WebCore::NodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&&) final;
     std::optional<std::pair<simd_float4, simd_float4>> centerAndExtents(WebCore::NodeIdentifier) const final;
     void removeModel(WebCore::NodeIdentifier) final;
     void sizeDidChange(unsigned, unsigned, CompletionHandler<void(Vector<MachSendRight>&&)>&&) final;
@@ -133,7 +136,19 @@ private:
     void computeTransform();
     void setRotation(float yaw, float pitch, float roll) final;
 #endif
+#if ENABLE(SPATIAL_PORTAL) && PLATFORM(COCOA)
+    void setPortalTransform(const WebCore::UsedPortalTransform&) final;
+    void setPortalChildTransform(WebCore::NodeIdentifier, const WebModel::Float4x4&) final;
+    std::optional<WebModel::Float4x4> resolvedPortalTransform() const final;
+#endif
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(GPU_PROCESS_MODEL)
+    std::pair<simd_float4, simd_float4> portalContentCenterAndExtents(const simd_float4x4& transformBeforeAuto) const;
+#endif
     void setEnvironmentMap(WebModel::UpdateTextureDescriptor&&) final;
+#if ENABLE(SPATIAL_PORTAL)
+    void setDefaultEnvironmentMap() final;
+    void removeEnvironmentMap() final;
+#endif
     void updateContentsHeadroom(float) final;
 
     const WebModelIdentifier m_backing;
@@ -149,6 +164,10 @@ private:
     float m_viewportHeight { 0.f };
     WebCore::StageModeOperation m_stageMode { WebCore::StageModeOperation::None };
     bool m_entityTransformSetByScript { false };
+#endif
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(GPU_PROCESS_MODEL)
+    std::optional<WebCore::UsedPortalTransform> m_portalTransform;
+    std::optional<WebModel::Float4x4> m_fittedPortalTransform;
 #endif
 };
 

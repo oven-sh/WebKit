@@ -24,11 +24,15 @@
 #include "config.h"
 #include "Error.h"
 
+#include "AOTCallSiteTable.h"
+#include "AOTCompiledFrame.h"
+#include "AOTStackTrace.h"
 #include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
+#include "MarkedBlockCage.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
 #include "TopExceptionScope.h"
@@ -130,7 +134,8 @@ public:
         : m_startCallFrame(startCallFrame)
     { }
 
-    IterationStatus operator()(StackVisitor& visitor) const
+    template<typename Visitor>
+    IterationStatus operator()(Visitor& visitor) const
     {
         if (!m_foundStartCallFrame && (visitor->callFrame() == m_startCallFrame))
             m_foundStartCallFrame = true;
@@ -143,6 +148,13 @@ public:
 
         if (visitor->isImplementationVisibilityPrivate())
             return IterationStatus::Continue;
+
+#if ENABLE(AOT)
+        if constexpr (Visitor::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame())
+                return IterationStatus::Done;
+        }
+#endif
 
         auto* codeBlock = visitor->codeBlock();
         if (!codeBlock)
@@ -179,9 +191,13 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 
 std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
 {
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && startCallFrame && vm.topCallFrame == startCallFrame && AOT::isTopFrameCompiled(vm)) [[unlikely]]
+        return { nullptr, BytecodeIndex(0) };
+#endif
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
-        auto* callerFrame = startCallFrame->callerFrame(entryFrame);
+        auto* callerFrame = startCallFrame->callerFrameUnlessCompiled(vm, entryFrame);
         if (callerFrame)
             startCallFrame = callerFrame;
     }
@@ -200,6 +216,16 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
     
     for (unsigned i = 0 ; i < stackTrace->size(); ++i) {
         StackFrame& frame = stackTrace->at(i);
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) [[unlikely]] {
+            auto position = frame.representsHostFunction() ? std::nullopt : frame.compiledPosition();
+            if (!position || !position->lineColumn.line)
+                continue;
+            lineColumn = position->lineColumn;
+            sourceURL = AOT::sourceProviderURLOf(position->source);
+            return true;
+        }
+#endif
         if (frame.hasLineAndColumnInfo()) {
             lineColumn = frame.computeLineAndColumn();
             sourceURL = frame.sourceURLStripped(vm);
@@ -236,6 +262,15 @@ bool addErrorInfo(VM& vm, Vector<StackFrame>* stackTrace, JSObject* obj)
 void addErrorInfo(JSGlobalObject* globalObject, JSObject* obj, bool useCurrentFrame)
 {
     VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && useCurrentFrame) [[unlikely]] {
+        Vector<StackFrame> stackTrace;
+        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, stackTrace, 0, *stackTraceLimit)) {
+            addErrorInfo(vm, &stackTrace, obj);
+            return;
+        }
+    }
+#endif
     std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, obj, useCurrentFrame);
     addErrorInfo(vm, stackTrace.get(), obj);
 }
@@ -360,6 +395,17 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
     return throwException(globalObject, scope, createTypeError(globalObject, message));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+String withAOTErrorNote(const String& message)
+{
+    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"_s;
+    size_t endOfFirstLine = message.find('\n');
+    if (endOfFirstLine == notFound)
+        return makeString(message, note);
+    return makeString(StringView(message).left(endOfFirstLine), note, StringView(message).substring(endOfFirstLine));
+}
+#endif
+
 Exception* throwSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     return throwException(globalObject, scope, createSyntaxError(globalObject));
@@ -434,6 +480,8 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
 {
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
+    if (MarkedBlockCage::isRequired())
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 
@@ -443,6 +491,8 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
         return createOutOfMemoryError(globalObject);
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
+    if (MarkedBlockCage::isRequired())
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError(globalObject->vm());
     return error;
 }
 

@@ -66,6 +66,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 + (instancetype)new NS_UNAVAILABLE;
 
 @property (nonatomic, readonly, copy) NSString *title;
+@property (nonatomic, readonly, copy, nullable) NSString *informativeText;
 @property (nonatomic, readonly, copy) NSArray<NSString *> *buttonTitles;
 
 - (void)respondWithButtonIndex:(NSUInteger)index;
@@ -144,6 +145,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 - (_WKPlatformVisualEffectView *)_screenTimeBlurredSnapshot;
 
 - (void)_getRenderTreeAsStringWithCompletionHandler:(NS_SWIFT_UI_ACTOR void (^)(NSString * NS_NULLABLE_RESULT, NSError * _Nullable error))completionHandler WK_API_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4));
+- (void)_getSelectionAsAttributedStringForTesting:(void (^)(NSAttributedString * _Nullable))completionHandler;
 
 @property (nonatomic, setter=_setScrollingUpdatesDisabledForTesting:) BOOL _scrollingUpdatesDisabledForTesting;
 @property (nonatomic, readonly) NSString *_scrollingTreeAsText;
@@ -196,6 +198,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 - (void)_createMediaSessionCoordinatorForTesting:(id <_WKMediaSessionCoordinator>)privateCoordinator completionHandler:(void(^)(BOOL))completionHandler;
 - (void)_gpuToWebProcessConnectionCountForTesting:(void(^)(NSUInteger))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
+- (void)_runDisplayListDataTestsInGPUProcessForTesting:(void(^)(NSArray<NSString *> *failures))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (void)_isLayerTreeFrozenForTesting:(void (^)(BOOL frozen))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 
@@ -208,6 +211,9 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 - (void)_endPrintingForTesting:(void(^)(void))completionHandler;
 // Blocks the main thread until the pages have been drawn, as UIKit printing does. Needs printing to have begun.
 - (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle pageCount:(NSUInteger)pageCount;
+// Waits for the print process with this web view's Lockdown Mode to be ready. Reports 0 if there is no such process.
+- (void)_printProcessIdentifierForTesting:(void(^)(pid_t))completionHandler;
+- (void)_setPrintProcessIdleTimeoutForTesting:(NSTimeInterval)timeout;
 
 - (void)_setConnectedToHardwareConsoleForTesting:(BOOL)connected;
 

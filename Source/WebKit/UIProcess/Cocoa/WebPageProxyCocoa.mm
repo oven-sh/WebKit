@@ -944,7 +944,7 @@ void WebPageProxy::createTextFragmentDirectiveFromSelection(CompletionHandler<vo
     if (!hasRunningProcess())
         return;
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::CreateTextFragmentDirectiveFromSelection(), WTF::move(completionHandler), webPageIDInMainFrameProcess());
+    sendWithAsyncReplyToFocusedOrMainFrameProcess(Messages::WebPage::CreateTextFragmentDirectiveFromSelection(), Messages::WebPage::CreateTextFragmentDirectiveFromSelection::Reply { WTF::move(completionHandler) });
 }
 
 void WebPageProxy::getTextFragmentRanges(CompletionHandler<void(const Vector<EditingRange>&&)>&& completionHandler)
@@ -2435,6 +2435,16 @@ void WebPageProxy::updateVisibleContentRectsLocally(const VisibleContentRectUpda
     internals().lastVisibleContentRectUpdate = visibleContentRectUpdate;
 }
 
+#if PLATFORM(MAC)
+bool WebPageProxy::isRedundantUnstableVisibleContentRectUpdate(const VisibleContentRectUpdateInfo& visibleContentRectUpdate) const
+{
+    const auto& lastUpdate = internals().lastVisibleContentRectUpdate;
+    if (!lastUpdate || !lastUpdate->inStableState() || visibleContentRectUpdate.inStableState())
+        return false;
+    return equalIgnoringViewStability(*lastUpdate, visibleContentRectUpdate);
+}
+#endif
+
 FloatRect WebPageProxy::updateVisibleContentRectsAndAdjustLayers(const VisibleContentRectUpdateInfo& visibleContentRectUpdate, bool sendEvenIfUnchanged)
 {
     updateVisibleContentRects(visibleContentRectUpdate, sendEvenIfUnchanged);
@@ -2522,11 +2532,6 @@ WebCore::FloatRect WebPageProxy::computeLayoutViewportRect(const FloatRect& unob
 
     double minimumScale = pageClient->minimumZoomScale();
     bool isBelowMinimumScale = displayedContentScale < minimumScale && !WebKit::scalesAreEssentiallyEqual(displayedContentScale, minimumScale);
-
-#if PLATFORM(MAC)
-    if (delegatesScalingToUIProcess())
-        isBelowMinimumScale = false;
-#endif
 
     // Below the minimum scale the viewport's off-document edges get pulled back onto the document, so fixed
     // elements stay with the page as it shrinks inside the view.
@@ -2622,10 +2627,10 @@ void WebPageProxy::cancelPotentialTap()
     protect(legacyMainFrameProcess())->send(Messages::WebPage::CancelPotentialTap(), webPageIDInMainFrameProcess());
 }
 
-void WebPageProxy::didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color& color, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling)
+void WebPageProxy::didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color& color, const Vector<WebCore::FloatQuad>& highlightedQuads, WebCore::CornerRadii&& cornerRadii, bool nodeHasBuiltInClickHandling)
 {
     if (RefPtr pageClient = this->pageClient())
-        pageClient->didGetTapHighlightGeometries(requestID, color, highlightedQuads, topLeftRadius, topRightRadius, bottomLeftRadius, bottomRightRadius, nodeHasBuiltInClickHandling);
+        pageClient->didGetTapHighlightGeometries(requestID, color, highlightedQuads, WTF::move(cornerRadii), nodeHasBuiltInClickHandling);
 }
 
 void WebPageProxy::commitPotentialTapFailed()

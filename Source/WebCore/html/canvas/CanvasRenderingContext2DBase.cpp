@@ -414,6 +414,7 @@ CanvasRenderingContext2DBase::State::State()
     , filter { CSS::Keyword::None { } }
     , letterSpacing("0px"_s)
     , wordSpacing("0px"_s)
+    , lang("inherit"_s)
     , unparsedFont(DefaultFont)
 {
 }
@@ -720,7 +721,7 @@ void CanvasRenderingContext2DBase::FontProxy::initialize(FontSelector& fontSelec
     protect(m_font.fontSelector())->registerForInvalidationCallbacks(*this);
 }
 
-void CanvasRenderingContext2DBase::FontProxy::update(NOESCAPE const Invocable<void(FontCascadeDescription&)> auto& function)
+void CanvasRenderingContext2DBase::FontProxy::update(NOESCAPE const ScopedLambda<void(FontCascadeDescription&)>& function)
 {
     ASSERT(realized());
     RefPtr fontSelector = m_font.fontSelector();
@@ -1988,7 +1989,11 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     if (!context)
         return { };
 
-    auto internalFrame = frame.internalFrame();
+    RefPtr scriptContext = protect(canvasBase())->scriptExecutionContext();
+    if (!scriptContext)
+        return { };
+
+    RefPtr internalFrame = frame.internalFrameForRendering(*scriptContext);
     if (!internalFrame)
         return { };
 
@@ -1999,7 +2004,8 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     else
         willUpdateContents(normalizedDstRect);
 
-    ImagePaintingOptions options = {
+    ImageDrawingOptions options = {
+        internalFrame->orientation(),
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
         (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No
 #endif
@@ -2061,7 +2067,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Im
         shouldPostProcess = false;
     }
 
-    ImagePaintingOptions options = {
+    ImageDrawingOptions options = {
         op,
         blendMode,
         orientation,
@@ -2082,7 +2088,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Im
 
     if (rectContainsCanvas(normalizedDstRect)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        image->draw(*c, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
     } else if (isFullCanvasCompositeMode(op)) {
         willUpdateEntireContents(willUpdateContentsOptions);
         auto sizedImage = SizedImage { *image, concreteObjectSize };
@@ -2090,10 +2096,10 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Im
     } else if (op == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
         clearCanvas();
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        image->draw(*c, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
     } else {
         willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : normalizedDstRect, willUpdateContentsOptions);
-        c->drawImage(*image, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
+        image->draw(*c, concreteObjectSize, normalizedDstRect, normalizedSrcRect, options);
     }
 
     return { };
@@ -2145,7 +2151,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(CanvasBase& sourceCanv
         copy = createCompatibleImageBuffer(*c, normalizedSrcRect.size());
         if (!copy)
             return { };
-        copy->context().drawNativeImage(*image, { -normalizedSrcRect.location(), FloatSize { image->size() } }, { { }, FloatSize { image->size() } });
+        copy->context().drawNativeImage(*image, FloatRect { -normalizedSrcRect.location(), FloatSize { image->size() } }, FloatRect { { }, FloatSize { image->size() } });
         image = copy->copyNativeImage();
         if (!image)
             return { };
@@ -2458,22 +2464,22 @@ void CanvasRenderingContext2DBase::compositeBuffer(ImageBuffer& buffer, const In
     c->restore();
 }
 
-static void drawImageToContext(const SizedImage& sizedImage, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImagePaintingOptions options)
+static void drawImageToContext(const SizedImage& sizedImage, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
 {
-    context.drawImage(sizedImage.image, sizedImage.concreteObjectSize, dest, src, options);
+    protect(sizedImage.image)->draw(context, sizedImage.concreteObjectSize, dest, src, options);
 }
 
-static void drawImageToContext(ImageBuffer& imageBuffer, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImagePaintingOptions options)
+static void drawImageToContext(ImageBuffer& imageBuffer, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
 {
     context.drawImageBuffer(imageBuffer, dest, src, options);
 }
 
-static void drawImageToContext(NativeImage& image, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImagePaintingOptions options)
+static void drawImageToContext(NativeImage& image, GraphicsContext& context, const FloatRect& dest, const FloatRect& src, ImageDrawingOptions options)
 {
     context.drawNativeImage(image, dest, src, options);
 }
 
-template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op, ImagePaintingOptions options)
+template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op, ImageDrawingOptions options)
 {
     ASSERT(isFullCanvasCompositeMode(op));
 
@@ -3484,14 +3490,6 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
     }
 }
 
-Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const String& text)
-{
-    String normalizedText = normalizeSpaces(text);
-    auto direction = (state().direction == Direction::Rtl) ? TextDirection::RTL : TextDirection::LTR;
-    TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, false, true);
-    return measureTextInternal(textRun);
-}
-
 static std::pair<float, float> emHeightAscentAndDescent(const FontCascade& font)
 {
     auto& fontMetrics = font.metricsOfPrimaryFont();
@@ -3654,7 +3652,7 @@ std::optional<double> CanvasRenderingContext2DBase::getEffectiveDynamicRangeLimi
     return effectiveDynamicRangeLimit(m_dynamicRangeLimit, displayEDRState(protect(canvasBase())).suppressEDR).value();
 }
 
-ImagePaintingOptions CanvasRenderingContext2DBase::paintingOptionsForDisplay() const
+ImageDrawingOptions CanvasRenderingContext2DBase::drawingOptionsForDisplay() const
 {
     if (!isHDR() || m_dynamicRangeLimit == PlatformDynamicRangeLimit::noLimit())
         return { };
@@ -3809,6 +3807,24 @@ void CanvasRenderingContext2DBase::carryOverKerningAndTextRendering(FontCascadeD
 {
     description.setKerning(toKerning(state().canvasFontKerning()));
     description.setTextRenderingMode(toTextRenderingMode(state().canvasTextRendering()));
+}
+
+AtomString CanvasRenderingContext2DBase::effectiveLanguage() const
+{
+    return state().lang == "inherit"_s ? inheritedLanguage() : AtomString { state().lang };
+}
+
+void CanvasRenderingContext2DBase::setLang(const String& lang)
+{
+    if (state().lang == lang)
+        return;
+    realizeSaves();
+    modifiableState().lang = lang;
+    if (!state().font.realized())
+        return;
+    modifiableState().font.update([language = effectiveLanguage()](FontCascadeDescription& description) {
+        description.setComputedLocale(language);
+    });
 }
 
 void CanvasRenderingContext2DBase::setFontKerning(CanvasFontKerning fontKerning)

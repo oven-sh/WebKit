@@ -1,0 +1,25 @@
+# With the pass switched off a Map that a counted loop fills grows as any other
+# FORM: Prepared
+# OPTIONS: disable=pass:PlanCollectionCapacities
+# RUN: pass PlanCollectionCapacities
+# STATISTIC: CollectionGrowthsPlanned = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="setInMap" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v0, v2, v3 overload=MapPrototypeSet/0
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+}
+# CHECK-NOT: IsCollectionTableFull
+# CHECK-NOT: ReserveCollectionCapacity

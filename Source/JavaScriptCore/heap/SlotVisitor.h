@@ -26,6 +26,7 @@
 #pragma once
 
 #include "AbstractSlotVisitor.h"
+#include "CellVisitKind.h"
 #include "HandleTypes.h"
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
@@ -34,7 +35,9 @@
 
 namespace JSC {
 
+class CellVisitValidator;
 class Collector;
+class FastMarkAppender;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -47,6 +50,15 @@ typedef uint32_t HeapVersion;
 // cell it visits. 128 satisfies 64-byte lines too.
 static constexpr size_t slotVisitorAlignment = 128;
 
+class SlotVisitor;
+
+struct DeferredRootRegion {
+    void (*visit)(SlotVisitor&, void* owner, size_t beginOffset, size_t endOffset);
+    void* owner;
+    size_t beginOffset;
+    size_t endOffset;
+};
+
 class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(SlotVisitor);
     WTF_MAKE_TZONE_ALLOCATED(SlotVisitor);
@@ -55,6 +67,8 @@ class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisit
 
     friend class SetCurrentCellScope;
     friend class Heap;
+    friend class CellVisitValidator;
+    friend class FastMarkAppender;
 
 public:
     class ReferrerContext {
@@ -130,7 +144,7 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void LEGACY_NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, bool isAnalyzingHeap);
+    void LEGACY_NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, bool isAnalyzingHeap, bool validatesCellVisits);
     void LEGACY_NODELETE reset();
     void clearMarkStacks();
 
@@ -186,6 +200,9 @@ public:
     
     void donateAll();
 
+    bool defersRootRegions() const;
+    void deferRootRegion(const DeferredRootRegion&);
+
     NO_RETURN_DUE_TO_CRASH void addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>>) final;
     JS_EXPORT_PRIVATE void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final;
 
@@ -210,9 +227,15 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+    template<bool mutatorsAreStopped> void visitChildren(FastMarkAppender&, const JSCell*);
+    void visitChildrenOutOfLoop(const JSCell*, CellVisitKind);
+    void visitChildrenThroughMethodTable(const JSCell*);
+
+    template<bool drainsCollectorStack, bool mutatorsAreStopped, typename Budget> void drainStackWithAppender(MarkStackArray&, unsigned countdown, Budget&);
+    template<typename Budget> void drainStack(MarkStackArray&, unsigned countdown, Budget&);
 
     void propagateExternalMemoryVisitedIfNecessary();
-    ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);
+    void noteBytesMarked(JSC::Heap&, size_t);
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
@@ -246,10 +269,21 @@ private:
     bool m_mutatorsAreStopped { false };
     bool m_isInParallelMode { false };
 
+    bool m_validatesCellVisits { false };
+
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };
 #endif
 };
+
+ALWAYS_INLINE void SlotVisitor::noteBytesMarked(JSC::Heap& heap, size_t bytes)
+{
+    if (&heap != m_bytesMarkedHeap) [[unlikely]] {
+        flushBytesMarked();
+        m_bytesMarkedHeap = &heap;
+    }
+    m_bytesMarkedInHeap += bytes;
+}
 
 class ParallelModeEnabler {
 public:

@@ -247,6 +247,7 @@ set(LLINT_ASM
     llint/InPlaceInterpreter64.asm
     llint/LowLevelInterpreter.asm
     llint/LowLevelInterpreter64.asm
+    llint/LowLevelInterpreterAOT.asm
 )
 
 set(OFFLINE_ASM
@@ -401,6 +402,10 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/builtins/WrapForValidIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
 )
+
+if (DEFINED ENABLE_SHADOW_REALM AND NOT ENABLE_SHADOW_REALM)
+    list(REMOVE_ITEM JavaScriptCore_BUILTINS_SOURCES ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js)
+endif ()
 
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
@@ -617,8 +622,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/AllowMacroScratchRegisterUsage.h
     assembler/AssemblerBuffer.h
     assembler/AssemblerCommon.h
+    assembler/AssemblerPolicy.h
     assembler/AssemblyComments.h
     assembler/CPU.h
+    assembler/CPUFeatureSet.h
     assembler/CPUInlines.h
     assembler/CodeLocation.h
     assembler/DisallowMacroScratchRegisterUsage.h
@@ -638,10 +645,12 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/RISCV64Assembler.h
     assembler/RISCV64Registers.h
     assembler/RegisterInfo.h
+    assembler/RelocationKind.h
     assembler/SecureARM64EHashPins.h
     assembler/SecureARM64EHashPinsInlines.h
     assembler/TargetAssemblerDefinitions.h
     assembler/X86Assembler.h
+    assembler/X86JumpShortening.h
     assembler/X86_64Registers.h
 
     b3/air/AirDisassembler.h
@@ -840,10 +849,12 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/BlockDirectoryBits.h
     heap/BlockDirectoryInlines.h
     heap/BunV8HeapSnapshotBuilder.h
+    heap/CagedAlignedMemoryAllocator.h
     heap/CellAttributes.h
     heap/CellContainer.h
     heap/CellContainerInlines.h
     heap/CellState.h
+    heap/CellVisitKind.h
     heap/CodeBlockSet.h
     heap/CodeBlockSetInlines.h
     heap/CollectingScope.h
@@ -916,6 +927,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/MarkStack.h
     heap/MarkStackMergingConstraint.h
     heap/MarkedBlock.h
+    heap/MarkedBlockCage.h
     heap/MarkedBlockInlines.h
     heap/MarkedBlockSet.h
     heap/MarkedSpace.h
@@ -942,6 +954,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/SpaceTimeMutatorScheduler.h
     heap/StochasticSpaceTimeMutatorScheduler.h
     heap/StopIfNecessaryTimer.h
+    heap/StoredCellLog.h
     heap/Strong.h
     heap/StrongBlock.h
     heap/StrongForward.h
@@ -1218,6 +1231,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/CagedBarrierPtr.h
     runtime/CallData.h
     runtime/CellSize.h
+    runtime/DateTimeWriter.h
+    runtime/ImmutablePropertyNames.h
+    runtime/JSObjectVisitInlines.h
+    runtime/JSStringVisitInlines.h
+    runtime/PropertyRun.h
     runtime/TerminationDeadline.h
     runtime/TopExceptionScope.h
     runtime/ClassInfo.h
@@ -1340,6 +1358,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/GlobalExecutable.h
     runtime/GlobalObjectMethodTable.h
     runtime/HasOwnPropertyCache.h
+    runtime/HasOwnPropertyCacheInlines.h
     runtime/HashMapHelper.h
     runtime/ISO8601.h
     runtime/Identifier.h
@@ -1645,6 +1664,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/OperationsInlines.h
     runtime/Options.h
     runtime/OptionsList.h
+    runtime/OwedOutOfMemoryError.h
     runtime/PageCount.h
     runtime/ParseInt.h
     runtime/PinballCompletion.h
@@ -1669,8 +1689,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ProxyConstructorInlines.h
     runtime/ProxyObject.h
     runtime/ProxyObjectInlines.h
-    runtime/ProxyRevoke.h
-    runtime/ProxyRevokeInlines.h
     runtime/PureNaN.h
     runtime/PutDirectIndexMode.h
     runtime/PutPropertySlot.h
@@ -1896,6 +1914,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/WasmCalleeGroup.h
     wasm/WasmCallingConvention.h
     wasm/WasmCapabilities.h
+    wasm/WasmCodeInImage.h
     wasm/WasmCompilationContext.h
     wasm/WasmCompilationMode.h
     wasm/WasmConstExprGenerator.h
@@ -2012,13 +2031,18 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     yarr/RegularExpression.h
     yarr/Yarr.h
+    yarr/YarrCharacterSetBits.h
     yarr/YarrErrorCode.h
+    yarr/YarrFirstFollowSets.h
     yarr/YarrFlags.h
+    yarr/YarrFlatProgram.h
     yarr/YarrInterpreter.h
     yarr/YarrJIT.h
     yarr/YarrMatchingContextHolder.h
     yarr/YarrParser.h
     yarr/YarrPattern.h
+    yarr/YarrRequiredText.h
+    yarr/YarrSyntaxChecker.h
     yarr/YarrUnicodeProperties.h
 
     bytecode/Opcode.h
@@ -2068,6 +2092,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     ffi/BunFFI.h
     ffi/FFICallHost.h
+    ffi/FFICallbackEntryPool.h
     ffi/FFICallbackThunk.h
     ffi/FFICallingConvention.h
     ffi/FFIContext.h
@@ -2076,6 +2101,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ffi/FFIICStub.h
     ffi/FFIInvokeThunk.h
     ffi/FFISignature.h
+    ffi/FFIStubEmitters.h
+    ffi/FFIStubs.h
     ffi/FFIType.h
     ffi/JSFFICallback.h
     ffi/JSFFIFunction.h
@@ -2089,6 +2116,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/ProgramCodeBlock.h
     parser/ModuleAnalyzer.h
 )
+include(aot/AOT.cmake)
 
 if(USE_INSPECTOR_SOCKET_SERVER)
     list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS

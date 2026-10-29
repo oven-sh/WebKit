@@ -75,7 +75,7 @@ public:
 
     CodePtr<JSEntryPtrTag> jsCallICEntrypoint()
     {
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         if (m_taintedness.isTainted())
             return nullptr;
 
@@ -105,7 +105,7 @@ private:
     uint32_t m_frameSize { 0 };
     SourceTaintedness m_taintedness;
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     CodePtr<JSEntryPtrTag> m_jsToWasmICJITCode;
 #endif
 };

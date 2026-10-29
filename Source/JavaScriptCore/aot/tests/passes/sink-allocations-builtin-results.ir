@@ -1,0 +1,436 @@
+# The array a built-in returns is never built when only its length, its first elements and the properties its entry lists are read: the call delivers them as results, and "no match" is a bit of a tag.
+# The pieces of a split and the groups of an exec are delivered as bounds in the string, and a string is made of them only where one is needed
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 16
+# STATISTIC: AllocationsSunk = 0
+# LOSS: MaxVirtualArrayLength x1 f17 v2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="splitReadAtConstantIndexes" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    v6 = ElemGet v3, v4
+    v7 = ElemGet v3, v5
+    v8 = PropGet v3 key="length"
+    v9 = Call v2, -, v6, v7, v8
+    Return v9
+# CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+# CHECK-NEXT: [[length0]]:{{*}}= ResultAt v3
+# CHECK-NEXT: [[firstStart0]]: int[-1, 2147483647] = ResultAt v3 index=1
+# CHECK-NEXT: [[firstEnd0]]: int[-1, 2147483647] = ResultAt v3 index=2
+# CHECK-NEXT: [[first0]]: undefined|string = SubstringOrUndefined v0, [[firstStart0]], [[firstEnd0]]
+# CHECK-NEXT: [[secondStart0]]: int[-1, 2147483647] = ResultAt v3 index=3
+# CHECK-NEXT: [[secondEnd0]]: int[-1, 2147483647] = ResultAt v3 index=4
+# CHECK-NEXT: [[second0]]: undefined|string = SubstringOrUndefined v0, [[secondStart0]], [[secondEnd0]]
+# CHECK-NOT: LShift
+# CHECK-NOT: ElemGet
+# CHECK-NOT: PropGet
+# CHECK: v6:{{*}}= Upcast [[first0]]
+# CHECK-NEXT: v7:{{*}}= Upcast [[second0]]
+# CHECK-NEXT: v8:{{*}}= Upcast [[length0]]
+}
+
+function f1 name="splitLengthOnly" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = PropGet v2 key="length"
+    Return v3
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=0
+# CHECK-NEXT: [[length1]]:{{*}}= ResultAt v2
+# CHECK-NEXT: v3:{{*}}= Upcast [[length1]]
+}
+
+function f2 name="execTested" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Integer integer=1
+    v6 = ElemGet v4, v5
+    Return v6
+  b2():
+    Return v1
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
+# CHECK-NEXT: [[flag2]]: boolean = ResultAt v2
+# CHECK: [[shift2]]: int[0, 1] = ToNumber [[flag2]]
+# CHECK-NEXT: [[tag2]]: i32 = LShift {{*}}, [[shift2]]
+# CHECK: [[start2]]:{{*}}= ResultAt v2 index=6
+# CHECK-NEXT: [[end2]]:{{*}}= ResultAt v2 index=7
+# CHECK-NEXT: [[group2]]: undefined|string = SubstringOrUndefined v1, [[start2]], [[end2]]
+# CHECK: [[present2]]: 2 = Integer integer=2
+# CHECK-NEXT: [[masked2]]:{{*}}= BitAnd [[tag2]], [[present2]]
+# CHECK-NEXT: [[isPresent2]]: boolean = ToBoolean [[masked2]]
+# CHECK-NEXT: v3: boolean = Upcast [[isPresent2]]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NOT: ElemGet
+# CHECK-NOT: Rare
+# CHECK: v6:{{*}}= Upcast [[group2]]
+}
+
+function f3 name="matchComparedWithNull" parameters=[{type=string}, {type=RegExp<pristine[Names]>}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeMatch/0
+    v3 = Null
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v0
+  b2(v5):
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    Return v7
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeMatch/0 builtinCallForm=Prefix prefixLength=1
+# CHECK: [[tag3]]: i32 = LShift
+# CHECK: [[whole3]]: undefined|string = ResultAt v2 index=2
+# CHECK-NOT: StrictEq
+# CHECK: [[masked3]]:{{*}}= BitAnd [[tag3]], [[absent3]]
+# CHECK-NEXT: [[isAbsent3]]: boolean = ToBoolean [[masked3]]
+# CHECK-NEXT: v4: boolean = Upcast [[isAbsent3]]
+# CHECK-NOT: ElemGet
+# CHECK: v7:{{*}}= Upcast [[whole3]]
+}
+
+function f4 name="execTestedForNullish" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = TypeTest v2 testedType=undefined|null
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v1
+  b2(v4):
+    v5 = Integer integer=1
+    v6 = ElemGet v4, v5
+    Return v6
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK: [[start4]]:{{*}}= ResultAt v2 index=6
+# CHECK-NEXT: [[end4]]:{{*}}= ResultAt v2 index=7
+# CHECK-NEXT: [[group4]]: undefined|string = SubstringOrUndefined v1, [[start4]], [[end4]]
+# CHECK-NOT: TypeTest
+# CHECK: = BitAnd
+# CHECK-NOT: TypeTest
+# CHECK-NOT: ElemGet
+# CHECK: v6:{{*}}= Upcast [[group4]]
+}
+
+function f5 name="coercibleCheckWithoutTest" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = RequireObjectCoercible v2
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4
+    Return v5
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK: [[tag5]]: i32 = LShift
+# CHECK: [[start5]]:{{*}}= ResultAt v2 index=6
+# CHECK-NEXT: [[end5]]:{{*}}= ResultAt v2 index=7
+# CHECK-NEXT: [[group5]]: undefined|string = SubstringOrUndefined v1, [[start5]], [[end5]]
+# CHECK: [[masked5]]:{{*}}= BitAnd [[tag5]],
+# CHECK-NEXT: [[isAbsent5]]: boolean = ToBoolean [[masked5]]
+# CHECK-NEXT: Branch [[isAbsent5]] -> taken [[failing5]](), notTaken [[passing5]]()
+# CHECK-NEXT: [[failing5]]() frequency=Rare:
+# CHECK-NEXT: [[null5]]: null = Null
+# CHECK-NEXT: = RequireObjectCoercible [[null5]]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: [[passing5]]():
+# CHECK-NOT: ElemGet
+# CHECK: v5:{{*}}= Upcast [[group5]]
+}
+
+function f6 name="checkFailsForNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = Check v2 expectedType=Array<anything>
+    v4 = Integer integer=1
+    v5 = ElemGet v3, v4
+    Return v5
+# A check that fails throws nothing: generic code goes on with the value, whichever it is, so the check takes what the call returns.
+# CHECK-NOT: builtinCallForm=
+# CHECK: v3:{{*}}= Check v2 expectedType=Array
+# CHECK: v5:{{*}}= ElemGet v3, v4
+}
+
+function f7 name="checkAcceptsNull" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = Check v2 expectedType=null|Array<anything>
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = Integer integer=1
+    v7 = ElemGet v5, v6
+    Return v7
+  b2():
+    Return v1
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: Check
+# CHECK-NOT: Rare
+# CHECK: [[start7]]:{{*}}= ResultAt v2 index=6
+# CHECK-NEXT: [[end7]]:{{*}}= ResultAt v2 index=7
+# CHECK-NEXT: [[group7]]: undefined|string = SubstringOrUndefined v1, [[start7]], [[end7]]
+# CHECK-NOT: Check
+# CHECK-NOT: Rare
+# CHECK: v7:{{*}}= Upcast [[group7]]
+}
+
+function f8 name="checkFailsForTheArray" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = Check v2 expectedType=null
+    Return v3
+# CHECK-NOT: builtinCallForm=
+# CHECK: v3: null = Check v2 expectedType=null
+}
+
+function f9 name="splitDestructured" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = DestructureIterable v2 count=2
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = StrictEq v4, v5
+    Return v6
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK: [[first9]]: undefined|string = SubstringOrUndefined v0,
+# CHECK: [[second9]]: undefined|string = SubstringOrUndefined v0,
+# CHECK-NOT: DestructureIterable
+# CHECK: v4:{{*}}= Upcast [[first9]]
+# CHECK-NEXT: v5:{{*}}= Upcast [[second9]]
+}
+
+function f10 name="underHandler" parameters=[{type=RegExp}, {type=string}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v4 = RequireObjectCoercible v3
+    v5 = Call v2
+    v6 = Integer integer=1
+    v7 = ElemGet v4, v6
+    Jump -> next b2(v7)
+  b2(v8):
+    Return v8
+  b3() role=CatchHandler:
+    v9 = CatchValue
+    Return v9
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: v3:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
+# CHECK: [[start10]]:{{*}}= ResultAt v3 index=6
+# CHECK-NEXT: [[end10]]:{{*}}= ResultAt v3 index=7
+# CHECK-NEXT: [[group10]]: undefined|string = SubstringOrUndefined v1, [[start10]], [[end10]]
+# CHECK: Branch {{*}} -> taken [[failing10]](), notTaken
+# CHECK: [[failing10]]() frequency=Rare handler=b3():
+# CHECK-NEXT: [[null10]]: null = Null
+# CHECK-NEXT: = RequireObjectCoercible [[null10]]
+# CHECK-NEXT: Unreachable
+# CHECK: handler=b3():
+# CHECK-NEXT: v5: anything = Call v2
+# CHECK-NOT: ElemGet
+# CHECK: v7:{{*}}= Upcast [[group10]]
+}
+
+function f11 name="matchReturned" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    Return v2
+# CHECK-NOT: builtinCallForm=
+# CHECK: Return v2
+}
+
+function f12 name="matchReturnedOnOnePath" parameters=[{type=RegExp}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    v4 = ToBoolean v3
+    Return v4
+# CHECK-NOT: builtinCallForm=
+# CHECK: Return v3
+# CHECK: v4: boolean = ToBoolean v3
+}
+
+function f13 name="unknownIndex" parameters=[{type=string}, {type=string}, {type=i32}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = ElemGet v3, v2
+    v7 = StrictEq v5, v6
+    Return v7
+# CHECK-NOT: builtinCallForm=
+# CHECK: v5:{{*}}= ElemGet v3, v4
+# CHECK-NEXT: v6:{{*}}= ElemGet v3, v2
+}
+
+function f14 name="namedPropertyOfMatch" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v4 key="index"
+    Return v5
+  b2():
+    Return v1
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0
+# CHECK: [[index14]]: int[0, 2147483647] = ResultAt v2 index=2
+# CHECK-NOT: SubstringOrUndefined
+# CHECK-NOT: PropGet
+# CHECK: v5:{{*}}= Upcast [[index14]]
+}
+
+function f15 name="resultWithoutPrefixForm" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v2 = Integer integer=0
+    v3 = ElemGet v1, v2
+    Return v3
+# CHECK-NOT: builtinCallForm=
+# CHECK: v3:{{*}}= ElemGet v1, v2
+}
+
+function f16 name="lastElementOfLongestPrefix" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = Integer integer=15
+    v4 = ElemGet v2, v3
+    Return v4
+# CHECK: builtinCallForm=Prefix prefixLength=16
+# CHECK-NOT: ElemGet
+# CHECK: [[lastStart16]]:{{*}}= ResultAt v2 index=31
+# CHECK-NEXT: [[lastEnd16]]:{{*}}= ResultAt v2 index=32
+# CHECK-NEXT: [[last16]]: undefined|string = SubstringOrUndefined v0, [[lastStart16]], [[lastEnd16]]
+# CHECK-NOT: ElemGet
+# CHECK: v4:{{*}}= Upcast [[last16]]
+}
+
+function f17 name="elementPastLongestPrefix" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = Integer integer=16
+    v4 = ElemGet v2, v3
+    Return v4
+# CHECK-NOT: builtinCallForm=
+# CHECK: v4:{{*}}= ElemGet v2, v3
+}
+
+function f18 name="execInLoop" parameters=[{type=RegExp}, {type=string}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v5 = Null
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b3(), notTaken b2(| 0)
+  b2(v7):
+    v8 = Integer integer=1
+    v9 = ElemGet v7, v8
+    v10 = Call v2, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: LoopHint
+# CHECK-NEXT: v4:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
+# CHECK: [[start18]]:{{*}}= ResultAt v4 index=6
+# CHECK-NEXT: [[end18]]:{{*}}= ResultAt v4 index=7
+# CHECK-NEXT: [[group18]]: undefined|string = SubstringOrUndefined v1, [[start18]], [[end18]]
+# CHECK-NOT: StrictEq
+# CHECK: Branch v6 -> taken b3(), notTaken b2([[group18]],
+# CHECK-NEXT: b2([[carried18]]: undefined|string,
+# CHECK-NOT: ElemGet
+# CHECK: v9:{{*}}= Upcast [[carried18]]
+# CHECK-NEXT: = Call v2, -, v9
+}
+
+function f19 name="execOrNull" parameters=[{type=RegExp}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    Jump -> next b3(v3)
+  b2():
+    v4 = Null
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = ToBoolean v5
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = Integer integer=1
+    v9 = ElemGet v7, v8
+    Return v9
+  b5():
+    Return v1
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK: [[tag19]]: i32 = LShift
+# CHECK: [[start19]]:{{*}}= ResultAt v3 index=6
+# CHECK-NEXT: [[end19]]:{{*}}= ResultAt v3 index=7
+# CHECK-NEXT: [[group19]]: undefined|string = SubstringOrUndefined v1, [[start19]], [[end19]]
+# CHECK-NEXT: Jump -> next b3([[tag19]], [[group19]],
+# CHECK: [[absent19]]: 1 = Integer integer=1
+# CHECK: Jump -> next b3([[absent19]],
+# CHECK-NEXT: b3([[merged19]]: i32, [[carried19]]: undefined|string|unspecified,
+# CHECK: = BitAnd [[merged19]],
+# CHECK-NOT: ElemGet
+# CHECK: v9:{{*}}= Upcast [[carried19]]
+}
+
+function f20 name="inputAndWholeMatch" parameters=[{type=RegExp}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v4 = RequireObjectCoercible v3
+    v5 = PropGet v4 key="input"
+    v6 = PropGet v4 key="index"
+    v7 = Integer integer=0
+    v8 = ElemGet v4, v7
+    v9 = Call v2, -, v5, v6, v8
+    Return v9
+# CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=1
+# CHECK: [[index20]]: int[0, 2147483647] = ResultAt v3 index=2
+# CHECK-NEXT: [[input20]]: string = ResultAt v3 index=3
+# CHECK-NEXT: [[start20]]:{{*}}= ResultAt v3 index=4
+# CHECK-NEXT: [[end20]]:{{*}}= ResultAt v3 index=5
+# CHECK-NEXT: [[whole20]]: undefined|string = SubstringOrUndefined v1, [[start20]], [[end20]]
+# CHECK-NOT: PropGet
+# CHECK-NOT: ElemGet
+# CHECK: v5:{{*}}= Upcast [[input20]]
+# CHECK-NEXT: v6:{{*}}= Upcast [[index20]]
+# CHECK: v8:{{*}}= Upcast [[whole20]]
+}
+
+function f21 name="propertyTheEntryDoesNotList" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = RequireObjectCoercible v2
+    v4 = PropGet v3 key="groups"
+    Return v4
+# CHECK-NOT: builtinCallForm=
+# CHECK: = PropGet v3 key="groups"
+}
+
+function f22 name="indexOfAnArrayWithoutOne" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = PropGet v2 key="index"
+    Return v3
+# CHECK-NOT: builtinCallForm=
+# CHECK: = PropGet v2 key="index"
+}
+
+function f23 name="listedPropertyIsStored" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = RequireObjectCoercible v2
+    v4 = Integer integer=7
+    PropSet v3, v4 key="index"
+    v6 = PropGet v3 key="index"
+    Return v6
+# CHECK-NOT: builtinCallForm=
+# CHECK: PropSet v3, v4 key="index"
+# CHECK-NEXT: = PropGet v3 key="index"
+}
+
+function f24 name="indexOfAMatchThatMayBeGlobal" parameters=[{type=string}, {type=RegExp<pristine[Names]>}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeMatch/0
+    v3 = RequireObjectCoercible v2
+    v4 = PropGet v3 key="index"
+    Return v4
+# CHECK-NOT: builtinCallForm=
+# CHECK: = PropGet v3 key="index"
+}
+
+function f25 name="splitThatNobodyReads" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    Return v0
+# CHECK-NOT: CallBuiltin
+# CHECK: Return v0
+}
+
+function f26 name="execThatNobodyReads" parameters=[{type=RegExp}, {type=string}] results=[{type=string}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    Return v1
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0
+}

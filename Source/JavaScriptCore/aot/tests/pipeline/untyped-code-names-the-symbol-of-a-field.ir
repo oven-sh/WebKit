@@ -1,0 +1,85 @@
+# const kMass = Symbol("mass"), kLabel = Symbol("label")  interface Body { plain: number; [kLabel]: number; [kMass]: number }
+# function make(n): Body { const b = { plain: 1 }; define b[kMass] = n; define b[kLabel] = n + 1; return b }
+# function readAny(o) { return o[kMass] }  function writeAny(o, v) { o[kMass] = v }  function has(o) { return kMass in o }  function remove(o) { return delete o[kMass] }
+# Code that knows the symbol and nothing of the object reads, stores, tests and deletes the field in its slot. The definitions of a literal give the order of the keys
+# FORM: AsRead
+# RUN(IR): pipeline ChooseCallingConventions
+# RUN: run-in-shell globalThis.register = (make, readAny, writeAny, has, remove, k) => { const b = make(7); const keys = o => Reflect.ownKeys(o).map(String).join(); print(readAny(b), has(b), keys(b)); writeAny(b, 9); print(readAny(b), b[k]); print(remove(b), has(b), readAny(b), keys(b)); writeAny(b, 10); print(readAny(b), has(b), keys(b)); print(remove(b), remove(b), keys(b)); const plain = {}; print(readAny(plain), has(plain), remove(plain)); writeAny(plain, 1); print(readAny(plain), has(plain)); const heir = Object.create(make(3)); print(readAny(heir), has(heir), remove(heir), readAny(heir)); writeAny(heir, 4); print(readAny(heir), readAny(Object.getPrototypeOf(heir)), keys(heir)); const frozen = Object.freeze(make(5)); try { writeAny(frozen, 6); print("stored"); } catch (e) { print(e.constructor.name); } try { print(remove(frozen)); } catch (e) { print(e.constructor.name); } print(readAny(frozen)); try { readAny(undefined); } catch (e) { print(e.constructor.name); } print(readAny(5), readAny("text")); };
+# IR: key=symbol("mass")@m0:100
+# CHECK: 7 true plain,Symbol(mass),Symbol(label)
+# CHECK-NEXT: 9 9
+# CHECK-NEXT: true false undefined plain,Symbol(label)
+# CHECK-NEXT: 10 true plain,Symbol(label),Symbol(mass)
+# CHECK-NEXT: true true plain,Symbol(label)
+# CHECK-NEXT: undefined false true
+# CHECK-NEXT: 1 true
+# CHECK-NEXT: 3 true true 3
+# CHECK-NEXT: 4 3 Symbol(mass)
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 5
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: undefined undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=200 kind=Parameter
+layout L0 name="Body" fields=[{key="plain" declared={type=number} flags=[IsRequired]}, {key=symbol("label")@m0:120 declared={type=number} flags=[IsRequired]}, {key=symbol("mass")@m0:100 declared={type=number} flags=[IsRequired]}]
+variable g0 name="kMass" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="kLabel" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = String string="mass"
+    v2 = Call v0, -, v1 callNumber=100 @100
+    PutModuleVariable v2 variable=g0
+    v4 = String string="label"
+    v5 = Call v0, -, v4 callNumber=120 @120
+    PutModuleVariable v5 variable=g1
+    v7 = NewClosure function=f1
+    v8 = NewClosure function=f2
+    v9 = NewClosure function=f3
+    v10 = NewClosure function=f4
+    v11 = NewClosure function=f5
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="register" [isFreeName]
+    v14 = Call v13, -, v7, v8, v9, v10, v11, v2
+    Return
+}
+function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="kMass"
+    ElemDefine v2, v4, v0
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="kLabel"
+    v8 = Add v0, v1
+    ElemDefine v2, v7, v8
+    v10 = FinishObject v2
+    Return v10
+}
+function f2 name="readAny" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kMass"
+    v3 = ElemGet v0, v2
+    Return v3
+}
+function f3 name="writeAny" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="kMass"
+    ElemSet v0, v3, v1 mode=Strict
+    Return
+}
+function f4 name="has" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kMass"
+    v3 = ElemHas v0, v2
+    Return v3
+}
+function f5 name="remove" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="kMass"
+    v3 = ElemDelete v0, v2 mode=Strict
+    Return v3
+}

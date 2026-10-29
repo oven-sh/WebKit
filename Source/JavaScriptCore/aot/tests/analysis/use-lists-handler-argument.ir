@@ -1,0 +1,58 @@
+# A handler argument and a block subject are uses at the head of their block, in front of the operands of its first value
+# FORM: Prepared
+# RUN: analyses use-lists
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4) role=DisposalCleanup subject=v2 handler=b4(v2, v1):
+    v5 = CatchValue
+    v6 = Call v0, -, v2, v4
+    Throw v5
+  b4(v7, v8) role=CatchHandler:
+    v9 = CatchValue
+    Throw v7
+}
+# CHECK: function f0
+# CHECK-NEXT: use-lists:
+# CHECK-NEXT: v0 location: b0 parameter 0
+# CHECK-NEXT: v0 uses: [v3(0) v6(0)]
+# CHECK-NEXT: v0 use points: [b1:0 b3:1]
+# CHECK-NEXT: v1 location: b0 parameter 1
+# CHECK-NEXT: v1 uses: [v2(0) v2(1) b3.handler(1)]
+# CHECK-NEXT: v1 use points: [b0:0 b0:0 b3:0]
+# CHECK-NEXT: v2 location: b0 value 0
+# CHECK-NEXT: v2 uses: [b1.handler(0) v3(2) b3.subject b3.handler(0) v6(2)]
+# CHECK-NEXT: v2 use points: [b1:0 b1:0 b3:0 b3:0 b3:1]
+# CHECK-NEXT: v3 location: b1 value 0
+# CHECK-NEXT: v3 uses: [b2.terminator(0)]
+# CHECK-NEXT: v3 use points: [b2:0]
+# CHECK-NEXT: v4 location: b3 parameter 0
+# CHECK-NEXT: v4 uses: [v6(3)]
+# CHECK-NEXT: v4 use points: [b3:1]
+# CHECK: v7 location: b4 parameter 0
+# CHECK-NEXT: v7 uses: [b4.terminator(0)]
+# CHECK-NEXT: v7 use points: [b4:1]
+# CHECK-NEXT: v8 location: b4 parameter 1
+# CHECK-NEXT: v8 uses: []
+# CHECK-NEXT: v8 use points: []
+
+function f1 name="uncovered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1():
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+# CHECK: function f1
+# CHECK: v2 location: b0 value 0
+# CHECK-NEXT: v2 uses: [v3(2)]
+# CHECK-NEXT: v2 use points: [b1:0]

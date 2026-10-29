@@ -1,0 +1,25 @@
+# words = { a: 1 }; entries = Object.entries(words); entries[0][1] = true; return new Map(entries).get("a")
+# A pair that somebody has stored into holds more than it was made with, and nobody knows at which index: all that the entries lead to may be a value of the Map, the pair too, as the records say.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|true|int|string|Array<{{*}}true|int|string, proven, pristine[Storage, Names]>}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectEntries
+    v4 = Call v3, v2, v1
+    v5 = Integer integer=0
+    v6 = ElemGet v4, v5
+    v7 = Boolean boolean=true
+    ElemSet v6, v0, v7
+    v9 = Builtin builtin=Map
+    v10 = Construct v9, -, v4
+    v11 = Builtin builtin=MapPrototypeGet
+    v12 = String string="a"
+    v13 = Call v11, v10, v12
+    Return v13
+}

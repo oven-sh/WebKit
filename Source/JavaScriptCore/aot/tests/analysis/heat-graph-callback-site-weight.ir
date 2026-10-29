@@ -1,0 +1,51 @@
+# The calls of a per-element callback count with the weight of the block that hands the callback over: two nested loops, a rare block, straight-line code
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=64 function=f1
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Boolean boolean=true
+    v1 = CallDirect v0 function=f5
+    Return v1
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1 callees=[f2, f3, f4]
+    Return v2
+}
+function f2 name="inNestedLoops" results=[{type=undefined}] {
+    Return
+}
+function f3 name="inRareBlock" results=[{type=undefined}] {
+    Return
+}
+function f4 name="outsideLoops" results=[{type=undefined}] {
+    Return
+}
+function f5 name="caller" role=OutlinedBody parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = NewClosure function=f2
+    v5 = CallBuiltin v1, v4 overload=ArrayPrototypeMap/0
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Branch v0 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v6 = NewClosure function=f3
+    v7 = CallBuiltin v1, v6 overload=ArrayPrototypeMap/0
+    Jump -> next b6()
+  b6():
+    v8 = NewClosure function=f4
+    v9 = CallBuiltin v1, v8 overload=ArrayPrototypeMap/0
+    Return v9
+}
+# CHECK: f5 size 16 mass {{*}}: f1*101.000977 f2*700.000000 f3*0.006836 f4*7.000000

@@ -1,0 +1,42 @@
+# A call that neither throws nor completes keeps its handler here: RemoveRedundantHandlers takes it, and the catch block goes with it
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# RUN(BOTH): pass RemoveRedundantHandlers SimplifyControlFlow
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calleeCannotThrow" results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = CallDirect function=f2
+    Unreachable
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+# CHECK: b0() handler=b1():
+# CHECK: = CatchValue
+# BOTH: b0():
+# BOTH-NEXT: = CallDirect
+# BOTH-NEXT: Unreachable
+# BOTH-NOT: CatchValue
+}
+
+function f1 name="calleeThrows" results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = CallDirect function=f3
+    Unreachable
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+# BOTH: b0() handler=b1():
+# BOTH-NEXT: = CallDirect
+# BOTH-NEXT: Unreachable
+# BOTH: = CatchValue
+}
+
+function f2 name="neverReached" results=[{type=never}] {
+    Unreachable
+}
+function f3 name="alwaysThrows" results=[{type=never}] {
+    v0 = Undefined
+    Throw v0
+}

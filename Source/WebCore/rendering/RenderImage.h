@@ -101,15 +101,21 @@ public:
     WEBCORE_EXPORT std::optional<FloatSize> usedImageSize() const final;
 
     // FIXME: Condense these into fewer concrete categories of sizing algorithms once we know all the different sizing rules needed.
-    ConcreteObjectSize concreteObjectSizeForPasteboard() const;
+    ConcreteObjectSize concreteObjectSizeForPainting() const;
+    ConcreteObjectSize concreteObjectSizeForInteractionRegion() const;
+    WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForPasteboard() const;
     ConcreteObjectSize concreteObjectSizeForAccessibility() const;
     ConcreteObjectSize concreteObjectSizeForImageAnalysis() const;
+    ConcreteObjectSize concreteObjectSizeForDragImageOriginalSizeComparison() const;
     WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForPositionInformation() const;
+    WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForElementImage() const;
 
     // FIXME: Condense these into fewer concrete categories of bitmap extraction once we know all the different behaviors needed.
     WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForHitTestResult() const;
     WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForPositionInformation(FloatSize screenSizeInPixels) const;
     WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForImageBitmapRequest() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForFullScreen() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForImageServices() const;
     WEBCORE_EXPORT Ref<NativePromise<Ref<ShareableBitmap>, void>> createShareableBitmapAsyncForImageAnalysis(CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages) const;
 
     // Returns an image as `paint()` would draw it. Sized and placed respecting 'object-fit', 'object-position', 'object-view-box', and orientation, and clipped to the content box.

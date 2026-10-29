@@ -37,7 +37,7 @@ std::array<unsigned, MarkedSpace::numSizeClasses> MarkedSpace::s_sizeClassForSiz
 
 namespace {
 
-static Vector<size_t> sizeClasses()
+static Vector<size_t> sizeClasses(double progression)
 {
     Vector<size_t> result;
 
@@ -71,7 +71,7 @@ static Vector<size_t> sizeClasses()
     dataLogLnIf(Options::dumpSizeClasses(), "    Marked block payload size: ", static_cast<size_t>(MarkedSpace::blockPayload));
     
     for (unsigned i = 0; ; ++i) {
-        double approximateSize = MarkedSpace::preciseCutoff * pow(Options::sizeClassProgression(), i);
+        double approximateSize = MarkedSpace::preciseCutoff * pow(progression, i);
         dataLogLnIf(Options::dumpSizeClasses(), "    Next size class as a double: ", approximateSize);
 
         size_t approximateSizeInBytes = static_cast<size_t>(approximateSize);
@@ -146,7 +146,7 @@ template<typename TableType, typename SizeClassCons, typename DefaultCons>
 void buildSizeClassTable(TableType& table, NOESCAPE const SizeClassCons& cons, NOESCAPE const DefaultCons& defaultCons)
 {
     size_t nextIndex = 0;
-    for (size_t sizeClass : sizeClasses()) {
+    for (size_t sizeClass : sizeClasses(Options::sizeClassProgression())) {
         auto entry = cons(sizeClass);
         size_t index = MarkedSpace::sizeClassToIndex(sizeClass);
         for (size_t i = nextIndex; i <= index; ++i)
@@ -159,6 +159,11 @@ void buildSizeClassTable(TableType& table, NOESCAPE const SizeClassCons& cons, N
 }
 
 } // anonymous namespace
+
+Vector<size_t> MarkedSpace::sizeClassesFor(double progression)
+{
+    return sizeClasses(progression);
+}
 
 void MarkedSpace::initializeSizeClassForStepSize()
 {
@@ -179,7 +184,18 @@ void MarkedSpace::initializeSizeClassForStepSize()
         });
 }
 
+// Options::initialHeapVersion() lets tests start a heap's versions near their wrap.
+static HeapVersion startingHeapVersion()
+{
+    if (unsigned version = Options::initialHeapVersion())
+        return version;
+    return MarkedSpace::initialVersion;
+}
+
 MarkedSpace::MarkedSpace(JSC::Heap* heap)
+    : m_markingVersion(startingHeapVersion())
+    , m_newlyAllocatedVersion(startingHeapVersion())
+    , m_edenVersion(startingHeapVersion())
 {
     ASSERT_UNUSED(heap, heap == &this->heap());
     initializeSizeClassForStepSize();
@@ -209,6 +225,13 @@ void MarkedSpace::lastChanceToFinalize()
 {
     // Must call stopAllocatingForGood first.
     ASSERT(!isIterating());
+#if ASAN_ENABLED
+    if (Options::runsCompiledImage()) {
+        forEachBlock([&](MarkedBlock::Handle* handle) {
+            handle->unpoisonCells();
+        });
+    }
+#endif
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocatingForGood();
@@ -282,8 +305,10 @@ void MarkedSpace::sweepPreciseAllocations()
 void MarkedSpace::prepareForAllocation()
 {
     ASSERT(!Thread::mayBeGCThread() || heap().worldIsStopped());
-    for (Subspace* subspace : m_subspaces)
-        subspace->prepareForAllocation();
+    if (!heap().isEdenCollectionWithEmptyEden()) {
+        for (Subspace* subspace : m_subspaces)
+            subspace->prepareForAllocation();
+    }
 
     m_activeWeakSets.takeFrom(m_newActiveWeakSets);
     
@@ -316,6 +341,8 @@ void MarkedSpace::reapWeakSets()
 void MarkedSpace::stopAllocating()
 {
     ASSERT(!isIterating());
+    if (!heap().m_hasAllocatedSinceLastCollection)
+        return;
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocating();
@@ -350,6 +377,8 @@ void MarkedSpace::prepareForConservativeScan()
 void MarkedSpace::resumeAllocating()
 {
     m_conservativeScanIsPrepared = false;
+    if (!heap().m_hasAllocatedSinceLastCollection)
+        return;
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.resumeAllocating();
@@ -453,22 +482,24 @@ void MarkedSpace::endMarking()
             ASSERT_UNUSED(allocation, !allocation->isNewlyAllocated());
     }
 
-    forEachDirectory(
-        [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.endMarking();
-            return IterationStatus::Continue;
-        });
+    if (!heap().isEdenCollectionWithEmptyEden()) {
+        forEachDirectory(
+            [&] (BlockDirectory& directory) -> IterationStatus {
+                directory.endMarking();
+                return IterationStatus::Continue;
+            });
+    }
     
     m_isMarking = false;
 }
 
 // For a space that has never been marked: each collection advances either the marking version or
-// the Eden version, so both are still initial, and every block is at nullVersion, which matches
-// neither the old version nor the new one, so no block's marks change meaning.
+// the Eden version, so both are still at their start versions, and every block is at nullVersion,
+// which matches neither the old version nor the new one, so no block's marks change meaning.
 void MarkedSpace::adoptMarkingVersion(HeapVersion version)
 {
     ASSERT(!m_isMarking);
-    ASSERT(m_markingVersion == initialVersion && m_edenVersion == initialVersion);
+    ASSERT(m_markingVersion == startingHeapVersion() && m_edenVersion == startingHeapVersion());
     m_markingVersion = version;
 }
 

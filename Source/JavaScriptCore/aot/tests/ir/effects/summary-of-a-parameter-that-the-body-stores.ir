@@ -1,0 +1,59 @@
+# A reference that a body stores is read out again by what runs until the body returns: a closure over the scope that holds it, a callee that is handed the object it lies in. They reach the object
+# other than through a parameter, so that what they write is with the exits. The object need not outlive the call, and a caller that alone holds it looks only at the memory of the parameter: for a
+# parameter that the body stores that memory holds the exits' too, through any number of direct calls.
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Holder" fields=[{key="inner" declared={type=L0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 kind=Environment fields=[{key="held" declared={type=L0}}]
+variable g0 name="held" declared={type=L0} initialization=Undefined
+function f0 name="outer" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return
+}
+# CHECK: f0 return: {{*}} throw: none p0: [{{*}}] reads(EnvironmentFields/1) writes(ObjectFields/1) p1:
+function f1 name="holdsInScope" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = CallDirect v2, v1 function=f2
+    Return
+}
+# CHECK-NEXT: f1 return: {{*}} throw: none p0: [{{*}}] reads(EnvironmentFields/1) writes(ObjectFields/1) p1:
+function f2 name="writesWhatScopeHolds" captures=[{type=env L2}] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: env L2, v1: number):
+    v2 = GetEnvironmentField v0 layout=L2 field=0
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-NEXT: f2 return: reads(EnvironmentFields/1) writes(ObjectFields/1) throw: none p0: [Inspects, ReadsContents, WritesContents] p1:
+function f3 name="holdsInObject" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = CallDirect v2, v1 function=f4
+    Return
+}
+# CHECK-NEXT: f3 return: {{*}} throw: none p0: [] reads(ObjectFields/1) writes(ObjectFields/1) p1:
+function f4 name="writesWhatObjectHolds" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+    v2 = GetSlot v0 key="inner" receivers=[L1] level=Proven
+    PutSlot v2, -, v1 key="y" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-NEXT: f4 return: reads(ObjectFields/1) writes(ObjectFields/1) throw: none p0: [Inspects, ReadsContents, WritesContents] p1:
+function f5 name="holdsInVariable" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    v3 = CallDirect v1 function=f6
+    Return
+}
+# CHECK-NEXT: f5 return: {{*}} throw: none p0: [Retains] writes(ObjectFields/1) p1:
+function f6 name="writesWhatVariableHolds" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = GetModuleVariable variable=g0
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-NEXT: f6 return: reads(ModuleVariables/1) writes(ObjectFields/1) throw: none p0: [Inspects]
+function f7 name="storesNothing" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v3 = CallDirect v1 function=f6
+    Return
+}
+# CHECK-NEXT: f7 return: {{*}} throw: none p0: [Inspects] p1: [Inspects]

@@ -44,7 +44,7 @@ namespace WebKit {
 
 class TestWithSwiftConditionallyAndEnabledByMessageForwarder: public RefCounted<TestWithSwiftConditionallyAndEnabledByMessageForwarder>, public IPC::MessageReceiver {
 public:
-    static Ref<TestWithSwiftConditionallyAndEnabledByMessageForwarder> createFromWeak(WebKit::TestWithSwiftConditionallyAndEnabledByWeakRef* _Nonnull handler)
+    static Ref<TestWithSwiftConditionallyAndEnabledByMessageForwarder> createFromWeak(WebKit::TestWithSwiftConditionallyAndEnabledByWeakRef* WTF_NONNULL handler)
     {
         return adoptRef(*new TestWithSwiftConditionallyAndEnabledByMessageForwarder(handler));
     }
@@ -54,7 +54,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 private:
-    TestWithSwiftConditionallyAndEnabledByMessageForwarder(WebKit::TestWithSwiftConditionallyAndEnabledByWeakRef* _Nonnull);
+    TestWithSwiftConditionallyAndEnabledByMessageForwarder(WebKit::TestWithSwiftConditionallyAndEnabledByWeakRef* WTF_NONNULL);
     std::unique_ptr<WebKit::TestWithSwiftConditionallyAndEnabledBy> getMessageTarget();
     std::unique_ptr<WebKit::TestWithSwiftConditionallyAndEnabledByWeakRef> m_handler;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
@@ -76,7 +76,7 @@ class TestAsyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestAsyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestAsyncMessage; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -106,7 +106,7 @@ class TestSyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestSyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestSyncMessage; }
     static constexpr bool isSync = true;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -134,7 +134,7 @@ class TestAsyncMessageReply {
 public:
     using Arguments = std::tuple<uint8_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestAsyncMessageReply; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionallyAndEnabledBy_TestAsyncMessageReply; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -165,6 +165,8 @@ using TestAsyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSw
 using TestSyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSwiftConditionallyAndEnabledBy::TestSyncMessage::Reply>;
 
 void completeWithDefaultReply(TestAsyncMessageCompletionHandler&);
+
+void complete(TestAsyncMessageCompletionHandler&, uint8_t);
 } // namespace TestWithSwiftConditionallyAndEnabledBy
 } // namespace CompletionHandlers
 

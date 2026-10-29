@@ -1,0 +1,95 @@
+# The tables of a program whose only module does nothing, in the order of the list: a table about something the program does not have is empty but for a reserved first or a closing entry
+# LIBRARY: own
+# RUN: tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+
+# CHECK: magic ok
+# CHECK-NEXT: instances one
+# CHECK-NEXT: types
+# CHECK-NEXT: typeSites 0 0
+# CHECK-NEXT: layouts 2 8
+# CHECK-NEXT: classes 2 8
+# CHECK-NEXT: layoutSets 0 0
+# CHECK-NEXT: allocations 1 10
+# CHECK-NEXT: constructedAllocations 0 0
+# CHECK-NEXT: shapeSetBits
+# CHECK-NEXT: propertyRuns 1 4
+# CHECK-NEXT: fieldTable 
+# CHECK-NEXT: fieldRecordIndices 
+# CHECK-NEXT: classMemberRows 0 0
+# CHECK-NEXT: classAccessors 0 0
+# CHECK-NEXT: methodTableFunctions 0 0
+# CHECK-NEXT: methodLookupFunctions 0 0
+# CHECK-NEXT: methodTableDependents 0 0
+# CHECK-NEXT: removedFields 0 0
+# CHECK-NEXT: addedNames 0 0
+# CHECK-NEXT: classPrototypeNames 0 0
+# CHECK-NEXT: parsedRecordFields 0 0
+# CHECK-NEXT: functionNames 1 3
+# CHECK-NEXT: functionNameGroups 2 8
+# CHECK-NEXT: functionNameRuns 0 0
+# CHECK-NEXT: functionRecordNumbers 2 2
+# CHECK-NEXT: functionRecords
+# CHECK-NEXT: functionRecordsByFunction 0 0
+# CHECK-NEXT: functionSources 1 3
+# CHECK-NEXT: implementedBuiltins 0 0
+# CHECK-NEXT: closureFunctionKinds 1 2
+# CHECK-NEXT: functionLengths 1 1
+# CHECK-NEXT: closureCaptureCounts 1 1
+# CHECK-NEXT: functionsWithLargeCounts 0 0
+# CHECK-NEXT: closureCellNumbers 1 3
+# CHECK-NEXT: functionTexts 0 0
+# CHECK-NEXT: constructors 0 0
+# CHECK-NEXT: boundFunctions 0 0
+# CHECK-NEXT: constructEntrypoints 0 0
+# CHECK-NEXT: placesOfTailCalls 0 0
+# CHECK-NEXT: staticsLayout 1 8
+# CHECK-NEXT: staticsRuns 0 0
+# CHECK-NEXT: staticsOfFiles 0 0
+# CHECK-NEXT: staticsOfImportedFiles 0 0
+# CHECK-NEXT: staticsRoots 0 0
+# CHECK-NEXT: staticsNarrowRoots 0 0
+# CHECK-NEXT: staticsClearedEachCollection 0 0
+# CHECK-NEXT: functionVariables 0 0
+# CHECK-NEXT: identifiersByHash
+# CHECK-NEXT: identifiersOfEngineSymbols
+# CHECK-NEXT: keyCellIdentifiers
+# CHECK-NEXT: literalStrings
+# CHECK-NEXT: literalStringTable
+# CHECK-NEXT: literalStringLimits
+# CHECK-NEXT: literalStringDigests
+# CHECK-NEXT: bigIntConstants 0 0
+# CHECK-NEXT: data 1 8
+# CHECK-NEXT: requests 1 4
+# CHECK-NEXT: builtinCells 0 0
+# CHECK-NEXT: eagerBuiltinCells 0 0
+# CHECK-NEXT: constantBuiltinMembers 0 0
+# CHECK-NEXT: globalBindings 0 0
+# CHECK-NEXT: entryPoints 1 4
+# CHECK-NEXT: modules 2 80
+# CHECK-NEXT: moduleDirectories 0 0
+# CHECK-NEXT: moduleDisplayPaths 0 0
+# CHECK-NEXT: moduleRequests 0 0
+# CHECK-NEXT: linkRequests 0 0
+# CHECK-NEXT: evaluationRequests 0 0
+# CHECK-NEXT: groupsLoadedWithGroups 0 0
+# CHECK-NEXT: entryPointLinkPlan 0 0
+# CHECK-NEXT: linkPlanRoots 0 0
+# CHECK-NEXT: linkPlanStepsOfRoots 0 0
+# CHECK-NEXT: moduleExports 0 0
+# CHECK-NEXT: indirectExports 0 0
+# CHECK-NEXT: syntheticExports 0 0
+# CHECK-NEXT: requiredNames 0 0
+# CHECK-NEXT: exportStatements 0 0
+# CHECK-NEXT: moduleFailures 0 0
+# CHECK-NEXT: modulesByPath 1 2
+# CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: compiledRuntimeModules 0 0
+# CHECK-NEXT: compiledRuntimeFunctions 0 0
+# CHECK-NEXT: namedStrings
+# CHECK-NEXT: total

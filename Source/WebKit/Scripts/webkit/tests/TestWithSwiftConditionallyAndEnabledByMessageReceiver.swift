@@ -28,6 +28,7 @@ import WebKit_Internal
 
 #if ENABLE_SWIFT_TEST_CONDITION
 // Safety: target is only written in init, assumeIsolated asserts the main thread, and weak loads are atomic in the Swift runtime
+@_expose(Cxx)
 final class TestWithSwiftConditionallyAndEnabledByWeakRef: @unchecked Sendable {
     private weak var target: TestWithSwiftConditionallyAndEnabledBy?
     init(target: TestWithSwiftConditionallyAndEnabledBy) {
@@ -88,7 +89,7 @@ final class TestWithSwiftConditionallyAndEnabledByWeakRef: @unchecked Sendable {
                         param: param
                     )
                 )
-                completionHandler.pointee(reply)
+                CompletionHandlers.TestWithSwiftConditionallyAndEnabledBy.complete(completionHandler, reply)
             } catch {
                 markMessageInvalid(error, on: connection)
                 CompletionHandlers.TestWithSwiftConditionallyAndEnabledBy.completeWithDefaultReply(completionHandler)
@@ -145,7 +146,7 @@ final class TestWithSwiftConditionallyAndEnabledByWeakRef: @unchecked Sendable {
                         param: param
                     )
                 )
-                completionHandler.pointee(reply)
+                CompletionHandlers.TestWithSwiftConditionallyAndEnabledBy.complete(completionHandler, reply)
             } catch {
                 markMessageInvalid(error, on: connection)
                 CompletionHandlers.TestWithSwiftConditionallyAndEnabledBy.completeWithDefaultReply(completionHandler)

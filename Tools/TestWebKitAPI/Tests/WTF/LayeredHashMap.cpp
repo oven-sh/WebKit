@@ -475,4 +475,168 @@ TEST(WTF_LayeredHashMap, WellDistributedHash)
     EXPECT_EQ(map.layerCount(), 0U);
 }
 
+namespace {
+
+struct IdentityHash {
+    static unsigned hash(unsigned key) { return key; }
+    static bool equal(unsigned a, unsigned b) { return a == b; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
+};
+
+using IdentityMap = LayeredHashMap<unsigned, unsigned, IdentityHash>;
+
+constexpr unsigned initialTableSize = 8;
+static_assert(IdentityMap::KeyTraits::minimumTableSize == initialTableSize);
+
+// Adding these 40 keys grows the table twice: from 8 buckets to 32, then to 128.
+constexpr unsigned firstGrowthKey = 100;
+constexpr unsigned endGrowthKey = 140;
+
+void addKeys(IdentityMap& map, unsigned firstKey, unsigned endKey)
+{
+    for (unsigned key = firstKey; key < endKey; ++key)
+        EXPECT_TRUE(map.add(key, key * 2));
+}
+
+void expectKeysPresent(IdentityMap& map, unsigned firstKey, unsigned endKey)
+{
+    for (unsigned key = firstKey; key < endKey; ++key)
+        EXPECT_EQ(map.find(key).value_or(0), key * 2);
+}
+
+void expectKeysAbsent(IdentityMap& map, unsigned firstKey, unsigned endKey)
+{
+    for (unsigned key = firstKey; key < endKey; ++key)
+        EXPECT_FALSE(map.find(key));
+}
+
+} // anonymous namespace
+
+TEST(WTF_LayeredHashMap, ChainsSplitByGrowth)
+{
+    const Vector<unsigned> sharedBucketKeys { 1, 9, 17, 25 };
+
+    IdentityMap map;
+    for (unsigned key : sharedBucketKeys) {
+        EXPECT_EQ(key % initialTableSize, 1U);
+        map.startLayer();
+        EXPECT_TRUE(map.add(key, key * 2));
+    }
+
+    map.startLayer();
+    addKeys(map, firstGrowthKey, endGrowthKey);
+    expectKeysPresent(map, firstGrowthKey, endGrowthKey);
+    for (unsigned key : sharedBucketKeys)
+        EXPECT_EQ(map.find(key).value_or(0), key * 2);
+
+    map.dropLastLayer();
+    expectKeysAbsent(map, firstGrowthKey, endGrowthKey);
+    for (unsigned key : sharedBucketKeys)
+        EXPECT_EQ(map.find(key).value_or(0), key * 2);
+
+    for (unsigned remainingCount = sharedBucketKeys.size(); remainingCount--;) {
+        map.dropLastLayer();
+        for (unsigned i = 0; i < sharedBucketKeys.size(); ++i) {
+            unsigned key = sharedBucketKeys[i];
+            EXPECT_EQ(map.find(key).value_or(0), i < remainingCount ? key * 2 : 0U);
+        }
+    }
+    EXPECT_EQ(map.layerCount(), 0U);
+}
+
+TEST(WTF_LayeredHashMap, OverlayAfterGrowthFindsNewest)
+{
+    IdentityMap map;
+    map.startLayer();
+    EXPECT_TRUE(map.add(1, 10));
+
+    map.startLayer();
+    map.overlay(1, 20);
+    addKeys(map, firstGrowthKey, endGrowthKey);
+    EXPECT_EQ(map.find(1).value_or(0), 20U);
+
+    map.dropLastLayer();
+    EXPECT_EQ(map.find(1).value_or(0), 10U);
+    map.dropLastLayer();
+    EXPECT_FALSE(map.find(1));
+}
+
+TEST(WTF_LayeredHashMap, GrowthCountsShadowedEntries)
+{
+    constexpr unsigned layerCount = initialTableSize + 1;
+
+    IdentityMap map;
+    for (unsigned layer = 1; layer <= layerCount; ++layer) {
+        map.startLayer();
+        map.overlay(5, layer * 10);
+        EXPECT_EQ(map.find(5).value_or(0), layer * 10);
+    }
+
+    for (unsigned layer = layerCount; layer; --layer) {
+        EXPECT_EQ(map.find(5).value_or(0), layer * 10);
+        map.dropLastLayer();
+    }
+    EXPECT_FALSE(map.find(5));
+    EXPECT_EQ(map.layerCount(), 0U);
+}
+
+TEST(WTF_LayeredHashMap, EmptyLayersAroundGrowth)
+{
+    IdentityMap map;
+    map.startLayer();
+    addKeys(map, 1, 5);
+    map.startLayer();
+    map.startLayer();
+
+    map.startLayer();
+    addKeys(map, firstGrowthKey, endGrowthKey);
+    map.startLayer();
+    map.startLayer();
+    EXPECT_EQ(map.layerCount(), 6U);
+
+    for (unsigned expectedLayerCount : { 5U, 4U }) {
+        map.dropLastLayer();
+        EXPECT_EQ(map.layerCount(), expectedLayerCount);
+        expectKeysPresent(map, firstGrowthKey, endGrowthKey);
+        expectKeysPresent(map, 1, 5);
+    }
+
+    map.dropLastLayer();
+    EXPECT_EQ(map.layerCount(), 3U);
+    expectKeysAbsent(map, firstGrowthKey, endGrowthKey);
+    expectKeysPresent(map, 1, 5);
+
+    for (unsigned expectedLayerCount : { 2U, 1U }) {
+        map.dropLastLayer();
+        EXPECT_EQ(map.layerCount(), expectedLayerCount);
+        expectKeysPresent(map, 1, 5);
+    }
+
+    map.dropLastLayer();
+    EXPECT_EQ(map.layerCount(), 0U);
+    expectKeysAbsent(map, 1, 5);
+}
+
+TEST(WTF_LayeredHashMap, ClearEntriesAfterGrowth)
+{
+    IdentityMap map;
+    map.startLayer();
+    addKeys(map, 1, 5);
+    map.startLayer();
+    addKeys(map, firstGrowthKey, endGrowthKey);
+
+    map.clearEntries();
+    EXPECT_EQ(map.layerCount(), 2U);
+    expectKeysAbsent(map, 1, 5);
+    expectKeysAbsent(map, firstGrowthKey, endGrowthKey);
+
+    addKeys(map, 200, 240);
+    expectKeysPresent(map, 200, 240);
+    map.dropLastLayer();
+    expectKeysAbsent(map, 200, 240);
+    EXPECT_EQ(map.layerCount(), 1U);
+    map.dropLastLayer();
+    EXPECT_EQ(map.layerCount(), 0U);
+}
+
 } // namespace TestWebKitAPI

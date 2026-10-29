@@ -322,7 +322,7 @@ std::expected<void, String> validatePreflightResponse(PAL::SessionID sessionID, 
 }
 
 // https://fetch.spec.whatwg.org/#cross-origin-resource-policy-internal-check
-static inline bool shouldCrossOriginResourcePolicyCancelLoad(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicy documentIsolationPolicy, const SecurityOrigin& origin, bool isResponseNull, const URL& responseURL, const String& crossOriginResourcePolicyHeaderValue, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
+static inline bool shouldCrossOriginResourcePolicyCancelLoad(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicyValue documentIsolationPolicy, const SecurityOrigin& origin, bool isResponseNull, const URL& responseURL, const String& crossOriginResourcePolicyHeaderValue, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
 {
     if (forNavigation == ForNavigation::Yes && coep != CrossOriginEmbedderPolicyValue::RequireCORP)
         return false;
@@ -333,7 +333,7 @@ static inline bool shouldCrossOriginResourcePolicyCancelLoad(CrossOriginEmbedder
     auto policy = parseCrossOriginResourcePolicyHeader(crossOriginResourcePolicyHeaderValue);
 
     // https://fetch.spec.whatwg.org/#cross-origin-resource-policy-internal-check (step 4).
-    if ((policy == CrossOriginResourcePolicy::None || policy == CrossOriginResourcePolicy::Invalid) && (coep == CrossOriginEmbedderPolicyValue::RequireCORP || documentIsolationPolicy == DocumentIsolationPolicy::IsolateAndRequireCORP))
+    if ((policy == CrossOriginResourcePolicy::None || policy == CrossOriginResourcePolicy::Invalid) && (coep == CrossOriginEmbedderPolicyValue::RequireCORP || documentIsolationPolicy == DocumentIsolationPolicyValue::IsolateAndRequireCORP))
         return true;
 
     if (policy == CrossOriginResourcePolicy::SameOrigin)
@@ -351,19 +351,54 @@ static inline bool shouldCrossOriginResourcePolicyCancelLoad(CrossOriginEmbedder
     return false;
 }
 
-std::optional<ResourceError> validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicy documentIsolationPolicy, const SecurityOrigin& origin, const URL& requestURL, bool isResponseNull, const URL& responseURL, const String& crossOriginResourcePolicyHeaderValue, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
+std::optional<ResourceError> validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicyValue documentIsolationPolicy, const SecurityOrigin& origin, const URL& requestURL, bool isResponseNull, const URL& responseURL, const String& crossOriginResourcePolicyHeaderValue, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
 {
     if (shouldCrossOriginResourcePolicyCancelLoad(coep, documentIsolationPolicy, origin, isResponseNull, responseURL, crossOriginResourcePolicyHeaderValue, forNavigation, patterns))
         return ResourceError { errorDomainWebKitInternal, 0, requestURL, makeString("Cancelled load to "_s, responseURL.stringCenterEllipsizedToLength(), " because it violates the resource's Cross-Origin-Resource-Policy response header."_s), ResourceError::Type::AccessControl };
     return std::nullopt;
 }
 
-std::optional<ResourceError> validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicy documentIsolationPolicy, const SecurityOrigin& origin, const URL& requestURL, const ResourceResponse& response, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
+std::optional<ResourceError> validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue coep, DocumentIsolationPolicyValue documentIsolationPolicy, const SecurityOrigin& origin, const URL& requestURL, const ResourceResponse& response, ForNavigation forNavigation, const OriginAccessPatterns& patterns)
 {
     bool isReponseNull = response.isNull();
     String crossOriginResourcePolicyHeaderValue = isReponseNull ? nullString() : response.httpHeaderField(HTTPHeaderName::CrossOriginResourcePolicy);
     URL responseURL = isReponseNull ? URL { } : response.url();
     return validateCrossOriginResourcePolicy(coep, documentIsolationPolicy, origin, requestURL, isReponseNull, responseURL, crossOriginResourcePolicyHeaderValue, forNavigation, patterns);
+}
+
+std::optional<ResourceError> performCrossOriginResourcePolicyCheck(const CrossOriginEmbedderPolicy& embedderPolicy, const DocumentIsolationPolicy& documentIsolationPolicy, const SecurityOrigin& origin, const URL& requestURL, const ResourceResponse& response, ForNavigation forNavigation, const OriginAccessPatterns& patterns, const CORPViolationReportContext* reportContext)
+{
+    auto check = [&](CrossOriginEmbedderPolicyValue embedderPolicyValue, DocumentIsolationPolicyValue documentIsolationPolicyValue) {
+        return validateCrossOriginResourcePolicy(embedderPolicyValue, documentIsolationPolicyValue, origin, requestURL, response, forNavigation, patterns);
+    };
+
+    // A response that is blocked without either policy is not reported.
+    if (auto error = check(CrossOriginEmbedderPolicyValue::UnsafeNone, DocumentIsolationPolicyValue::None))
+        return error;
+
+    if (reportContext) {
+        if (embedderPolicy.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP && check(embedderPolicy.reportOnlyValue, DocumentIsolationPolicyValue::None))
+            sendCOEPCORPViolation(reportContext->client, reportContext->contextURL, embedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, reportContext->destination, reportContext->blockedURL);
+        if (documentIsolationPolicy.reportOnlyValue == DocumentIsolationPolicyValue::IsolateAndRequireCORP && check(CrossOriginEmbedderPolicyValue::UnsafeNone, documentIsolationPolicy.reportOnlyValue))
+            sendDocumentIsolationPolicyCORPViolation(reportContext->client, reportContext->contextURL, documentIsolationPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, reportContext->destination, reportContext->blockedURL);
+    }
+
+    // A response that both policies block gets a report for each.
+    std::optional<ResourceError> error;
+    if (embedderPolicy.value == CrossOriginEmbedderPolicyValue::RequireCORP) {
+        error = check(embedderPolicy.value, DocumentIsolationPolicyValue::None);
+        if (error && reportContext)
+            sendCOEPCORPViolation(reportContext->client, reportContext->contextURL, embedderPolicy.reportingEndpoint, COEPDisposition::Enforce, reportContext->destination, reportContext->blockedURL);
+    }
+    if (documentIsolationPolicy.value == DocumentIsolationPolicyValue::IsolateAndRequireCORP) {
+        if (auto documentIsolationPolicyError = check(CrossOriginEmbedderPolicyValue::UnsafeNone, documentIsolationPolicy.value)) {
+            if (reportContext)
+                sendDocumentIsolationPolicyCORPViolation(reportContext->client, reportContext->contextURL, documentIsolationPolicy.reportingEndpoint, COEPDisposition::Enforce, reportContext->destination, reportContext->blockedURL);
+            if (!error)
+                error = WTF::move(documentIsolationPolicyError);
+        }
+    }
+    return error;
 }
 
 std::optional<ResourceError> validateRangeRequestedFlag(const ResourceRequest& request, const ResourceResponse& response)

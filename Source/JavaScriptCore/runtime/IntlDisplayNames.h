@@ -39,10 +39,7 @@ public:
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
-    static void destroy(JSCell* cell)
-    {
-        static_cast<IntlDisplayNames*>(cell)->IntlDisplayNames::~IntlDisplayNames();
-    }
+    static void destroy(JSCell*);
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)

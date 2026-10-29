@@ -1,0 +1,126 @@
+# The array patterns of one function that become one read each are changed together: every read stands where the first step of its pattern stood, and the results of the steps are read from it
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# STATISTIC: IterationsExpandedGenerically = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
+
+function f0 name="oneBehindTheOther" parameters=[{type=L0}, {type=L0}, {type=L0}] results=[{type=anything}] {
+    v3 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b7():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    v6 = IteratorResume v3 stepIndex=1
+    v7 = ResultAt v6 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    v9 = IteratorOpen v1 elementCount=1 [isDestructuring]
+    Jump -> next b3()
+  b3() handler=b8():
+    v10 = IteratorResume v9 stepIndex=0
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Jump -> next b4()
+  b4():
+    IteratorClose v9
+    v14 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b9():
+    v15 = IteratorResume v14 stepIndex=0
+    v16 = ResultAt v15 index=1
+    v17 = IteratorResume v14 stepIndex=1
+    v18 = ResultAt v17 index=1
+    Jump -> next b6()
+  b6():
+    IteratorClose v14
+    v20 = NewArray v5, v7, v11, v12, v16, v18 contents=anything
+    Return v20
+  b7() role=IterationCleanup subject=v3:
+    v21 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v21
+  b8() role=IterationCleanup subject=v9:
+    v23 = CatchException
+    IteratorClose v9 completion=Throw
+    Rethrow v23
+  b9() role=IterationCleanup subject=v14:
+    v25 = CatchException
+    IteratorClose v14 completion=Throw
+    Rethrow v25
+# CHECK: b1():
+# CHECK-NEXT: [[first0]]: {{*}} = DestructureIterable v0 count=2
+# CHECK-NEXT: v5: anything = ResultAt [[first0]]
+# CHECK-NEXT: v7: anything = ResultAt [[first0]] index=1
+# CHECK-NEXT: Jump
+# CHECK: b3():
+# CHECK-NEXT: [[second0]]: {{*}} = DestructureIterable v1 count=1
+# CHECK-NEXT: v11: {{*}} = Boolean
+# CHECK-NEXT: v12: anything = ResultAt [[second0]]
+# CHECK-NEXT: Jump
+# CHECK: b5():
+# CHECK-NEXT: [[third0]]: {{*}} = DestructureIterable v2 count=2
+# CHECK-NEXT: v16: anything = ResultAt [[third0]]
+# CHECK-NEXT: v18: anything = ResultAt [[third0]] index=1
+# CHECK-NEXT: Jump
+# CHECK: = NewArray v5, v7, v11, v12, v16, v18 contents=anything
+# ABSENT-NOT: IteratorOpen
+# ABSENT-NOT: IteratorResume
+# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: handler=
+# ABSENT-NOT: role=
+# ABSENT-COUNT-3: DestructureIterable
+# ABSENT-NOT: DestructureIterable
+}
+
+function f1 name="inTwoBranches" parameters=[{type=L0}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = IteratorOpen v0 elementCount=1 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b7():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    Jump -> next b3()
+  b3():
+    IteratorClose v3
+    Return v5
+  b4():
+    v7 = IteratorOpen v1 elementCount=1 [isDestructuring]
+    Jump -> next b5()
+  b5() handler=b8():
+    v8 = IteratorResume v7 stepIndex=0
+    v9 = ResultAt v8 index=1
+    Jump -> next b6()
+  b6():
+    IteratorClose v7
+    Return v9
+  b7() role=IterationCleanup subject=v3:
+    v11 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v11
+  b8() role=IterationCleanup subject=v7:
+    v13 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v13
+# CHECK: b2():
+# CHECK-NEXT: [[taken1]]: {{*}} = DestructureIterable v0 count=1
+# CHECK-NEXT: v5: anything = ResultAt [[taken1]]
+# CHECK: Return v5
+# CHECK: b5():
+# CHECK-NEXT: [[notTaken1]]: {{*}} = DestructureIterable v1 count=1
+# CHECK-NEXT: v9: anything = ResultAt [[notTaken1]]
+# CHECK: Return v9
+# ABSENT-NOT: IteratorOpen
+# ABSENT-NOT: IteratorResume
+# ABSENT-NOT: IteratorClose
+# ABSENT-NOT: handler=
+# ABSENT-COUNT-2: DestructureIterable
+# ABSENT-NOT: DestructureIterable
+}

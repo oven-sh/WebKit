@@ -157,8 +157,6 @@ set(bmalloc_C_SOURCES
     libpas/src/libpas/pas_megapage_cache.c
     libpas/src/libpas/pas_monotonic_time.c
     libpas/src/libpas/pas_mte.c
-    libpas/src/libpas/pas_mte_bootstrap_free_heap.c
-    libpas/src/libpas/pas_mte_bootstrap_heap_page_provider.c
     libpas/src/libpas/pas_mte_config.c
     libpas/src/libpas/pas_page_base.c
     libpas/src/libpas/pas_page_base_config.c
@@ -455,8 +453,6 @@ set(bmalloc_PUBLIC_HEADERS
     libpas/src/libpas/pas_min_heap.h
     libpas/src/libpas/pas_monotonic_time.h
     libpas/src/libpas/pas_mte.h
-    libpas/src/libpas/pas_mte_bootstrap_free_heap.h
-    libpas/src/libpas/pas_mte_bootstrap_heap_page_provider.h
     libpas/src/libpas/pas_mte_config.h
     libpas/src/libpas/pas_mutation_count.h
     libpas/src/libpas/pas_page_base_and_kind.h
@@ -679,6 +675,10 @@ set(bmalloc_COMPILE_OPTIONS
     -Wno-cast-align
     -Wno-missing-field-initializers
 )
+
+if (NOT MSVC)
+    list(APPEND bmalloc_COMPILE_OPTIONS $<$<CONFIG:Debug>:-O3>)
+endif ()
 
 set(bmalloc_INTERFACE_LIBRARIES bmalloc)
 set(bmalloc_INTERFACE_INCLUDE_DIRECTORIES ${bmalloc_FRAMEWORK_HEADERS_DIR})

@@ -1,0 +1,112 @@
+# function squares(count: number): number[] {
+#   const list = new Array<number>(count);
+#   for (let k = 0; k < count; k++) list[k] = k * k;
+#   return list;
+# }
+# declare const input: any;
+# (globalThis as any).answer = squares(input | 0);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized loops f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized loops f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=208 kind=CallResult
+typesite w3 module=m0 position=59 kind=CallResult
+typesite w4 module=m0 position=96 kind=Variable
+typesite w5 module=m0 position=119 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v9 = Integer
+    v10 = BitOr v8, v9
+    v11 = Call v1, -, v10 calleeName="squares"
+    v12 = Convert v11 declared={type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v5, v12 key="answer"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Array
+    v2 = Call v1, -, v0 calleeName="Array" [isDoneInPlace]
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w4}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Less v8, v0
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Mul v12, v12
+    v14 = Convert v13 declared={type=number site=w5}
+    ElemSet v3, v12, v14
+    Jump -> next b5()
+  b5():
+    v16 = Increment v12
+    v17 = Convert v16 declared={type=number site=w4}
+    Jump -> next b2(v17)
+  b6(v18, v19):
+    Jump -> next b7()
+  b7():
+    Return v3
+}
+
+# The loop stores doubles, so new Array(count) makes storage for unboxed doubles. A store is a test that the number is not NaN (which marks a hole), a test of the index against the length, and the store.
+# CHECK-LABEL: steps by 1
+# CHECK: Int32 b@[[k]] = Phi(
+# CHECK-NEXT: Double b@[[wide]] = IToD(b@[[k]],
+# CHECK-NEXT: Double b@[[square]] = Mul(b@[[wide]], b@[[wide]],
+# CHECK: Int32 b@[[isNumber]] = Equal(b@[[square]], b@[[square]], {{*}}:PutArrayElement)
+# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[bounds]], Else:Rare:#
+# CHECK-NEXT: BB#[[bounds]]:
+# CHECK: Int32 b@[[isInside]] = Above(b@[[length]], b@[[k]], {{*}}:PutArrayElement)
+# CHECK-NEXT: Branch(b@[[isInside]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[store]], Else:Unlikely:#
+# CHECK-NEXT: BB#[[store]]:
+# CHECK: Store(b@[[square]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)
+# CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# CHECK-LABEL: end of loop
+# The storage and the length are read ahead of the loop, nothing is boxed, and the kind of storage is not tested in it.
+# NONE-LABEL: steps by 1
+# NONE-NOT: Reads:
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: Patchpoint(
+# NONE-LABEL: end of loop
+# CALLS: f1: size=
+# CALLS: stub NewArrayWithLength.Double x1
+# CALLS-NOT: stub NewArray
+# CALLS: f{{*}}: size=
+# Four turns are written out. They poll between stretches of many turns, and the few turns that are left behind them do not poll. Each turn keeps both tests.
+# X64: loop #{{*}}, instructions: 29, patchpoints: 0, {{*}} steps by 4
+# X64: loop #{{*}}, instructions: 8, patchpoints: 0, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 7, patchpoints: 0, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 25, patchpoints: 0, {{*}} steps by 4

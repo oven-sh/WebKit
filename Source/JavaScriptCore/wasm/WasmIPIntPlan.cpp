@@ -38,6 +38,7 @@
 #include "LinkBuffer.h"
 #include "NativeCalleeRegistry.h"
 #include "WasmCallee.h"
+#include "WasmCodeInImage.h"
 #include "WasmFunctionIPIntMetadataGenerator.h"
 #include "WasmIPIntGenerator.h"
 #include "WasmTypeDefinitionInlines.h"
@@ -50,8 +51,15 @@ namespace JSC { namespace Wasm {
 IPIntPlan::IPIntPlan(VM& vm, Vector<uint8_t>&& source, CompilerMode compilerMode, CompletionTask&& task)
     : Base(vm, WTF::move(source), compilerMode, WTF::move(task))
 {
-    if (parseAndValidateModule(m_source.span()))
-        prepare();
+    if (!parseAndValidateModule(m_source.span()))
+        return;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (!Options::useBBQJIT() && !Options::useOMGJIT()) {
+        m_moduleInImage = CodeInImage::find(m_moduleInformation.get());
+        m_moduleInformation->moduleWithSkippedFunctions = m_moduleInImage;
+    }
+#endif
+    prepare();
 }
 
 IPIntPlan::IPIntPlan(VM& vm, Ref<ModuleInformation> info, Ref<IPIntCallees> callees, CompletionTask&& task)
@@ -91,17 +99,30 @@ void IPIntPlan::compileFunction(FunctionCodeIndex functionIndex)
     auto functionIndexSpace = m_moduleInformation->toSpaceIndex(functionIndex);
     ASSERT_UNUSED(functionIndexSpace, &m_moduleInformation->rtt(functionIndexSpace) == &m_moduleInformation->rtt(typeSignatureIndex));
 
-    beginCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
-    auto parseAndCompileResult = parseAndCompileMetadata(function.data, signature, m_moduleInformation.get(), functionIndex);
-    endCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
-
-    if (!parseAndCompileResult) [[unlikely]] {
-        Locker locker { m_lock };
-        failFunctionCompilation(functionIndex, makeString(parseAndCompileResult.error(), ", in function at index "_s, functionIndex.rawIndex()));
-        return;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_moduleInImage) {
+        const FunctionInImage& functionInImage = CodeInImage::functionsOf(*m_moduleInImage)[functionIndex.rawIndex()];
+        if (functionInImage.hasCode) {
+            if (functionInImage.usesVectors)
+                m_moduleInformation->markUsesSIMD(functionIndex);
+            m_moduleInformation->doneSeeingFunction(functionIndex);
+            m_wasmInternalFunctions[functionIndex] = makeUnique<FunctionIPIntMetadataGenerator>(functionIndex, function.data.span());
+        }
     }
+#endif
+    if (!m_wasmInternalFunctions[functionIndex]) {
+        beginCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
+        auto parseAndCompileResult = parseAndCompileMetadata(function.data, signature, m_moduleInformation.get(), functionIndex);
+        endCompilerSignpost(CompilationMode::IPIntMode, functionIndexSpace);
 
-    m_wasmInternalFunctions[functionIndex] = WTF::move(*parseAndCompileResult);
+        if (!parseAndCompileResult) [[unlikely]] {
+            Locker locker { m_lock };
+            failFunctionCompilation(functionIndex, makeString(parseAndCompileResult.error(), ", in function at index "_s, functionIndex.rawIndex()));
+            return;
+        }
+
+        m_wasmInternalFunctions[functionIndex] = WTF::move(*parseAndCompileResult);
+    }
 
     {
         auto callee = IPIntCallee::create(*m_wasmInternalFunctions[functionIndex], functionIndexSpace, signature, { });

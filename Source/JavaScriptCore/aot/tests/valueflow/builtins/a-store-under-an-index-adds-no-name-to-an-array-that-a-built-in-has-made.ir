@@ -1,0 +1,59 @@
+# list = new Array(2); list[0] = one; list[1] = two; list.find(always)(); list.length;  bytes = new Uint8Array(2); bytes[0] = 1;  pattern = new RegExp("a"); pattern.lastIndex = 0
+# What `new Array(2)` answers is an array that a built-in has allocated. A store under an index adds no name to an array, whoever has made it: the array still passes the test for a pristine array,
+# so `find` takes the overload for arrays alone and answers an element, and the call of what it answers enters `one` or `two` and nothing else. Its names are proven to be those it was made with.
+# An array has its length for life: a read of it finds it on the array itself and never comes to the end of the chain, so it does not answer undefined (primitive0).
+# The same holds for an index of a typed array, and for `lastIndex`, which a RegExp has for life.
+# RUN: valueflow-solve calls
+# CHECK: f0 v2 -> Array
+# CHECK-NEXT: f0 v11 -> ArrayPrototypeFind
+# CHECK-NEXT: f0 v12 -> f1 f2
+# RUN(LENGTH): valueflow-why values=f0:v13
+# LENGTH: values=f0:v13
+# LENGTH-NOT: primitive0
+# RUN(APPLY): valueflow-apply
+# APPLY: variable g0 name="list" {{*}}declared={type=Array<{{*}}Names
+# APPLY: variable g1 name="bytes" {{*}}declared={type=Uint8Array<{{*}}Names
+# APPLY: variable g2 name="pattern" {{*}}declared={type=RegExp<{{*}}Names
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="list" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="bytes" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="pattern" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Array
+    v1 = Integer integer=2
+    v2 = Construct v0, -, v1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Integer integer=0
+    ElemSet v2, v5, v3
+    v7 = Integer integer=1
+    ElemSet v2, v7, v4
+    v9 = NewClosure function=f3
+    v10 = Builtin builtin=ArrayPrototypeFind
+    v11 = Call v10, v2, v9
+    v12 = Call v11
+    v13 = PropGet v2 key="length"
+    PutModuleVariable v2 variable=g0
+    v15 = Builtin builtin=Uint8Array
+    v16 = Construct v15, -, v1
+    ElemSet v16, v5, v7
+    PutModuleVariable v16 variable=g1
+    v19 = Builtin builtin=RegExp
+    v20 = String string="a"
+    v21 = Construct v19, -, v20
+    PropSet v21, v5 key="lastIndex" mode=Strict
+    PutModuleVariable v21 variable=g2
+    Return v13
+}
+function f1 name="one" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="two" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="always" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    Return v1
+}

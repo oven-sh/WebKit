@@ -132,6 +132,11 @@ public:
 
     void join();
 
+#if ENABLE(AOT)
+    // Starts the underlying thread if there is none. False where Thread::survivesFailedCreation() and the system refuses a thread.
+    WTF_EXPORT_PRIVATE bool tryEnsureUnderlyingThread(const AbstractLocker&);
+#endif
+
     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
 
 protected:
@@ -190,10 +195,21 @@ protected:
     // or to specify a custom stack size.
     virtual StackAllocationSpecification stackSpecification() { return { }; }
 
+#if ENABLE(AOT)
+    // Whether the work gets done without this thread too, by whoever made it available. Where Thread::survivesFailedCreation(), such a thread
+    // that cannot be started (the limit on threads is reached) is left out, and the next notification tries again. Any other crashes.
+    virtual bool isOptional() const { return false; }
+#endif
+
 private:
     friend class AutomaticThreadCondition;
 
+#if ENABLE(AOT)
+    enum class FailedCreation : bool { Crashes, IsReported };
+    void start(const AbstractLocker&, FailedCreation = FailedCreation::Crashes);
+#else
     void start(const AbstractLocker&);
+#endif
 
 protected:
     Box<Lock> m_lock;

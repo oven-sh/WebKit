@@ -1,0 +1,36 @@
+# nothing tests what constant data fills a field with when the program runs, so each member that is a field lies in the field's type; an expected type bounds nothing, and a key that is no field has no slot.
+# In form AsRead the reader gives a field that data fills from outside its type an expected type, so the rule is for what the passes leave
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: DataOutsideFieldType 14
+
+module m0 path="main" displayPath="main"
+entry module=m0
+layout L0 name="holder" fields=[{key="integer" declared={type=undefined|i32}}, {key="text" declared={type="a"|"b"}}, {key="flag" declared={type=true}}, {key="number" declared={type=number}}, {key="big" declared={type=bigint}}, {key="list" declared={type=null|Array<number>}}, {key="inner" declared={type=undefined|L1}}, {key="any" declared={type=anything}}, {key="hint" declared={type=string flags=[IsExpected]}}]
+layout L1 name="inner" fields=[{key="x" declared={type=number}}]
+layout L2 name="stranger" fields=[{key="x" declared={type=number}}]
+layout L3 name="computed" fields=[{key="x" declared={type=anything} form=[IsAccessor]}]
+
+# good: every member inside its type, a value of another type under an expected type, a key outside the fields
+data d0 root=Object{layout=L0 members=[{key="integer" value=Number{value=7}}, {key="text" value=String{value="b"}}, {key="flag" value=Boolean{value=true}}, {key="number" value=Number{value=1.5}}, {key="big" value=BigInt{digits="12"}}, {key="list" value=Array{contents=number elements=[Number{value=1}]}}, {key="inner" value=Object{layout=L1 members=[{key="x" value=Number{value=1.5}}]}}, {key="any" value=Object{layout=L2}}, {key="hint" value=Number{value=1}}, {key="outsideFields" value=Number{value=1.5}}]}
+data d1 root=Object{layout=L0 members=[{key="integer" value=Undefined}, {key="list" value=Null}, {key="inner" value=Undefined}]}
+
+# bad: one member outside its type each
+data d2 root=Object{layout=L0 members=[{key="integer" value=Number{value=1.5}}]}
+data d3 root=Object{layout=L0 members=[{key="integer" value=Number{value=4294967296}}]}
+data d4 root=Object{layout=L0 members=[{key="integer" value=Null}]}
+data d5 root=Object{layout=L0 members=[{key="text" value=String{value="c"}}]}
+data d6 root=Object{layout=L0 members=[{key="text" value=Number{value=1}}]}
+data d7 root=Object{layout=L0 members=[{key="flag" value=Boolean{value=false}}]}
+data d8 root=Object{layout=L0 members=[{key="number" value=Undefined}]}
+data d9 root=Object{layout=L0 members=[{key="big" value=Number{value=1}}]}
+data d10 root=Object{layout=L0 members=[{key="list" value=Object{layout=L1}}]}
+data d11 root=Object{layout=L0 members=[{key="inner" value=Object{layout=L2}}]}
+data d12 root=Object{layout=L0 members=[{key="inner" value=Array{contents=anything}}]}
+
+# bad: below an array, and in an object that is itself inside its field's type
+data d13 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="integer" value=Number{value=1.5}}]}]}
+data d14 root=Object{layout=L0 members=[{key="any" value=Object{layout=L1 members=[{key="x" value=String{value="s"}}]}}]}
+
+# bad: the slot of an accessor holds the pair of its functions, whatever the type of the field
+data d15 root=Object{layout=L3 members=[{key="x" value=Number{value=1}}]}

@@ -1239,8 +1239,7 @@ Editor& Document::editor()
 const Editor& Document::editor() const
 {
     if (!m_editor) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureEditor();
+        return const_cast<Document&>(*this).ensureEditor();
     }
     return *m_editor;
 }
@@ -2276,7 +2275,7 @@ String Document::defaultCharsetForLegacyBindings() const
 void Document::setCharset(const String& charset)
 {
     if (RefPtr decoder = this->decoder())
-        decoder->setEncoding(charset, TextResourceDecoder::UserChosenEncoding);
+        decoder->setEncoding(charset, TextResourceDecoder::EncodingSource::UserChosen);
 }
 
 void Document::setContentLanguage(const AtomString& language)
@@ -3547,6 +3546,7 @@ void Document::fontsNeedUpdate(FontSelector&)
 {
     ASSERT(!deletionHasBegun());
     invalidateMatchedPropertiesCacheAndForceStyleRecalc();
+    InspectorInstrumentation::fontDataChanged(*this);
 }
 
 void Document::invalidateMatchedPropertiesCacheAndForceStyleRecalc()
@@ -4017,8 +4017,7 @@ AXObjectCache* Document::axObjectCache() const
         return m_topAXObjectCache.get();
 #endif // !ENABLE_ACCESSIBILITY_LOCAL_FRAME
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST m_axObjectCache = makeUnique<AXObjectCache>(*protect(m_frame), const_cast<Document*>(this));
+    m_axObjectCache = makeUnique<AXObjectCache>(*protect(m_frame), const_cast<Document*>(this));
     Document::hasEverCreatedAnAXObjectCache = true;
     return m_axObjectCache.get();
 }
@@ -5410,13 +5409,21 @@ bool Document::isNavigationBlockedByThirdPartyIFrameRedirectBlocking(const Navig
             return false;
     }
 
+    // A provisional frame only has an initial empty document until it commits, so the document being
+    // navigated away from is in the frame it replaces.
+    Ref<Frame> frameWithTargetDocument = targetFrame;
+    if (auto* localTargetFrame = dynamicDowncast<LocalFrame>(targetFrame)) {
+        if (RefPtr frameBeingReplaced = localTargetFrame->frameBeingReplaced())
+            frameWithTargetDocument = frameBeingReplaced.releaseNonNull();
+    }
+
     // Only prevent navigations by third-party iframes or untrusted first-party iframes.
     bool isUntrustedIframe = requester.hasLoadedThirdPartyScript && requester.hasLoadedThirdPartyFrame;
-    if (canAccessAncestor(requester.securityOrigin, &targetFrame) && !isUntrustedIframe)
+    if (canAccessAncestor(requester.securityOrigin, frameWithTargetDocument.ptr()) && !isUntrustedIframe)
         return false;
 
     // Only prevent cross-site navigations.
-    RefPtr targetSecurityOrigin = targetFrame.frameDocumentSecurityOrigin();
+    RefPtr targetSecurityOrigin = frameWithTargetDocument->frameDocumentSecurityOrigin();
     if (!targetSecurityOrigin)
         return true;
 
@@ -5454,8 +5461,7 @@ bool Document::usesStyleBasedEditability() const
     ASSERT(!m_renderView || !m_renderView->frameView().isPainting());
     ASSERT(!m_inStyleRecalc);
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto& styleScope = const_cast<Style::DocumentScope&>(this->styleScope());
+    auto& styleScope = const_cast<Style::DocumentScope&>(this->styleScope());
     styleScope.flushPendingUpdate();
     return styleScope.usesStyleBasedEditability();
 }
@@ -5807,12 +5813,23 @@ TextScaleMeta Document::textScaleMeta() const
     return m_textScaleMeta;
 }
 
+bool Document::shouldUseTextScaleFactor() const
+{
+#if HAVE(TEXT_SCALE_FACTOR)
+    return textScaleMeta() == TextScaleMeta::Scale
+        && settings().contentSizeCategoryTextScaleEnabled()
+        && WebCore::textScaleFactor().has_value();
+#else
+    return false;
+#endif
+}
+
 float Document::textScaleFactor() const
 {
-    if (textScaleMeta() != TextScaleMeta::Scale)
+    if (!shouldUseTextScaleFactor())
         return 1;
-#if PLATFORM(IOS) || PLATFORM(VISION)
-    return textScaleFactorForContentSizeCategory();
+#if HAVE(TEXT_SCALE_FACTOR)
+    return *WebCore::textScaleFactor();
 #else
     return 1;
 #endif
@@ -7360,8 +7377,7 @@ Document& Document::contextDocument() const
 {
     if (m_contextDocument)
         return *m_contextDocument.get();
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this);
+    return const_cast<Document&>(*this);
 }
 
 void Document::setAttributeEventListener(const AtomString& eventType, const QualifiedName& attributeName, const AtomString& attributeValue, DOMWrapperWorld& isolatedWorld)
@@ -8354,12 +8370,10 @@ Document* Document::mainFrameDocument() const
         Document* localMainDocument = nullptr;
         if (RefPtr localMainFrame = this->localMainFrame())
             localMainDocument = localMainFrame->document();
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return localMainDocument ? localMainDocument : const_cast<Document*>(this);
+        return localMainDocument ? localMainDocument : const_cast<Document*>(this);
     }
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST Document* document = const_cast<Document*>(this);
+    Document* document = const_cast<Document*>(this);
     while (HTMLFrameOwnerElement* element = document->ownerElement())
         document = &element->document();
     return document;
@@ -8937,7 +8951,7 @@ bool Document::isInCrossOriginIsolatedAgentCluster() const
 {
     if (crossOriginOpenerPolicy().value == CrossOriginOpenerPolicyValue::SameOriginPlusCOEP)
         return true;
-    return documentIsolationPolicy() != DocumentIsolationPolicy::None && ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated;
+    return documentIsolationPolicy().value != DocumentIsolationPolicyValue::None && ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated;
 }
 
 bool Document::crossOriginIsolated() const
@@ -8965,7 +8979,7 @@ bool Document::originAgentCluster() const
 {
     if (securityOrigin().isOpaque())
         return true;
-    if (isInCrossOriginIsolatedAgentCluster() || documentIsolationPolicy() != DocumentIsolationPolicy::None)
+    if (isInCrossOriginIsolatedAgentCluster() || documentIsolationPolicy().value != DocumentIsolationPolicyValue::None)
         return true;
     return m_isOriginKeyed == OriginKeyed::Yes;
 }
@@ -9355,27 +9369,24 @@ void Document::transferViewTransitionParams(Document& newDocument)
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#deactivate-a-document-for-a-cross-document-navigation
 void Document::dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition canTriggerCrossDocumentViewTransition, RefPtr<NavigationActivation>&& activation, CompletionHandler<void()>&& proceedWithNavigation)
 {
+    ASSERT(canTriggerCrossDocumentViewTransition == CanTriggerCrossDocumentViewTransition::No || proceedWithNavigation);
     RefPtr<ViewTransition> oldViewTransition;
-    bool navigationWaitsForCapture = !!proceedWithNavigation;
 
     auto startTime = MonotonicTime::now();
     PageSwapEvent::Init swapInit;
     swapInit.activation = WTF::move(activation);
     if (canTriggerCrossDocumentViewTransition == CanTriggerCrossDocumentViewTransition::Yes && globalObject()) {
-        ViewTransition::OutboundPostCaptureSteps outboundPostCaptureSteps;
-        if (navigationWaitsForCapture) {
-            outboundPostCaptureSteps = [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }, startTime, proceedWithNavigation = std::exchange(proceedWithNavigation, nullptr)](std::unique_ptr<ViewTransitionParams>&& params) mutable {
-                if (RefPtr protectedThis = weakThis.get(); protectedThis && params) {
-                    params->startTime = startTime;
-                    params->oldDocumentOrigin = &protectedThis->securityOrigin();
-                    // FIXME: This should set the params on the new Document, but it doesn't exist yet.
-                    // Store it on the old, and we'll call transferViewTransitionParams soon.
-                    protectedThis->m_inboundViewTransitionParams = WTF::move(params);
-                }
-                // Not from within whatever skipped or completed the capture, which may be script.
-                callOnMainThread(WTF::move(proceedWithNavigation));
-            };
-        }
+        auto outboundPostCaptureSteps = [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }, startTime, proceedWithNavigation = std::exchange(proceedWithNavigation, nullptr)](std::unique_ptr<ViewTransitionParams>&& params) mutable {
+            if (RefPtr protectedThis = weakThis; protectedThis && params) {
+                params->startTime = startTime;
+                params->oldDocumentOrigin = &protectedThis->securityOrigin();
+                // FIXME: This should set the params on the new Document, but it doesn't exist yet.
+                // Store it on the old, and we'll call transferViewTransitionParams soon.
+                protectedThis->m_inboundViewTransitionParams = WTF::move(params);
+            }
+            // Not from within whatever skipped or completed the capture, which may be script.
+            callOnMainThread(WTF::move(proceedWithNavigation));
+        };
         oldViewTransition = ViewTransition::setupCrossDocumentViewTransition(*this, WTF::move(outboundPostCaptureSteps));
         swapInit.viewTransition = oldViewTransition;
     }
@@ -9383,28 +9394,14 @@ void Document::dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition canTr
     dispatchWindowEvent(PageSwapEvent::create(eventNames().pageswapEvent, WTF::move(swapInit)), this);
 
     // Proceeds from the transition's outbound post-capture steps instead, if there is one.
-    if (navigationWaitsForCapture) {
-        if (proceedWithNavigation) {
-            proceedWithNavigation();
-            return;
-        }
-        // FIXME: This should capture in the next rendering update, but there is none until the new
-        // document paints: the layer tree is frozen from when the provisional load started.
-        if (oldViewTransition && oldViewTransition->phase() == ViewTransitionPhase::PendingCapture)
-            oldViewTransition->setupViewTransition();
+    if (proceedWithNavigation) {
+        proceedWithNavigation();
         return;
     }
-
-    // The navigation cannot wait, so capture now.
-    if (oldViewTransition && oldViewTransition->phase() != ViewTransitionPhase::Done) {
+    // FIXME: This should capture in the next rendering update, but there is none until the new
+    // document paints: the layer tree is frozen from when the provisional load started.
+    if (oldViewTransition && oldViewTransition->phase() == ViewTransitionPhase::PendingCapture)
         oldViewTransition->setupViewTransition();
-
-        // FIXME: This should set the params on the new Document, but it doesn't exist yet.
-        // Store it on the old, and we'll call transferViewTransitionParams soon.
-        m_inboundViewTransitionParams = oldViewTransition->takeViewTransitionParams().moveToUniquePtr();
-        m_inboundViewTransitionParams->startTime = startTime;
-        m_inboundViewTransitionParams->oldDocumentOrigin = &securityOrigin();
-    }
 }
 
 void Document::enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&& eventInit)
@@ -9490,8 +9487,7 @@ DocumentFullscreen& Document::fullscreen()
 const DocumentFullscreen& Document::fullscreen() const
 {
     if (!m_fullscreen) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Document&>(*this).ensureFullscreen();
+        return const_cast<Document&>(*this).ensureFullscreen();
     }
     return *m_fullscreen;
 }
@@ -9742,6 +9738,11 @@ void Document::wheelOrTouchEventHandlersChanged(Node* node)
 
     if (RefPtr frame = this->frame())
         frame->invalidateContentEventRegionsIfNeeded(LocalFrame::InvalidateContentEventRegionsReason::EventHandlerChange);
+
+    // Adding or removing a handler only invalidates the target's style. That updates its event listener
+    // region types, which doesn't cause a repaint, so nothing else schedules a rendering update to rebuild
+    // the event region and send it to the UI process.
+    scheduleRenderingUpdate(RenderingUpdateStep::EventRegionUpdate);
 #else
     UNUSED_PARAM(node);
 #endif
@@ -12021,7 +12022,7 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
             callback(ScheduleLocationChangeResult::Stopped);
             return;
         }
-        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
+        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, ReplaceIfNotCompletelyLoaded::No, [callback = WTF::move(callback)](auto result) mutable {
             callback(result);
         });
     });

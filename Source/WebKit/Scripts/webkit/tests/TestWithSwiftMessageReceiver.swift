@@ -25,6 +25,7 @@
 import WebKit_Internal
 
 // Safety: target is only written in init, assumeIsolated asserts the main thread, and weak loads are atomic in the Swift runtime
+@_expose(Cxx)
 final class TestWithSwiftWeakRef: @unchecked Sendable {
     private weak var target: TestWithSwift?
     init(target: TestWithSwift) {
@@ -85,7 +86,7 @@ final class TestWithSwiftWeakRef: @unchecked Sendable {
                         param: param
                     )
                 )
-                completionHandler.pointee(reply)
+                CompletionHandlers.TestWithSwift.complete(completionHandler, reply)
             } catch {
                 markMessageInvalid(error, on: connection)
                 CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)
@@ -142,7 +143,7 @@ final class TestWithSwiftWeakRef: @unchecked Sendable {
                         param: param
                     )
                 )
-                completionHandler.pointee(reply)
+                CompletionHandlers.TestWithSwift.complete(completionHandler, reply)
             } catch {
                 markMessageInvalid(error, on: connection)
                 CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)
@@ -249,7 +250,7 @@ final class TestWithSwiftWeakRef: @unchecked Sendable {
                         param: param
                     )
                 )
-                completionHandler.pointee(reply)
+                CompletionHandlers.TestWithSwift.complete(completionHandler, reply)
             } catch {
                 markMessageInvalid(error, on: connection)
                 CompletionHandlers.TestWithSwift.completeWithDefaultReply(completionHandler)

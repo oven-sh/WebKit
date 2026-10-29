@@ -1,0 +1,73 @@
+# An object nobody knows is converted to a class at one site. The loss stays with the positions that it reaches: a parameter that only instances reach is proven, so the reads on it have no test, and so are the constructor's own stores.
+# A parameter that it reaches beside an instance is tested once at the entry. Behind the test the body reads a slot without a test, and the read by name stands in the generic version that a failed test calls
+# No instance was handed out, so the object is none. A parameter that it alone reaches is not tested: the function stays one function and reads by name
+# FORM: AsRead
+# Hot, because a cold function stays one function: it is not split into tests, a typed body and a fallback.
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline ResolveAccesses
+# CHECK-LABEL: function f1 name="Node"
+# CHECK-COUNT-2: PutSlot {{*}} receivers=[L0] level=Proven
+# CHECK-LABEL: function f2 name="readsInstances"
+# CHECK-NOT: TypeTest
+# CHECK: : L0 = GetSlot {{*}} key="next" receivers=[L0] level=Proven
+# CHECK: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
+# CHECK-NOT: PropGet
+# CHECK-LABEL: function f3 name="readsForeignObject" module=m0 thisType
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet {{*}} key="weight"
+# CHECK-LABEL: function f4 name="readsBoth" module=m0 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: key="weight"
+# CHECK-LABEL: function f5 name="passesForeignObject"
+# CHECK: name="readsBoth" module=m0 thisType={type=anything} parameters=[{type=L0}]
+# CHECK: : number = GetSlot v0 key="weight" receivers=[L0] level=Proven
+# CHECK-NOT: name="readsForeignObject"
+# CHECK: name="readsBoth" module=m0 role=GenericVersion
+# CHECK: = PropGet {{*}} key="weight"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ToNumber v4
+    v6 = Construct v2, -, v5
+    v7 = Convert v6 declared={type=L0}
+    v8 = CallDirect v7 function=f2
+    v9 = CallDirect v7 function=f4
+    v10 = CallDirect function=f5
+    Return v8
+}
+function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v1 key="weight" mode=Strict
+    Return v3
+}
+function f2 name="readsInstances" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="weight"
+    Return v2
+}
+function f3 name="readsForeignObject" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="weight"
+    Return v1
+}
+function f4 name="readsBoth" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="weight"
+    Return v1
+}
+# The conversion that fails stands in a function of its own: one node of the flow analysis stands for every value of a function that has passed a test, once a test of that function can fail
+function f5 name="passesForeignObject" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Convert v1 declared={type=L0} illTypedCause=FromLooseType
+    v3 = CallDirect v2 function=f3
+    v4 = CallDirect v2 function=f4
+    Return v3
+}

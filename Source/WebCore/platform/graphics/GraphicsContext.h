@@ -33,9 +33,9 @@
 #include <WebCore/FloatSegment.h>
 #include <WebCore/FontCascade.h>
 #include <WebCore/GraphicsContextState.h>
-#include <WebCore/Image.h>
 #include <WebCore/ImageBufferFormat.h>
-#include <WebCore/ImagePaintingOptions.h>
+#include <WebCore/ImageDrawingOptions.h>
+#include <WebCore/ImageTypes.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/Pattern.h>
 #include <WebCore/PlatformGraphicsContext.h>
@@ -47,7 +47,6 @@
 namespace WebCore {
 
 class AffineTransform;
-class BitmapImage;
 class Filter;
 class FilterResults;
 class FloatRoundedRect;
@@ -258,39 +257,29 @@ public:
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatRect&, const ColorSpace& = ColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
 
-    WEBCORE_EXPORT virtual void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) = 0;
+    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, FloatPoint destination = { }, ImageDrawingOptions = { });
+    WEBCORE_EXPORT void drawNativeImage(const NativeImage&, const FloatRect& destination, ImageDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawNativeImage(const NativeImage&, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { }) = 0;
 
     WEBCORE_EXPORT virtual void drawSystemImage(SystemImage&, const FloatRect&);
 
-    WEBCORE_EXPORT ImageDrawResult drawImage(Image&, ConcreteObjectSize, const FloatPoint& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
-    WEBCORE_EXPORT ImageDrawResult drawImage(Image&, ConcreteObjectSize, const FloatRect& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
-    WEBCORE_EXPORT virtual ImageDrawResult drawImage(Image&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr);
+    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatPoint& destination, ImageDrawingOptions = { });
+    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatRect& destination, ImageDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawImageBuffer(ImageBuffer&, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { });
 
-    WEBCORE_EXPORT ImageDrawResult drawBitmapImage(BitmapImage&, const FloatPoint& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
-    WEBCORE_EXPORT ImageDrawResult drawBitmapImage(BitmapImage&, const FloatRect& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
-    WEBCORE_EXPORT virtual ImageDrawResult drawBitmapImage(BitmapImage&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
-
-    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatPoint& destination, ImagePaintingOptions = { });
-    WEBCORE_EXPORT void drawImageBuffer(ImageBuffer&, const FloatRect& destination, ImagePaintingOptions = { });
-    WEBCORE_EXPORT virtual void drawImageBuffer(ImageBuffer&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { });
-
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatPoint& destination, ImagePaintingOptions = { });
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, ImagePaintingOptions = { });
-    WEBCORE_EXPORT virtual void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { });
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatPoint& destination, ImageDrawingOptions = { });
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, ImageDrawingOptions = { });
+    WEBCORE_EXPORT virtual void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { });
 
     WEBCORE_EXPORT virtual void drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter&, FilterResults&);
 
-#if ENABLE(MULTI_REPRESENTATION_HEIC)
-    ImageDrawResult drawMultiRepresentationHEIC(Image&, const Font&, const FloatRect& destination, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage });
-#endif
-
-    virtual void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) = 0;
-    WEBCORE_EXPORT virtual void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { });
+    virtual void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) = 0;
+    WEBCORE_EXPORT virtual void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { });
 
     WEBCORE_EXPORT virtual void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&);
 
 #if ENABLE(VIDEO)
-    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImagePaintingOptions = { });
+    WEBCORE_EXPORT virtual void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImageDrawingOptions = { });
 #endif
 
     // Clipping
@@ -383,9 +372,11 @@ public:
 #endif
 
 protected:
+    static Vector<TextRun> visuallyOrderedSubruns(const TextRun&);
+
     // Returns the interpolation quality a draw operation should use. InterpolationQuality::Default
     // in the options means the context image interpolation quality is used.
-    InterpolationQuality imageInterpolationQualityForOptions(ImagePaintingOptions options) const
+    InterpolationQuality imageInterpolationQualityForOptions(ImageDrawingOptions options) const
     {
         if (options.interpolationQuality() == InterpolationQuality::Default)
             return imageInterpolationQuality();

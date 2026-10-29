@@ -10,6 +10,8 @@ https://www.365scores.com/
     ShouldSilenceWindowResizeEventsDuringApplicationSnapshotting
 https://actesting.org/
     ShouldEnableLegacyGetUserMediaQuirk
+https://www.affirm.com/
+    (none)
 https://www.airindiaexpress.com/
     NeedsAirIndiaExpressLayeringQuirk
 https://www.amazon.com/
@@ -60,6 +62,8 @@ https://www.capitalgroup.com/
     ShouldDelayReloadWhenRegisteringServiceWorker
 https://www.cbssports.com/
     ShouldSynthesizeTouchEventsAfterNonSyntheticClickQuirk
+https://chatgpt.com/
+    ShouldUseLayoutViewportForClientRectsQuirk
 https://www.cnn.com/
     NeedsCNNCaptionQuirk
     NeedsFullscreenObjectFitQuirk
@@ -212,6 +216,7 @@ https://www.iheart.com/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.imdb.com/
     NeedsChromeMediaControlsPseudoElementQuirk
+    NeedsWebKitMediaTextTrackDisplayQuirk
     NeedsZeroMaxTouchPointsQuirk
 https://www.instagram.com/
     NeedsInstagramResizingReelsQuirk
@@ -323,9 +328,10 @@ https://open.spotify.com/
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldBlockAudiblePlaybackWhileAudioIsPlaying
     ShouldDeferIntersectionObserversDuringResize
+    ShouldFlipScreenDimensionsQuirk
     ShouldLimitHLSPlaybackRate
 https://www.spotify.com/
-    (none)
+    ShouldFlipScreenDimensionsQuirk
 https://ceac.state.gov/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://sub.ceac.state.gov/

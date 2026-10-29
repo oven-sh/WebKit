@@ -89,9 +89,10 @@ struct NetworkResourceLoadParameters {
     std::optional<WebCore::ContentSecurityPolicyResponseHeaders> cspResponseHeaders { };
     URL parentFrameURL { };
     URL frameURL { };
+    URL workerURL { };
     WebCore::CrossOriginEmbedderPolicy parentCrossOriginEmbedderPolicy { };
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy { };
-    WebCore::DocumentIsolationPolicy documentIsolationPolicy { WebCore::DocumentIsolationPolicy::None };
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy { };
     WebCore::HTTPHeaderMap originalRequestHeaders { };
     WebCore::PreflightPolicy preflightPolicy { WebCore::PreflightPolicy::Consider };
     bool shouldEnableCrossOriginResourcePolicy { false };

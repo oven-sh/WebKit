@@ -1,0 +1,32 @@
+# The length of a typed array comes out of an inline read that may miss, so what the counter is compared with is a block parameter. The turns of the likely loop can be counted all the same: none of them polls.
+# FORM: AsRead
+# f3 is the typed body of f1. One poll is that of the rare copy, which reads `length` by name. The others stand where the likely loop has more turns in front of it than may pass without a poll.
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
+# REQUIRES: x86_64 faulting-loop-polls
+# RUN: generate-code
+# CHECK: f3: size={{*}} polls=3
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    Return v2
+}
+function f1 name="walksAView" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=Uint8Array site=w0}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitXor v3, v2
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}

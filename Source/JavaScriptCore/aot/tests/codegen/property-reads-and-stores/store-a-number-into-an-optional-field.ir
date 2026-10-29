@@ -1,0 +1,94 @@
+# type Parcel = { weight: number; price?: number };
+# function price(parcel: Parcel, amount: number): void {
+#   parcel.price = amount;
+# }
+# declare const input: any;
+# const parcel: Parcel = { weight: +input };
+# if (input) price(parcel, +input);
+# (globalThis as any).answer = parcel.price;
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=164 kind=Variable
+typesite w1 module=m0 position=65 kind=Parameter function=f1
+typesite w2 module=m0 position=81 kind=Parameter function=f1
+typesite w3 module=m0 position=107 kind=Field
+layout L0 name="Parcel" module=m0 position=5 fields=[{key="price" declared={type=undefined|number}}, {key="weight" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Convert v5 declared={type=number}
+    v7 = NewObject -, v6 layout=L0 fields=[1]
+    v8 = FinishObject v7
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v13):
+    Jump -> next b3()
+  b3():
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Call v1, -, v9, v17 calleeName="price"
+    Jump -> next b5()
+  b4(v19):
+    Jump -> next b5()
+  b5():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="globalThis" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v24 = PropGet v9 key="price"
+    PropSet v23, v24 key="answer"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="price" module=m0 position=50 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=undefined|number site=w3}
+    PropSet v0, v2 key="price"
+    v4 = Undefined
+    Return v4
+}
+
+# The object was made without the field. The layout has a slot for it all the same, so the store that adds the field is one store of the double: the shape does not change, nothing grows, nothing is called.
+# A slot that holds nothing holds the bits of a NaN with a payload, which no double has.
+# CHECK-LABEL: name="price" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[amount]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[parcel]] = ArgumentReg(
+# CHECK-NEXT: Store(b@[[amount]], b@[[parcel]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Return(Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="price" role=Source
+# NONE-NOT: Patchpoint(
+# NONE-NOT: Reads:
+# NONE-NOT: Writes:ShapeWords
+# NONE-NOT: Writes:OrderWords
+# NONE-LABEL: end of function
+# X64-LABEL: name="price" role=Source
+# X64-NEXT: instructions: 2, patchpoints: 0
+# ARM64-LABEL: name="price" role=Source
+# ARM64-NEXT: instructions: 2, patchpoints: 0

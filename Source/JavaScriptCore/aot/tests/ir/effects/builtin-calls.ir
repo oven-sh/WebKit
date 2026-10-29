@@ -1,0 +1,63 @@
+# A call of a built-in has the effects its overload declares, and whether it runs other code is decided from the types of its operands
+# FORM: Prepared
+# RUN: effects summaries f2 f3 f4 f5
+# RUN(ONLY): effects summaries f3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
+variable g0 name="count" declared={type=number} initialization=Undefined
+runtimefunction id=64 function=f0
+function f0 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    Return v0
+}
+function f1 name="callback" kind=Arrow parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f2 name="protocolsAndCallbacks" parameters=[{type=L0}, {type=object}, {type=Uint8Array}, {type=f1}, {type=function}, {type=number}] results=[{type=undefined}] {
+    v6 = CallBuiltin -, v5 overload=MathAbs/0
+    v7 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v8 = CallBuiltin -, v1 overload=ObjectKeys/0
+    v9 = CallBuiltin v2, v3 overload=TypedArrayPrototypeForEach/0
+    v10 = CallBuiltin v2, v4 overload=TypedArrayPrototypeForEach/0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v6 CallBuiltin: none
+# CHECK-NEXT: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v8 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v9 CallBuiltin: reads(TypedArrayStorage, TypedArrayElements, StringStorage, AllocatorState, RuntimeState) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v10 CallBuiltin: {{*}}callsUnknownCode
+function f3 name="implementedInJavaScript" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=f1}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
+    v3 = CallBuiltin v0, v1 overload=ArrayPrototypeForEach/0
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v2 CallBuiltin: writes(ModuleVariables/1)
+# CHECK-NEXT: v3 CallBuiltin: {{*}}callsUnknownCode
+# ONLY-LABEL: function f3
+# ONLY-NOT: v2 CallBuiltin:{{*}}throws
+function f4 name="otherOverloads" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}, {type=object}] results=[{type=undefined}] {
+    v3 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeSlice/0
+    v4 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeSlice/0 builtinCallForm=AnyReceiver
+    v5 = CallBuiltin -, v2 overload=ArrayOf/1
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v4 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v5 CallBuiltin: {{*}}callsUnknownCode
+function f5 name="nullishReceiver" parameters=[{type=object}, {type=undefined|object}, {type=null|object}] results=[{type=undefined}] {
+    v3 = CallBuiltin v0 overload=IteratorPrototypeSymbolIterator/0
+    v4 = CallBuiltin v1 overload=IteratorPrototypeSymbolIterator/0
+    v5 = CallBuiltin v2 overload=IteratorPrototypeSymbolIterator/0
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v3 CallBuiltin: none
+# CHECK-NEXT: v4 CallBuiltin: throws
+# CHECK-NEXT: v5 CallBuiltin: throws

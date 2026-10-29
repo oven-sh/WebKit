@@ -19,21 +19,18 @@
 #include "config.h"
 #include "DragImage.h"
 
-#include "Element.h"
-#include "Image.h"
 #include "NativeImage.h"
+#include "SkiaUtilities.h"
 #include "TextFlags.h"
-#include "TextIndicator.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkImageInfo.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-#include <wtf/URL.h>
 
 namespace WebCore {
 
-IntSize dragImageSize(DragImageRef image)
+static IntSize dragImageSize(PlatformDragImage image)
 {
     if (image)
         return { image->width(), image->height() };
@@ -41,13 +38,23 @@ IntSize dragImageSize(DragImageRef image)
     return { 0, 0 };
 }
 
-void deleteDragImage(DragImageRef)
+IntSize DragImage::size() const
+{
+    return dragImageSize(m_platformImage);
+}
+
+static void deleteDragImage(PlatformDragImage)
 {
     // Since this is a RefPtr, there's nothing additional we need to do to
     // delete it. It will be released when it falls out of scope.
 }
 
-DragImageRef scaleDragImage(DragImageRef image, FloatSize scale)
+void DragImage::deletePlatformImage(PlatformDragImage image)
+{
+    deleteDragImage(WTF::move(image));
+}
+
+static PlatformDragImage scaleDragImage(PlatformDragImage image, FloatSize scale)
 {
     if (!image)
         return nullptr;
@@ -58,21 +65,15 @@ DragImageRef scaleDragImage(DragImageRef image, FloatSize scale)
     if (imageSize == scaledSize)
         return image;
 
-    auto imageInfo = SkImageInfo::Make(scaledSize.width(), scaledSize.height(), image->imageInfo().colorType(), image->imageInfo().alphaType());
-    SkBitmap bitmap;
-    bitmap.allocPixels(imageInfo);
-
-    SkPixmap pixmap;
-    if (!bitmap.peekPixels(&pixmap))
-        return nullptr;
-
-    if (!image->scalePixels(pixmap, SkSamplingOptions(SkCubicResampler::CatmullRom())))
-        return nullptr;
-
-    return SkImages::RasterFromBitmap(bitmap);
+    return SkiaUtilities::scaleImagePixels(image, scaledSize);
 }
 
-DragImageRef dissolveDragImageToFraction(DragImageRef image, float fraction)
+void DragImage::scale(FloatSize scale)
+{
+    m_platformImage = scaleDragImage(takePlatformImage(), scale);
+}
+
+static PlatformDragImage dissolveDragImageToFraction(PlatformDragImage image, float fraction)
 {
     if (!image)
         return nullptr;
@@ -94,24 +95,39 @@ DragImageRef dissolveDragImageToFraction(DragImageRef image, float fraction)
     return SkImages::RasterFromBitmap(bitmap);
 }
 
-DragImageRef createDragImageFromImage(NativeImage& image, GraphicsClient*, float)
+void DragImage::dissolveToFraction(float delta)
+{
+    m_platformImage = dissolveDragImageToFraction(takePlatformImage(), delta);
+}
+
+static PlatformDragImage createDragImageFromImage(NativeImage& image, GraphicsClient*, float)
 {
     return image.platformImage();
 }
 
-DragImageRef createDragImageIconForCachedImageFilename(const String&)
+DragImage DragImage::create(NativeImage& image, GraphicsClient* client, float deviceScaleFactor)
+{
+    return DragImage { createDragImageFromImage(image, client, deviceScaleFactor) };
+}
+
+static PlatformDragImage createDragImageIconForCachedImageFilename(const String&)
 {
     return nullptr;
 }
 
-DragImageData createDragImageForLink(Element&, URL&, const String&, float)
+DragImage DragImage::createIconForCachedImageFilename(const String& filename)
 {
-    return { nullptr, nullptr };
+    return DragImage { createDragImageIconForCachedImageFilename(filename) };
 }
 
-DragImageRef createDragImageForColor(const Color&, const FloatRect&, float, Path&)
+static PlatformDragImage createDragImageForColor(const Color&, const FloatRect&, float, Path&)
 {
     return nullptr;
+}
+
+DragImage DragImage::createForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
+{
+    return DragImage { createDragImageForColor(color, elementRect, pageScaleFactor, visiblePath) };
 }
 
 }

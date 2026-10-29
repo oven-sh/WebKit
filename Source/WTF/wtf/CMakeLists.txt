@@ -75,6 +75,7 @@ set(WTF_PUBLIC_HEADERS
     CryptographicUtilities.h
     CryptographicallyRandomNumber.h
     CurrentThread.h
+    CycleForest.h
     DataLog.h
     DataMutex.h
     DataRef.h
@@ -111,6 +112,7 @@ set(WTF_PUBLIC_HEADERS
     ForbidHeapAllocation.h
     FormattedLogging.h
     Forward.h
+    FrequencyEstimator.h
     Function.h
     FunctionDispatcher.h
     FunctionPtr.h
@@ -863,6 +865,12 @@ if (NOT APPLE AND SWIFT_REQUIRED)
     # an empty stub.
     file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/ios")
     file(WRITE "${WTF_HEADERS_DIR}/ios/WebCoreThread.h" "")
+endif ()
+
+if (NOT MSVC)
+    set_source_files_properties(FastMalloc.cpp PROPERTIES
+        COMPILE_OPTIONS $<$<CONFIG:Debug>:-O3>
+        SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 
 WEBKIT_FRAMEWORK(WTF)

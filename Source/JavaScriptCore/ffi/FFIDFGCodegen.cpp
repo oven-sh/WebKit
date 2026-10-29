@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "DFGSpeculativeJIT.h"
 
@@ -479,4 +479,4 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(DFG_JIT)
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

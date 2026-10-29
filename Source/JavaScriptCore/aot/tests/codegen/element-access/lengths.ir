@@ -1,0 +1,145 @@
+# The length of an array, of each kind of typed array and of a string has code in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-5: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayLength" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+    v2 = GetArrayLength v0
+    v3 = NewArray v2 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = GetArrayLength v0
+    v6 = NewArray v5 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v7 = GetArrayLength v0
+    v8 = NewArray v7 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="arrayLength"
+# R-COUNT-3: int[0, 4294967295] @Int64 = GetArrayLength v0
+function f1 name="arrayLengthUnderGuard" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b8()
+  b1(v3):
+    v4 = GetArrayLength v0, v3
+    v5 = NewArray v4 contents=anything
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v8 = GetArrayLength v0, v3
+    v9 = NewArray v8 contents=anything
+    Branch v1 -> taken b3(), notTaken b4()
+  b4():
+    Branch v1 -> taken b2(), notTaken b5()
+  b5():
+    Branch v1 -> taken b6(), notTaken b7()
+  b6() frequency=Rare:
+    v10 = GetArrayLength v0, v3
+    v11 = NewArray v10 contents=anything
+    Jump -> next b7()
+  b7():
+    Return
+  b8() frequency=Rare:
+    Return
+}
+# S: f1 b1 Balanced
+# S: f1 b3 Fast
+# S: f1 b6 Compact
+# R-LABEL: function f1 name="arrayLengthUnderGuard"
+# R-COUNT-3: int[0, 4294967295] @Int64 = GetArrayLength v0, v3
+function f2 name="typedArrayLengths" parameters=[{type=Int8Array}, {type=Uint8Array}, {type=Uint8ClampedArray}, {type=Int16Array}, {type=Uint16Array}, {type=Int32Array}, {type=Uint32Array}, {type=Float16Array}, {type=Float32Array}, {type=Float64Array}, {type=BigInt64Array}, {type=BigUint64Array}, {type=boolean}] results=[{type=undefined}] {
+# REPEAT: i = 0..11
+    v%(i+13) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
+    v25 = NewArray v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 0..11
+    v%(i+27) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
+    v39 = NewArray v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38 contents=anything
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    Branch v12 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+# REPEAT: i = 0..11
+    v%(i+40) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
+    v52 = NewArray v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+# R-LABEL: function f2 name="typedArrayLengths"
+# R-COUNT-36: int[0, 17179869184] @Int64 = GetTypedArrayLength
+# R-NOT: = GetTypedArrayLength
+function f3 name="stringLength" parameters=[{type=string}, {type=boolean}] results=[{type=undefined}] {
+    v2 = GetStringLength v0
+    v3 = NewArray v2 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = GetStringLength v0
+    v6 = NewArray v5 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v7 = GetStringLength v0
+    v8 = NewArray v7 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+# R-LABEL: function f3 name="stringLength"
+# R-COUNT-3: int[0, 2147483647] @Int32 = GetStringLength v0
+function f4 name="flatStringLength" parameters=[{type=string}, {type=boolean}] results=[{type=undefined}] {
+    v2 = FlattenString v0
+    v3 = GetStringLength v2
+    v4 = NewArray v3 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = FlattenString v0
+    v7 = GetStringLength v6
+    v8 = NewArray v7 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v9 = FlattenString v0
+    v10 = GetStringLength v9
+    v11 = NewArray v10 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+# R-LABEL: function f4 name="flatStringLength"
+# R-COUNT-3: int[0, 2147483647] @Int32 = GetStringLength

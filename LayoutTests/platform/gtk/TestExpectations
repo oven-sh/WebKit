@@ -942,6 +942,10 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the
 
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-height-constrained-by-max-width.html [ ImageOnlyFailure ]
 webkit.org/b/252953 imported/w3c/web-platform-tests/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/video-default-object-width-constrained-by-max-height.html [ ImageOnlyFailure ]
+
+# Antialiasing differences in the rounded corners of the focus ring.
+webkit.org/b/328475 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/focus-ring-rendering.html [ ImageOnlyFailure ]
+
 # Ftp code is disabled in gtk port
 
 # text-transform: full-width
@@ -1038,8 +1042,6 @@ webkit.org/b/303884 accessibility/gtk/spans-paragraphs-and-divs.html [ Failure ]
 
 fast/images/async-image-body-background-image.html [ Timeout Pass ]
 
-webkit.org/b/304271 [ Debug ] fullscreen/full-screen-enter-while-exiting-fully-mid-completion-handler.html [ Crash Pass ]
-
 webkit.org/b/304278 inspector/worker/debugger-pause-subworker.html [ Skip ]
 
 # webkit.org/b/304535 ui-serif, ui-sans-serif, ui-monospace, ui-rounded generic families not implemented on GTK
@@ -1090,7 +1092,7 @@ pointer-lock/lock-lost-on-alert.html [ Pass Failure ]
 
 webkit.org/b/311927 accessibility/combobox/gtk/combobox-collapsed-selection-changed.html [ Failure Pass Timeout ]
 
-webkit.org/b/311930 [ Release ] fonts/font-cache-memory-pressure-crash.html [ Failure Pass ]
+webkit.org/b/311930 fonts/font-cache-memory-pressure-crash.html [ Failure Pass ]
 
 webkit.org/b/312892 [ Release ] imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/window-open-self.html [ Pass Failure ]
 
@@ -1147,8 +1149,6 @@ webkit.org/b/319055 [ Debug ] fast/canvas/webgl/tex-image-and-sub-image-2d-with-
 webkit.org/b/319056 [ Debug ] fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Failure Pass ]
 webkit.org/b/319057 [ Debug ] media/media-h264-webm-source.html [ Failure Pass ]
 webkit.org/b/319058 [ Debug ] media/media-h264-webm-error.html [ Failure Pass ]
-webkit.org/b/319059 [ Debug ] media/vp9.html [ Failure ]
-webkit.org/b/319060 [ Debug ] media/auto-play-video-in-about-blank-iframe.html [ Failure ]
 webkit.org/b/319061 [ Debug ] media/muted-video-is-playing-audio.html [ Timeout Pass ]
 webkit.org/b/319062 [ Debug ] inspector/dom/getMediaStats.html [ Failure Pass ]
 webkit.org/b/319063 [ Debug ] fullscreen/full-screen-enter-while-exiting.html [ Timeout Pass ]
@@ -1183,7 +1183,7 @@ webkit.org/b/321789 animations/no-style-recalc-during-accelerated-animation.html
 
 webkit.org/b/322025 fast/animation/request-animation-frame-during-modal.html [ Failure Pass ]
 
-webkit.org/b/321107 imported/w3c/web-platform-tests/css/selectors/media/media-loading-state-timing.sub.html [ Failure ]
+webkit.org/b/321107 imported/w3c/web-platform-tests/css/selectors/media/media-loading-state-timing.sub.html [ Failure Pass ]
 webkit.org/b/322626 fast/events/touch/touch-target-limited.html [ Timeout ]
 webkit.org/b/322627 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-box-shadow-spread-elliptical.html [ ImageOnlyFailure ]
 webkit.org/b/322628 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-outline-offset-bevel.html [ ImageOnlyFailure ]
@@ -1218,7 +1218,6 @@ webkit.org/b/323612 imported/w3c/web-platform-tests/css/css-counter-styles/count
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-004-rtl.html [ ImageOnlyFailure Pass ]
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-006-rtl.html [ ImageOnlyFailure Pass ]
 webkit.org/b/323611 imported/w3c/web-platform-tests/css/css-anchor-position/position-area-overflow-icb-008-rtl.html [ ImageOnlyFailure Pass ]
-webkit.org/b/323778 [ Debug ] media/media-source/media-source-addsourcebuffer-after-canplaytype.html [ Crash Pass ]
 
 webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/held.https.any.sharedworker.html [ Failure Pass ]
 webkit.org/b/323779 imported/w3c/web-platform-tests/web-locks/idlharness.https.any.sharedworker.html [ Failure Pass ]
@@ -1259,10 +1258,9 @@ webkit.org/b/324374 webgl/2.0.y/conformance/textures/misc/texture-size-limit.htm
 
 webkit.org/b/319065 [ Debug ] imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_relatedtarget.html [ Failure Pass ]
 
-webkit.org/b/325941 [ Debug ] fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Crash Pass Timeout ]
-
 webkit.org/b/326556 inspector/debugger/breakpoint-action-log.html [ Failure ]
 webkit.org/b/326559 [ Release ] inspector/dom-debugger/dom-breakpoint-subtree-modified-add.html [ Crash Pass ]
+webkit.org/b/328584 fast/events/wheel/continuous-platform-wheelevent-in-scrolling-div.html [ Pass Failure ]
 webkit.org/b/326560 [ Debug ] imported/w3c/web-platform-tests/uievents/textInput/delete-selection.html [ Crash Pass ]
 webkit.org/b/326563 compositing/backface-visibility/backface-visibility-3d.html [ Pass Timeout ]
 

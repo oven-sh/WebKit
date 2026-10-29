@@ -85,6 +85,9 @@ JS_EXPORT_PRIVATE Exception* throwConstructorCannotBeCalledAsFunctionTypeError(J
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, ASCIILiteral errorMessage);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE String withAOTErrorNote(const String& message);
+#endif
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
 inline Exception* throwRangeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& errorMessage) { return throwException(globalObject, scope, createRangeError(globalObject, errorMessage)); }

@@ -22,6 +22,7 @@
 
 enum class WebCore::LockHistory : bool;
 enum class WebCore::LockBackForwardList : bool;
+enum class WebCore::ReplaceIfNotCompletelyLoaded : bool;
 
 [RValue] struct WebKit::LoadParameters {
     WebCore::PublicSuffix publicSuffix;
@@ -43,7 +44,9 @@ enum class WebCore::LockBackForwardList : bool;
     WebKit::UserData userData;
     WebCore::LockHistory lockHistory;
     WebCore::LockBackForwardList lockBackForwardList;
+    RefPtr<WebKit::FrameState> currentHistoryItemForReattach;
     WebCore::NavigationHistoryBehavior navigationHistoryBehavior;
+    WebCore::ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded;
     WebCore::SubstituteData::SessionHistoryVisibility sessionHistoryVisibility
     String clientRedirectSourceForHistory;
     std::optional<WebCore::SandboxFlags> effectiveSandboxFlags;

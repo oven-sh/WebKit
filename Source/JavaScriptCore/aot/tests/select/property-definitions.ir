@@ -1,0 +1,374 @@
+# A descriptor literal passed to a built-in and a run of accessor definitions each become one operation
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: DescriptorLiteralGroups = 7
+# STATISTIC: AccessorGroupGroups = 6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
+layout L1 kind=Instance name="DescriptorClass" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}] flow={baseState=None}
+layout L2 fields=[{key="value" declared={type=anything}}, {key="extra" declared={type=anything}}]
+layout L3 fields=[{key="Value" declared={type=anything}}]
+layout L4 fields=[{key="get" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="configurable" declared={type=anything}}]
+layout L5 fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+layout L6 fields=[{key="set" declared={type=anything}}]
+layout L7 fields=[{key="value" declared={type=anything}}, {key="get" declared={type=anything}}]
+layout L8 fields=[{key="writable" declared={type=anything}}, {key="set" declared={type=anything}}]
+layout L9
+layout L10 fields=[{key="value" declared={type=anything}}]
+function f0 name="accessor" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f1 name="data-descriptor" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: NewObject
+# CHECK-NOT: FinishObject
+# CHECK-NOT: overload=
+# CHECK: [[defined1]]:{{*}}= DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+# CHECK-NEXT: Return [[defined1]]
+}
+function f2 name="literal-with-getter-piece" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject -, v2 layout=L10 fields=[0]
+    v4 = NewClosure function=f0
+    DefineGetter v3, v4 key="writable"
+    v6 = FinishObject v3
+    v7 = CallBuiltin -, v0, v1, v6 overload=ObjectDefineProperty/0
+    Return v7
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v3:{{*}}= NewObject -, v2 layout=L10 fields=[0]
+# CHECK-NOT: DefineOwnProperty
+}
+function f3 name="instance-of-class" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L1 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f4 name="literal-used-twice" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=object}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v5
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v5:{{*}}= FinishObject v4
+# CHECK-NOT: DefineOwnProperty
+}
+function f5 name="literal-without-finish" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0
+    Return v5
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f6 name="literal-through-upcast" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Upcast v5 castType=object
+    v7 = CallBuiltin -, v0, v1, v6 overload=ObjectDefineProperty/0
+    Return v7
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v5:{{*}}= FinishObject v4
+# CHECK-NEXT: v6:{{*}}= Upcast v5
+# CHECK-NOT: DefineOwnProperty
+}
+function f7 name="unknown-attribute" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L2 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f8 name="attribute-with-capital-letter" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject -, v2 layout=L3 fields=[0]
+    v4 = FinishObject v3
+    v5 = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0
+    Return v5
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v3:{{*}}= NewObject -, v2 layout=L3 fields=[0]
+# CHECK-NOT: DefineOwnProperty
+}
+function f9 name="attribute-not-constant" parameters=[{type=object}, {type=string}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f10 name="descriptor-is-parameter" parameters=[{type=object}, {type=string}, {type=object}] results=[{type=anything}] {
+    v3 = CallBuiltin -, v0, v1, v2 overload=ObjectDefineProperty/0
+    Return v3
+# CHECK-NOT: DefineOwnProperty
+# CHECK: {{*}}v0, v1, v2{{*}}overload=ObjectDefineProperty/0
+# CHECK-NOT: DefineOwnProperty
+}
+function f11 name="builtin-takes-no-descriptor" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = CallBuiltin -, v3 overload=ObjectFreeze/0
+    Return v4
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f12 name="builtin-returns-boolean" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ReflectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f13 name="symbol-key" parameters=[{type=object}, {type=symbol}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: NewObject
+# CHECK-NOT: FinishObject
+# CHECK-NOT: overload=
+# CHECK: [[defined13]]:{{*}}= DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+# CHECK-NEXT: Return [[defined13]]
+}
+function f14 name="accessor-descriptor" parameters=[{type=object}, {type=string}, {type=function}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v3, v4 layout=L4 fields=[0, 1, 2]
+    v6 = FinishObject v5
+    v7 = CallBuiltin -, v0, v1, v6 overload=ObjectDefineProperty/0
+    Return v7
+# CHECK-NOT: NewObject
+# CHECK-NOT: FinishObject
+# CHECK-NOT: overload=
+# CHECK: [[defined14]]:{{*}}= DefineOwnProperty v0, v1, -, v2 descriptorFlags=[HasEnumerable, HasConfigurable, IsConfigurable, HasGet]
+# CHECK-NEXT: Return [[defined14]]
+}
+function f15 name="getter-and-setter-descriptor" parameters=[{type=object}, {type=string}, {type=function}, {type=function}] results=[{type=anything}] {
+    v4 = NewObject -, v2, v3 layout=L5 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: NewObject
+# CHECK-NOT: FinishObject
+# CHECK-NOT: overload=
+# CHECK: [[defined15]]:{{*}}= DefineOwnProperty v0, v1, -, v2, v3 descriptorFlags=[HasGet, HasSet]
+# CHECK-NEXT: Return [[defined15]]
+}
+function f16 name="setter-descriptor" parameters=[{type=object}, {type=string}, {type=function}] results=[{type=anything}] {
+    v3 = NewObject -, v2 layout=L6 fields=[0]
+    v4 = FinishObject v3
+    v5 = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0
+    Return v5
+# CHECK-NOT: NewObject
+# CHECK-NOT: FinishObject
+# CHECK-NOT: overload=
+# CHECK: [[defined16]]:{{*}}= DefineOwnProperty v0, v1, -, -, v2 descriptorFlags=[HasSet]
+# CHECK-NEXT: Return [[defined16]]
+}
+function f17 name="value-and-getter" parameters=[{type=object}, {type=string}, {type=anything}, {type=function}] results=[{type=anything}] {
+    v4 = NewObject -, v2, v3 layout=L7 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L7 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f18 name="writable-and-setter" parameters=[{type=object}, {type=string}, {type=function}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v3, v2 layout=L8 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v4:{{*}}= NewObject -, v3, v2 layout=L8 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f19 name="empty-descriptor" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject layout=L9 fields=[]
+    v3 = FinishObject v2
+    v4 = CallBuiltin -, v0, v1, v3 overload=ObjectDefineProperty/0
+    Return v4
+# CHECK-NOT: NewObject
+# CHECK-NOT: overload=
+# CHECK: [[defined19]]:{{*}}= DefineOwnProperty v0, v1
+# CHECK-NOT: descriptorFlags
+# CHECK: Return [[defined19]]
+}
+function f20 name="getter-and-setter" parameters=[{type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineSetter v0, v2 key="b"
+    Return
+# CHECK-NOT: DefineGetter
+# CHECK-NOT: DefineSetter
+# CHECK: DefineAccessors v0, v1, v2 keys=["a", "b"] getterMask=1 enumerableMask=3
+# CHECK-NEXT: Return
+}
+function f21 name="one-accessor" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    Return
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter v0, v1 key="a"
+# CHECK-NEXT: Return
+# CHECK-NOT: DefineAccessors
+}
+function f22 name="computed-key" parameters=[{type=object}, {type=function}, {type=function}, {type=string}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineSetter v0, v2, v3
+    Return
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter v0, v1 key="a"
+# CHECK-NEXT: DefineSetter v0, v2, v3
+# CHECK-NEXT: Return
+# CHECK-NOT: DefineAccessors
+}
+function f23 name="index-key" parameters=[{type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="0"
+    DefineGetter v0, v2 key="a"
+    Return
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter v0, v1 key="0"
+# CHECK-NEXT: DefineGetter v0, v2 key="a"
+# CHECK-NEXT: Return
+# CHECK-NOT: DefineAccessors
+}
+function f24 name="two-objects" parameters=[{type=object}, {type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v2 key="a"
+    DefineGetter v1, v3 key="b"
+    Return
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter v0, v2 key="a"
+# CHECK-NEXT: DefineGetter v1, v3 key="b"
+# CHECK-NEXT: Return
+# CHECK-NOT: DefineAccessors
+}
+function f25 name="call-between" parameters=[{type=object}, {type=function}, {type=function}, {type=anything}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    v5 = Call v3
+    DefineSetter v0, v2 key="b"
+    Return
+# CHECK-NOT: DefineAccessors
+# CHECK: DefineGetter v0, v1 key="a"
+# CHECK-NEXT: = Call v3
+# CHECK-NEXT: DefineSetter v0, v2 key="b"
+# CHECK-NEXT: Return
+# CHECK-NOT: DefineAccessors
+}
+function f26 name="call-after-first-accessor" parameters=[{type=object}, {type=function}, {type=function}, {type=function}, {type=anything}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    v6 = Call v4
+    DefineGetter v0, v2 key="b"
+    DefineSetter v0, v3 key="c"
+    Return
+# CHECK: DefineGetter v0, v1 key="a"
+# CHECK-NEXT: = Call v4
+# CHECK-NEXT: DefineAccessors v0, v2, v3 keys=["b", "c"] getterMask=1 enumerableMask=3
+# CHECK-NEXT: Return
+}
+function f27 name="two-getters" parameters=[{type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineGetter v0, v2 key="b"
+    Return
+# CHECK-NOT: DefineGetter
+# CHECK-NOT: DefineSetter
+# CHECK: DefineAccessors v0, v1, v2 keys=["a", "b"] getterMask=3 enumerableMask=3
+# CHECK-NEXT: Return
+}
+function f28 name="getter-and-setter-of-one-key" parameters=[{type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineSetter v0, v2 key="a"
+    Return
+# CHECK-NOT: DefineGetter
+# CHECK-NOT: DefineSetter
+# CHECK: DefineAccessors v0, v1, v2 keys=["a", "a"] getterMask=1 enumerableMask=3
+# CHECK-NEXT: Return
+}
+function f29 name="seventeen-accessors" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineGetter v0, v1 key="b"
+    DefineGetter v0, v1 key="c"
+    DefineGetter v0, v1 key="d"
+    DefineGetter v0, v1 key="e"
+    DefineGetter v0, v1 key="f"
+    DefineGetter v0, v1 key="g"
+    DefineGetter v0, v1 key="h"
+    DefineGetter v0, v1 key="i"
+    DefineGetter v0, v1 key="j"
+    DefineGetter v0, v1 key="k"
+    DefineGetter v0, v1 key="l"
+    DefineGetter v0, v1 key="m"
+    DefineGetter v0, v1 key="n"
+    DefineGetter v0, v1 key="o"
+    DefineGetter v0, v1 key="p"
+    DefineGetter v0, v1 key="q"
+    Return
+# CHECK-NOT: DefineGetter
+# CHECK: DefineAccessors v0, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 keys=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"] getterMask=65535 enumerableMask=65535
+# CHECK-NEXT: DefineGetter v0, v1 key="q"
+# CHECK-NEXT: Return
+}
+function f30 name="closure-between" results=[{type=object}] {
+    v0 = NewObject layout=L9 fields=[]
+    v1 = NewClosure function=f0
+    DefineGetter v0, v1 key="a"
+    v3 = NewClosure function=f0
+    DefineGetter v0, v3 key="b"
+    v5 = FinishObject v0
+    Return v5
+# CHECK-NOT: DefineGetter
+# CHECK: [[first]]:{{*}}= NewClosure function=f0
+# CHECK-NEXT: [[second]]:{{*}}= NewClosure function=f0
+# CHECK-NEXT: DefineAccessors v0, [[first]], [[second]] keys=["a", "b"] getterMask=3 enumerableMask=3
+# CHECK-NEXT: = FinishObject v0
+}
+function f31 name="defined-on-anything" parameters=[{type=anything}, {type=string}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: overload=
+# CHECK: DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+}
+function f32 name="defined-on-what-is-no-object" parameters=[{type=undefined|number}, {type=string}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    Unreachable
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v5:{{*}}= NewObject -, v2, v4 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f33 name="defined-on-anything-and-handed-on" parameters=[{type=anything}, {type=string}, {type=anything}, {type=anything}] results=[{type=object}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    Return v7
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v5:{{*}}= NewObject -, v2, v4 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}

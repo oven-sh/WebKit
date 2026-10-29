@@ -1,0 +1,67 @@
+# Each literal site has its own object, so an operation may take two equal literals of two sites that are both shared
+# FORM: Prepared
+# RUN: pass ShareRegExpLiterals
+# STATISTIC: ShareRegExpLiteralsChanges = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="comparedWithEqualLiteral" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = NewRegExp pattern="a" @20
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f1 name="comparedThroughCast" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = NewRegExp pattern="a" @20
+    v2 = Upcast v1 castType=object
+    v3 = StrictEq v0, v2
+    Return v3
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f2 name="passedToObjectIs" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = NewRegExp pattern="a" @20
+    v2 = CallBuiltin -, v0, v1 overload=ObjectIs/0
+    Return v2
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f3 name="comparedWithOtherFlags" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = NewRegExp pattern="a" regExpFlags=[IgnoreCase] @20
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f4 name="comparesParameterWithLiteral" parameters=[{type=RegExp}] results=[{type=boolean}] {
+    v1 = NewRegExp pattern="a" @10
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f5 name="passedToDirectCall" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = CallDirect v0 function=f4
+    Return v1
+# CHECK: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+}
+
+function f6 name="comparedWithCopyOfItsSite" results=[{type=boolean}] {
+    v0 = NewRegExp pattern="a" @10
+    v1 = NewRegExp pattern="a" @10
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-COUNT-2: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+}

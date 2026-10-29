@@ -369,6 +369,8 @@ public:
     void clearDidMutateSubtreeAfterSetInnerHTML() { clearStateFlag(StateFlag::DidMutateSubtreeAfterSetInnerHTML); }
     void setDidMutateSubtreeAfterSetInnerHTMLOnAncestors();
 
+    bool isInSelectOrDataListSubtree() const { return hasStateFlag(StateFlag::IsInSelectOrDataListSubtree); }
+
     bool hasWasParsedWithFastPath() const { return hasStateFlag(StateFlag::WasParsedWithFastPath); }
     void setWasParsedWithFastPath() { setStateFlag(StateFlag::WasParsedWithFastPath); }
     void clearWasParsedWithFastPath() { clearStateFlag(StateFlag::WasParsedWithFastPath); }
@@ -674,7 +676,8 @@ protected:
         ShouldNotifyTextManipulationControllerIfDisplayed = 1 << 23,
         DescendantNeedsStyleResolution = 1 << 24,
         DirectChildNeedsStyleResolution = 1 << 25,
-        // 6 bits free.
+        IsInSelectOrDataListSubtree = 1 << 26, // Only used on Element.
+        // 5 bits free.
     };
 
     enum class TabIndexState : uint8_t {
@@ -876,8 +879,7 @@ ALWAYS_INLINE void Node::deref() const
 #if ASSERT_ENABLED
         m_inRemovedLastRefFunction = true;
 #endif
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<Node&>(*this).removedLastRef();
+        const_cast<Node&>(*this).removedLastRef();
         return;
     }
     m_refCountAndParentBit = updatedRefCount;

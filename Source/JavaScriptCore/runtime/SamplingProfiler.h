@@ -45,6 +45,10 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 
+#if ENABLE(AOT)
+#include "AOTTraceFrame.h"
+#endif
+
 namespace JSC {
 
 class VM;
@@ -70,13 +74,17 @@ public:
         const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
+#if ENABLE(AOT)
+        AOT::CompiledFunctionID compiledCode;
+        uint32_t compiledCodeOffset { 0 };
+#endif
         CallSiteIndex callSiteIndex;
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)
         std::optional<Wasm::IndexOrName> wasmIndexOrName;
 #endif
         std::optional<Wasm::CompilationMode> wasmCompilationMode;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         Box<PCToCodeOriginMap> wasmPCMap;
 #endif
     };
@@ -102,6 +110,15 @@ public:
         FrameType frameType { FrameType::Unknown };
         const void* cCodePC { nullptr };
         ExecutableBase* executable { nullptr };
+#if ENABLE(AOT)
+        AOT::TraceFrame compiledFrame { };
+        AOT::Typed::ModuleID compiledSiteModule;
+        bool isCompiledFrame() const { return !!compiledFrame.function; }
+        AOT::Typed::ModuleID compiledModule() const;
+#else
+        static constexpr bool isCompiledFrame() { return false; }
+#endif
+        static constexpr SourceID firstCompiledCodeSourceID = 1 << 30;
         JSObject* callee { nullptr };
         RegExp* regExp { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -175,10 +192,7 @@ public:
         Vector<StackFrame> frames;
         StackTrace()
         { }
-        StackTrace(StackTrace&& other)
-            : timestamp(other.timestamp)
-            , frames(WTF::move(other.frames))
-        { }
+        StackTrace(StackTrace&&) = default;
     };
 
     SamplingProfiler(VM&, Ref<Stopwatch>&&);

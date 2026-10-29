@@ -1,0 +1,43 @@
+# A shared body that only prepares the arguments of a direct call and hands on what the call returns leaves by the call. One that does more in front of the call returns for itself
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsTheCapture" parameters=[{type=number}, {type=f2}, {type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), otherwise b17()
+# REPEAT: i = 1..16
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = GetCapture v1 function=f2 @9
+    v%(i*2+2) = CallDirect v%(i*2+1), v2 function=f2 @9
+    Return v%(i*2+2)
+# END REPEAT
+  b17():
+    Return v2
+}
+function f1 name="addsFirst" parameters=[{type=number}, {type=anything}] results=[{type=i32}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*3-1) = Integer integer=1000001
+    v%(i*3) = Add v1, v1 form=Generic @9
+    v%(i*3+1) = CallDirect v%(i*3-1), v%(i*3-1) function=f2 @9
+    Return v%(i*3+1)
+# END REPEAT
+  b7():
+    v20 = Integer integer=0
+    Return v20
+}
+function f2 name="callee" kind=Arrow captures=[{type=i32}] parameters=[{type=i32}] results=[{type=i32}] {
+    Return v1
+}
+# CHECK-LABEL: role=OutlinedBody
+# CHECK: = GetCapture
+# CHECK-NEXT: [[call]]: i32 = CallDirect {{*}} function=f2
+# CHECK-NEXT: ReturnCall [[call]]
+# CHECK-LABEL: role=OutlinedBody
+# CHECK: = Add
+# CHECK: [[other]]: i32 = CallDirect {{*}} function=f2
+# CHECK-NEXT: Return [[other]]

@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "BytecodeGeneratorBase.h"
+#include "AOTRemovableFeature.h"
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "Instruction.h"
@@ -344,29 +344,21 @@ namespace JSC {
         bool hasAwaitUsing { false };
     };
 
-    struct JSGeneratorTraits {
-        using OpcodeTraits = JSOpcodeTraits;
-        using OpcodeID = ::JSC::OpcodeID;
-        using OpNop = ::JSC::OpNop;
-        using CodeBlock = std::unique_ptr<UnlinkedCodeBlockGenerator>;
-        using InstructionType = JSInstruction;
-        static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
-    };
-
-    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
-    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
+    // One character early, on whatever is before the expression: the basic block of an arrow function's own code starts at
+    // the expression, and two basic blocks with the same range share a counter.
     inline int startOffsetOfBasicBlock(ExpressionNode* node)
     {
         return node->startOffset() - 1;
     }
 
-    class BytecodeGenerator : public BytecodeGeneratorBase<JSGeneratorTraits> {
+    class BytecodeGenerator {
         WTF_MAKE_TZONE_ALLOCATED(BytecodeGenerator);
         WTF_MAKE_NONCOPYABLE(BytecodeGenerator);
 
         friend class FinallyContext;
         friend class BytecodeOptimizerAccess;
         friend class ForInContext;
+        friend class Label;
         friend class StrictModeScope;
 
         template <typename OldOpType, typename NewOpType, typename TupleType>
@@ -404,8 +396,9 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
+        NEVER_INLINE static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
+            JSC_REMOVABLE_DEFINITION(Interpreter, &BytecodeGenerator::generate<Node, UnlinkedCodeBlock>);
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
                 before = MonotonicTime::now();
@@ -443,6 +436,19 @@ namespace JSC {
         RegisterID* generatorRegister() { return m_generatorRegister; }
 
         RegisterID* promiseRegister() { return m_promiseRegister; }
+
+        Ref<Label> newLabel();
+        Ref<Label> newEmittedLabel();
+        RegisterID* newRegister();
+        RegisterID* addVar();
+
+        // Returns the next available temporary register. Registers returned by
+        // newTemporary require a modified form of reference counting: any
+        // register with a refcount of 0 is considered "available", meaning that
+        // the next instruction may overwrite it.
+        RegisterID* newTemporary();
+        template<typename Functor>
+        void newTemporaries(size_t count, NOESCAPE const Functor&);
 
         // The same as newTemporary(), but this function returns "suggestion" if
         // "suggestion" is a temporary. This function is helpful in situations
@@ -493,6 +499,12 @@ namespace JSC {
         }
 
         Ref<LabelScope> newLabelScope(LabelScope::Type, const Identifier* = nullptr);
+
+        void emitLabel(Label&);
+        void recordOpcode(OpcodeID);
+
+        template<OpcodeSize size, typename... Ops>
+        void writeOpcode(OpcodeID, Ops...);
 
         void emitNode(RegisterID* dst, StatementNode* n)
         {
@@ -652,9 +664,17 @@ namespace JSC {
             return (m_codeType != FunctionCode || rightHasAssignments) && !rightIsPure;
         }
 
+        ALWAYS_INLINE bool leftHandSideNeedsCopy(ExpressionNode* leftHandSide, bool rightHasAssignments, bool rightIsPure)
+        {
+            // Reading |this| checks that it is bound, and super() throws instead of rebinding it, so it cannot change afterwards.
+            if (leftHandSide->isThisNode())
+                return false;
+            return leftHandSideNeedsCopy(rightHasAssignments, rightIsPure);
+        }
+
         ALWAYS_INLINE RefPtr<RegisterID> emitNodeForLeftHandSide(ExpressionNode* n, bool rightHasAssignments, bool rightIsPure)
         {
-            if (leftHandSideNeedsCopy(rightHasAssignments, rightIsPure)) {
+            if (leftHandSideNeedsCopy(n, rightHasAssignments, rightIsPure)) {
                 RefPtr<RegisterID> dst = newTemporary();
                 emitNode(dst.get(), n);
                 return dst;
@@ -665,7 +685,7 @@ namespace JSC {
 
         ALWAYS_INLINE RefPtr<RegisterID> emitNodeForLeftHandSideForProperty(ExpressionNode* n, bool rightHasAssignments, bool rightIsPure)
         {
-            if (leftHandSideNeedsCopy(rightHasAssignments, rightIsPure)) {
+            if (leftHandSideNeedsCopy(n, rightHasAssignments, rightIsPure)) {
                 RefPtr<RegisterID> dst = newTemporary();
                 emitNodeForProperty(dst.get(), n);
                 return dst;
@@ -712,6 +732,17 @@ namespace JSC {
                 emitProfileControlFlow(textOffset, textEndOffset);
         }
         bool& isInCaseTest() { return m_isInCaseTest; }
+        // For the condition, the increment or the left side in a loop header. A loop emits its condition twice, with one counter.
+        void emitProfileControlFlowForLoopHeader(int textOffset, int textEndOffset)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileControlFlowSlow(textOffset, textEndOffset, true);
+        }
+        void emitProfileControlFlowForLoopHeader(ExpressionNode* conditionOrIncrement)
+        {
+            if (conditionOrIncrement)
+                emitProfileControlFlowForLoopHeader(startOffsetOfBasicBlock(conditionOrIncrement), conditionOrIncrement->endOffset());
+        }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -1132,7 +1163,7 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
-        void emitProfileControlFlowSlow(int textOffset, int textEndOffset);
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader = false);
         bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
@@ -1193,6 +1224,9 @@ namespace JSC {
         int LEGACY_NODELETE labelScopeDepth() const;
 
     private:
+        void allocateCalleeSaveSpace();
+        void reclaimFreeRegisters();
+
         ParserError generate(unsigned&);
         Variable LEGACY_NODELETE variableForLocalEntry(const Identifier&, const SymbolTableEntry::Fast&, int symbolTableConstantIndex, bool isLexicallyScoped);
 
@@ -1371,6 +1405,16 @@ namespace JSC {
 
         unsigned localScopeCount() const { return m_localScopeCount; }
     private:
+        JSInstructionStreamWriter m_writer;
+        std::unique_ptr<UnlinkedCodeBlockGenerator> m_codeBlock;
+
+        bool m_outOfMemoryDuringConstruction { false };
+        OpcodeID m_lastOpcodeID { op_debug };
+        JSInstructionStream::MutableRef m_lastInstruction { m_writer.ref() };
+
+        SegmentedVector<Label, 32> m_labels;
+        SegmentedVector<RegisterID, 32> m_calleeLocals;
+
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;

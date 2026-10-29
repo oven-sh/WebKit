@@ -20,7 +20,7 @@ ARG NDK_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget unzip xz-utils ca-certificates \
-    cmake ninja-build make git \
+    cmake ninja-build make git patch \
     ruby ruby-getoptlong perl python3 rsync file cpio \
     lsb-release software-properties-common gnupg \
     && rm -rf /var/lib/apt/lists/*
@@ -76,6 +76,15 @@ RUN set -eux; \
     done; \
     echo 'int main(){return 0;}' | $CC --target=aarch64-unknown-linux-android${ANDROID_API} --sysroot=$NDK_SYSROOT --rtlib=compiler-rt -fuse-ld=lld -xc - -o /tmp/t && file /tmp/t
 
+# Node runs the generators of Source/JavaScriptCore/aot (>=23.6 strips types by default). The one of Dockerfile.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    node --version
+
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
 # ICU's sources and, for this container, its tools. ICU runs them while it builds (pkgdata, genrb, ...), so a cross
@@ -118,13 +127,16 @@ ARG ANDROID_ARCH
 # the staleness guard in ./Dockerfile).
 # This image does not run compress-data.ts, so those five items cost their raw
 # 35 KB here rather than the ~8 KB they compress to elsewhere.
+COPY icu/decnum-allocation-failure.patch /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
     export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
     export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} --rtlib=compiler-rt -fuse-ld=lld" && \
-    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd source && \
+    cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && \
+    patch -p1 < /icu-bun/decnum-allocation-failure.patch && \
+    cd source && \
     /icu-host/source/bin/icupkg -l data/in/icudt${ICU_VERSION%%.*}l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
     /icu-host/source/bin/icupkg --auto_toc_prefix -r data/in/rm.lst data/in/icudt${ICU_VERSION%%.*}l.dat data/in/icudt${ICU_VERSION%%.*}l_filtered.dat && \
     mv -f data/in/icudt${ICU_VERSION%%.*}l_filtered.dat data/in/icudt${ICU_VERSION%%.*}l.dat && \
@@ -165,6 +177,11 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 # treat as a generic Linux cross-compile and pass --target/--sysroot in CFLAGS;
 # WebKit's source detects Android via __ANDROID__ (set by --target=*-android*),
 # and we set ANDROID=ON so cmake `if(ANDROID)` blocks fire.
+#
+#
+# The programs ship without debug info: each of them would carry another copy of the library's.
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. Here it only prints its rows so far: the list of expected rows was made on Linux x86-64 with glibc.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
@@ -205,21 +222,35 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ]; then \
+        PATH="$(dirname "$(readlink -f "$(command -v "$AR")")"):$PATH" python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || echo "find-structures-decoded-behind-calls.py: not yet fatal here"; \
+    fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    "$(echo "$AR" | sed s/llvm-ar/llvm-strip/)" --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \( -name "*.h" -o -name "*.def" -o -name "*.inc" \) -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \
     cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/ /output/include && \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
-    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore
+    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete
 
 FROM scratch AS artifact
 

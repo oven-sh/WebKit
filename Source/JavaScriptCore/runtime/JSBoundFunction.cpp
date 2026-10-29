@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSBoundFunction.h"
 
+#include "AOTAllocationCounts.h"
+#include "AOTCompiledCallee.h"
 #include "DeferTermination.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionPrototype.h"
@@ -135,7 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(boundFunctionConstruct, (JSGlobalObject* globalObject, 
     JSValue newTarget = callFrame->newTarget();
     if (newTarget == boundFunction)
         newTarget = targetFunction;
-    RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, targetFunction, constructData, args, newTarget)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructAllowingPrimitiveResult(globalObject, targetFunction, constructData, args, newTarget)));
 }
 
 inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction)
@@ -144,6 +146,10 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
     JSFunction* targetJSFunction = dynamicDowncast<JSFunction>(targetFunction);
     if (targetJSFunction && targetJSFunction->getPrototypeDirect() == globalObject->functionPrototype()) [[likely]]
         return globalObject->boundFunctionStructure();
+#if ENABLE(AOT)
+    if (isSlimClosureType(targetFunction->type()) && targetFunction->getPrototypeDirect() == globalObject->functionPrototype())
+        return globalObject->boundFunctionStructure();
+#endif
 
     JSValue prototype = targetFunction->getPrototype(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -155,6 +161,13 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
         if (structure && structure->storedPrototype() == prototype && structure->realm() == globalObject)
             return structure;
     }
+#if ENABLE(AOT)
+    if (isSlimClosureType(targetFunction->type())) {
+        Structure* structure = AOT::CompiledCallee::cachedBoundFunctionStructure(targetFunction);
+        if (structure && structure->storedPrototype() == prototype && structure->realm() == globalObject)
+            return structure;
+    }
+#endif
 
     Structure* result = globalObject->boundFunctionStructure();
 
@@ -169,11 +182,20 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
 
     if (targetJSFunction)
         targetJSFunction->ensureRareData(vm)->setBoundFunctionStructure(vm, result);
+#if ENABLE(AOT)
+    else if (isSlimClosureType(targetFunction->type()))
+        AOT::CompiledCallee::setCachedBoundFunctionStructure(vm, targetFunction, result);
+#endif
 
     return result;
 }
 
 JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction, JSValue boundThis, ArgList args, double length, JSString* nameMayBeNull, const SourceCode& source)
+{
+    return create(vm, globalObject, targetFunction, boundThis, args, length, nameMayBeNull, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
+}
+
+JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, JSObject* targetFunction, JSValue boundThis, ArgList args, double length, JSString* nameMayBeNull, SourceTaintedOrigin taintedness)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -200,19 +222,19 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
     }
 
     bool isJSFunction = getJSFunction(targetFunction);
-    NativeExecutable* executable = vm.getBoundFunction(isJSFunction, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
+    NativeExecutable* executable = vm.getBoundFunction(isJSFunction, taintedness);
     Structure* structure = getBoundFunctionStructure(vm, globalObject, targetFunction);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, structure, targetFunction, boundThis, args.size(), boundArgs[0], boundArgs[1], boundArgs[2], nameMayBeNull, length, source);
+    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, structure, targetFunction, boundThis, args.size(), boundArgs[0], boundArgs[1], boundArgs[2], nameMayBeNull, length, taintedness);
 
     function->finishCreation(vm);
     return function;
 }
 
-JSBoundFunction* JSBoundFunction::createRaw(VM& vm, JSGlobalObject* globalObject, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode& source)
+JSBoundFunction* JSBoundFunction::createRaw(VM& vm, JSGlobalObject* globalObject, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, SourceTaintedOrigin taintedness)
 {
-    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy));
-    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, globalObject->boundFunctionStructure(), targetFunction, boundThis, boundArgsLength, arg0, arg1, arg2, nullptr, PNaN, source);
+    NativeExecutable* executable = vm.getBoundFunction(/* isJSFunction */ true, taintedness);
+    JSBoundFunction* function = new (NotNull, allocateCell<JSBoundFunction>(vm)) JSBoundFunction(vm, executable, globalObject, globalObject->boundFunctionStructure(), targetFunction, boundThis, boundArgsLength, arg0, arg1, arg2, nullptr, PNaN, taintedness);
     function->finishCreation(vm);
     return function;
 }
@@ -222,15 +244,19 @@ bool JSBoundFunction::customHasInstance(JSObject* object, JSGlobalObject* global
     return uncheckedDowncast<JSBoundFunction>(object)->m_targetFunction->hasInstance(globalObject, value);
 }
 
-JSBoundFunction::JSBoundFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, const SourceCode& source)
+JSBoundFunction::JSBoundFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, SourceTaintedOrigin taintedness)
     : Base(vm, executable, globalObject, structure)
     , m_targetFunction(targetFunction, WriteBarrierEarlyInit)
     , m_boundThis(boundThis, WriteBarrierEarlyInit)
     , m_nameMayBeNull(nameMayBeNull, WriteBarrierEarlyInit)
     , m_length(length)
     , m_boundArgsLength(boundArgsLength)
-    , m_isTainted(source.provider()->sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy) >= SourceTaintedOrigin::IndirectlyTainted)
+    , m_isTainted(taintedness >= SourceTaintedOrigin::IndirectlyTainted)
 {
+#if ENABLE(AOT)
+    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
+        AOT::AllocationCounts::didMake(vm, "bound_function"_s, targetFunction->classInfo()->className.characters());
+#endif
     m_boundArgs[0].setWithoutWriteBarrier(arg0);
     m_boundArgs[1].setWithoutWriteBarrier(arg1);
     m_boundArgs[2].setWithoutWriteBarrier(arg2);
@@ -262,6 +288,12 @@ JSString* JSBoundFunction::nameSlow(VM& vm)
     JSObject* cursor = m_targetFunction.get();
     JSString* terminal = nullptr;
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            terminal = jsString(vm, AOT::CompiledCallee::name(cursor));
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.
         if (!cursor->inherits<JSBoundFunction>()) {
             terminal = uncheckedDowncast<JSFunction>(cursor)->originalName(globalObject);
@@ -315,6 +347,12 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     JSObject* cursor = m_targetFunction.get();
     String terminal;
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            terminal = AOT::CompiledCallee::name(cursor);
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.
         if (!cursor->inherits<JSBoundFunction>()) {
             terminal = uncheckedDowncast<JSFunction>(cursor)->nameWithoutGC(vm);
@@ -347,6 +385,12 @@ double JSBoundFunction::lengthSlow(VM& vm)
     unsigned numBoundArgs = boundArgsLength();
     JSObject* cursor = m_targetFunction.get();
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            length = AOT::CompiledCallee::length(cursor);
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the length already.
         if (!cursor->inherits<JSBoundFunction>()) {
             length = uncheckedDowncast<JSFunction>(cursor)->originalLength(vm);

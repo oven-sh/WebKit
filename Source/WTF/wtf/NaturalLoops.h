@@ -120,7 +120,8 @@ class NaturalLoops {
 public:
     typedef std::array<unsigned, 2> InnerMostLoopIndices;
 
-    NaturalLoops(Graph& graph, Dominators<Graph>& dominators, bool selfCheck = false)
+    template<typename DominatorsType>
+    NaturalLoops(Graph& graph, DominatorsType& dominators, bool selfCheck = false)
         : m_graph(graph)
         , m_innerMostLoopIndices(graph.template newMap<InnerMostLoopIndices>())
     {
@@ -152,16 +153,11 @@ public:
                     continue;
                 // At this point, we've proven 'header' is actually a loop header and
                 // that 'footer' is a loop footer.
-                bool found = false;
-                for (unsigned j = m_loops.size(); j--;) {
-                    if (m_loops[j].header() == header) {
-                        m_loops[j].addBlock(footer);
-                        found = true;
-                        break;
-                    }
-                }
-                if (found)
+                // The loop of this header, if it has one by now, is the one that was added last.
+                if (!m_loops.isEmpty() && m_loops.last().header() == header) {
+                    m_loops.last().addBlock(footer);
                     continue;
+                }
                 NaturalLoop<Graph> loop(graph, header, m_loops.size());
                 loop.addBlock(footer);
                 m_loops.append(loop);
@@ -173,11 +169,11 @@ public:
         FastBitVector seenBlocks;
         Vector<typename Graph::Node, 4> blockWorklist;
         seenBlocks.resize(graph.numNodes());
+        seenBlocks.clearAll();
     
         for (unsigned i = m_loops.size(); i--;) {
             NaturalLoop<Graph>& loop = m_loops[i];
         
-            seenBlocks.clearAll();
             ASSERT(blockWorklist.isEmpty());
         
             dataLogLnIf(verbose, "Dealing with loop ", loop);
@@ -205,6 +201,10 @@ public:
                     seenBlocks[graph.index(predecessor)] = true;
                 }
             }
+
+            // Every block that was seen is in the loop.
+            for (unsigned j = loop.size(); j--;)
+                seenBlocks[graph.index(loop[j])] = false;
         }
 
         // Figure out reverse mapping from blocks to loops.

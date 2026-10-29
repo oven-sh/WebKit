@@ -1,0 +1,123 @@
+# Who takes in the tests that were split off the head of a function (role EntryChecks).
+# A caller whose argument types pass every test always does: its call becomes a call of the typed body. A caller that does not pass them decides as it would have about the whole function:
+# tests, typed body and fallback together must fit its budget. A generic entrypoint takes them in where nothing else enters them: they go, and a call by value goes from the entrypoint to the typed body.
+# Where compiled code enters them too they stay, and an entrypoint that is not hot calls them: what it took in would be a second copy of them and of the body behind them.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls VerifyProgram
+# LOSS: MaxInlineHeadBytes x1 f4
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="passesEveryTest" module=m0 parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+# CHECK-LABEL: function f1 name="passesEveryTest"
+# CHECK-NOT: function=f4
+# CHECK: = CallDirect {{*}} function=f5
+function f2 name="passesNoTestOfALargeFunction" module=m0 parameters=[{type=anything}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+# CHECK-LABEL: function f2 name="passesNoTestOfALargeFunction"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0 function=f4
+function f3 name="passesNoTestOfASmallFunction" module=m0 parameters=[{type=anything}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f7
+    Return v1
+}
+# CHECK-LABEL: function f3 name="passesNoTestOfASmallFunction"
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: function=f7
+function f4 name="large" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f5 fallback=f6} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f5
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f6
+    ReturnCall v4 requirement=Allowed
+}
+# The tests take in neither body, however small it is
+# CHECK-LABEL: function f4 name="large"
+# CHECK: = CallDirect v2 function=f5
+# CHECK: = CallDirect v0 function=f6
+function f5 name="large" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+# REPEAT: i = 0..63
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v64
+}
+function f6 name="large" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} creator=Version{provenVersion=f5} {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}
+function f7 name="small" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f8 fallback=f9} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f8
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f9
+    ReturnCall v4 requirement=Allowed
+}
+# The tests take in neither body, however small it is
+# CHECK-LABEL: function f7 name="small"
+# CHECK: = CallDirect v2 function=f8
+# CHECK: = CallDirect v0 function=f9
+function f8 name="small" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} {
+    v1 = Mul v0, v0
+    Return v1
+}
+function f9 name="small" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} creator=Version{provenVersion=f8} {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}
+function f10 name="large" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+    v3 = CallDirect v2 function=f4
+    ReturnCall v3 requirement=Allowed
+}
+# Two functions above call the tests of this one
+# CHECK-LABEL: function f10 name="large"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v2 function=f4
+function f11 name="onlyByValue" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f12 fallback=f13} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f12 [isNeverInlined]
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f13 [isNeverInlined]
+    ReturnCall v4 requirement=Allowed
+}
+function f12 name="onlyByValue" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11} {
+    v1 = Mul v0, v0
+    Return v1
+}
+function f13 name="onlyByValue" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11} creator=Version{provenVersion=f12} {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}
+function f14 name="onlyByValue" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
+    v3 = CallDirect v2 function=f11
+    ReturnCall v3 requirement=Allowed
+}
+# Nothing but the entrypoint calls the tests of this one
+# CHECK-LABEL: function f14 name="onlyByValue"
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: function=f11
+# CHECK: = CallDirect {{*}} function=f12

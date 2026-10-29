@@ -1,0 +1,35 @@
+# value instanceof F, with F a constructor function whose prototype property nothing replaces: the class that the run time defines at the first construction has the one object
+# that the property ever holds, so what the function makes is asked no more than what a class makes: the bits of the class answer, and no object is asked for its prototype object.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Kept" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L1 kind=Instance name="Replaced" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+function f0 name="Kept" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
+    Return
+}
+function f1 name="Replaced" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L1):
+    Return
+}
+function f2 name="instance-of-a-function-that-keeps-its-prototype-object" parameters=[{type=L0 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: true = Boolean boolean=true
+# CHECK: = AreMembersUnchanged conditions={{*}}{layout=L0 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L0 side=Static}, {kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NOT: HasLayoutPrototype
+# Where that test fails the guards of the function may not have begun: it may have made no object yet.
+# CHECK: BeginMemberGuards layout=L0
+}
+function f3 name="instance-of-a-function-whose-prototype-object-is-replaced" parameters=[{type=L1 flags=[IsExpected]}, {type=f1}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: f1):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = HasLayoutPrototype
+# CHECK: key="prototype"
+}

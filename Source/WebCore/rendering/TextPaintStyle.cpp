@@ -168,7 +168,7 @@ TextPaintStyle computeTextPaintStyle(const RenderText& renderer, const Style::Co
     paintStyle.fillColor = adjustColorForPunchedOutBackground(paintStyle.fillColor, renderer, lineStyle);
 
     bool forceBackgroundToWhite = false;
-    if (frame->document() && protect(frame->document())->printing()) {
+    if (frame->document() && frame->document()->printing()) {
         if (lineStyle.printColorAdjust() == PrintColorAdjust::Economy)
             forceBackgroundToWhite = true;
 
@@ -176,7 +176,8 @@ TextPaintStyle computeTextPaintStyle(const RenderText& renderer, const Style::Co
             forceBackgroundToWhite = false;
 
         if (forceBackgroundToWhite) {
-            if (Style::hasAnyBackgroundClipText(renderer.style().backgroundLayers()))
+            // background-clip: text on the parent paints its background through the text.
+            if (Style::hasAnyBackgroundClipText(renderer.parent()->style().backgroundLayers()))
                 paintStyle.fillColor = Color::black;
         }
     }
@@ -198,12 +199,8 @@ TextPaintStyle computeTextPaintStyle(const RenderText& renderer, const Style::Co
         paintStyle.emphasisMarkColor = adjustColorForVisibilityOnBackground(paintStyle.emphasisMarkColor, Color::white);
 
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-    if (!forceBackgroundToWhite && frame->settings().axCustomColorModeEnabled()) {
-        AXCustomColorModeController::adjustTextPaintStyle(renderer, paintStyle,
-            lineStyle.visitedDependentTextFillColor(paintInfo.paintBehavior),
-            lineStyle.usedStrokeColor(),
-            lineStyle.visitedDependentTextEmphasisColor());
-    }
+    if (!forceBackgroundToWhite && frame->settings().axCustomColorModeEnabled())
+        AXCustomColorModeController::adjustTextPaintStyle(renderer, paintStyle, lineStyle, paintInfo.paintBehavior);
 #endif
 
     return paintStyle;

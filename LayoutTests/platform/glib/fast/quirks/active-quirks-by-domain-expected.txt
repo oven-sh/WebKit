@@ -10,6 +10,8 @@ https://www.365scores.com/
     (none)
 https://actesting.org/
     ShouldEnableLegacyGetUserMediaQuirk
+https://www.affirm.com/
+    (none)
 https://www.airindiaexpress.com/
     NeedsAirIndiaExpressLayeringQuirk
 https://www.amazon.com/
@@ -58,6 +60,8 @@ https://bungalow.com/
 https://www.capitalgroup.com/
     ShouldDelayReloadWhenRegisteringServiceWorker
 https://www.cbssports.com/
+    (none)
+https://chatgpt.com/
     (none)
 https://www.cnn.com/
     (none)
@@ -188,6 +192,7 @@ https://www.iheart.com/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.imdb.com/
     NeedsChromeMediaControlsPseudoElementQuirk
+    NeedsWebKitMediaTextTrackDisplayQuirk
     NeedsZeroMaxTouchPointsQuirk
 https://www.instagram.com/
     NeedsInstagramResizingReelsQuirk

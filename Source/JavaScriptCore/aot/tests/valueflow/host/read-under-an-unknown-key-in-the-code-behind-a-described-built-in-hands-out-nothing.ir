@@ -1,0 +1,30 @@
+# [1].map(double), where the library's map reads `this[callback]`
+# The code behind Array.prototype.map (runtimefunction 66) is entered with operands nobody knows and reads one of them under a key nobody knows. What a call of map reads from its operands
+# the records say where the call is, so the read hands out no member of the table: Array.prototype.filter is not used, and nothing of the table is in unknown hands.
+# Without records: read-under-an-unknown-key-in-library-code-that-no-record-describes-hands-out-every-member.ir
+# LIBRARY: own
+# RUN: valueflow-solve used
+# CHECK-NOT: ArrayPrototypeFilter
+# RUN(WHY): valueflow-why values=f1:v4
+# WHY: values=f1:v4
+# WHY: operand 0 {{*}} unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=64 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="map"
+    v4 = Call v3, v1, v2 calleeKey="map"
+    Return
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = PropGet v3 key="x"
+    Return v4
+}
+function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

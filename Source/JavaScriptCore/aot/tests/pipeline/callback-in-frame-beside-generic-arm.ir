@@ -1,0 +1,107 @@
+# A callback that escapes only on the unlikely generic path gets one copy per path, and the copy passed to a callee that only calls it is allocated in the frame with its environment
+# TODO: memory: a callback handed to a callee that only calls it is on the heap with its environment: neither copy is allocated in the frame
+# FORM: AsRead
+# LIBRARY: own
+# RUN: pipeline AllocateInFrames
+# RUN(GENERIC): pipeline AllocateInFrames
+# RUN(BUILTIN): pipeline AllocateInFrames
+# RUN(COPIES): pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,SinkAllocations,AllocateInFrames
+# STATISTIC: AllocationsBuiltApartOnRarerPaths >= 2
+# STATISTIC: ClosuresInFrames >= 1
+# STATISTIC: EnvironmentsInFrames >= 1
+# CHECK: L0 may be in a frame
+# CHECK: f2 may be in a frame
+# CHECK: f2 capture 0 holds frame pointers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="sum" fields=[{key="n" declared={type=anything}}]
+layout L1 kind=Environment name="sumOfAnything" fields=[{key="n" declared={type=anything}}]
+runtimefunction id=43 function=f6
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1, v2 function=f1
+    v4 = CallDirect v1 function=f4
+    v5 = NewArray v1 contents=anything holes=[]
+    v6 = PropGet v5 key="forEach"
+    v7 = Call v6, v5, v1 calleeKey="forEach"
+    Return
+}
+
+function f1 name="sum" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure v3 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v4 function=f3
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    v6 = PropGet v0 key="forEach"
+    v7 = Call v6, v0, v4 calleeKey="forEach"
+    Jump -> next b3()
+  b3():
+    v8 = GetEnvironmentField v3 layout=L0 field=0
+    Return v8
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = NewClosure
+# CHECK: Branch v1
+# CHECK: [[frameScope]]:{{*}}= NewObject {{*}}layout=L0 {{*}}storage=Frame
+# CHECK-NEXT: [[frameCallback]]:{{*}}= NewClosure [[frameScope]] function=f2 {{*}}storage=Frame
+# CHECK-NEXT: = CallDirect v0, [[frameCallback]] function=f3
+# GENERIC: frequency=Unlikely:
+# GENERIC-NOT: storage=
+# GENERIC: [[heapCallback]]:{{*}}= NewClosure [[heapScope]] function=f2
+# GENERIC-NOT: storage=
+# GENERIC: = Call {{*}}, v0, [[heapCallback]]
+}
+
+function f2 name="add" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f2 name="add"
+# GENERIC-LABEL: function f2 name="add"
+
+function f3 name="each" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0
+    Return v2
+}
+
+function f4 name="sumOfAnything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = PropGet v0 key="forEach"
+    v4 = NewClosure v2 function=f5
+    v5 = Call v3, v0, v4 calleeKey="forEach"
+    v6 = GetEnvironmentField v2 layout=L1 field=0
+    Return v6
+# BUILTIN: [[arrayScope]]:{{*}}= NewObject {{*}}layout=L1 {{*}}storage=Frame
+# BUILTIN-NEXT: [[arrayCallback]]:{{*}}= NewClosure [[arrayScope]] function=f5 {{*}}storage=Frame
+# BUILTIN: = CallDirect {{*}}, [[arrayCallback]]{{*}} function=f6
+# COPIES-COUNT-2: = NewClosure {{*}} function=f5
+}
+
+function f5 name="add" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L1 field=0
+    Return
+}
+# BUILTIN-LABEL: function f5 name="add"
+# COPIES-LABEL: function f5 name="add"
+
+function f6 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, v2, v4, v3, v0
+    Return
+}

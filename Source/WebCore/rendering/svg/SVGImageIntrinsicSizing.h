@@ -20,13 +20,16 @@
 #pragma once
 
 #include "FloatRect.h"
+#include "PaintPhase.h"
 
 namespace WebCore {
 
 class CachedImage;
+class GraphicsContext;
 class RenderElement;
 class SVGImageElement;
 class SVGPreserveAspectRatioValue;
+struct ImageDrawingOptions;
 struct NaturalDimensions;
 
 namespace Style {
@@ -53,8 +56,6 @@ SVGImageIntrinsicSizing resolveSVGImageIntrinsicSizing(CachedImage&, float usedZ
 // the source's intrinsic sizing, per SVG 2 §12.2. Shared by the LBSE and legacy SVG renderers.
 FloatRect calculateSVGImageObjectBoundingBox(const SVGImageElement&, const Style::ComputedStyle&, CachedImage*);
 
-NaturalDimensions calculateSVGImageNaturalDimensions(const Style::Image&, const RenderElement&);
-
 // https://svgwg.org/svg2-draft/embedded.html#Placement
 struct SVGImagePlacement {
     // https://svgwg.org/svg2-draft/embedded.html#TermImageRenderingRectangle
@@ -63,5 +64,6 @@ struct SVGImagePlacement {
     FloatRect source;
 };
 SVGImagePlacement calculateSVGImagePlacement(const Style::Image&, const RenderElement&, const SVGPreserveAspectRatioValue&, const FloatRect& positioningRectangle);
+ImageDrawingOptions calculateSVGImageDrawingOptions(const Style::Image&, RenderElement&, GraphicsContext&, const FloatSize& imageRenderingSize, const FloatSize& destinationSize, OptionSet<PaintBehavior>);
 
 } // namespace WebCore

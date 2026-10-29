@@ -270,9 +270,11 @@ messages -> WebPage WantsAsyncDispatchMessage {
     RestoreSelectionInFocusedEditableElement()
 
     # Callbacks.
-    GetContentsAsString(enum:bool WebKit::ContentAsStringIncludesChildFrames inChildFrames) -> (String string)
+    GetContentsAsString() -> (String string)
+    GetContentsOfAllFramesAsString() -> (HashMap<WebCore::FrameIdentifier, String> frameContents)
 #if PLATFORM(COCOA)
     GetContentsAsAttributedString() -> (struct WebCore::AttributedString result)
+    GetSelectionAsAttributedStringForTesting() -> (struct WebCore::AttributedString result)
 #endif
 #if ENABLE(MHTML)
     GetContentsAsMHTMLData() -> (IPC::SharedBufferReference data)
@@ -382,6 +384,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     # Find.
     FindString(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (std::optional<WebCore::FrameIdentifier> frameID, Vector<WebCore::IntRect> matchRects, uint32_t matchCount, int32_t matchIndex, bool didWrap)
+    CountStringMatchesByFrame(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (Vector<std::pair<WebCore::FrameIdentifier, uint32_t>> counts)
     SelectLastFoundRange(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (std::optional<WebCore::FrameIdentifier> frameID, Vector<WebCore::IntRect> matchRects, int32_t matchIndex, bool didWrap)
 #if ENABLE(IMAGE_ANALYSIS)
     FindStringIncludingImages(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (std::optional<WebCore::FrameIdentifier> frameID, Vector<WebCore::IntRect> matchRects, uint32_t matchCount, int32_t matchIndex, bool didWrap)
@@ -717,6 +720,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     PerformHitTestForModifierFlagsChangeOnMouseEvent(WebCore::FrameIdentifier frameID, Ref<WebKit::WebMouseEvent> event) -> (Variant<WebKit::WebHitTestResultData, WebCore::RemoteUserInputEventData> result, OptionSet<WebKit::WebEventModifier> modifiers)
 
     SetUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel)
+    SetContentInversion(enum:uint8_t WebKit::ContentInversion contentInversion)
 
 #if HAVE(APP_ACCENT_COLORS)
     SetAccentColor(WebCore::Color color)
@@ -911,6 +915,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     RequestAllTextAndRects() -> (Vector<std::pair<String, WebCore::FloatRect>> textAndRects)
 
     RequestTargetedElement(struct WebCore::TargetedElementRequest request) -> (Vector<WebCore::TargetedElementInfo> elements)
+    RequestTargetedElementsForText(struct WebCore::TargetedElementRequest request) -> (struct WebCore::TargetedTextSearchResult result)
 
     RequestAllTargetableElements(float hitTestInterval) -> (Vector<Vector<WebCore::TargetedElementInfo>> elements)
 
@@ -973,6 +978,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
     TakeSnapshotForTargetedElement(WebCore::NodeIdentifier nodeID, WebCore::ScriptExecutionContextIdentifier documentID) -> (std::optional<WebCore::ShareableBitmapHandle> image)
+    [EnabledBy=RemoteSnapshottingEnabled] TakeRemoteSnapshotForTargetedElement(WebCore::NodeIdentifier nodeID, WebCore::ScriptExecutionContextIdentifier documentID, WebKit::RemoteSnapshotIdentifier snapshotIdentifier) -> (bool success)
     ResetVisibilityAdjustmentsForTargetedElements(Vector<std::pair<WebCore::NodeIdentifier, WebCore::ScriptExecutionContextIdentifier>> identifiers) -> (bool success)
     AdjustVisibilityForTargetedElements(Vector<WebCore::TargetedElementAdjustment> adjustments) -> (bool success)
     NumberOfVisibilityAdjustmentRects() -> (uint64_t count)

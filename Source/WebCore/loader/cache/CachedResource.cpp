@@ -93,7 +93,6 @@ CachedResource::CachedResource(CachedResourceRequest&& request, Type type, PAL::
     , m_preloadResult(PreloadResult::PreloadNotReferenced)
     , m_status(Pending)
     , m_isLinkPreload(request.isLinkPreload())
-    , m_isLinkModulePreload(request.isLinkModulePreload())
     , m_hasUnknownEncoding(request.isLinkPreload())
     , m_ignoreForRequestCount(request.ignoreForRequestCount())
 {
@@ -118,7 +117,6 @@ CachedResource::CachedResource(const URL& url, Type type, PAL::SessionID session
     , m_preloadResult(PreloadResult::PreloadNotReferenced)
     , m_status(Cached)
     , m_isLinkPreload(false)
-    , m_isLinkModulePreload(false)
     , m_hasUnknownEncoding(false)
     , m_ignoreForRequestCount(false)
 {
@@ -141,8 +139,7 @@ void CachedResource::deref() const
     // Invoke the inspector notification while the object is still fully intact
     // (i.e. before derived class destructors have run).
     if (hasOneRef()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST InspectorInstrumentation::willDestroyCachedResource(const_cast<CachedResource&>(*this));
+        InspectorInstrumentation::willDestroyCachedResource(const_cast<CachedResource&>(*this));
     }
     RefCountedAndCanMakeWeakPtr::deref();
 }
@@ -187,6 +184,12 @@ void CachedResource::load(CachedResourceLoader& cachedResourceLoader)
                 return;
             }
         }
+    }
+
+    if (RefPtr document = cachedResourceLoader.document(); document && document->backForwardCacheState() == Document::InBackForwardCache) {
+        CACHEDRESOURCE_RELEASE_LOG_WITH_FRAME("load: Document already in back/forward cache", frame.get());
+        failBeforeStarting();
+        return;
     }
 
     Ref frameLoader = frame->loader();
@@ -870,8 +873,7 @@ CachedResource::ResponseData::ResponseData(CachedResource& resource)
 CachedResource::ResponseData& CachedResource::mutableResponseData() const
 {
     if (!m_response) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST m_response = makeUnique<ResponseData>(*const_cast<CachedResource*>(this));
+        m_response = makeUnique<ResponseData>(*const_cast<CachedResource*>(this));
     }
     return *m_response;
 }

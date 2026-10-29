@@ -1,0 +1,25 @@
+# The same call in a program that holds the function: nothing is named.
+# LIBRARY: own
+# RUN: valueflow-solve lacked
+# CHECK-NOT: lacked
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131110 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=CompilerHelpersArrayFromLength
+    v3 = Call v2, -, v0, v1
+    Return
+}
+function f1 name="from" role=Library enclosingRuntimeFunction=131110 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Call v1, -, v2, v3
+    v5 = NewArray v4 contents=anything
+    Return v5
+}
+function f2 name="make" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}

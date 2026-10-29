@@ -1,0 +1,36 @@
+# Declared contents restrict nothing: unproven parts of one class are inside each other. Proven contents, a proven storage kind and proven pristine aspects do restrict.
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t2: no overlaps: yes
+# CHECK: t0 <= t4: no overlaps: yes
+# CHECK: t0 <= t6: yes overlaps: yes
+# CHECK: t0 <= t7: no
+# CHECK: t0 <= t9: yes overlaps: yes
+# CHECK: t1 <= t0: yes overlaps: yes
+# CHECK: t2 <= t0: yes overlaps: yes
+# CHECK: t2 <= t3: no overlaps: yes
+# CHECK: t2 <= t5: no overlaps: yes
+# CHECK: t3 <= t2: yes overlaps: yes
+# CHECK: t3 <= t14: no overlaps: yes
+# CHECK: t4 <= t0: yes overlaps: yes
+# CHECK: t4 <= t5: no overlaps: yes
+# CHECK: t4 <= t15: yes overlaps: yes
+# CHECK: t5 <= t2: yes overlaps: yes
+# CHECK: t5 <= t4: yes overlaps: yes
+# CHECK: t6 <= t0: yes overlaps: yes
+# CHECK: t7 <= t8: no overlaps: yes
+# CHECK: t8 <= t7: yes overlaps: yes
+# CHECK: t9 <= t0: no overlaps: yes
+# CHECK: t10 <= t11: yes overlaps: yes
+# CHECK: t11 <= t10: yes overlaps: yes
+# CHECK: t12 <= t10: yes overlaps: yes
+# CHECK: t12 <= t13: no overlaps: yes
+# CHECK: t13 <= t12: no overlaps: yes
+# CHECK: t14 <= t3: yes overlaps: yes
+# CHECK: t15 <= t4: no overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Dog"
+layout L1 name="Cat"
+function f0 name="types" parameters=[{type=Array<number>}, {type=Array<string>}, {type=Array<number, proven>}, {type=Array<int, proven>}, {type=Array<number, pristine[Storage, Names]>}, {type=Array<number, proven, pristine[Storage, Names]>}, {type=Array}, {type=Map<string, number, proven>}, {type=Map<string, int, proven>}, {type=object}, {type=Array<L0>}, {type=Array<L1>}, {type=Array<L0, proven>}, {type=Array<L1, proven>}, {type=Array<int, proven, Int32>}, {type=Array<number, pristine[Names]>}] results=[{type=undefined}]

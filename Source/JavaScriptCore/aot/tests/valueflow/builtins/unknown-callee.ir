@@ -1,0 +1,25 @@
+# What is handed to a callee that nobody knows escapes and is entered. What the callee answers is unknown. A closure that stays in the program is not entered.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> unknown
+# CHECK-NEXT: f0 v4 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="nobodyKnowsThis" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Call v3
+    v5 = NewClosure function=f2
+    Return
+}
+function f1 name="handedOver" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="kept" kind=Arrow results=[{type=anything}] {
+    Return
+}

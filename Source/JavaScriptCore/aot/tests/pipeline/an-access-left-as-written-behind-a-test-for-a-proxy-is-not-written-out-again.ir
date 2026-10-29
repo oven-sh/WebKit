@@ -1,0 +1,88 @@
+# var held = "t";
+# function poke(by) { held = held + by; }
+# const proxy = new Proxy({}, { get() { poke(3); return "p"; } });
+# function run(turns) { let seen = ""; for (let at = 0; at < turns; at++) { seen += "," + held; seen += proxy.any; seen += "/" + held; } return seen; }
+# globalThis.answer = run(+input);
+#
+# The receiver is that proxy for sure. The read of `any` is written out once: tests of what the proxy holds, the trap behind them, and on the side where a test fails the read as it is written. That read has the same receiver and the same place in the
+# program, and the rounds come by it again and again: it stays as it is.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=80
+layout L1 module=m0 position=84 fields=[{key="get" declared={type=function flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="poke" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="held" module=m0 declared={type=undefined|null|string flags=[IsExpected]} initialization=Undefined
+variable g2 name="proxy" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = String string="t"
+    PutModuleVariable v1 variable=g1
+    v3 = Builtin builtin=Proxy
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = NewClosure function=f3
+    v7 = NewObject layout=L1
+    PropDefine v7, v6 key="get"
+    v9 = FinishObject v7
+    v10 = Construct v3, -, v5, v9 calleeName="Proxy"
+    PutModuleVariable v10 variable=g2
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = ToNumber v13
+    v15 = Call v0, -, v14 calleeName="run"
+    PropSet v12, v15 key="answer"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="poke" module=m0 position=16 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Add v1, v0
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f2 name="run"
+# CHECK-NOT: testedType=Proxy
+# CHECK: = PropGet {{*}} key="any"
+# CHECK-NOT: key="any"
+# CHECK-LABEL: function f3 name="get"
+function f2 name="run" module=m0 position=121 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = String string=","
+    v8 = GetModuleVariable variable=g1
+    v9 = Add v7, v8
+    v10 = Add v3, v9
+    v11 = GetModuleVariable variable=g2
+    v12 = CheckInitialized v11 name="proxy"
+    v13 = PropGet v12 key="any"
+    v14 = Add v10, v13
+    v15 = String string="/"
+    v16 = GetModuleVariable variable=g1
+    v17 = Add v15, v16
+    v18 = Add v14, v17
+    v19 = Increment v4
+    Jump -> next b1(v18, v19)
+  b3():
+    Return v3
+}
+function f3 name="get" module=m0 position=86 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=3
+    v2 = Call v0, -, v1 calleeName="poke"
+    v3 = String string="p"
+    Return v3
+}

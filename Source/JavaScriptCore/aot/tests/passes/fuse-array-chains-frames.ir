@@ -1,0 +1,91 @@
+# Each method of a fused chain that is written in JavaScript gets an inline frame at the place of its own call, and the step is called from a frame behind them: the number of that frame says how many there are
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js"
+runtimefunction id=32 function=f1
+runtimefunction id=64 function=f2
+runtimefunction id=81 function=f3
+runtimefunction id=131091 function=f0
+function f0 name="traverseArray" module=m1 position=900 role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = Undefined
+    Return v6
+}
+function f1 name="filter" module=m1 position=100 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f2 name="map" module=m1 position=200 role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f3 name="reduce" module=m1 position=300 role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array<anything>):
+    v4 = Integer integer=0
+    v5 = ElemGet v0, v4
+    v6 = Call v2, -, v5, v5, v4, v0
+    Return v6
+}
+
+function f4 name="isPositive" module=m0 kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f5 name="double" module=m0 kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f6 name="sum" module=m0 kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+}
+
+function f7 name="filterThenMap" module=m0 parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1 @21
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2 @22
+    v8 = AssumeType v7 provenType=Array<number>
+    Return v8
+# CHECK: = CallDirect v0, {{*}} function={{*}} [isAlwaysInlined] @900:4
+}
+
+function f8 name="filterThenLength" module=m0 parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1 @31
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven, pristine[Storage, Names]>
+    v6 = GetArrayLength v5 @32
+    Return v6
+# CHECK: = CallDirect v0, {{*}} function={{*}} [isAlwaysInlined] @900:2
+}
+
+function f9 name="mapThenReduce" module=m0 parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f2 @41
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = NewClosure function=f6
+    v6 = Integer integer=1
+    v7 = NewArray contents=anything
+    v8 = CallDirect v4, v6, v5, v7 function=f3 @42
+    Return v8
+# CHECK: = CallDirect v0, {{*}} function={{*}} [isAlwaysInlined] @900:3
+}

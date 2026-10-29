@@ -1,0 +1,20 @@
+# A plain function that reads new.target has two generic entrypoints: a call passes undefined, and the entrypoint of a call names the one of a construction
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# RUN(CONSTRUCT): derived-functions GenericEntrypoint:f0:1
+# CHECK: {role=GenericEntrypoint target=f0} -> request 0
+# CONSTRUCT: {role=GenericEntrypoint target=f0 parameter=1} -> request 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callable" flags=[HasThis, HasNewTarget] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK: function [[call]] name="callable" module=m0 role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}]{{*}}derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers constructEntrypoint=[[construct]]} {
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything):
+# CHECK-NEXT: [[undefined]]: undefined = Undefined
+# CHECK-NEXT: = CallDirect [[this]], [[undefined]] function=f0
+# CHECK: function [[construct]] name="callable" module=m0 role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f0}]{{*}}derivation={source=f0 parameter=1} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0([[constructClosure]]: f0, [[constructThis]]: anything, [[newTarget]]: anything):
+# CHECK-NEXT: = CallDirect [[constructThis]], [[newTarget]] function=f0
+# CONSTRUCT-COUNT-1: role=GenericEntrypoint flags=[HasThis, HasNewTarget]
+# CONSTRUCT-NOT: role=GenericEntrypoint

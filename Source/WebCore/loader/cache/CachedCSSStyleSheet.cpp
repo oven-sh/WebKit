@@ -45,7 +45,7 @@ namespace WebCore {
 
 CachedCSSStyleSheet::CachedCSSStyleSheet(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar)
     : CachedResource(WTF::move(request), Type::CSSStyleSheet, sessionID, cookieJar)
-    , m_decoder(TextResourceDecoder::create(cssContentTypeAtom(), request.charset()))
+    , m_decoder(TextResourceDecoder::create(TextResourceDecoder::ContentType::CSS, request.charset()))
 {
 }
 
@@ -69,7 +69,7 @@ void CachedCSSStyleSheet::didAddClient(CachedResourceClient& client)
 
 void CachedCSSStyleSheet::setEncoding(const String& chs)
 {
-    protect(m_decoder)->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
+    protect(m_decoder)->setEncoding(chs, TextResourceDecoder::EncodingSource::HTTPHeader);
 }
 
 ASCIILiteral CachedCSSStyleSheet::encoding() const
@@ -98,9 +98,7 @@ std::expected<String, CachedCSSStyleSheet::Error> CachedCSSStyleSheet::sheetText
         return protect(m_decoder)->decodeAndFlush(data->makeContiguous()->span());
 
     case ForceUTF8Encoding::Yes:
-        auto utf8Decoder = TextResourceDecoder::create(cssContentTypeAtom(), PAL::UTF8Encoding());
-        utf8Decoder->setAlwaysUseUTF8();
-        return utf8Decoder->decodeAndFlush(data->makeContiguous()->span());
+        return TextResourceDecoder::textFromUTF8(data->makeContiguous()->span());
     }
 }
 

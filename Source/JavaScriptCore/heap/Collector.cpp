@@ -22,6 +22,8 @@
 #include "config.h"
 #include "Collector.h"
 
+#include "AOTHeapHooks.h"
+#include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectorInlines.h"
@@ -31,10 +33,13 @@
 #include "IncrementalSweeper.h"
 #include "JITWorklistInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkingConstraintSet.h"
 #include "MutatorScheduler.h"
 #include "SpaceTimeMutatorScheduler.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
+#include "StructureAlignedMemoryAllocator.h"
+#include "SubspaceInlines.h"
 #include "SynchronousStopTheWorldMutatorScheduler.h"
 #include "TypeProfiler.h"
 #include "VerifierSlotVisitorInlines.h"
@@ -96,6 +101,9 @@ private:
 
     WorkResult work() final
     {
+#if ENABLE(AOT)
+        AOT::HeapHooks::willWorkOnThisThread(m_collector.heap().vm());
+#endif
         m_collector.collectInCollectorThread();
         return WorkResult::Continue;
     }
@@ -126,7 +134,7 @@ Collector::Collector()
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
 {
-    for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
+    for (unsigned i = 0, numberOfParallelThreads = std::max(heapHelperPool().numberOfThreads(), Options::numberOfGCMarkers() - 1); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         m_availableParallelSlotVisitors.append(visitor.get());
         m_parallelSlotVisitors.append(WTF::move(visitor));
@@ -161,10 +169,19 @@ Collector& Collector::globalCollector()
 
 Collector::~Collector()
 {
-    ASSERT(m_heaps.isEmpty());
+    RELEASE_ASSERT(m_heaps.isEmpty());
+    RELEASE_ASSERT(!m_collectContinuouslyThread);
+    {
+        Locker locker { *m_threadLock };
+        RELEASE_ASSERT(m_threadShouldStop);
+    }
+    m_raceMarkStack->clear();
+}
+
+void Collector::shutDown()
+{
     stopCollectingContinuously();
     stopThread();
-    m_raceMarkStack->clear();
 }
 
 void Collector::stopThread()
@@ -194,6 +211,14 @@ void Collector::assertMarkStacksEmpty()
     if (!m_sharedMutatorMarkStack->isEmpty()) {
         dataLog("FATAL: Shared mutator mark stack not empty! It has ", m_sharedMutatorMarkStack->size(), " elements.\n");
         ok = false;
+    }
+
+    if (Options::runsCompiledImage()) {
+        Locker locker { m_markingMutex };
+        if (!m_deferredRootRegions.isEmpty()) {
+            dataLog("FATAL: ", m_deferredRootRegions.size(), " deferred root regions were not visited.\n");
+            ok = false;
+        }
     }
 
     forEachSlotVisitor(
@@ -227,6 +252,8 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     // right now. This is an optimization that prevents the collector thread from ever starting in most
     // cases.
     ASSERT(m_lastServedTicket <= m_lastGrantedTicket);
+    ASSERT(requester.hasHeapAccess());
+    ASSERT(!(requester.m_worldState.load() & Heap::stoppedBit));
     // It's okay for a heap to request a GC while its membership is pending, but it can't be the conductor yet.
     if ((m_lastServedTicket == m_lastGrantedTicket) && !m_threadIsWorking && hasHeap(requester)) {
         dataLogLnIf(CollectorInternal::verbose, "Taking the conn.");
@@ -234,6 +261,7 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     }
 
     m_requests.append(request);
+    m_hasQueuedRequest.store(true, std::memory_order_relaxed);
     m_lastGrantedTicket++;
     // A mutator that has the conn serves the request at its next poll, and otherwise the collector thread does.
     if (!anyMutatorHasConnWithLock())
@@ -278,6 +306,18 @@ void Collector::collectInCollectorThread()
             break;
         }
     }
+}
+
+bool Collector::tryEnsureThreadForWork()
+{
+#if ENABLE(AOT)
+    if (!Thread::survivesFailedCreation())
+        return true;
+    Locker locker { *m_threadLock };
+    return !hasWorkWithLock() || m_thread->tryEnsureUnderlyingThread(locker);
+#else
+    return true;
+#endif
 }
 
 void Collector::collectInMutatorThread(Heap& conductor)
@@ -378,6 +418,7 @@ NEVER_INLINE bool Collector::runNotRunningPhase(GCConductor conn)
         }
         // A mutator whose heap just left must not begin a collection, since it is no longer in the set.
         shouldBegin = hasPendingGCRequestWithLock() && (conn == GCConductor::Collector || hasHeap(*m_conductingHeap));
+        m_hasQueuedRequest.store(hasPendingGCRequestWithLock(), std::memory_order_relaxed);
     }
     for (Heap* heap : changedHeaps)
         ParkingLot::unparkAll(&heap->m_worldState);
@@ -415,27 +456,22 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
-    m_helperClient.setFunction(
-        [this] () {
-            SlotVisitor* visitor;
-            {
-                Locker locker { m_parallelSlotVisitorLock };
-                RELEASE_ASSERT_WITH_MESSAGE(!m_availableParallelSlotVisitors.isEmpty(), "Parallel SlotVisitors are allocated apriori");
-                visitor = m_availableParallelSlotVisitors.takeLast();
+    m_hasStartedHelpers.store(false, std::memory_order_relaxed);
+    if (startsHelpersLazily()) {
+        if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1) {
+            constexpr size_t bytesPerHelper = 16 * MB;
+            size_t allocated = totalBytesAllocatedThisCycle();
+            size_t bytesToVisit = allocated / 2;
+            if (scope == CollectionScope::Full) {
+                bytesToVisit = allocated;
+                forEachHeap([&](Heap& heap) {
+                    bytesToVisit += heap.m_sizeAfterLastCollect;
+                });
             }
-
-            Thread::registerGCThread(GCThreadType::Helper);
-
-            {
-                ParallelModeEnabler parallelModeEnabler(*visitor);
-                visitor->drainFromShared(SlotVisitor::HelperDrain);
-            }
-
-            {
-                Locker locker { m_parallelSlotVisitorLock };
-                m_availableParallelSlotVisitors.append(visitor);
-            }
-        });
+            m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
+        }
+    } else
+        startHelpers();
 
     m_constraintSet->didStartMarking();
 
@@ -484,6 +520,8 @@ void Collector::beginCollectionInEachHeap(CollectionScope scope, MonotonicTime s
 #endif
         if (!Options::seedOfVMRandomForFuzzer())
             heap.vm().random().setSeed(cryptographicallyRandomNumber<uint32_t>());
+        // The previous collection's epilogue must have run before starting the next collection.
+        RELEASE_ASSERT(!heap.needCollectionEpilogue());
         heap.willStartCollection(scope);
         heap.beginMarking();
     });
@@ -493,19 +531,69 @@ void Collector::setUpVisitors(CollectionScope scope)
 {
     HeapVersion markingVersion = m_heaps.first()->objectSpace().markingVersion();
     bool isAnalyzingHeap = false;
+    bool validatesCellVisits = false;
     forEachHeap([&](Heap& heap) {
         ASSERT(heap.objectSpace().markingVersion() == markingVersion);
         if (heap.vm().isAnalyzingHeap())
             isAnalyzingHeap = true;
+        validatesCellVisits |= heap.validatesCellVisits();
     });
     forEachSlotVisitor(
         [&](SlotVisitor& visitor) {
-            visitor.didStartMarking(scope, markingVersion, isAnalyzingHeap);
+            visitor.didStartMarking(scope, markingVersion, isAnalyzingHeap, validatesCellVisits);
         });
     if (Options::verifyGC()) [[unlikely]] {
         m_verifierSlotVisitor = makeUnique<VerifierSlotVisitor>(*this);
         m_verifierSlotVisitor->didStartMarking(scope, isAnalyzingHeap);
     }
+}
+
+bool Collector::isNotRunning() const
+{
+    return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed);
+}
+
+bool Collector::canSkipMarking()
+{
+    if (!Options::runsCompiledImage())
+        return false;
+    bool result = true;
+    forEachHeap([&](Heap& heap) {
+        result &= heap.canSkipMarking();
+    });
+    return result;
+}
+
+void Collector::startHelpers()
+{
+    if (m_hasStartedHelpers.exchange(true))
+        return;
+    RELEASE_ASSERT(!m_parallelMarkersShouldExit);
+
+    m_helperClient.setFunction(
+        [this] () {
+            SlotVisitor* visitor;
+            {
+                Locker locker { m_parallelSlotVisitorLock };
+                RELEASE_ASSERT_WITH_MESSAGE(!m_availableParallelSlotVisitors.isEmpty(), "Parallel SlotVisitors are allocated apriori");
+                visitor = m_availableParallelSlotVisitors.takeLast();
+            }
+
+            Thread::registerGCThread(GCThreadType::Helper);
+#if ENABLE(AOT)
+            AOT::HeapHooks::willWorkOnThisThread(heap().vm());
+#endif
+
+            {
+                ParallelModeEnabler parallelModeEnabler(*visitor);
+                visitor->drainFromShared(SlotVisitor::HelperDrain);
+            }
+
+            {
+                Locker locker { m_parallelSlotVisitorLock };
+                m_availableParallelSlotVisitors.append(visitor);
+            }
+        });
 }
 
 NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
@@ -531,7 +619,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
         // Wondering what this does? Look at Heap::createCoreConstraints(). The DOM and others can also
         // add their own using Heap::addMarkingConstraint().
-        bool converged = m_constraintSet->executeConvergence(visitor);
+        bool converged = canSkipMarking() || m_constraintSet->executeConvergence(visitor);
 
         // FIXME: The visitor.isEmpty() check is most likely not needed.
         // https://bugs.webkit.org/show_bug.cgi?id=180310
@@ -541,6 +629,14 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         }
 
         m_scheduler->didExecuteConstraints();
+
+        if (Options::runsCompiledImage()) {
+            Locker locker { m_markingMutex };
+            if (!m_deferredRootRegions.isEmpty()) {
+                startHelpers();
+                m_markingConditionVariable.notifyOne();
+            }
+        }
     }
 
     dataLogIf(Options::logGC(), visitor.collectorMarkStack().size(), "+", mutatorMarkStacksSize() + visitor.mutatorMarkStack().size(), " ");
@@ -589,6 +685,14 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
 
     switch (conn) {
     case GCConductor::Mutator: {
+        if (m_conductorMarksInConcurrentPhase) [[unlikely]] {
+            {
+                ParallelModeEnabler enabler(visitor);
+                visitor.drainInParallel(m_scheduler->timeToStop());
+            }
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
+
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
@@ -668,6 +772,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         Locker locker { *m_threadLock };
         m_requests.removeFirst();
         m_lastServedTicket++;
+        m_hasQueuedRequest.store(hasWorkWithLock(), std::memory_order_relaxed);
         forEachHeap([](Heap& heap) {
             heap.clearMutatorWaiting();
         });
@@ -689,7 +794,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 void Collector::endCollectionInEachHeap()
 {
     forEachHeap([&](Heap& heap) {
-        ASSERT(heap.m_mutatorMarkStack->isEmpty());
+        ASSERT(heap.m_mutatorMarkStack->isEmpty() || heap.canSkipMarking());
 
         // Executing CodeBlocks keep writing their profiles without barriers after this collection. Remembering
         // them makes the next collection reconcile those profiles even if it is an Eden collection.
@@ -739,6 +844,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
     if (suspendedBefore != suspendedAfter) {
         if (suspendedBefore) {
             RELEASE_ASSERT(!suspendedAfter);
+            // End sets the epilogue bit just before resuming into NotRunning, and nothing else sets it during a collection.
+            RELEASE_ASSERT(heap().needCollectionEpilogue() == (m_currentPhase == CollectorPhase::End));
 
             resumeThePeriphery();
             if (conn == GCConductor::Collector)
@@ -759,7 +866,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
                 }
             } else {
                 sanitizeStackForVM(heap().vm());
-                heap().handleNeedCollectionEpilogue();
+                // A mutator runs any pending epilogue before it starts conducting, and only End sets the bit.
+                RELEASE_ASSERT(!heap().needCollectionEpilogue());
             }
             stopThePeriphery();
         }
@@ -772,7 +880,12 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
 void Collector::stopThePeriphery()
 {
     m_isCompilerThreadsSuspended = suspendCompilerThreads();
-    forEachHeap([](Heap& heap) {
+    forEachHeap([&](Heap& heap) {
+        unsigned worldState = heap.m_worldState.load();
+        if (&heap == m_conductingHeap)
+            RELEASE_ASSERT(worldState & Heap::mutatorHasConnBit, worldState);
+        else
+            RELEASE_ASSERT(worldState & Heap::stoppedBit, worldState);
         heap.stopThePeriphery();
     });
     m_collectorSlotVisitor->setMutatorsAreStopped(true);
@@ -832,6 +945,7 @@ auto Collector::requestMembershipChange(MembershipChange&& change) -> Membership
         return ticket;
     }
     m_membershipChanges.append(WTF::move(change));
+    m_hasQueuedRequest.store(true, std::memory_order_relaxed);
     // A mutator that has the conn applies the change at its next poll, and otherwise the collector thread does.
     if (!anyMutatorHasConnWithLock())
         m_threadCondition->notifyOne(locker);
@@ -1032,6 +1146,22 @@ void Collector::verifyGC()
         RELEASE_ASSERT(heap.isMarked(cell));
     });
 
+    if (MarkedBlockCage::isRequired()) {
+        forEachHeap([](Heap& heap) {
+            AlignedMemoryAllocator* cagedAllocator = heap.cagedAllocator.get();
+            MarkedBlockCage& cage = heap.cage();
+            heap.objectSpace().forEachSubspace([&](Subspace& subspace) {
+                RELEASE_ASSERT(!isJSCellKind(subspace.attributes().cellKind) || subspace.alignedMemoryAllocator() == cagedAllocator || subspace.alignedMemoryAllocator() == heap.structureAllocator.get());
+                return IterationStatus::Continue;
+            });
+            heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* block) {
+                RELEASE_ASSERT(block->alignedMemoryAllocator() != cagedAllocator || cage.contains(&block->block()));
+            });
+            for (PreciseAllocation* allocation : heap.objectSpace().preciseAllocations())
+                RELEASE_ASSERT(allocation->subspace()->alignedMemoryAllocator() != cagedAllocator || cage.contains(allocation->cell()));
+        });
+    }
+
     if (!m_keepVerifierSlotVisitor)
         clearVerifierSlotVisitor();
 }
@@ -1103,6 +1233,7 @@ void Collector::startCollectingContinuously()
                     Locker locker { *m_threadLock };
                     if (!hasPendingGCRequestWithLock() && !m_heaps.isEmpty()) {
                         m_requests.append(std::nullopt);
+                        m_hasQueuedRequest.store(true, std::memory_order_relaxed);
                         m_lastGrantedTicket++;
                         m_threadCondition->notifyOne(locker);
                     }
@@ -1133,6 +1264,7 @@ void Collector::stopCollectingContinuously()
         m_collectContinuouslyCondition.notifyOne();
     }
     RefPtr { m_collectContinuouslyThread }->waitForCompletion();
+    m_collectContinuouslyThread = nullptr;
 }
 
 } // namespace JSC

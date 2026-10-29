@@ -1,0 +1,24 @@
+# In the middle of the optimization stage operations of AsRead and of Prepared stand together, and a stored type may be wider than its rule gives
+# FORM: Prepared optimizing
+# RUN: round-trip
+# CHECK: layout L0
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="both" module=m0
+# CHECK-NEXT: b0(v0: anything, v1: object, v2: number):
+# CHECK-NEXT: v3: iteratorstate = IteratorOpen v0
+# CHECK-NEXT: v4: boolean = ShapeTest v1 layouts=[L0]
+# CHECK-NEXT: v5: anything = Add v2, v2
+# CHECK-NEXT: v6: number = Add v2, v2
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-NEXT: round trip: same
+
+layout L0
+module m0 path="main.js" displayPath="main.js"
+function f0 name="both" parameters=[{type=anything}, {type=object}, {type=number}] results=[{type=anything}] {
+    v3 = IteratorOpen v0
+    v4 = ShapeTest v1 layouts=[L0]
+    v5: anything = Add v2, v2
+    v6 = Add v2, v2
+    Return v5
+}

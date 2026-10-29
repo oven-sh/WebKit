@@ -186,11 +186,13 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         { },
+        { }, /* openedByScriptDomain */
         navigationAction.targetBackForwardItemIdentifier(),
         navigationAction.sourceBackForwardItemIdentifier(),
         navigationAction.lockHistory(),
         navigationAction.lockBackForwardList(),
         navigationAction.navigationHistoryBehavior(),
+        navigationAction.replaceIfNotCompletelyLoaded(),
         clientRedirectSourceForHistory,
         sandboxFlags,
         ReferrerPolicy::EmptyString,

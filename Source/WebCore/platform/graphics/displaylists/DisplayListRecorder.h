@@ -28,7 +28,6 @@
 #include <WebCore/DisplayList.h>
 #include <WebCore/DisplayListItems.h>
 #include <WebCore/GraphicsContext.h>
-#include <WebCore/Image.h> // For Image::TileRule.
 #include <WebCore/TextFlags.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -44,11 +43,10 @@ class FloatRect;
 class Font;
 class GlyphBuffer;
 class Gradient;
-class Image;
 class SourceImage;
 class VideoFrame;
 
-struct ImagePaintingOptions;
+struct ImageDrawingOptions;
 
 namespace DisplayList {
 
@@ -140,7 +138,7 @@ private:
 
     WEBCORE_EXPORT void didUpdateState(GraphicsContextState&) final;
 
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions) final;
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions) final;
     WEBCORE_EXPORT AffineTransform getCTM(GraphicsContext::IncludeDeviceScale = PossiblyIncludeDeviceScale) const final;
     WEBCORE_EXPORT IntRect clipBounds() const final;
 

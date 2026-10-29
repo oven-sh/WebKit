@@ -1,0 +1,66 @@
+record Section wire wireOnly { offsetInBytes: UInt32 count: UInt32 }
+record Header wire wireOnly { magic: UInt32 schemaHash: UInt64 sizeInBytes: UInt32 sections: Section[lists] }
+
+enum NameClass (words: Text) {
+    Ordinary("") Index("") CanonicalNumericString("") Proto("__proto__") Constructor("constructor")
+    ObjectPrototypeMember("hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__")
+    Length("length") Prototype("prototype") CallOrApply("call apply") Bind("bind") LastIndex("lastIndex") Then("then") ToJSON("toJSON")
+}
+record String wire customEngine customText { offset: UInt32 length: UInt32 nameClass: NameClass builtinName: BuiltinName? }
+
+enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName | engine RegisteredSymbol }
+enum WellKnownSymbol {
+    AsyncDispose AsyncIterator Dispose HasInstance IsConcatSpreadable Iterator Match MatchAll Replace Search Species Split ToPrimitive ToStringTag
+    Unscopables
+}
+record PropertyKey wire customText {
+    kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? callNumber: UInt32?
+    | engine site: AllocationSite?
+}
+
+flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
+flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol Unspecified }
+flags TypeFlags { HasIntegers AnyObject AnyFunction }
+enum ContentsSlot { Element Key Value }
+enum ArrayStorage { Other Int32 Double Contiguous }
+flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow }
+
+record Type wire customEngine customText {
+    primitives: Primitives flags: TypeFlags opaque: OpaqueKind? environment: Layout? minimum: Int64 maximum: Int64
+    strings: Span<String> sorted layouts: Span<Layout> sorted classes: Span<ClassPart> sorted by builtinClass builtins: Span<Builtin> sorted
+    functions: Span<Function(Dispatch)> sorted
+}
+record ClassPart wire customEngine {
+    builtinClass: BuiltinClass contents: Span<Type>
+    | engine contentsAreProven: Bool arrayStorage: ArrayStorage provenPristine: PristineAspects
+}
+
+enum TypeSiteKind (logWord: Text) {
+    Unknown("unknown") Parameter("argument") This("this") Capture("capture") Result("return") Field("field")
+    StaticField("field") Variable("variable") Element("element") MapKey("element") MapValue("element")
+    SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
+}
+record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
+flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim }
+record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
+
+enum IllTypedCause abi {
+    None Unclassified FromLooseType Assertion SuppressedError DeclarationWithoutBody OutsideData LayoutOutsideFamily MemberWithoutSlot
+    StoreOutsideFieldType ComputedKeyStore UnprovenReceiverStore NativeWritesOperand StateChanged UnseenWriter UnseenCaller UnprovenCallee
+    OtherThis CalledByEngine ContainerWriterUnseen ElementMayBeAbsent ScopeOpenedByEval ReadBeforeInitialized LookupMayChange
+}
+enum CastResolution { | engine Unresolved Nothing Upcast Check Assume }
+record TailCast wire { declared: DeclaredType | engine resolution: CastResolution }
+
+flags ExpectedResultFlags { IsRowsOfQuery }
+record ExpectedResult wire { type: Type layouts: Span<Layout> flags: ExpectedResultFlags }
+
+list bytes : Byte
+list words : Word
+list strings : String
+list propertyKeys : PropertyKey
+list types : Type
+list classParts : ClassPart
+list typeSites : TypeSite as typesite prefix w
+list declaredTypes : DeclaredType
+list expectedResults : ExpectedResult as expectedresult prefix x

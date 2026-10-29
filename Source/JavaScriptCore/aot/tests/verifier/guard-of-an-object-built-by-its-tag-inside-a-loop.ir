@@ -1,0 +1,179 @@
+# a guard parameter of a loop whose object is unspecified at the entry proves what the guards prove that come round the loop with the object
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="goodBuiltOnceInsideTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Unspecified valueType=object
+    v2 = AllGuards
+    v3 = Integer integer=1
+    Jump -> next b1(v3, v1, v2)
+  b1(v4, v5, v6):
+    LoopHint
+    Switch v4 cases=[1] -> case b2(), otherwise b3()
+  b2():
+    v8 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v9 = AllGuards v8
+    Jump -> next b4(v8, v9)
+  b3():
+    Jump -> next b4(v5, v6)
+  b4(v10, v11):
+    v12 = Specified
+    v13 = AssumeType v10, v12 provenType=object
+    v14 = GetSlot v13, v11 key="x" receivers=[L0] level=Proven
+    v15 = ToBoolean v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Integer integer=2
+    Jump -> next b1(v16, v10, v11)
+  b6():
+    Return v14
+}
+function f1 name="goodBuiltInOneOfTwoFormsInsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Unspecified valueType=object
+    v3 = AllGuards
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Jump -> next b3(v4, v2, v3)
+  b2():
+    v5 = Integer integer=2
+    Jump -> next b3(v5, v2, v3)
+  b3(v6, v7, v8):
+    LoopHint
+    Switch v6 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4():
+    v10 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v11 = AllGuards v10
+    Jump -> next b7(v10, v11)
+  b5():
+    v12 = NewObject -, v0 layout=L0 fields=[0]
+    v13 = AllGuards v12
+    Jump -> next b7(v12, v13)
+  b6():
+    Jump -> next b7(v7, v8)
+  b7(v14, v15):
+    v16 = Specified
+    v17 = AssumeType v14, v16 provenType=object
+    v18 = GetSlot v17, v15 key="x" receivers=[L0] level=Proven
+    v19 = ToBoolean v18
+    Branch v19 -> taken b8(), notTaken b9()
+  b8():
+    v20 = Integer integer=4
+    Jump -> next b3(v20, v14, v15)
+  b9():
+    Return v18
+}
+function f2 name="badAnotherObjectComesRoundTheLoop" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+    v2 = Unspecified valueType=object
+    v3 = AllGuards
+    v4 = Integer integer=1
+    Jump -> next b1(v4, v2, v3)
+  b1(v5, v6, v7):
+    LoopHint
+    Switch v5 cases=[1] -> case b2(), otherwise b3()
+  b2():
+    v9 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v10 = AllGuards v9
+    Jump -> next b4(v9, v10)
+  b3():
+    Jump -> next b4(v6, v7)
+  b4(v11, v12):
+    v13 = Specified
+    v14 = AssumeType v11, v13 provenType=object
+    v15 = GetSlot v14, v12 key="x" receivers=[L0] level=Proven
+    v16 = ToBoolean v15
+    Branch v16 -> taken b5(), notTaken b6()
+  b5():
+    v17 = Integer integer=2
+    Jump -> next b1(v17, v1, v12)
+  b6():
+    Return v15
+}
+function f3 name="badNoGuardComesRoundTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Unspecified valueType=object
+    v2 = AllGuards
+    v3 = Integer integer=1
+    Jump -> next b1(v3, v1, v2)
+  b1(v4, v5, v6):
+    LoopHint
+    Switch v4 cases=[1] -> case b2(), otherwise b3()
+  b2():
+    v8 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v9 = AllGuards v8
+    Jump -> next b4(v8, v9)
+  b3():
+    Jump -> next b4(v5, v6)
+  b4(v10, v11):
+    v12 = Specified
+    v13 = AssumeType v10, v12 provenType=object
+    v14 = GetSlot v13, v11 key="x" receivers=[L0] level=Proven
+    v15 = ToBoolean v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = Integer integer=2
+    v17 = AllGuards
+    Jump -> next b1(v16, v10, v17)
+  b6():
+    Return v14
+}
+function f4 name="badAnObjectWithoutGuardAtTheEntry" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+    v2 = AllGuards
+    v3 = Integer integer=1
+    Jump -> next b1(v3, v1, v2)
+  b1(v4, v5, v6):
+    LoopHint
+    Switch v4 cases=[1] -> case b2(), otherwise b3()
+  b2():
+    v8 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v9 = AllGuards v8
+    Jump -> next b4(v8, v9)
+  b3():
+    Jump -> next b4(v5, v6)
+  b4(v10, v11):
+    v12 = GetSlot v10, v11 key="x" receivers=[L0] level=Proven
+    v13 = ToBoolean v12
+    Branch v13 -> taken b5(), notTaken b6()
+  b5():
+    v14 = Integer integer=2
+    Jump -> next b1(v14, v10, v11)
+  b6():
+    Return v12
+}
+function f5 name="badSlotFilledInOneOfTwoForms" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Unspecified valueType=object
+    v3 = AllGuards
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Jump -> next b3(v4, v2, v3)
+  b2():
+    v5 = Integer integer=2
+    Jump -> next b3(v5, v2, v3)
+  b3(v6, v7, v8):
+    LoopHint
+    Switch v6 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4():
+    v10 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v11 = AllGuards v10
+    Jump -> next b7(v10, v11)
+  b5():
+    v12 = NewObject -, v0 layout=L0 fields=[0]
+    v13 = AllGuards v12
+    Jump -> next b7(v12, v13)
+  b6():
+    Jump -> next b7(v7, v8)
+  b7(v14, v15):
+    v16 = Specified
+    v17 = AssumeType v14, v16 provenType=object
+    v18 = GetSlot v17, v15 key="y" receivers=[L0] level=Proven
+    v19 = ToBoolean v18
+    Branch v19 -> taken b8(), notTaken b9()
+  b8():
+    v20 = Integer integer=4
+    Jump -> next b3(v20, v14, v15)
+  b9():
+    Return v18
+}

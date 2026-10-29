@@ -1,0 +1,50 @@
+# The base of a raw pointer is live as long as the pointer and not beyond
+# FORM: Selected
+# RUN: analyses liveness live-points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="cursor" results=[{type=number}] {
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=8
+    Jump -> next b1()
+  b1():
+    v2 = Integer integer=0
+    Jump -> next b2(v1)
+  b2(v3):
+    Return v2
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0 v1]
+# CHECK-NEXT: b2 live at head: [v2]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: []
+# CHECK-NEXT: b0:1 live: [v0]
+# CHECK-NEXT: b0:2 live: [v0 v1]
+# CHECK-NEXT: b1:0 live: [v0 v1]
+# CHECK-NEXT: b1:1 live: [v0 v1 v2]
+# CHECK-NEXT: b2:0 live: [v2]
+
+function f1 name="cursorAmongSeveralResults" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=4096
+    v3 = JSONAppendValue v1, v2, v0 jsonPosition=Element
+    v4 = ResultAt v3 index=1
+    v5 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v6):
+    Return v5
+}
+# CHECK-NEXT: function f1
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v5]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0]
+# CHECK-NEXT: b0:1 live: [v0 v1]
+# CHECK-NEXT: b0:2 live: [v0 v1 v2]
+# CHECK-NEXT: b0:3 live: [v1 v3]
+# CHECK-NEXT: b0:4 live: [v1 v4]
+# CHECK-NEXT: b0:5 live: [v1 v4 v5]
+# CHECK-NEXT: b1:0 live: [v5]

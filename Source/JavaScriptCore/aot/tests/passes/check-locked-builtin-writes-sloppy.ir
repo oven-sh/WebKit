@@ -1,0 +1,24 @@
+# In sloppy code too a store to a locked member, or a deletion of one, throws: the build stops where the statement runs in every run
+# What the language itself refuses, it refuses in silence there: the build goes on
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 3
+# DIAGNOSTIC: LockedBuiltinWriteIsIgnored 2
+
+module m0 path="main.cjs" displayPath="main.cjs" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="floor" mode=Sloppy @10
+    v3 = PropDelete v0 key="ceil" mode=Sloppy @20
+    v4 = Builtin builtin=Object
+    PropSet v4, v1 key="keys" mode=Sloppy @30
+    PropSet v0, v1 key="random" mode=Sloppy @40
+    PropSet v0, v1 key="PI" mode=Sloppy @50
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropDelete v8 key="undefined" mode=Sloppy @60
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+    Return
+}

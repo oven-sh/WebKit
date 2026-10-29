@@ -1,0 +1,15 @@
+# Eight built-in objects are the limit and no hit. The ninth widens the object parts to object.
+# OPTIONS: limit=MaxBuiltinsInType:8
+# RUN: union-widening
+# LOSS: MaxBuiltinsInType x2 f0
+# CHECK: t0 | t0 = builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})
+# CHECK-NEXT: t0 | t1 = undefined|object
+# CHECK-NEXT: t0 | t2 = builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})|builtin({{*}})
+# CHECK-NEXT: t1 | t1 = undefined|builtin(ArrayPrototypePush)
+# CHECK-NEXT: t1 | t2 = undefined|builtin(
+# CHECK-NEXT: t2 | t2 = builtin(Array)
+# CHECK-NEXT: loss MaxBuiltinsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=builtin(GlobalThis)|builtin(Array)|builtin(Symbol)|builtin(SymbolFor)|builtin(ObjectFreeze)|builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeApply)|builtin(FunctionPrototypeBind)}, {type=undefined|builtin(ArrayPrototypePush)}, {type=builtin(Array)}] results=[{type=undefined}]

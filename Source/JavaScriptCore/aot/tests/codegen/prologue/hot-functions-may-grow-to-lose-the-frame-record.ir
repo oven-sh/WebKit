@@ -1,0 +1,28 @@
+# A frame without a record saves two or three instructions each time it is set up. A hot function that sets its frame up at most entries may grow by some bytes for that:
+# the same function as in frames-without-a-frame-record.ir, which keeps its record where it is cold. A frame that a short displacement off the stack pointer does not span keeps the record even so
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keepsTwoValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Call v0
+    Return v1
+}
+function f1 name="keepsManyValues" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..20
+    v%(i) = Call v0
+# END REPEAT
+    v21 = Call v0, -, v1, v2, v3, v4
+    v22 = Call v0, -, v5, v6, v7, v8
+    v23 = Call v0, -, v9, v10, v11, v12
+    v24 = Call v0, -, v13, v14, v15, v16
+    v25 = Call v0, -, v17, v18, v19, v20
+    Return v25
+}
+# CHECK: f0: size={{*}}
+# X64: f0: size={{*}} noFrameRecord
+# X64-NOT: f1: size={{*}} noFrameRecord

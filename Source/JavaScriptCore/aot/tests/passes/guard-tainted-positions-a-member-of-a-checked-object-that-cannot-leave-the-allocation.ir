@@ -1,0 +1,81 @@
+# interface Made { list: number[]; ratio: number }   interface Given { name: string; list: number[] }
+# function make(given: Given): Made { return { list: given.list, ratio: 0.125 }; }   make({ name: "s", list: [1, 2] });   make(((value: any): Given => value)({ list: -1.5 }));
+# The check of the parameter turns the second object away, and the generic version reads a number out of it and lists it where the typed code lists an array.
+# Flow sees the number arrive. Of the slot of an object it leaves out the primitives of another type, which a store turns away: the value is stored behind the allocation, by a store that tests it.
+# Nothing stands in for an array, so `ratio` would have to be defined behind the allocation too, and flow says that it is stored once. So the number stays listed, and `list` of Made is only expected: nothing but the checks of `make` says what is listed there.
+# In `makeLast` nothing is listed behind the array: the field keeps its type.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# CHECK: layout L1 name="Made" {{*}}{key="list" declared={type=Array<int[1, 2], proven, pristine[Storage, Names, Dense]> flags=[IsExpected]} flags=[IsRequired]
+# CHECK: layout L3 name="MadeLast" {{*}}{key="list" declared={type=Array<int[1, 2], proven, pristine[Storage, Names, Dense]>} flags=[IsRequired, IsEnforced]
+# CHECK-LABEL: function f1 name="make"
+# CHECK: [[read]]: {{*}} = PropGet {{*}} key="list"
+# CHECK-NEXT: = AssumeType [[read]] provenType=fractional|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK: [[listed]]: {{*}} = AssumeType {{*}} provenType=Array<int[1, 2], proven, pristine[Storage, Names, Dense]> [isBehindChecks]
+# CHECK-NOT: = AssumeType
+# CHECK: = NewObject -, [[listed]], {{*}} layout=L1
+# CHECK-LABEL: function f3 name="makeLast"
+# CHECK: [[listedLast]]: {{*}} = AssumeType {{*}} provenType=undefined|null|boolean|number|string|symbol|bigint|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: = NewObject -, {{*}}, [[listedLast]] layout=L3
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Given" module=m0 fields=[{key="list" declared={type=undefined|null|Array<number>} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 name="Made" module=m0 fields=[{key="ratio" declared={type=number} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number>} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 module=m0 fields=[{key="list" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L3 name="MadeLast" module=m0 fields=[{key="ratio" declared={type=number} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number>} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="name" value=String{value="s"}}, {key="list" value=Array{contents=number elements=[Number{value=1}, Number{value=2}]}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="list" value=Number{value=-1.5}}]} module=m0
+
+function f0 module=m0 kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d1
+    v7 = Call v5, -, v6
+    v8 = Convert v7 declared={type=undefined|null|L0}
+    v9 = Call v1, -, v8
+    v10 = Convert v9 declared={type=undefined|null|L1}
+    v11 = PropGet v10 key="ratio"
+    v12 = NewClosure function=f3
+    v13 = Convert v12 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = Call v13, -, v2
+    v15 = Call v13, -, v8
+    v16 = Convert v15 declared={type=undefined|null|L3}
+    v17 = PropGet v16 key="ratio"
+    v18 = Add v11, v17
+    Return v18
+}
+function f1 name="make" module=m0 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=undefined|null|L1}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="list"
+    v3 = Convert v2 declared={type=undefined|null|Array<number>}
+    v4 = Double number=0.125
+    v5 = Convert v4 declared={type=number}
+    v6 = NewObject -, v3, v5 layout=L1 fields=[1, 0]
+    v7 = FinishObject v6
+    v8 = Convert v7 declared={type=undefined|null|L1}
+    Return v8
+}
+function f2 name="launder" module=m0 kind=Arrow flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=undefined|null|L0}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    Return v1
+}
+function f3 name="makeLast" module=m0 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=undefined|null|L3}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="list"
+    v3 = Convert v2 declared={type=undefined|null|Array<number>}
+    v4 = Double number=0.125
+    v5 = Convert v4 declared={type=number}
+    v6 = NewObject -, v5, v3 layout=L3 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Convert v7 declared={type=undefined|null|L3}
+    Return v8
+}

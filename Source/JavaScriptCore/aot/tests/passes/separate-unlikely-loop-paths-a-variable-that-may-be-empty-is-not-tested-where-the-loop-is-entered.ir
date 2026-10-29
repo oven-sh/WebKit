@@ -1,0 +1,75 @@
+# A loop that paths have to leave is entered through its copy, and the variables that go around it are read and tested on the way from the end of a turn into the loop. A turn of the copy may have passed the read by:
+# then the variable may still be empty on that way, and it is tested where the program tests it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="aTurnMayPassTheReadBy" parameters=[{type=anything}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IsClosureOf v0 function=f1
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    v5 = Entered function=f1
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = GetStringLength v2
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b7()
+  b3():
+    v9 = TypeTest v6 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = BitOr v10, v10
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    v12 = Call v1, -
+    Jump -> next b1()
+  b6():
+    v13 = Increment v6
+    PutModuleVariable v13 variable=g0
+    Jump -> next b1()
+  b7():
+    Return v6
+}
+# CHECK-LABEL: name="aTurnMayPassTheReadBy"
+# CHECK: [[entering]]: number|unspecified{{*}} = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NOT: = TypeTest [[entering]]
+
+function f1 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+# Every turn of the copy reads the variable, so it has been stored on the way into the loop
+function f2 name="everyTurnReads" parameters=[{type=anything}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetModuleVariable variable=g0
+    v5 = GetStringLength v2
+    v6 = Less v4, v5
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = TypeTest v4 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = BitOr v8, v8
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    v10 = Call v1, -
+    Jump -> next b5()
+  b5():
+    v11 = Increment v4
+    PutModuleVariable v11 variable=g0
+    Jump -> next b1()
+  b6():
+    Return v4
+}
+# CHECK-LABEL: name="everyTurnReads"
+# CHECK-NOT: mayPrecedeItsStore

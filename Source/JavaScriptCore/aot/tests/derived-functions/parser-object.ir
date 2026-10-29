@@ -1,0 +1,128 @@
+# The parser of an object tries the members in declared order, then asks whether a text with the same names was parsed before, then tries them in any order in a loop, where a member that comes again keeps its place among the keys, and allocates the layout in the closing block
+# FORM: Prepared optimizing
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2
+# STATISTIC: ParsersCreated = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="OptionalId" fields=[{key="id" declared={type=undefined|number}}]
+layout L2 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
+variable g0 name="user" declared={type=L0} initialization=Undefined
+variable g1 name="optionalId" declared={type=L1} initialization=Undefined
+variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
+
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
+# CHECK-NEXT: b0(v0: cursor):
+# CHECK-NEXT: [[hasStack]]: boolean = JSONHasStackSpace
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: [[two]]: 2 = Integer integer=2
+# CHECK-NEXT: [[noValue]]: undefined = Undefined
+# CHECK-NEXT: [[rejectedResults]]:{{*}}= Results [[two]], [[noValue]], v0
+# CHECK-NEXT: Return [[rejectedResults]]
+# CHECK-NEXT: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: [[noValue2]]: undefined = Undefined
+# CHECK-NEXT: [[unknownResults]]:{{*}}= Results [[zero]], [[noValue2]], v0
+# CHECK-NEXT: Return [[unknownResults]]
+# CHECK: [[firstByte]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: [[brace]]: 123 = Integer integer=123
+# CHECK-NEXT: [[isBrace]]: boolean = StrictEq [[firstByte]], [[brace]]
+# CHECK-NEXT: Branch [[isBrace]] -> taken {{*}}, notTaken [[rejected0]]()
+# CHECK: [[afterBrace]]: cursor = JSONSkipByte v0
+# CHECK-NEXT: [[firstKey]]: cursor = JSONSkipWhitespace [[afterBrace]]
+# CHECK: [[begin]]: keyorder = JSONObjectBegin layout=L0
+# CHECK-NEXT: [[idInOrder]]: boolean = JSONStartsWith [[firstKey]] string="\"id\":" [isLikely]
+# CHECK-NEXT: Branch [[idInOrder]] -> taken [[idMatched]](| 0), notTaken
+# CHECK: [[loop]]([[id]]: undefined|number, [[seenId]]: boolean, [[name]]: undefined|string, [[seenName]]: boolean, [[key]]: cursor, [[order]]: keyorder, [[extra]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK: [[closing]]([[cId]]: undefined|number, [[cSeenId]]: boolean, [[cName]]: undefined|string, [[cSeenName]]: boolean, [[cCursor]]: cursor, [[cOrder]]: keyorder, [[cExtra]]: anything):
+# CHECK-NEXT: Branch [[cSeenId]] -> taken [[hasId]](), notTaken [[idIsMissing]]()
+# CHECK: = JSONStartsWith {{*}} string="\"name\":" [isLikely]
+# CHECK: [[idMatched]]([[idGuard]]: guard):
+# CHECK-NEXT: [[afterIdKey]]: cursor = JSONAdvance [[firstKey]], [[idGuard]] string="\"id\":"
+# CHECK-NEXT: [[idValue]]: cursor = JSONSkipWhitespace [[afterIdKey]]
+# CHECK-NEXT: = JSONParseNumber [[idValue]]
+# CHECK: [[repeats]]: boolean = JSONMemberRepeats [[idValue]] string="id"
+# CHECK-NEXT: Branch [[repeats]] -> taken [[unknown0]](), notTaken [[rejected0]]()
+# CHECK: [[orderAfterId]]: keyorder = JSONObjectKey [[begin]] layout=L0 @
+# CHECK: [[notInOrder]]([[nId]]: undefined|number, [[nSeenId]]: boolean, [[nName]]: undefined|string, [[nSeenName]]: boolean, [[nKey]]: cursor, [[nOrder]]: keyorder, [[nExtra]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[beginOfWhole]]: keyorder = JSONObjectBegin layout=L0
+# CHECK-NEXT: [[null]]: null = Null
+# CHECK-NEXT: [[whole]]:{{*}}= JSONParseExtraMembers v0, [[null]], [[beginOfWhole]] layout=L0
+# CHECK-NEXT: [[wholeOutcome]]: int[0, 2] = ResultAt [[whole]]
+# CHECK-NEXT: Switch [[wholeOutcome]] cases=[1, 2] -> case [[isWhole]](), case [[isNotWhole]](), otherwise [[unknown0]]()
+# CHECK: = JSONObjectKey [[orderAfterId]] layout=L0 field=1
+# CHECK-NOT: JSONKeyHasEscapes
+# CHECK: [[idInLoop]]: boolean = JSONStartsWith [[key]] string="\"id\"" @
+# CHECK: = JSONStartsWith [[key]] string="\"name\"" @
+# CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken [[idIsNew]]()
+# CHECK: [[afterId]]([[orderWithId]]: keyorder):
+# CHECK: [[idRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[afterId]]([[order]])
+# CHECK-NEXT: [[idIsNew]]():
+# CHECK-NEXT: [[orderAfterIdInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 @
+# CHECK-NEXT: Jump -> next [[afterId]]([[orderAfterIdInLoop]])
+# CHECK: [[extraMembers]]:{{*}}= JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
+# CHECK-NEXT: [[extraOutcome]]: int[0, 2] = ResultAt [[extraMembers]]
+# CHECK-NEXT: Switch [[extraOutcome]] cases=[1] -> case [[hasExtraMembers]](), otherwise [[unknown0]]()
+# CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken [[nameIsNew]]()
+# CHECK: [[afterName]]([[orderWithName]]: keyorder):
+# CHECK: [[nameRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[afterName]]([[order]])
+# CHECK-NEXT: [[nameIsNew]]():
+# CHECK-NEXT: [[orderAfterNameInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 field=1
+# CHECK-NEXT: Jump -> next [[afterName]]([[orderAfterNameInLoop]])
+# CHECK-NOT: JSONKeyHasEscapes
+# CHECK: [[hasExtraMembers]]():
+# CHECK-NEXT: [[extraAfter]]: anything = ResultAt [[extraMembers]] index=1
+# CHECK-NEXT: [[keyAfter]]: cursor = ResultAt [[extraMembers]] index=2
+# CHECK-NEXT: [[orderAfter]]: keyorder = ResultAt [[extraMembers]] index=3
+# CHECK-NEXT: Jump -> next [[loop]]([[id]], [[seenId]], [[name]], [[seenName]], [[keyAfter]], [[orderAfter]], [[extraAfter]])
+# CHECK: [[hasId]]():
+# CHECK-NEXT: Branch [[cSeenName]] -> taken {{*}}, notTaken [[nameIsMissing]]()
+# CHECK-NEXT: [[idIsMissing]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK: [[next]]: cursor = JSONSkipByte [[cCursor]]
+# CHECK: [[nameIsMissing]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK: [[object]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[finished]]: int[0, 2] = JSONObjectFinish [[cOrder]], [[object]], [[cExtra]] layout=L0
+# CHECK-NEXT: Switch [[finished]] cases=[1] -> case {{*}}, otherwise [[unknown0]]()
+# CHECK: Jump -> next [[parsed]]([[object]], [[next]])
+# CHECK-NEXT: [[parsed]]([[result]]: undefined|L0, [[behind]]: cursor):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[parsedResults]]:{{*}}= Results [[one]], [[result]], [[behind]]
+# CHECK-NEXT: Return [[parsedResults]]
+# CHECK-NEXT: [[isNotWhole]]():
+# CHECK-NEXT: Jump -> next [[loop]]([[nId]], [[nSeenId]], [[nName]], [[nSeenName]], [[nKey]], [[nOrder]], [[nExtra]])
+# CHECK-NEXT: [[isWhole]]():
+# CHECK-NEXT: [[wholeValue]]: anything = ResultAt [[whole]] index=1
+# CHECK-NEXT: [[closingBrace]]: cursor = ResultAt [[whole]] index=2
+# CHECK: [[isObject]]: boolean = TypeTest [[wholeValue]] testedType=L0
+# CHECK: ([[wholeObject]]: L0):
+# CHECK-NEXT: [[behindWhole]]: cursor = JSONSkipByte [[closingBrace]]
+# CHECK-NEXT: Jump -> next [[parsed]]([[wholeObject]], [[behindWhole]])
+
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
+# CHECK: LoopHint
+# CHECK: ([[optionalId]]: undefined|number, [[seenOptionalId]]: boolean, [[cursor1]]: cursor, [[order1]]: keyorder, [[extra1]]: anything):
+# CHECK-NEXT: = JSONSkipByte [[cursor1]]
+# CHECK-NEXT: [[object1]]:{{*}}= NewObject layout=L1
+# CHECK-NEXT: Branch [[seenOptionalId]] -> taken [[storesOptionalId]](), notTaken
+# CHECK: [[storesOptionalId]]():
+# CHECK-NEXT: PutSlot [[object1]], [[object1]], [[optionalId]] key="id" receivers=[L1] level=Expected
+# CHECK: = JSONObjectFinish [[order1]], [[object1]], [[extra1]] layout=L1
+
+# CHECK-LABEL: creator=Parser{type=L2 layout=L2 form=ParsedText}
+# CHECK-NOT: JSONStartsWith
+# CHECK: LoopHint
+# CHECK-NOT: JSONStartsWith
+# CHECK: = JSONKeyHasEscapes [[key6]]
+# CHECK-NOT: JSONStartsWith
+# CHECK: [[parsedKey6]]:{{*}}= JSONParseKey [[key6]]
+# CHECK: [[keyText6]]: string = ResultAt [[parsedKey6]] index=1
+# CHECK: [[name6]]:{{*}}= String string="caf\u{e9}"
+# CHECK-NEXT: = StrictEq [[keyText6]], [[name6]]
+# CHECK-NOT: JSONStartsWith
+# CHECK: = JSONParseExtraMembers [[key6]],
+# CHECK-NOT: JSONStartsWith

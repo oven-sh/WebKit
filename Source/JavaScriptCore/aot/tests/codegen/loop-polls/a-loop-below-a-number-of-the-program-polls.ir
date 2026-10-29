@@ -1,0 +1,75 @@
+# A loop tests its counter against a number of the program, and the side where the test fails is rare. The test leaves the fast version of the loop, which ends below that number.
+# The program may choose the number as large as it likes. A fast version keeps the poll of its loop whatever ends it: where a poll may leave the turns is decided where the turns are counted,
+# behind this phase. A turn of these loops may leave by a rare edge and come back, so both versions of both loops poll on every turn.
+# FORM: Placed
+# OPTIONS: heat=EverythingIsHot disable=b3:UnrollLoops
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 faulting-loop-polls
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64
+# STATISTIC: LoopsVersioned = 2
+# STATISTIC: RangeChecksRemoved = 2
+# STATISTIC: LoopPollsRemoved = 0
+# X64: f0: size={{*}} polls=2
+# X64: f1: size={{*}} polls=2
+# ARM64-LABEL: f0: size=
+# ARM64: operation operationAOTPollSlow x2
+# ARM64-LABEL: f1: size=
+# ARM64: operation operationAOTPollSlow x2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="belowANumberOfTheProgram" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}, {type=number}] results=[{type=number}] {
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5: number, v6: int[0, 2147483647]):
+    LoopHint
+    v8 = Less v6, v1 form=Integers
+    TestAndBranch v8 -> taken b2(| 0), notTaken b7()
+  b2(v9: int[0, 2147483646]):
+    v10 = Less v9, v2 form=Integers
+    TestAndBranch v10 -> taken b3(), notTaken b6()
+  b3():
+    v11 = Integer integer=7
+    v12 = BitAnd v9, v11 form=Numbers
+    v13 = IsInsideView v0, v12 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v13 -> taken b4(| 0), notTaken b5()
+  b4(v14: guard):
+    v15 = GetTypedArrayElement v0, v12, v14 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v16 = Add v5, v15 form=Numbers
+    v17 = Increment v9 form=Integers
+    Jump -> next b1(v16, v17)
+  b5() frequency=Rare:
+    Return v5
+  b6() frequency=Rare:
+    Return v5
+  b7():
+    Return v5
+}
+function f1 name="belowASmallNumber" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[0, 2147483647]}, {type=int[0, 1000]}, {type=number}] results=[{type=number}] {
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5: number, v6: int[0, 2147483647]):
+    LoopHint
+    v8 = Less v6, v1 form=Integers
+    TestAndBranch v8 -> taken b2(| 0), notTaken b7()
+  b2(v9: int[0, 2147483646]):
+    v10 = Less v9, v2 form=Integers
+    TestAndBranch v10 -> taken b3(), notTaken b6()
+  b3():
+    v11 = Integer integer=7
+    v12 = BitAnd v9, v11 form=Numbers
+    v13 = IsInsideView v0, v12 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v13 -> taken b4(| 0), notTaken b5()
+  b4(v14: guard):
+    v15 = GetTypedArrayElement v0, v12, v14 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v16 = Add v5, v15 form=Numbers
+    v17 = Increment v9 form=Integers
+    Jump -> next b1(v16, v17)
+  b5() frequency=Rare:
+    Return v5
+  b6() frequency=Rare:
+    Return v5
+  b7():
+    Return v5
+}

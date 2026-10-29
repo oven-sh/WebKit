@@ -1,0 +1,48 @@
+# A class whose parent nobody sees is allocated by that parent, so placement gives it a shape and slots. A sibling that nothing constructs gets a class record and no shape
+# RUN: tables layouts
+# RUN(NEVER): tables layouts
+# RUN(SLOTS): plan-slots layouts
+# CHECK: layout shape=[[shape]] index=L0 kind=Instance name="ExtendsUnknown"
+# CHECK-NEXT: field 0 name="y"
+# CHECK: class index=L0 shape=[[shape]] base=- {{*}}hasUntypedBase
+# NEVER-NOT: index=L1 kind=Instance
+# NEVER: class index=L1 shape=0 base=-
+# SLOTS: L0 CompiledObject
+# SLOTS-NEXT: .0 "y" Optional
+# SLOTS-NOT: L1 CompiledObject
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="ExtendsUnknown" module=m0 constructor=f1 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L1 kind=Instance name="NeverConstructed" module=m0 constructor=f2 fields=[{key="z" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="makeBase" [isFreeName]
+    v2 = Call v1
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4, v2, v3 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = NewClosure function=f2
+    v8 = NewClass v7, v2, v3 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Construct v6
+    v11 = PropGet v10 key="y"
+    v12 = PropGet v0 key="publish" [isFreeName]
+    v13 = Call v12, -, v11
+    Return
+}
+function f1 name="ExtendsUnknown" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=1
+    PropSet v3, v4 key="y"
+    Return v3
+}
+function f2 name="NeverConstructed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=1
+    PropSet v3, v4 key="z"
+    Return v3
+}

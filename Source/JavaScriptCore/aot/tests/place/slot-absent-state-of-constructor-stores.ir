@@ -1,0 +1,98 @@
+# The store that creates a field of an object with ordered keys has to find the slot absent, so a field that the constructor fills has an absent state unless every allocation lists it or nobody enumerates the keys
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Stored" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Listed" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="Base" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L4 kind=Instance name="Derived" base=L3 constructor=f5 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L5 kind=Instance name="Point" constructor=f6 fields=[{key="x" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Construct v6, -, v2
+    v8 = Call v3, -, v7
+    v9 = NewClosure function=f2
+    v10 = NewClass v9 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Construct v11, -, v2
+    v13 = Call v3, -, v12
+    v14 = NewClosure function=f3
+    v15 = NewClass v14 layout=L2
+    v16 = FinishClass v15 layout=L2
+    v17 = Construct v16, -, v2
+    PutModuleVariable v17 variable=g1
+    v19 = NewClosure function=f4
+    v20 = NewClass v19 layout=L3
+    v21 = FinishClass v20 layout=L3
+    PutModuleVariable v21 variable=g0
+    v23 = ResolveHeritage v21
+    v24 = NewClosure function=f5
+    v25 = NewClass v24, v21, v23 layout=L4
+    v26 = FinishClass v25 layout=L4
+    v27 = Construct v21, -, v2
+    v28 = Call v3, -, v27
+    v29 = Construct v26, -, v2
+    v30 = Call v3, -, v29
+    v31 = NewClosure function=f6
+    v32 = Construct v31, -, v2
+    v33 = Call v3, -, v32
+    Return
+}
+function f1 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="Listed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    Return v3
+}
+function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f4 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2, v1 layout=L3 fields=[0]
+    Return v3
+}
+function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = SuperConstruct v2, v0, v1 layout=L4
+    PropSet v3, v1 key="y"
+    Return v3
+}
+function f6 name="Point" flags=[HasThis] thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK: L0 CompiledObject
+# CHECK-NEXT: .0 "x" OptionalDouble @
+# CHECK: L1 CompiledObject
+# CHECK-NEXT: .0 "x" Double @
+# CHECK: L2 CompiledObject {{*}}unordered
+# CHECK-NEXT: .0 "x" Double @
+# The run time allocates the object of a subclass without keys, and a class and its subclasses agree on the slot of a field.
+# CHECK: L3 CompiledObject
+# CHECK-NEXT: .0 "x" OptionalDouble @
+# CHECK: L4 CompiledObject
+# CHECK-NEXT: .0 "y" OptionalDouble @
+# CHECK-NEXT: .1 "x" OptionalDouble @
+# CHECK: L5 CompiledObject
+# CHECK-NEXT: .0 "x" OptionalDouble @

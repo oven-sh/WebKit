@@ -1,0 +1,65 @@
+# An object passed to a callee that gives back what it reads from it is in the caller's frame: only what the object holds leaves. So what such an object holds is on the heap.
+# The inner object gets into the outer one by a store: the second under its name, which the allocation does not list
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,AllocateInFrames
+# STATISTIC: ObjectsInFrames = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="GivenBackInner" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="GivenBackOuter" module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="TestedInner" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="TestedOuter" module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    Return
+}
+function f1 name="fieldGivenBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f4
+    Return v2
+# CHECK: NewObject {{*}}layout=L0 {{*}}storage=Frame
+}
+
+function f2 name="heldObjectGivenBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v2, v0 key="inner" mode=Strict
+    PropSet v2, v1 key="inner" mode=Strict
+    v5 = CallDirect v2 function=f5
+    Return v5
+# CHECK-NOT: layout=L1 {{*}}storage=
+# CHECK: NewObject {{*}}layout=L2 {{*}}storage=Frame
+}
+
+function f3 name="heldObjectTested" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = NewObject -, v0 layout=L4 fields=[0]
+    PropSet v2, v0 key="inner" mode=Strict
+    PropSet v2, v1 key="inner" mode=Strict
+    v5 = CallDirect v2 function=f6
+    Return v5
+# CHECK: NewObject {{*}}layout=L3 {{*}}storage=Frame
+# CHECK: NewObject {{*}}layout=L4 {{*}}storage=Frame
+}
+
+function f4 name="givesFieldBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f5 name="givesInnerBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+function f6 name="testsInner" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="inner"
+    v2 = ToBoolean v1
+    Return v2
+}

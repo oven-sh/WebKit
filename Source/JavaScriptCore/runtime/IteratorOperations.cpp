@@ -73,7 +73,7 @@ JSValue iteratorNextWithCachedCall(JSGlobalObject* globalObject, IterationRecord
 
     JSValue iterator = iterationRecord.iterator;
 
-    ASSERT(JSC::getCallDataInline(iterationRecord.nextMethod).type == CallData::Type::JS);
+    ASSERT(CachedCall::supports(JSC::getCallDataInline(iterationRecord.nextMethod)));
 
     JSValue result;
     if (argument)

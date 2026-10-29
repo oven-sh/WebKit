@@ -498,6 +498,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/model-element/ModelPlayerTransformState.h
     Modules/model-element/ModelPresentationMode.h
     Modules/model-element/PortalAction.h
+    Modules/model-element/PortalInteractionGesture.h
     Modules/model-element/PortalTransform.h
     Modules/model-element/SpatialPortalController.h
 
@@ -639,6 +640,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/webauthn/UserVerificationRequirement.h
     Modules/webauthn/WebAuthenticationConstants.h
     Modules/webauthn/WebAuthenticationUtils.h
+    Modules/webauthn/WebAuthnOperationErrorCode.h
     Modules/webauthn/WellKnownOriginList.h
 
     Modules/webauthn/apdu/ApduCommand.h
@@ -1904,6 +1906,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/DragActions.h
     page/DragClient.h
     page/DragController.h
+    page/DragItem.h
     page/DummySpeechRecognitionProvider.h
     page/EditorClient.h
     page/ElementTargetingController.h
@@ -1990,7 +1993,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteFrameLayoutInfo.h
     page/RemoteFrameView.h
     page/RemoteUserInputEventData.h
-    page/RuntimeQuirkTable.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
     page/ScriptTrackingPrivacyCategory.h
@@ -2134,7 +2136,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/DragData.h
     platform/DragEventTargetData.h
     platform/DragImage.h
-    platform/DragItem.h
     platform/EventTrackingRegions.h
     platform/FileChooser.h
     platform/FileMonitor.h
@@ -2180,6 +2181,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/PODInterval.h
     platform/PODIntervalTree.h
     platform/PODRedBlackTree.h
+    platform/PacedMediaSamplesDecoder.h
     platform/PageIdentifier.h
     platform/Pasteboard.h
     platform/PasteboardContext.h
@@ -2517,10 +2519,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageDecoder.h
     platform/graphics/ImageDecoderIdentifier.h
     platform/graphics/ImageDrawingExtras.h
+    platform/graphics/ImageDrawingOptions.h
     platform/graphics/ImageFrame.h
     platform/graphics/ImageObserver.h
     platform/graphics/ImageOrientation.h
-    platform/graphics/ImagePaintingOptions.h
     platform/graphics/ImageResolution.h
     platform/graphics/ImageSizingContext.h
     platform/graphics/ImageSource.h
@@ -3063,7 +3065,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/svg/RenderSVGModelObject.h
     rendering/svg/SVGBoundingBoxComputation.h
     rendering/svg/SVGRenderSupport.h
-    rendering/svg/SVGTextLayoutAttributes.h
     rendering/svg/SVGTextMetrics.h
 
     rendering/svg/legacy/LegacyRenderSVGModelObject.h
@@ -3561,6 +3562,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     testing/MockGamepad.h
     testing/MockGamepadProvider.h
     testing/MockParentalControlsURLFilter.h
+    testing/MockPhoneNumberPossessionConfiguration.h
     testing/MockWebAuthenticationConfiguration.h
     testing/js/WebCoreTestSupport.h
 
@@ -3719,7 +3721,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/MathMLNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/Namespace.h
     ${WebCore_DERIVED_SOURCES_DIR}/NodeName.h
-    ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDefinitions.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.h
     ${WebCore_DERIVED_SOURCES_DIR}/SVGNames.h
@@ -3741,7 +3742,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 # FIXME: Eventually add all non-installed headers to this list, so that the
 # per-directory -I paths can be removed.
 set(WebCore_PROJECT_HEADERS
+    Modules/webauthn/WebAuthnOperationException.h
     loader/cache/CachedCSSStyleSheet.h
-
     platform/graphics/FloatPolygon.h
 )

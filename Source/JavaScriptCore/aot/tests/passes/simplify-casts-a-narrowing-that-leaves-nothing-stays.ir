@@ -1,0 +1,32 @@
+# Where no member of its holder is left, NarrowByField has the type of its holder (ir/result-types/narrow-by-field-drops-members-that-cannot-hold-the-value.ir says why). It takes nothing away
+# from the holder by type, and says that nothing comes here: whoever cuts the code behind it finds it by that. A function with a check waits for its generic version, so the cast stays.
+# A narrowing that leaves every member says nothing and goes. Once the check is gone the code behind the first is cut
+# FORM: Prepared
+# RUN: pass SimplifyCasts VerifyProgram
+# RUN(CUT): pass SimplifyCasts AddGenericVersion RetypeValues VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+layout L0 name="Circle" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="radius" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Square" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="side" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="noMemberIsLeft" parameters=[{type=L0}, {type=2}, {type=anything}] results=[{type=anything}] {
+    v3 = Check v2 expectedType=number site=w0
+    v4 = NarrowByField v0, v1 key="kind"
+    v5 = PropGet v4 key="side"
+    Return v5
+# CHECK: v4: L0 = NarrowByField v0, v1 key="kind"
+# CHECK-NEXT: = PropGet v4 key="side"
+# CUT-NOT: key="side"
+# CUT: Unreachable
+}
+function f1 name="everyMemberIsLeft" parameters=[{type=L0}, {type=1}, {type=anything}] results=[{type=anything}] {
+    v3 = Check v2 expectedType=number site=w0
+    v4 = NarrowByField v0, v1 key="kind"
+    v5 = PropGet v4 key="radius"
+    Return v5
+# CHECK-NOT: NarrowByField
+# CHECK: = PropGet v0 key="radius"
+# CUT: = PropGet v0 key="radius"
+}

@@ -1,0 +1,57 @@
+# A check of a type never throws, so it has no throw site; a read from a value that is an object or null traps on null and has a faulting access in place of a throw site; a conversion to a wider type has neither; a call under a name is a call like any other: the stub that calls finds what is no function, so nothing is tested in line and there is no throw site in the code: the name stands in the fault table under the address of the call, where only the throw looks for it
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
+# STATISTIC: ThrowSites = 0
+# CHECK: f1: size={{*}} frame=none entries=1 sites=0 handlers=0 faults=0
+# CHECK: f2: size={{*}} frame=none entries=1 sites=1 handlers=0 faults=1
+# CHECK: f3: size={{*}} frame=none entries=1 sites=0 handlers=0 faults=0
+# CHECK: f4: size={{*}} entries=1 sites=1 handlers=0 faults=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion text="Point"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="PointThatUnknownCodeSees" fields=[{key="y" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1 function=f1
+    v5 = Double number=1.5
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Convert v6 declared={type=null|L0}
+    v8 = CallDirect v7 function=f2
+    v9 = Null
+    v10 = Convert v9 declared={type=null|L0}
+    v11 = CallDirect v10 function=f2
+    v12 = NewObject -, v5 layout=L1 fields=[0]
+    v13 = Convert v12 declared={type=null|L1}
+    v14 = CallDirect v13 function=f3
+    v15 = CallDirect v1 function=f4
+    v16 = Call v2, -, v4, v8, v11, v14, v15
+    v17 = ToBoolean v16
+    Branch v17 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="checkWithSite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|L1 site=w0} illTypedCause=FromLooseType @10
+    Return v1
+}
+function f2 name="readNullable" parameters=[{type=null|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" @20
+    Return v1
+}
+function f3 name="conversionToWiderType" parameters=[{type=null|L1}] results=[{type=undefined|null|L1}] {
+    v1 = Convert v0 declared={type=undefined|null|L1 site=w0}
+    Return v1
+}
+function f4 name="namedCallWithArgumentsOnStack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 calleeName="input" @30
+    Return v1
+}

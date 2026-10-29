@@ -90,6 +90,11 @@ public:
         return tryCreateUninitializedRestricted(scope, nullptr, structure, initialLength);
     }
 
+    // The butterfly half of tryCreateUninitializedRestricted, for clients that must fill the
+    // out-of-line property storage before the array cell exists. Pass the result to
+    // createWithButterfly() and then notify the ObjectInitializationScope.
+    static Butterfly* tryCreateUninitializedRestrictedButterfly(VM&, GCDeferralContext*, Structure*, unsigned initialLength);
+
     static void LEGACY_NODELETE eagerlyInitializeButterfly(ObjectInitializationScope&, JSArray*, unsigned initialLength);
 
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool throwException);
@@ -120,6 +125,8 @@ public:
     // This function returns NonArray if the indexing types are not compatable for copying.
     IndexingType mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion);
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, JSArray* otherArray);
+    JS_EXPORT_PRIVATE void validatePristine(VM&) const;
+    using JSObject::ensureLength;
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, IndexingType, std::span<const EncodedJSValue>);
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);
@@ -197,7 +204,7 @@ private:
     {
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
-            return true;
+            return !(isCopyOnWrite(indexingMode()) && structure()->hasFrozenElementsInPlace());
         SparseArrayValueMap* map = storage->m_sparseMap.get();
         return !map || !map->lengthIsReadOnly();
     }

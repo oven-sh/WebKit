@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PropertyInlineCache.h"
 
+#include "AOTRemovableFeature.h"
 #include "BaselineJITRegisters.h"
 #include "CacheableIdentifierInlines.h"
 #include "DFGJITCode.h"
@@ -267,8 +268,9 @@ AccessGenerationResult PropertyInlineCache::addAccessCase(const GCSafeConcurrent
     return result;
 }
 
-void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locker, CodeBlock* codeBlock)
+NEVER_INLINE void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locker, CodeBlock* codeBlock)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &PropertyInlineCache::reset);
     m_inlineAccessBaseStructureID.clear();
     if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*this)) {
         if (handlerIC->m_inlinedHandler)

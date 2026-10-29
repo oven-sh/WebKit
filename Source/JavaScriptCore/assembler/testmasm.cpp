@@ -27,13 +27,18 @@
 
 #include "CCallHelpers.h"
 #include "CPU.h"
+#include "CPUFeatureSet.h"
+#include "ExecutableAllocator.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
 #include "InitializeThreading.h"
 #include "LinkBuffer.h"
 #include "ProbeContext.h"
 #include "StackAlignment.h"
+#include <algorithm>
 #include <limits>
+#include <optional>
+#include <span>
 #include <wtf/Compiler.h>
 #include <wtf/DataLog.h>
 #include <wtf/Function.h>
@@ -43,6 +48,7 @@
 #include <wtf/PtrTag.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -289,6 +295,112 @@ T compileAndRun(Generator&& generator, Arguments... arguments)
     return invoke<T>(compile(WTF::move(generator)), arguments...);
 }
 
+#if CPU(X86_64) || CPU(ARM64)
+struct LinkedCode {
+    std::span<uint8_t> bytes() { return asMutableByteSpan(storage.mutableSpan()).first(size); }
+
+    Vector<uint32_t> storage;
+    size_t size { 0 };
+    Vector<LinkedSite> sites;
+    Vector<WideImmediate> wideImmediates;
+    Vector<ExternalLink> externalLinks;
+    bool hasProcessAddress { false };
+};
+
+enum class JumpShortening : bool { No, Yes };
+
+template<typename Emit>
+void emitWithRecording(CCallHelpers& jit, const Emit& emit, JumpShortening shortening)
+{
+    AssemblerPolicy policy = AssemblerPolicy::forImage(CPUFeatureSet::host());
+    policy.shortensJumps = shortening == JumpShortening::Yes;
+    jit.setPolicy(policy);
+    emit(jit);
+}
+
+template<typename Link>
+void finalizeAndCopyReports(LinkBuffer& linkBuffer, const Link& link, LinkedCode& result)
+{
+    link(linkBuffer);
+    FINALIZE_CODE_IF(false, linkBuffer, JSEntryPtrTag, nullptr, "testmasm linked code");
+    result.sites = linkBuffer.linkedSites();
+    result.wideImmediates = linkBuffer.wideImmediates();
+    result.externalLinks = linkBuffer.externalLinks();
+    result.hasProcessAddress = linkBuffer.hasProcessAddress();
+}
+
+template<typename Emit, typename Link>
+LinkedCode linkIntoStorage(const Emit& emit, const Link& link, JumpShortening shortening = JumpShortening::Yes)
+{
+    CCallHelpers jit;
+    emitWithRecording(jit, emit, shortening);
+    CCallHelpers::Label end = jit.label();
+
+    LinkedCode result;
+    result.storage.fill(0, roundUpToMultipleOf<sizeof(uint32_t)>(jit.m_assembler.codeSize()) / sizeof(uint32_t));
+    LinkBuffer linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(result.storage.mutableSpan().data()), result.storage.sizeInBytes(), LinkBuffer::Profile::Uncategorized);
+    result.size = linkBuffer.offsetOf(end);
+    finalizeAndCopyReports(linkBuffer, link, result);
+    return result;
+}
+
+// A near call or jump that leaves its buffer reaches other executable memory, but not from the heap.
+template<typename Emit, typename Link>
+LinkedCode linkIntoExecutableMemory(const Emit& emit, const Link& link)
+{
+    CCallHelpers jit;
+    emitWithRecording(jit, emit, JumpShortening::Yes);
+
+    LinkedCode result;
+    LinkBuffer linkBuffer(jit, nullptr);
+    finalizeAndCopyReports(linkBuffer, link, result);
+    return result;
+}
+
+Vector<uint8_t> takeEmittedBytes(CCallHelpers& jit)
+{
+    AssemblerBuffer& buffer = jit.m_assembler.buffer();
+    size_t size = buffer.codeSize();
+    AssemblerData data = buffer.releaseAssemblerData();
+#if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
+    AssemblerHashes hashes = buffer.releaseAssemblerHashes();
+#endif
+    return Vector<uint8_t>(std::span { reinterpret_cast<const uint8_t*>(data.buffer()), size });
+}
+
+template<typename Emit>
+Vector<uint8_t> emitWithPolicy(const AssemblerPolicy& policy, const Emit& emit)
+{
+    CCallHelpers jit;
+    jit.setPolicy(policy);
+    emit(jit);
+    return takeEmittedBytes(jit);
+}
+
+// applyRelocation() links code that starts at a multiple of 4 KB.
+constexpr size_t linkedCodeAlignment = 4 * KB;
+
+uint8_t* startOfCopiedCode(CodePtr<JSEntryPtrTag> allocation, size_t misalignment)
+{
+    return roundUpToMultipleOf<linkedCodeAlignment>(allocation.untaggedPtr<uint8_t*>()) + misalignment;
+}
+
+MacroAssemblerCodeRef<JSEntryPtrTag> makeExecutable(std::span<const uint8_t> bytes, size_t misalignment = 0)
+{
+    CCallHelpers jit;
+    jit.emitNops(linkedCodeAlignment + misalignment + roundUpToMultipleOf<sizeof(uint32_t)>(bytes.size()));
+    LinkBuffer linkBuffer(jit, nullptr);
+    performJITMemcpy<jitMemcpyRepatch>(startOfCopiedCode(linkBuffer.entrypoint<JSEntryPtrTag>(), misalignment), bytes.data(), bytes.size());
+    return FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm copied code");
+}
+
+template<typename T, typename... Arguments>
+T invokeAt(uint8_t* entry, Arguments... arguments)
+{
+    return invoke<T>(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(entry)), arguments...);
+}
+#endif // CPU(X86_64) || CPU(ARM64)
+
 void emitFunctionPrologue(CCallHelpers& jit)
 {
     jit.emitFunctionPrologue();
@@ -346,6 +458,25 @@ void testBranchTruncateDoubleToInt32(double val, int32_t expected)
         jit.ret();
     }), expected);
 }
+
+#if CPU(X86_64) || CPU(ARM64)
+// std::nullopt expects the branch to be taken.
+void testBranchTruncateDoubleToInt32ViaInt64(double value, std::optional<int32_t> expected)
+{
+    constexpr int64_t failed = 1ll << 40;
+    auto code = compile([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        auto failure = jit.branchTruncateDoubleToInt32ViaInt64(FPRInfo::argumentFPR0, GPRInfo::returnValueGPR);
+        auto done = jit.jump();
+        failure.link(&jit);
+        jit.move(CCallHelpers::TrustedImm64(failed), GPRInfo::returnValueGPR);
+        done.link(&jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<int64_t>(code, value), expected ? static_cast<int64_t>(static_cast<uint32_t>(*expected)) : failed);
+}
+#endif
 
 static void testBranch32()
 {
@@ -466,6 +597,59 @@ static void testBranch64()
             tryTest(CCallHelpers::NotEqual);
         }
     }
+}
+#endif
+
+#if CPU(ARM64)
+template<unsigned dataSize>
+unsigned numberOfFlaglessBranches(int64_t immediate)
+{
+    constexpr CCallHelpers::RelationalCondition conditions[] = {
+        CCallHelpers::Equal,
+        CCallHelpers::NotEqual,
+        CCallHelpers::Above,
+        CCallHelpers::AboveOrEqual,
+        CCallHelpers::Below,
+        CCallHelpers::BelowOrEqual,
+        CCallHelpers::GreaterThan,
+        CCallHelpers::GreaterThanOrEqual,
+        CCallHelpers::LessThan,
+        CCallHelpers::LessThanOrEqual,
+    };
+
+    unsigned result = 0;
+    for (auto cond : conditions) {
+        CCallHelpers jit;
+        if constexpr (dataSize == 32)
+            jit.branch32(cond, GPRInfo::regT0, CCallHelpers::TrustedImm32(static_cast<int32_t>(immediate)));
+        else
+            jit.branch64(cond, GPRInfo::regT0, CCallHelpers::TrustedImm64(immediate));
+        // The branch and the nop that compaction removes. A compare makes it three words or more.
+        bool isFlagless = jit.m_assembler.codeSize() == 2 * sizeof(uint32_t);
+        CHECK_EQ(CCallHelpers::canBranchWithoutFlags<dataSize>(cond, immediate), isFlagless);
+        if (isFlagless)
+            result++;
+    }
+    return result;
+}
+
+template<unsigned dataSize, typename Immediate>
+void checkNumberOfFlaglessBranches()
+{
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(0), 6u);
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(-1), 2u);
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(std::numeric_limits<Immediate>::min()), 2u);
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(std::numeric_limits<Immediate>::max()), 2u);
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(1), 0u);
+    CHECK_EQ(numberOfFlaglessBranches<dataSize>(-2), 0u);
+}
+
+void testCanBranchWithoutFlags()
+{
+    checkNumberOfFlaglessBranches<32, int32_t>();
+    checkNumberOfFlaglessBranches<64, int64_t>();
+    CHECK_EQ(numberOfFlaglessBranches<64>(std::numeric_limits<int32_t>::min()), 0u);
+    CHECK_EQ(numberOfFlaglessBranches<64>(std::numeric_limits<int32_t>::max()), 0u);
 }
 #endif
 
@@ -7297,6 +7481,101 @@ static void testBranchIfNotType()
 }
 
 #if CPU(X86_64) || CPU(ARM64)
+enum class FreeListAllocationForm : uint8_t { OutOfLineRefill, ConstantCellSize, NoRefill, InlineRefill };
+
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileFreeListAllocation(FreeListAllocationForm form, unsigned cellSize)
+{
+    return compile([=](CCallHelpers& jit) {
+        constexpr GPRReg result = GPRInfo::returnValueGPR;
+        constexpr GPRReg scratch = GPRInfo::argumentGPR1;
+        constexpr GPRReg allocator = GPRInfo::argumentGPR2;
+        CCallHelpers::JumpList slowPath;
+        CCallHelpers::FreeListRefill refill;
+
+        emitFunctionPrologue(jit);
+        jit.move(GPRInfo::argumentGPR0, allocator);
+        switch (form) {
+        case FreeListAllocationForm::OutOfLineRefill:
+            refill = jit.emitAllocateFromFreeList(result, allocator, scratch, slowPath);
+            break;
+        case FreeListAllocationForm::ConstantCellSize:
+            refill = jit.emitAllocateFromFreeList(result, allocator, scratch, slowPath, cellSize);
+            break;
+        case FreeListAllocationForm::NoRefill:
+            slowPath.append(jit.emitAllocateFromFreeList(result, allocator, scratch, slowPath).isExhausted);
+            break;
+        case FreeListAllocationForm::InlineRefill:
+            jit.emitAllocateWithNonNullAllocator(result, JITAllocator::variable(), allocator, scratch, slowPath);
+            break;
+        }
+        emitFunctionEpilogue(jit);
+        jit.ret();
+
+        jit.emitFreeListRefill(refill, slowPath);
+
+        slowPath.link(&jit);
+        jit.move(CCallHelpers::TrustedImmPtr(nullptr), result);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+static void testAllocateFromFreeList()
+{
+    constexpr unsigned cellSize = 32;
+    constexpr uint64_t secret = 0x123456789abcdef1;
+    constexpr std::array<unsigned, 8> freeCellOffsets { 0, 32, 64, 160, 512, 544, 576, 608 };
+    constexpr size_t firstIntervalCellCount = 3;
+
+    alignas(16) char cells[1024] = { };
+    auto freeCellAt = [&](unsigned offset) {
+        return std::bit_cast<FreeCell*>(cells + offset);
+    };
+    freeCellAt(0)->setNext(freeCellAt(160), 96, secret);
+    freeCellAt(160)->setNext(freeCellAt(512), 32, secret);
+    freeCellAt(512)->makeLast(128, secret);
+
+    using AllocatorBytes = std::array<uint8_t, LocalAllocator::offsetOfFreeList() + sizeof(FreeList)>;
+    auto createAllocator = [&] {
+        FreeCell* nextInterval = freeCellAt(0);
+        char* intervalStart = nullptr;
+        char* intervalEnd = nullptr;
+        FreeCell::advance(secret, nextInterval, intervalStart, intervalEnd);
+
+        AllocatorBytes allocator { };
+        auto store = [&](ptrdiff_t offset, auto value) {
+            memcpy(allocator.data() + offset, &value, sizeof(value));
+        };
+        store(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart(), intervalStart);
+        store(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd(), intervalEnd);
+        store(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval(), nextInterval);
+        store(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret(), secret);
+        store(LocalAllocator::offsetOfCellSize(), cellSize);
+        return allocator;
+    };
+
+    auto checkAllocations = [&](FreeListAllocationForm form, std::span<const unsigned> expectedOffsets) {
+        auto allocate = compileFreeListAllocation(form, cellSize);
+        alignas(FreeList) AllocatorBytes allocator = createAllocator();
+        for (unsigned offset : expectedOffsets) {
+            void* cell = invoke<void*>(allocate, allocator.data());
+            CHECK_EQ(cell, static_cast<void*>(cells + offset));
+        }
+
+        void* cell = invoke<void*>(allocate, allocator.data());
+        CHECK_EQ(cell, static_cast<void*>(nullptr));
+        AllocatorBytes exhaustedAllocator = allocator;
+        cell = invoke<void*>(allocate, allocator.data());
+        CHECK_EQ(cell, static_cast<void*>(nullptr));
+        CHECK_EQ(allocator == exhaustedAllocator, true);
+    };
+
+    checkAllocations(FreeListAllocationForm::OutOfLineRefill, freeCellOffsets);
+    checkAllocations(FreeListAllocationForm::ConstantCellSize, freeCellOffsets);
+    checkAllocations(FreeListAllocationForm::InlineRefill, freeCellOffsets);
+    checkAllocations(FreeListAllocationForm::NoRefill, std::span { freeCellOffsets }.first(firstIntervalCellCount));
+}
+
 static void testBranchConvertDoubleToInt52()
 {
     auto toInt52 = compile([](CCallHelpers& jit) {
@@ -7337,6 +7616,150 @@ static void testBranchConvertDoubleToInt52()
     CHECK_EQ((invoke<int64_t>(toInt52, static_cast<double>(42.195))), (1LL << 52));
     CHECK_EQ((invoke<int64_t>(toInt52, static_cast<double>(0.3))), (1LL << 52));
     CHECK_EQ((invoke<int64_t>(toInt52, static_cast<double>(-0.1))), (1LL << 52));
+}
+#endif
+
+#if CPU(X86_64)
+struct TagsInMemory {
+    int64_t numberTag { JSValue::NumberTag };
+    int64_t notCellMask { JSValue::NotCellMask };
+};
+
+template<typename Emit>
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileWithTagsInMemory(const Emit& emit)
+{
+    return compile([&](CCallHelpers& jit) {
+        constexpr GPRReg tags = GPRInfo::argumentGPR1;
+        emitFunctionPrologue(jit);
+        jit.push(GPRInfo::numberTagRegister);
+        jit.push(GPRInfo::notCellMaskRegister);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::numberTagRegister);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::notCellMaskRegister);
+        jit.readTagsFromMemory(CCallHelpers::Address(tags, OBJECT_OFFSETOF(TagsInMemory, numberTag)), CCallHelpers::Address(tags, OBJECT_OFFSETOF(TagsInMemory, notCellMask)));
+        emit(jit);
+        jit.pop(GPRInfo::notCellMaskRegister);
+        jit.pop(GPRInfo::numberTagRegister);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+static void testTagsInMemory()
+{
+    constexpr GPRReg value = GPRInfo::argumentGPR0;
+    constexpr GPRReg scratch = GPRInfo::argumentGPR2;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
+    constexpr FPRReg fpScratch = FPRInfo::fpRegT0;
+    enum ValueKind : uint32_t { Cell, Int32, Double, Other };
+
+    auto encodedInt32 = [](int32_t number) {
+        return static_cast<uint64_t>(JSValue::NumberTag) | static_cast<uint32_t>(number);
+    };
+    auto encodedDouble = [](double number) {
+        return std::bit_cast<uint64_t>(number) + static_cast<uint64_t>(JSValue::DoubleEncodeOffset);
+    };
+
+    auto returnKind = [&](CCallHelpers& jit, ValueKind kind, CCallHelpers::JumpList& done) {
+        jit.move(CCallHelpers::TrustedImm32(kind), result);
+        done.append(jit.jump());
+    };
+    auto kindOf = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        CCallHelpers::JumpList done;
+        CCallHelpers::Jump isCell = jit.branchIfCell(value);
+        CCallHelpers::Jump isInt32 = jit.branchIfInt32(value);
+        CCallHelpers::Jump isNumber = jit.branchIfNumber(value);
+        returnKind(jit, Other, done);
+        isCell.link(&jit);
+        returnKind(jit, Cell, done);
+        isInt32.link(&jit);
+        returnKind(jit, Int32, done);
+        isNumber.link(&jit);
+        returnKind(jit, Double, done);
+        done.link(&jit);
+    });
+    auto kindOfByExclusion = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        CCallHelpers::JumpList done;
+        CCallHelpers::Jump isNotCell = jit.branchIfNotCell(value);
+        returnKind(jit, Cell, done);
+        isNotCell.link(&jit);
+        CCallHelpers::Jump isNotInt32 = jit.branchIfNotInt32(value);
+        returnKind(jit, Int32, done);
+        isNotInt32.link(&jit);
+        CCallHelpers::Jump isNotNumber = jit.branchIfNotNumber(value);
+        returnKind(jit, Double, done);
+        isNotNumber.link(&jit);
+        returnKind(jit, Other, done);
+        done.link(&jit);
+    });
+
+    TagsInMemory tags;
+    struct EncodedValue {
+        uint64_t bits;
+        ValueKind kind;
+    };
+    const EncodedValue values[] = {
+        { 0x1000, Cell },
+        { encodedInt32(42), Int32 },
+        { encodedInt32(-7), Int32 },
+        { encodedDouble(1.5), Double },
+        { encodedDouble(-0.0), Double },
+        { static_cast<uint64_t>(JSValue::ValueUndefined), Other },
+        { static_cast<uint64_t>(JSValue::ValueNull), Other },
+        { static_cast<uint64_t>(JSValue::ValueTrue), Other },
+    };
+    for (const EncodedValue& encoded : values) {
+        CHECK_EQ(invoke<uint32_t>(kindOf, encoded.bits, &tags), static_cast<uint32_t>(encoded.kind));
+        CHECK_EQ(invoke<uint32_t>(kindOfByExclusion, encoded.bits, &tags), static_cast<uint32_t>(encoded.kind));
+    }
+
+    auto boxInt32 = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.boxInt32(value, result);
+    });
+    for (int32_t number : { 0, 42, -7 })
+        CHECK_EQ(invoke<uint64_t>(boxInt32, static_cast<uint64_t>(static_cast<uint32_t>(number)), &tags), encodedInt32(number));
+
+    auto boxDouble = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.move64ToDouble(value, fpScratch);
+        jit.boxDouble(fpScratch, result);
+    });
+    auto unboxDouble = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.unboxDoubleWithoutAssertions(value, result, fpScratch);
+        jit.moveDoubleTo64(fpScratch, result);
+    });
+    for (double number : { 1.5, -0.0, 1e300 }) {
+        CHECK_EQ(invoke<uint64_t>(boxDouble, std::bit_cast<uint64_t>(number), &tags), encodedDouble(number));
+        CHECK_EQ(invoke<uint64_t>(unboxDouble, encodedDouble(number), &tags), std::bit_cast<uint64_t>(number));
+    }
+
+    auto boxInt52 = compileWithTagsInMemory([&](CCallHelpers& jit) {
+        jit.boxInt52(value, result, scratch, fpScratch);
+    });
+    CHECK_EQ(invoke<uint64_t>(boxInt52, static_cast<int64_t>(-7), &tags), encodedInt32(-7));
+    CHECK_EQ(invoke<uint64_t>(boxInt52, static_cast<int64_t>(1) << 40, &tags), encodedDouble(static_cast<double>(static_cast<int64_t>(1) << 40)));
+
+    auto checkSameBytes = [](const auto& helper, const auto& expected) {
+        CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), helper) == emitWithPolicy(AssemblerPolicy::forJIT(), expected), true);
+    };
+    checkSameBytes([&](CCallHelpers& jit) {
+        jit.branchIfCell(value);
+        jit.branchIfNotCell(value);
+        jit.branchIfInt32(value);
+        jit.branchIfNotInt32(value);
+        jit.branchIfNumber(value);
+        jit.branchIfNotNumber(value);
+        jit.boxInt32(value, result);
+        jit.unboxDoubleWithoutAssertions(value, result, fpScratch);
+    }, [&](CCallHelpers& jit) {
+        jit.branchTest64(CCallHelpers::Zero, value, GPRInfo::notCellMaskRegister);
+        jit.branchTest64(CCallHelpers::NonZero, value, GPRInfo::notCellMaskRegister);
+        jit.branch64(CCallHelpers::AboveOrEqual, value, GPRInfo::numberTagRegister);
+        jit.branch64(CCallHelpers::Below, value, GPRInfo::numberTagRegister);
+        jit.branchTest64(CCallHelpers::NonZero, value, GPRInfo::numberTagRegister);
+        jit.branchTest64(CCallHelpers::Zero, value, GPRInfo::numberTagRegister);
+        jit.or64(GPRInfo::numberTagRegister, value, result);
+        jit.add64(GPRInfo::numberTagRegister, value, result);
+        jit.move64ToDouble(result, fpScratch);
+    });
 }
 #endif
 
@@ -7510,6 +7933,28 @@ static void testCachedTempRegisterImm32Normalization()
         WTFReportAssertionFailure(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, "CHECK_CODE_WAS_EMITTED("#_jit ", " #_emitter ")"); \
         CRASH();                                                         \
     } while (false)
+
+static void testPrefetch()
+{
+    auto prefetchAround = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        for (GPRReg base : { X86Registers::eax, X86Registers::ecx, X86Registers::r8, X86Registers::r12, X86Registers::r13 }) {
+            jit.push(base);
+            jit.move(GPRInfo::argumentGPR0, base);
+            for (int32_t offset : { 0, 64, -64, 4096 })
+                jit.prefetch(CCallHelpers::Address(base, offset));
+            jit.pop(base);
+        }
+        jit.move(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    alignas(64) std::array<char, 192> bytes { };
+    CHECK_EQ(invoke<void*>(prefetchAround, bytes.data() + 64), static_cast<void*>(bytes.data() + 64));
+    CHECK_EQ(std::ranges::count(bytes, 0), static_cast<ptrdiff_t>(bytes.size()));
+    CHECK_EQ(invoke<void*>(prefetchAround, nullptr), static_cast<void*>(nullptr));
+}
 
 static void testAtomicAndEmitsCode()
 {
@@ -8762,6 +9207,2162 @@ static void testMove64ToDoubleX64()
 }
 #endif
 
+#if CPU(X86_64) || CPU(ARM64)
+#if CPU(X86_64)
+struct ProtectedFeatureQueries : MacroAssembler {
+    using MacroAssembler::supportsBMI1;
+    using MacroAssembler::supportsLZCNT;
+};
+#endif
+
+constexpr CPUFeatureSet allCPUFeatures = CPUFeatureSet::fromBits(std::numeric_limits<uint32_t>::max());
+
+void checkFeatureQueries(CPUFeatureSet features)
+{
+#if CPU(X86_64)
+    CHECK_EQ(MacroAssembler::supportsSSE3(features), features.contains(CPUFeature::SSE3));
+    CHECK_EQ(MacroAssembler::supportsSupplementalSSE3(features), features.contains(CPUFeature::SupplementalSSE3));
+    CHECK_EQ(MacroAssembler::supportsSSE4_1(features), features.contains(CPUFeature::SSE4_1));
+    CHECK_EQ(MacroAssembler::supportsFloatingPointRounding(features), features.contains(CPUFeature::SSE4_1));
+    CHECK_EQ(MacroAssembler::supportsCountPopulation(features), features.contains(CPUFeature::Popcnt));
+    CHECK_EQ(MacroAssembler::supportsAVX(features), features.contains(CPUFeature::AVX));
+    CHECK_EQ(MacroAssembler::supportsAVX2(features), features.contains(CPUFeature::AVX2));
+    CHECK_EQ(ProtectedFeatureQueries::supportsLZCNT(features), features.contains(CPUFeature::LZCNT));
+    CHECK_EQ(ProtectedFeatureQueries::supportsBMI1(features), features.contains(CPUFeature::BMI1));
+#else
+    CHECK_EQ(MacroAssembler::supportsLSE(features), features.contains(CPUFeature::LSE));
+    CHECK_EQ(MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(features), features.contains(CPUFeature::JSCVT));
+    CHECK_EQ(MacroAssembler::supportsFloat16(features), features.contains(CPUFeature::Float16));
+    CHECK_EQ(MacroAssembler::supportsRoundFloatToIntegerFloat(features), features.contains(CPUFeature::FRINT));
+    CHECK_EQ(MacroAssembler::supportsSHA3(features), features.contains(CPUFeature::SHA3));
+    CHECK_EQ(MacroAssembler::supportsDotProd(features), features.contains(CPUFeature::DotProd));
+#endif
+}
+
+void testCPUFeatureSet()
+{
+    constexpr CPUFeature firstFeature = static_cast<CPUFeature>(0);
+    constexpr CPUFeatureSet buildTarget = CPUFeatureSet::buildTarget();
+    static_assert(CPUFeatureSet().isSubsetOf(buildTarget));
+    static_assert(buildTarget.isSubsetOf(allCPUFeatures));
+    static_assert(!CPUFeatureSet().contains(firstFeature));
+    static_assert(CPUFeatureSet().with(firstFeature).contains(firstFeature));
+    static_assert(CPUFeatureSet().with(firstFeature).bits() == 1);
+    static_assert(CPUFeatureSet::fromBits(buildTarget.bits()) == buildTarget);
+
+    CHECK_EQ(buildTarget.isSubsetOf(CPUFeatureSet::host()), true);
+    checkFeatureQueries(CPUFeatureSet::host());
+    checkFeatureQueries(CPUFeatureSet());
+    checkFeatureQueries(allCPUFeatures);
+}
+
+#if CPU(X86_64)
+constexpr CPUFeature queriedFeature = CPUFeature::AVX;
+bool supportsQueriedFeature(const CCallHelpers& jit) { return jit.supportsAVX(); }
+#else
+constexpr CPUFeature queriedFeature = CPUFeature::LSE;
+bool supportsQueriedFeature(const CCallHelpers& jit) { return jit.supportsLSE(); }
+#endif
+
+void checkPerAssemblerFeatures()
+{
+    CCallHelpers baseline;
+    baseline.setPolicy(AssemblerPolicy::forImage(CPUFeatureSet()));
+    CCallHelpers extended;
+    extended.setPolicy(AssemblerPolicy::forImage(CPUFeatureSet().with(queriedFeature)));
+    CHECK_EQ(supportsQueriedFeature(baseline), false);
+    CHECK_EQ(supportsQueriedFeature(extended), true);
+    CHECK_EQ(supportsQueriedFeature(baseline), false);
+}
+
+template<typename T, typename Emit, typename... Arguments>
+T runWithFeatures(CPUFeatureSet features, const Emit& emit, Arguments... arguments)
+{
+    AssemblerPolicy policy = AssemblerPolicy::forJIT();
+    policy.features = features;
+    CCallHelpers jit;
+    jit.setPolicy(policy);
+    emit(jit);
+    LinkBuffer linkBuffer(jit, nullptr);
+    return invoke<T>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm code for a feature set"), arguments...);
+}
+
+template<typename Emit, typename Argument, typename T>
+void checkEmitterFollowsFeature(CPUFeatureSet baseline, CPUFeature feature, const Emit& emit, Argument argument, T expected)
+{
+    auto emitFunction = [&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        emit(jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    };
+    CHECK_EQ(baseline.contains(feature), false);
+    Vector<uint8_t> baselineCode = emitWithPolicy(AssemblerPolicy::forImage(baseline), emitFunction);
+    Vector<uint8_t> featureCode = emitWithPolicy(AssemblerPolicy::forImage(baseline.with(feature)), emitFunction);
+    CHECK_EQ(baselineCode == featureCode, false);
+    if (baseline.isSubsetOf(CPUFeatureSet::host()))
+        CHECK_EQ(runWithFeatures<T>(baseline, emitFunction, argument), expected);
+}
+
+void checkEmittersFollowFeatures()
+{
+#if CPU(X86_64)
+    auto countLeadingZeros = [](CCallHelpers& jit) {
+        jit.countLeadingZeros32(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+    };
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::LZCNT, countLeadingZeros, 0x00010000u, 15u);
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::LZCNT, countLeadingZeros, 0u, 32u);
+
+    auto countTrailingZeros = [](CCallHelpers& jit) {
+        jit.countTrailingZeros32(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+    };
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::BMI1, countTrailingZeros, 0x00010000u, 16u);
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::BMI1, countTrailingZeros, 0u, 32u);
+
+    checkEmitterFollowsFeature(CPUFeatureSet().with(CPUFeature::SSE4_1), CPUFeature::AVX, [](CCallHelpers& jit) {
+        jit.ceilDouble(FPRInfo::argumentFPR0, FPRInfo::returnValueFPR);
+    }, 1.25, 2.0);
+#else
+    auto convertDoubleToInt32 = [](CCallHelpers& jit) {
+        CCallHelpers::JumpList failureCases;
+        jit.branchConvertDoubleToInt32(FPRInfo::argumentFPR0, GPRInfo::returnValueGPR, failureCases, FPRInfo::fpRegT1);
+        CCallHelpers::Jump done = jit.jump();
+        failureCases.link(&jit);
+        jit.move(CCallHelpers::TrustedImm32(-1), GPRInfo::returnValueGPR);
+        done.link(&jit);
+    };
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::FRINT, convertDoubleToInt32, 42.0, 42);
+    checkEmitterFollowsFeature(CPUFeatureSet(), CPUFeature::FRINT, convertDoubleToInt32, 42.5, -1);
+#endif
+}
+
+void checkOopsForm()
+{
+    auto emitOops = [](CCallHelpers& jit) {
+        jit.oops();
+    };
+    AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet::host());
+    Vector<uint8_t> breakpoint = emitWithPolicy(imagePolicy, [](CCallHelpers& jit) {
+        jit.breakpoint();
+    });
+    CHECK_EQ(emitWithPolicy(imagePolicy, emitOops) == breakpoint, true);
+    CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), emitOops).size() > breakpoint.size(), true);
+}
+
+#if CPU(X86_64)
+void checkEncodingsFollowPolicy()
+{
+    AssemblerPolicy longEncodings = AssemblerPolicy::forJIT();
+    AssemblerPolicy shortEncodings = longEncodings;
+    shortEncodings.shortensEncodings = true;
+    auto sizeUnder = [](const AssemblerPolicy& policy, const auto& emit) {
+        return emitWithPolicy(policy, emit).size();
+    };
+    auto checkSizes = [&](size_t longSize, size_t shortSize, const auto& emit) {
+        CHECK_EQ(sizeUnder(longEncodings, emit), longSize);
+        CHECK_EQ(sizeUnder(shortEncodings, emit), shortSize);
+    };
+
+    checkSizes(3, 2, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(0), X86Registers::eax);
+    });
+    checkSizes(7, 5, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(5), X86Registers::eax);
+    });
+    checkSizes(7, 7, [](CCallHelpers& jit) {
+        jit.signExtend32To64(CCallHelpers::TrustedImm32(-5), X86Registers::eax);
+    });
+    checkSizes(3, 3, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::edx, CCallHelpers::TrustedImm32(0x10));
+    });
+    checkSizes(6, 4, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::edi, CCallHelpers::TrustedImm32(0x10));
+    });
+    checkSizes(7, 4, [](CCallHelpers& jit) {
+        jit.test32(X86Registers::r10, CCallHelpers::TrustedImm32(0x10));
+    });
+
+    for (const AssemblerPolicy& policy : { longEncodings, shortEncodings }) {
+        for (int32_t immediate : { 0, 5, -5, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+            CCallHelpers jit;
+            jit.setPolicy(policy);
+            emitFunctionPrologue(jit);
+            jit.move(CCallHelpers::TrustedImm64(-1), GPRInfo::returnValueGPR);
+            jit.signExtend32To64(CCallHelpers::TrustedImm32(immediate), GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+            LinkBuffer linkBuffer(jit, nullptr);
+            CHECK_EQ(invoke<int64_t>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm sign extension of an immediate")), static_cast<int64_t>(immediate));
+        }
+        for (uint32_t value : { 0u, 0x10u, 0x1000u, 0xffffffefu }) {
+            CCallHelpers jit;
+            jit.setPolicy(policy);
+            emitFunctionPrologue(jit);
+            jit.test32(CCallHelpers::NonZero, GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0x10), GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+            LinkBuffer linkBuffer(jit, nullptr);
+            CHECK_EQ(invoke<uint32_t>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm test of a byte mask"), value), static_cast<uint32_t>(!!(value & 0x10)));
+        }
+    }
+}
+#endif
+
+void checkFeaturesAboveHost()
+{
+    AssemblerPolicy policy = AssemblerPolicy::forImage(allCPUFeatures);
+    CCallHelpers jit;
+    jit.setPolicy(policy);
+    CHECK_EQ(jit.policy() == policy, true);
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    CHECK_EQ(linkBuffer.policy() == policy, true);
+    FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm code for every CPU feature");
+}
+
+void testAssemblerPolicy()
+{
+    constexpr AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet());
+    static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps && imagePolicy.shortensEncodings);
+    static_assert(imagePolicy.oops == OopsForm::Breakpoint);
+    static_assert(imagePolicy.needsLinkRecords() && !AssemblerPolicy().needsLinkRecords());
+
+    CCallHelpers jit;
+    CHECK_EQ(jit.policy() == AssemblerPolicy::forJIT(), true);
+
+    checkPerAssemblerFeatures();
+    checkEmittersFollowFeatures();
+    checkOopsForm();
+#if CPU(X86_64)
+    checkEncodingsFollowPolicy();
+#endif
+    checkFeaturesAboveHost();
+}
+
+struct JumpSource {
+    CCallHelpers::Jump (*emit)(CCallHelpers&);
+};
+
+constexpr JumpSource unconditionalJump { [](CCallHelpers& jit) { return jit.jump(); } };
+constexpr JumpSource jumpOnFlags { [](CCallHelpers& jit) { return jit.branchOnFlags(CCallHelpers::Equal); } };
+
+struct JumpSite {
+    CCallHelpers::Label before;
+    CCallHelpers::Jump jump;
+    CCallHelpers::Label after;
+};
+
+JumpSite emitJumpSite(CCallHelpers& jit, const JumpSource& source)
+{
+    JumpSite site;
+    site.before = jit.label();
+    site.jump = source.emit(jit);
+    site.after = jit.label();
+    return site;
+}
+
+LinkedSite expectedLinkedSite(LinkBuffer& linkBuffer, const JumpSite& site, CCallHelpers::Label target, RelocationKind kind)
+{
+    CHECK_EQ(linkBuffer.offsetOf(site.after) - linkBuffer.offsetOf(site.before), MacroAssembler::relocationSize(kind));
+    return { linkBuffer.offsetOf(site.before), linkBuffer.offsetOf(target), kind };
+}
+
+void checkLinkedSite(const LinkedSite& actual, const LinkedSite& expected)
+{
+    CHECK_EQ(actual.offset, expected.offset);
+    CHECK_EQ(actual.target, expected.target);
+    CHECK_EQ(static_cast<unsigned>(actual.kind), static_cast<unsigned>(expected.kind));
+}
+
+enum class JumpLinking : uint8_t { Forward, Backward, Late };
+
+void checkJump(const JumpSource& source, size_t distance, JumpLinking linking, RelocationKind kind, JumpShortening shortening = JumpShortening::Yes)
+{
+    JumpSite site;
+    CCallHelpers::Label target;
+    LinkedSite expected { };
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        jit.compareOnFlags32(GPRInfo::regT0, GPRInfo::regT1);
+        if (linking == JumpLinking::Backward) {
+            target = jit.label();
+            jit.emitNops(distance);
+        }
+        site = emitJumpSite(jit, source);
+        switch (linking) {
+        case JumpLinking::Forward:
+            jit.emitNops(distance);
+            site.jump.link(&jit);
+            target = jit.label();
+            break;
+        case JumpLinking::Backward:
+            site.jump.linkTo(target, &jit);
+            break;
+        case JumpLinking::Late:
+            jit.emitNops(distance);
+            target = jit.label();
+            break;
+        }
+        jit.ret();
+    }, [&](LinkBuffer& linkBuffer) {
+        if (linking == JumpLinking::Late)
+            linkBuffer.link(site.jump, linkBuffer.locationOf<JSInternalPtrTag>(target));
+        expected = expectedLinkedSite(linkBuffer, site, target, kind);
+    }, shortening);
+
+    CHECK_EQ(code.sites.size(), 1u);
+    checkLinkedSite(code.sites[0], expected);
+    CHECK_EQ(code.externalLinks.size(), 0u);
+    CHECK_EQ(code.hasProcessAddress, false);
+}
+#endif // CPU(X86_64) || CPU(ARM64)
+
+#if CPU(X86_64)
+struct RandomJumpProgram {
+    static constexpr unsigned numberOfBlocks = 200;
+
+    Vector<CCallHelpers::Label> blocks;
+    CCallHelpers::Label exit;
+};
+
+RandomJumpProgram emitRandomJumpProgram(CCallHelpers& jit, unsigned seed)
+{
+    constexpr GPRReg accumulator = GPRInfo::returnValueGPR;
+    constexpr GPRReg fuel = GPRInfo::regT1;
+    constexpr unsigned maxPadding = 140;
+
+    WeakRandom random(seed);
+    RandomJumpProgram program;
+    Vector<CCallHelpers::JumpList> forwardJumps(RandomJumpProgram::numberOfBlocks);
+    CCallHelpers::JumpList exitJumps;
+
+    auto randomTarget = [&](unsigned block) {
+        if (random.getUint32(2))
+            return random.getUint32(RandomJumpProgram::numberOfBlocks);
+        unsigned firstNeighbor = block < 2 ? 0 : block - 2;
+        return std::min(firstNeighbor + random.getUint32(5), RandomJumpProgram::numberOfBlocks - 1);
+    };
+    auto linkToBlock = [&](CCallHelpers::Jump jump, unsigned target) {
+        if (target < program.blocks.size())
+            jump.linkTo(program.blocks[target], &jit);
+        else
+            forwardJumps[target].append(jump);
+    };
+
+    emitFunctionPrologue(jit);
+    jit.move(GPRInfo::argumentGPR0, accumulator);
+    jit.move(CCallHelpers::TrustedImm32(1000), fuel);
+    for (unsigned block = 0; block < RandomJumpProgram::numberOfBlocks; ++block) {
+        forwardJumps[block].link(&jit);
+        program.blocks.append(jit.label());
+        jit.mul32(CCallHelpers::TrustedImm32(31), accumulator, accumulator);
+        jit.add32(CCallHelpers::TrustedImm32(block), accumulator);
+        exitJumps.append(jit.branchSub32(CCallHelpers::Zero, CCallHelpers::TrustedImm32(1), fuel));
+        jit.emitNops(random.getUint32(maxPadding));
+        linkToBlock(jit.branchTest32(CCallHelpers::NonZero, accumulator, CCallHelpers::TrustedImm32(1)), randomTarget(block));
+        jit.emitNops(random.getUint32(maxPadding));
+        linkToBlock(jit.jump(), randomTarget(block));
+    }
+    exitJumps.link(&jit);
+    program.exit = jit.label();
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    return program;
+}
+
+void checkRandomJumpSites(const LinkedCode& code, const Vector<uint32_t>& targets, JumpShortening shortening)
+{
+    unsigned numberOfShortJumps = 0;
+    uint32_t endOfPreviousJump = 0;
+    CHECK_EQ(code.sites.size(), 3u * RandomJumpProgram::numberOfBlocks);
+    for (const LinkedSite& site : code.sites) {
+        CHECK_EQ(site.offset >= endOfPreviousJump, true);
+        endOfPreviousJump = site.offset + MacroAssembler::relocationSize(site.kind);
+        CHECK_EQ(targets.contains(site.target), true);
+        bool isShort = site.kind == RelocationKind::ShortJump || site.kind == RelocationKind::ShortConditionalJump;
+        CHECK_EQ(isShort || site.kind == RelocationKind::Jump || site.kind == RelocationKind::ConditionalJump, true);
+        numberOfShortJumps += isShort;
+    }
+    CHECK_EQ(endOfPreviousJump <= code.size, true);
+    if (shortening == JumpShortening::No) {
+        CHECK_EQ(numberOfShortJumps, 0u);
+        return;
+    }
+    CHECK_EQ(!!numberOfShortJumps, true);
+    CHECK_EQ(numberOfShortJumps < code.sites.size(), true);
+}
+
+LinkedCode linkRandomJumpProgram(unsigned seed, JumpShortening shortening)
+{
+    RandomJumpProgram program;
+    Vector<uint32_t> targets;
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        program = emitRandomJumpProgram(jit, seed);
+    }, [&](LinkBuffer& linkBuffer) {
+        for (CCallHelpers::Label block : program.blocks)
+            targets.append(linkBuffer.offsetOf(block));
+        targets.append(linkBuffer.offsetOf(program.exit));
+    }, shortening);
+    checkRandomJumpSites(code, targets, shortening);
+    return code;
+}
+
+void testJumpShortening()
+{
+    for (unsigned seed = 1; seed <= 20; ++seed) {
+        LinkedCode shortened = linkRandomJumpProgram(seed, JumpShortening::Yes);
+        LinkedCode unshortened = linkRandomJumpProgram(seed, JumpShortening::No);
+
+        size_t sizeWithLongJumps = 0;
+        auto codeWithLongJumps = compile([&](CCallHelpers& jit) {
+            emitRandomJumpProgram(jit, seed);
+            sizeWithLongJumps = jit.m_assembler.codeSize();
+        });
+        CHECK_EQ(shortened.size < sizeWithLongJumps, true);
+        CHECK_EQ(unshortened.size, sizeWithLongJumps);
+
+        auto executable = makeExecutable(shortened.bytes());
+        for (int32_t argument : { 0, 1, 12345 })
+            CHECK_EQ(invokeAt<int32_t>(startOfCopiedCode(executable.code(), 0), argument), invoke<int32_t>(codeWithLongJumps, argument));
+    }
+}
+
+void checkJumpChainShortens()
+{
+    JumpSite outer;
+    JumpSite inner;
+    CCallHelpers::Label outerTarget;
+    CCallHelpers::Label innerTarget;
+    LinkedSite expectedOuter { };
+    LinkedSite expectedInner { };
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        outer = emitJumpSite(jit, unconditionalJump);
+        jit.emitNops(124);
+        inner = emitJumpSite(jit, unconditionalJump);
+        outer.jump.link(&jit);
+        outerTarget = jit.label();
+        jit.emitNops(10);
+        inner.jump.link(&jit);
+        innerTarget = jit.label();
+        jit.ret();
+    }, [&](LinkBuffer& linkBuffer) {
+        expectedOuter = expectedLinkedSite(linkBuffer, outer, outerTarget, RelocationKind::ShortJump);
+        expectedInner = expectedLinkedSite(linkBuffer, inner, innerTarget, RelocationKind::ShortJump);
+    });
+    CHECK_EQ(code.sites.size(), 2u);
+    checkLinkedSite(code.sites[0], expectedOuter);
+    checkLinkedSite(code.sites[1], expectedInner);
+}
+
+void checkLabelAfterJumps()
+{
+    constexpr uint32_t savings = MacroAssembler::relocationSize(RelocationKind::Jump) - MacroAssembler::relocationSize(RelocationKind::ShortJump);
+    CCallHelpers::Label end;
+    uint32_t emittedEnd = 0;
+    uint32_t linkedEnd = 0;
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        CCallHelpers::Jump jump = jit.jump();
+        jit.emitNops(10);
+        jump.link(&jit);
+        jit.ret();
+        emittedEnd = static_cast<uint32_t>(jit.m_assembler.codeSize());
+        end = jit.label();
+    }, [&](LinkBuffer& linkBuffer) {
+        linkedEnd = linkBuffer.offsetOf(end);
+    });
+    CHECK_EQ(linkedEnd, emittedEnd - savings);
+    CHECK_EQ(code.size, static_cast<size_t>(linkedEnd));
+}
+
+void checkShorteningWithoutRecords()
+{
+    AssemblerPolicy policy = AssemblerPolicy::forJIT();
+    policy.shortensJumps = true;
+
+    for (unsigned seed = 1; seed <= 3; ++seed) {
+        CCallHelpers jit;
+        jit.setPolicy(policy);
+        emitRandomJumpProgram(jit, seed);
+        CCallHelpers::Label end = jit.label();
+        size_t sizeWithLongJumps = jit.m_assembler.codeSize();
+        LinkBuffer linkBuffer(jit, nullptr);
+        CHECK_EQ(linkBuffer.offsetOf(end) < sizeWithLongJumps, true);
+        auto shortened = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm shortened jumps without records");
+
+        auto codeWithLongJumps = compile([&](CCallHelpers& unshortened) {
+            emitRandomJumpProgram(unshortened, seed);
+        });
+        for (int32_t argument : { 0, 1, 12345 })
+            CHECK_EQ(invoke<int32_t>(shortened, argument), invoke<int32_t>(codeWithLongJumps, argument));
+    }
+
+    CCallHelpers jit;
+    jit.setPolicy(policy);
+    emitFunctionPrologue(jit);
+    jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+    CCallHelpers::Jump shortJump = jit.jump();
+    jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::returnValueGPR);
+    shortJump.link(&jit);
+    CCallHelpers::Jump lateJump = jit.jump();
+    jit.move(CCallHelpers::TrustedImm32(3), GPRInfo::returnValueGPR);
+    CCallHelpers::Label target = jit.label();
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    linkBuffer.link(lateJump, linkBuffer.locationOf<JSInternalPtrTag>(target));
+    CHECK_EQ(invoke<int>(FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm late jump after a shortened jump")), 1);
+}
+
+void testJumpShorteningBounds()
+{
+    struct JumpKinds {
+        JumpSource source;
+        RelocationKind shortJump;
+        RelocationKind longJump;
+    };
+    const JumpKinds kinds[] = {
+        { unconditionalJump, RelocationKind::ShortJump, RelocationKind::Jump },
+        { jumpOnFlags, RelocationKind::ShortConditionalJump, RelocationKind::ConditionalJump },
+    };
+    for (const JumpKinds& kind : kinds) {
+        checkJump(kind.source, 127, JumpLinking::Forward, kind.shortJump);
+        checkJump(kind.source, 128, JumpLinking::Forward, kind.longJump);
+        checkJump(kind.source, 126, JumpLinking::Backward, kind.shortJump);
+        checkJump(kind.source, 127, JumpLinking::Backward, kind.longJump);
+        checkJump(kind.source, 385, JumpLinking::Forward, kind.longJump);
+        checkJump(kind.source, 10, JumpLinking::Forward, kind.longJump, JumpShortening::No);
+        checkJump(kind.source, 10, JumpLinking::Backward, kind.longJump, JumpShortening::No);
+    }
+    checkJumpChainShortens();
+    checkLabelAfterJumps();
+    checkShorteningWithoutRecords();
+}
+
+void checkCarryFlagInstructions(GPRReg result)
+{
+    auto carryAfterSetting = [&](bool clearsCarry) {
+        return compileAndRun<int>([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.xor32(result, result);
+            jit.m_assembler.stc();
+            if (clearsCarry)
+                jit.m_assembler.clc();
+            jit.setCarry(result);
+            jit.move(result, GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+    CHECK_EQ(carryAfterSetting(false), 1);
+    CHECK_EQ(carryAfterSetting(true), 0);
+}
+
+void checkLeave()
+{
+    constexpr GPRReg stackPointerDifference = GPRInfo::returnValueGPR;
+    constexpr GPRReg framePointerDifference = GPRInfo::regT2;
+    CHECK_EQ(compileAndRun<uint64_t>([&](CCallHelpers& jit) {
+        jit.move(X86Registers::esp, stackPointerDifference);
+        jit.move(X86Registers::ebp, framePointerDifference);
+        jit.push(X86Registers::ebp);
+        jit.move(X86Registers::esp, X86Registers::ebp);
+        jit.subPtr(CCallHelpers::TrustedImm32(32), X86Registers::esp);
+        jit.m_assembler.leave();
+        jit.xor64(X86Registers::esp, stackPointerDifference);
+        jit.xor64(X86Registers::ebp, framePointerDifference);
+        jit.or64(framePointerDifference, stackPointerDifference);
+        jit.ret();
+    }), 0u);
+}
+
+void checkRepeatStoreString()
+{
+    static_assert(GPRInfo::argumentGPR0 == X86Registers::edi);
+    constexpr uint64_t stored = 0x0123456789abcdefULL;
+    constexpr uint64_t untouched = 0xfedcba9876543210ULL;
+    constexpr unsigned numberOfStoredWords = 5;
+    uint64_t words[numberOfStoredWords + 1];
+    for (uint64_t& word : words)
+        word = untouched;
+    compileAndRun<void>([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(numberOfStoredWords), X86Registers::ecx);
+        jit.move(CCallHelpers::TrustedImm64(stored), X86Registers::eax);
+        jit.m_assembler.rep_stosq();
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    }, words);
+    for (unsigned i = 0; i < numberOfStoredWords; ++i)
+        CHECK_EQ(words[i], stored);
+    CHECK_EQ(words[numberOfStoredWords], untouched);
+}
+
+void checkRIPRelativeAddress(GPRReg dest)
+{
+    auto code = compile([&](CCallHelpers& jit) {
+        jit.m_assembler.leaq_rip(dest);
+        jit.move(dest, GPRInfo::returnValueGPR);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uintptr_t>(code), code.code().untaggedPtr<uintptr_t>() + MacroAssembler::relocationSize(RelocationKind::AddressNear));
+}
+
+void checkUnalignedVectorLoad(GPRReg base, GPRReg index, FPRReg vector, GPRReg mask)
+{
+    alignas(16) uint8_t bytes[48];
+    for (unsigned i = 0; i < sizeof(bytes); ++i)
+        bytes[i] = static_cast<uint8_t>(i % 3 ? 0x80 | i : i);
+    auto signBitsAt = [&](unsigned offset) {
+        unsigned result = 0;
+        for (unsigned i = 0; i < 16; ++i)
+            result |= (bytes[offset + i] >> 7) << i;
+        return result;
+    };
+    auto loadedSignBits = [&](auto emitLoad) {
+        return compileAndRun<unsigned>([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.move(GPRInfo::argumentGPR0, base);
+            jit.move(GPRInfo::argumentGPR1, index);
+            emitLoad(jit.m_assembler);
+            jit.m_assembler.pmovmskb_rr(vector, mask);
+            jit.move(mask, GPRInfo::returnValueGPR);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        }, bytes, static_cast<uint64_t>(3));
+    };
+
+    CHECK_EQ(loadedSignBits([&](X86Assembler& assembler) {
+        assembler.movdqu_mr(1, base, vector);
+    }), signBitsAt(1));
+    CHECK_EQ(loadedSignBits([&](X86Assembler& assembler) {
+        assembler.movdqu_mr(1, base, index, CCallHelpers::TimesFour, vector);
+    }), signBitsAt(13));
+}
+
+template<typename Operation>
+v128_t runVectorOperation(FPRReg dest, FPRReg source, v128_t destValue, v128_t sourceValue, const Operation& operation)
+{
+    constexpr int vectorSize = sizeof(v128_t);
+    v128_t values[] = { destValue, sourceValue, v128_t() };
+    uint64_t lowHalf = compileAndRun<uint64_t>([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.m_assembler.movups_mr(0, GPRInfo::argumentGPR0, dest);
+        jit.m_assembler.movups_mr(vectorSize, GPRInfo::argumentGPR0, source);
+        operation(jit.m_assembler);
+        jit.m_assembler.movups_rm(dest, 2 * vectorSize, GPRInfo::argumentGPR0);
+        jit.m_assembler.movq_rr(dest, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    }, values);
+    CHECK_EQ(lowHalf, values[2].u64x2[0]);
+    return values[2];
+}
+
+void checkVectorInstructions(FPRReg dest, FPRReg source)
+{
+    v128_t left { 0x1122334455667788ULL, 0x99aabbccddeeff00ULL };
+    v128_t right { 0x1100330055007700ULL, 0x99aa0000ddee0000ULL };
+    auto run = [&](auto operation) {
+        return runVectorOperation(dest, source, left, right, operation);
+    };
+
+    CHECK_EQ(bitEquals(run([&](X86Assembler& assembler) {
+        assembler.pand_rr(source, dest);
+    }), vectorAnd(left, right)), true);
+
+    v128_t equalBytes;
+    for (unsigned i = 0; i < 16; ++i)
+        equalBytes.u8x16[i] = left.u8x16[i] == right.u8x16[i] ? 0xff : 0;
+    CHECK_EQ(bitEquals(run([&](X86Assembler& assembler) {
+        assembler.pcmpeqb_rr(source, dest);
+    }), equalBytes), true);
+
+    v128_t shiftedWords;
+    for (unsigned i = 0; i < 8; ++i)
+        shiftedWords.u16x8[i] = left.u16x8[i] >> 3;
+    CHECK_EQ(bitEquals(run([&](X86Assembler& assembler) {
+        assembler.psrlw_i8r(3, dest);
+    }), shiftedWords), true);
+
+    CHECK_EQ(bitEquals(run([&](X86Assembler& assembler) {
+        assembler.pslldq_i8r(8, dest);
+    }), v128_t { 0, left.u64x2[0] }), true);
+}
+
+void testX86NamedInstructions()
+{
+    checkCarryFlagInstructions(X86Registers::eax);
+    checkCarryFlagInstructions(X86Registers::r8);
+    checkLeave();
+    checkRepeatStoreString();
+    checkRIPRelativeAddress(X86Registers::eax);
+    checkRIPRelativeAddress(X86Registers::r9);
+    checkUnalignedVectorLoad(X86Registers::edx, X86Registers::ecx, X86Registers::xmm0, X86Registers::eax);
+    checkUnalignedVectorLoad(X86Registers::r8, X86Registers::r9, X86Registers::xmm8, X86Registers::r10);
+    checkVectorInstructions(X86Registers::xmm0, X86Registers::xmm1);
+    checkVectorInstructions(X86Registers::xmm8, X86Registers::xmm9);
+    checkVectorInstructions(X86Registers::xmm1, X86Registers::xmm15);
+    checkVectorInstructions(X86Registers::xmm15, X86Registers::xmm1);
+}
+
+void testAddOrFromMemoryAliasing()
+{
+    constexpr GPRReg first = GPRInfo::argumentGPR2;
+    constexpr GPRReg second = GPRInfo::argumentGPR3;
+    constexpr GPRReg third = GPRInfo::argumentGPR4;
+    constexpr uint64_t registerValue = 0x00ff00ff12345678ULL;
+    constexpr int32_t offsetOfMemoryOperand = sizeof(uint64_t);
+    uint64_t words[] = { 0, 0x0f0f0f0f87654321ULL };
+
+    auto check = [&](GPRReg base, GPRReg operand, GPRReg dest) {
+        auto run = [&](auto emitOperation) {
+            return compileAndRun<uint64_t>([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.move(GPRInfo::argumentGPR1, operand);
+                jit.move(GPRInfo::argumentGPR0, base);
+                emitOperation(jit, CCallHelpers::Address(base, offsetOfMemoryOperand));
+                jit.move(dest, GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            }, words, registerValue);
+        };
+        uint64_t operandValue = operand == base ? reinterpret_cast<uintptr_t>(words) : registerValue;
+        CHECK_EQ(run([&](CCallHelpers& jit, CCallHelpers::Address address) {
+            jit.add64(address, operand, dest);
+        }), words[1] + operandValue);
+        CHECK_EQ(run([&](CCallHelpers& jit, CCallHelpers::Address address) {
+            jit.or64(address, operand, dest);
+        }), words[1] | operandValue);
+    };
+
+    check(first, second, third);
+    check(first, second, first);
+    check(first, second, second);
+    check(first, first, third);
+    check(first, first, first);
+}
+#endif // CPU(X86_64)
+
+#if CPU(X86_64) || CPU(ARM64)
+// The 32-bit immediate of a 64-bit operation stands for its sign extension, whether or not the instruction can hold it.
+void testImmediatesOf64BitOperationsAreSignExtended()
+{
+    constexpr int32_t immediates[] = {
+        -1, -4095, -4096, -4097, -5000, -0x00fff000, -0x00fff001, -0x01000000, std::numeric_limits<int32_t>::min(),
+        0, 1, 4095, 4096, 4097, 5000, 0x00fff001, std::numeric_limits<int32_t>::max()
+    };
+    constexpr CCallHelpers::RelationalCondition conditions[] = {
+        CCallHelpers::Equal, CCallHelpers::NotEqual, CCallHelpers::LessThan, CCallHelpers::GreaterThanOrEqual, CCallHelpers::Below, CCallHelpers::AboveOrEqual
+    };
+    auto holds = [](CCallHelpers::RelationalCondition condition, int64_t left, int64_t right) {
+        switch (condition) {
+        case CCallHelpers::Equal:
+            return left == right;
+        case CCallHelpers::NotEqual:
+            return left != right;
+        case CCallHelpers::LessThan:
+            return left < right;
+        case CCallHelpers::GreaterThanOrEqual:
+            return left >= right;
+        case CCallHelpers::Below:
+            return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+        case CCallHelpers::AboveOrEqual:
+            return static_cast<uint64_t>(left) >= static_cast<uint64_t>(right);
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    };
+
+    for (int32_t immediate : immediates) {
+        const int64_t extended = immediate;
+        const int64_t operands[] = {
+            extended, extended - 1, extended + 1, static_cast<int64_t>(static_cast<uint32_t>(immediate)), 0, -1,
+            std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max()
+        };
+        const CCallHelpers::TrustedImm32 right(immediate);
+
+        for (auto condition : conditions) {
+            auto branch = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                auto taken = jit.branch64(condition, GPRInfo::argumentGPR0, right);
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+                taken.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            auto select = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.moveConditionally64(condition, GPRInfo::argumentGPR0, right, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            auto selectDouble = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.moveDoubleConditionally64(condition, GPRInfo::argumentGPR0, right, FPRInfo::argumentFPR0, FPRInfo::argumentFPR1, FPRInfo::returnValueFPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            for (int64_t operand : operands) {
+                bool expected = holds(condition, operand, extended);
+                CHECK_EQ(invoke<int32_t>(branch, operand), static_cast<int32_t>(expected));
+                CHECK_EQ(invoke<int64_t>(select, operand, static_cast<int64_t>(11), static_cast<int64_t>(22)), static_cast<int64_t>(expected ? 11 : 22));
+                CHECK_EQ(invoke<double>(selectDouble, operand, 1.5, 2.5), expected ? 1.5 : 2.5);
+            }
+        }
+
+        auto subtract = compile([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.branchSub64(CCallHelpers::Zero, GPRInfo::argumentGPR0, right, GPRInfo::returnValueGPR).link(&jit);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+        for (int64_t operand : operands)
+            CHECK_EQ(invoke<uint64_t>(subtract, operand), static_cast<uint64_t>(operand) - static_cast<uint64_t>(extended));
+
+#if CPU(ARM64)
+        auto add = compile([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.branchAdd64(CCallHelpers::Zero, GPRInfo::argumentGPR0, right, GPRInfo::returnValueGPR).link(&jit);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+        for (int64_t operand : operands)
+            CHECK_EQ(invoke<uint64_t>(add, operand), static_cast<uint64_t>(operand) + static_cast<uint64_t>(extended));
+#endif
+    }
+}
+
+void testAdd64OfRegisterToMemory()
+{
+    constexpr uint64_t registerValue = 0x00ff00ff12345678ULL;
+    constexpr uint64_t memoryValue = 0x0f0f0f0f87654321ULL;
+    uint64_t words[] = { 1, memoryValue, 2 };
+    uint64_t registerAfterwards = compileAndRun<uint64_t>([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.add64(GPRInfo::argumentGPR1, CCallHelpers::Address(GPRInfo::argumentGPR0, sizeof(uint64_t)));
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    }, words, registerValue);
+    CHECK_EQ(registerAfterwards, registerValue);
+    CHECK_EQ(words[0], static_cast<uint64_t>(1));
+    CHECK_EQ(words[1], memoryValue + registerValue);
+    CHECK_EQ(words[2], static_cast<uint64_t>(2));
+}
+
+enum class TargetPosition : bool { BeforeSite, AfterSite };
+
+struct PCRelativeProgram {
+    LinkedCode code;
+    uint32_t entry { 0 };
+    uint32_t site { 0 };
+    uint32_t target { 0 };
+};
+
+constexpr size_t codeMisalignments[] = { 0, 4, 2048, 4092 };
+constexpr uint64_t loadedWord = 0x0123456789abcdefULL;
+
+template<typename EmitSite>
+PCRelativeProgram linkPCRelativeProgram(RelocationKind kind, size_t gap, TargetPosition position, const EmitSite& emitSite)
+{
+    PCRelativeProgram program;
+    CCallHelpers::Label entry;
+    CCallHelpers::Label site;
+    CCallHelpers::Label target;
+    auto emitTarget = [&](CCallHelpers& jit) {
+        target = jit.label();
+        jit.emitNops(sizeof(uint64_t));
+    };
+    program.code = linkIntoStorage([&](CCallHelpers& jit) {
+        if (position == TargetPosition::BeforeSite) {
+            emitTarget(jit);
+            jit.emitNops(gap);
+        }
+        entry = jit.label();
+        emitFunctionPrologue(jit);
+        site = emitSite(jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+        if (position == TargetPosition::AfterSite) {
+            jit.emitNops(gap);
+            emitTarget(jit);
+        }
+    }, [&](LinkBuffer& linkBuffer) {
+        CHECK_EQ(linkBuffer.link(site, kind, target), true);
+        program.entry = linkBuffer.offsetOf(entry);
+        program.site = linkBuffer.offsetOf(site);
+        program.target = linkBuffer.offsetOf(target);
+    });
+
+    CHECK_EQ(program.code.sites.size(), 1u);
+    checkLinkedSite(program.code.sites[0], LinkedSite { program.site, program.target, kind });
+    CHECK_EQ(program.code.hasProcessAddress, false);
+    return program;
+}
+
+bool computesTargetAddress(PCRelativeProgram& program, size_t misalignment)
+{
+    auto executable = makeExecutable(program.code.bytes(), misalignment);
+    uint8_t* start = startOfCopiedCode(executable.code(), misalignment);
+    return invokeAt<uintptr_t>(start + program.entry) == reinterpret_cast<uintptr_t>(start + program.target);
+}
+
+void checkPCRelativeAddress(PCRelativeReach reach, size_t gap, TargetPosition position)
+{
+    RelocationKind kind = addressKindFor(reach);
+    PCRelativeProgram program = linkPCRelativeProgram(kind, gap, position, [&](CCallHelpers& jit) {
+        return jit.movePCRelativeAddress(GPRInfo::returnValueGPR, reach);
+    });
+    for (size_t misalignment : codeMisalignments)
+        CHECK_EQ(computesTargetAddress(program, misalignment), true);
+
+    CHECK_EQ(MacroAssembler::applyRelocation(kind, program.code.bytes(), program.site, program.target), true);
+    CHECK_EQ(computesTargetAddress(program, 0), true);
+#if CPU(ARM64)
+    if (kind == RelocationKind::AddressFar)
+        CHECK_EQ(computesTargetAddress(program, 2048), false);
+#endif
+}
+
+void testPCRelativeAddress()
+{
+    for (size_t gap : { static_cast<size_t>(64), 3 * linkedCodeAlignment + 20 }) {
+        for (TargetPosition position : { TargetPosition::BeforeSite, TargetPosition::AfterSite }) {
+            checkPCRelativeAddress(PCRelativeReach::Near, gap, position);
+            checkPCRelativeAddress(PCRelativeReach::Far, gap, position);
+        }
+    }
+}
+
+void testLoadPCRelative64()
+{
+    for (TargetPosition position : { TargetPosition::BeforeSite, TargetPosition::AfterSite }) {
+        PCRelativeProgram program = linkPCRelativeProgram(RelocationKind::Load64, 64, position, [](CCallHelpers& jit) {
+            return jit.loadPCRelative64(GPRInfo::returnValueGPR);
+        });
+        memcpySpan(program.code.bytes().subspan(program.target), asByteSpan(loadedWord));
+        auto runAt = [&](size_t misalignment) {
+            auto executable = makeExecutable(program.code.bytes(), misalignment);
+            return invokeAt<uint64_t>(startOfCopiedCode(executable.code(), misalignment) + program.entry);
+        };
+        for (size_t misalignment : codeMisalignments)
+            CHECK_EQ(runAt(misalignment), loadedWord);
+
+        CHECK_EQ(MacroAssembler::applyRelocation(RelocationKind::Load64, program.code.bytes(), program.site, program.target), true);
+        CHECK_EQ(runAt(0), loadedWord);
+    }
+}
+
+constexpr RelocationKind allRelocationKinds[] = {
+    RelocationKind::Call,
+    RelocationKind::Jump,
+    RelocationKind::ShortJump,
+    RelocationKind::ConditionalJump,
+    RelocationKind::ShortConditionalJump,
+    RelocationKind::ConditionalJumpThenNop,
+    RelocationKind::TestBitJump,
+    RelocationKind::TestBitJumpThenNop,
+    RelocationKind::InvertedJumpThenJump,
+    RelocationKind::AddressNear,
+    RelocationKind::AddressFar,
+    RelocationKind::Load64,
+    RelocationKind::Distance32,
+    RelocationKind::InstanceOffset,
+};
+static_assert(std::size(allRelocationKinds) == numberOfRelocationKinds);
+
+constexpr GPRReg relocatedGPR = GPRInfo::returnValueGPR;
+constexpr GPRReg instanceGPR = GPRInfo::argumentGPR1;
+constexpr int testedBit = 3;
+constexpr int32_t distance32Addend = 0x40;
+
+void emitRelocationSite(CCallHelpers& jit, RelocationKind kind)
+{
+    switch (kind) {
+    case RelocationKind::Call:
+        jit.nearCall();
+        return;
+    case RelocationKind::Jump:
+        jit.jump();
+        return;
+    case RelocationKind::AddressNear:
+        jit.movePCRelativeAddress(relocatedGPR, PCRelativeReach::Near);
+        return;
+    case RelocationKind::AddressFar:
+        jit.movePCRelativeAddress(relocatedGPR, PCRelativeReach::Far);
+        return;
+    case RelocationKind::Load64:
+        jit.loadPCRelative64(relocatedGPR);
+        return;
+    case RelocationKind::Distance32:
+        jit.m_assembler.buffer().putInt(distance32Addend);
+        return;
+    case RelocationKind::InstanceOffset:
+        jit.moveInstanceAddress(instanceGPR, relocatedGPR);
+        return;
+#if CPU(X86_64)
+    case RelocationKind::ConditionalJump:
+        jit.branchOnFlags(CCallHelpers::Equal);
+        return;
+    case RelocationKind::ShortJump:
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(X86JumpShortener::shortJumpOpcode));
+        jit.m_assembler.buffer().putByte(0);
+        return;
+    case RelocationKind::ShortConditionalJump:
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(X86JumpShortener::shortConditionalJumpOpcode | X86Assembler::ConditionE));
+        jit.m_assembler.buffer().putByte(0);
+        return;
+    case RelocationKind::ConditionalJumpThenNop:
+    case RelocationKind::TestBitJump:
+    case RelocationKind::TestBitJumpThenNop:
+    case RelocationKind::InvertedJumpThenJump:
+        break;
+#else
+    case RelocationKind::ConditionalJump:
+        jit.m_assembler.b_cond(ARM64Assembler::ConditionEQ);
+        return;
+    case RelocationKind::ConditionalJumpThenNop:
+        jit.m_assembler.b_cond(ARM64Assembler::ConditionEQ);
+        jit.m_assembler.nop();
+        return;
+    case RelocationKind::TestBitJump:
+        jit.m_assembler.tbnz(relocatedGPR, testedBit);
+        return;
+    case RelocationKind::TestBitJumpThenNop:
+        jit.m_assembler.tbnz(relocatedGPR, testedBit);
+        jit.m_assembler.nop();
+        return;
+    case RelocationKind::InvertedJumpThenJump:
+        jit.m_assembler.b_cond(ARM64Assembler::ConditionNE, 2 * static_cast<int32_t>(sizeof(uint32_t)));
+        jit.m_assembler.b();
+        return;
+    case RelocationKind::ShortJump:
+    case RelocationKind::ShortConditionalJump:
+        break;
+#endif
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Vector<uint8_t> createRelocationSite(RelocationKind kind)
+{
+    CCallHelpers jit;
+    emitRelocationSite(jit, kind);
+    Vector<uint8_t> bytes = takeEmittedBytes(jit);
+    size_t size = MacroAssembler::relocationSize(kind);
+    // On ARM64 the add of the instance follows the two instructions that hold the offset.
+    CHECK_EQ(kind == RelocationKind::InstanceOffset ? bytes.size() >= size : bytes.size() == size, true);
+    bytes.shrink(size);
+    return bytes;
+}
+
+struct RelocationAttempt {
+    Vector<uint8_t> emitted;
+    Vector<uint8_t> linked;
+};
+
+template<typename Link>
+RelocationAttempt checkRelocationAttempt(RelocationKind kind, bool isInReach, const Link& link)
+{
+    RelocationAttempt attempt;
+    attempt.emitted = createRelocationSite(kind);
+    attempt.linked = attempt.emitted;
+    CHECK_EQ(link(attempt.linked.mutableSpan()), isInReach);
+    if (!isInReach)
+        CHECK_EQ(attempt.linked == attempt.emitted, true);
+    return attempt;
+}
+
+#if CPU(ARM64)
+constexpr uint32_t adrOpcode = 0x10000000;
+constexpr uint32_t adrpOpcode = 0x90000000;
+constexpr uint32_t addImmediateOpcode = 0x91000000;
+constexpr uint32_t addShiftedImmediateOpcode = 0x91400000;
+constexpr uint32_t subShiftedImmediateOpcode = 0xd1400000;
+constexpr uint32_t loadLiteral64Opcode = 0x58000000;
+constexpr uint32_t branchOpcode = 0x14000000;
+constexpr uint32_t branchAndLinkOpcode = 0x94000000;
+constexpr uint32_t linkedRegister = static_cast<uint32_t>(relocatedGPR);
+
+uint32_t instructionAt(std::span<const uint8_t> code, size_t index)
+{
+    uint32_t word;
+    memcpy(&word, code.subspan(index * sizeof(word)).data(), sizeof(word));
+    return word;
+}
+
+int64_t signExtend(uint32_t value, unsigned width)
+{
+    unsigned shift = 64 - width;
+    return static_cast<int64_t>(static_cast<uint64_t>(value) << shift) >> shift;
+}
+
+void checkPCRelativeWord(uint32_t word, uint32_t opcode, int64_t immediate)
+{
+    CHECK_EQ(word & 0x9f000000, opcode);
+    CHECK_EQ(word & 0x1f, linkedRegister);
+    uint32_t encodedImmediate = ((word >> 5) & 0x7ffff) << 2 | ((word >> 29) & 3);
+    CHECK_EQ(signExtend(encodedImmediate, 21), immediate);
+}
+
+void checkAddSubtractImmediateWord(uint32_t word, uint32_t opcode, uint32_t immediate)
+{
+    CHECK_EQ(word & 0xffc00000, opcode);
+    CHECK_EQ((word >> 10) & 0xfff, immediate);
+    CHECK_EQ((word >> 5) & 0x1f, linkedRegister);
+    CHECK_EQ(word & 0x1f, linkedRegister);
+}
+
+void checkBranchWord(uint32_t word, uint32_t opcode, int64_t distance)
+{
+    CHECK_EQ(word & 0xfc000000, opcode);
+    CHECK_EQ(signExtend(word & 0x3ffffff, 26) * 4, distance);
+}
+
+void checkBranchImmediate(const RelocationAttempt& attempt, unsigned width, int64_t distance)
+{
+    uint32_t mask = ((1u << width) - 1) << 5;
+    uint32_t word = instructionAt(attempt.linked.span(), 0);
+    CHECK_EQ(word & ~mask, instructionAt(attempt.emitted.span(), 0) & ~mask);
+    CHECK_EQ(signExtend((word & mask) >> 5, width) * 4, distance);
+    CHECK_EQ(equalSpans(attempt.linked.span().subspan(sizeof(word)), attempt.emitted.span().subspan(sizeof(word))), true);
+}
+
+void checkDistanceEncoding(RelocationKind kind, const RelocationAttempt& attempt, int64_t distance)
+{
+    std::span<const uint8_t> code = attempt.linked.span();
+    uint32_t word = instructionAt(code, 0);
+    switch (kind) {
+    case RelocationKind::Call:
+        checkBranchWord(word, branchAndLinkOpcode, distance);
+        return;
+    case RelocationKind::Jump:
+        checkBranchWord(word, branchOpcode, distance);
+        return;
+    case RelocationKind::ConditionalJump:
+    case RelocationKind::ConditionalJumpThenNop:
+        checkBranchImmediate(attempt, 19, distance);
+        return;
+    case RelocationKind::TestBitJump:
+    case RelocationKind::TestBitJumpThenNop:
+        checkBranchImmediate(attempt, 14, distance);
+        return;
+    case RelocationKind::InvertedJumpThenJump:
+        CHECK_EQ(word, instructionAt(attempt.emitted.span(), 0));
+        checkBranchWord(instructionAt(code, 1), branchOpcode, distance - static_cast<int64_t>(sizeof(word)));
+        return;
+    case RelocationKind::AddressNear:
+        checkPCRelativeWord(word, adrOpcode, distance);
+        return;
+    case RelocationKind::AddressFar: {
+        int64_t pages = distance >> 12;
+        checkPCRelativeWord(word, adrOpcode, distance - pages * 4096);
+        uint32_t opcode = pages < 0 ? subShiftedImmediateOpcode : addShiftedImmediateOpcode;
+        checkAddSubtractImmediateWord(instructionAt(code, 1), opcode, static_cast<uint32_t>(pages < 0 ? -pages : pages));
+        return;
+    }
+    case RelocationKind::Load64:
+        CHECK_EQ(word & 0xff000000, loadLiteral64Opcode);
+        CHECK_EQ(word & 0x1f, linkedRegister);
+        CHECK_EQ(signExtend((word >> 5) & 0x7ffff, 19) * 4, distance);
+        return;
+    case RelocationKind::ShortJump:
+    case RelocationKind::ShortConditionalJump:
+    case RelocationKind::Distance32:
+    case RelocationKind::InstanceOffset:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#else
+void checkDistanceEncoding(RelocationKind kind, const RelocationAttempt& attempt, int64_t distance)
+{
+    std::span<const uint8_t> code = attempt.linked.span();
+    bool isShort = kind == RelocationKind::ShortJump || kind == RelocationKind::ShortConditionalJump;
+    size_t opcodeSize = code.size() - (isShort ? sizeof(int8_t) : sizeof(int32_t));
+    const uint8_t* field = code.subspan(opcodeSize).data();
+    int64_t displacement = isShort ? WTF::unalignedLoad<int8_t>(field) : WTF::unalignedLoad<int32_t>(field);
+    CHECK_EQ(displacement, distance - static_cast<int64_t>(code.size()));
+    CHECK_EQ(equalSpans(code.first(opcodeSize), attempt.emitted.span().first(opcodeSize)), true);
+}
+#endif
+
+void checkRelocationDistance(RelocationKind kind, int64_t distance, bool isInReach)
+{
+    RelocationAttempt attempt = checkRelocationAttempt(kind, isInReach, [&](std::span<uint8_t> instructions) {
+        return MacroAssembler::setRelocationDistance(kind, instructions, distance);
+    });
+    if (!isInReach)
+        return;
+    if (kind == RelocationKind::Distance32) {
+        CHECK_EQ(static_cast<int64_t>(WTF::unalignedLoad<int32_t>(attempt.linked.span().data())), distance32Addend + distance);
+        return;
+    }
+    checkDistanceEncoding(kind, attempt, distance);
+}
+
+#if CPU(ARM64)
+void checkPageRelativeTarget(uint64_t site, uint64_t target, bool isInReach)
+{
+    int64_t pages = static_cast<int64_t>(target >> 12) - static_cast<int64_t>(site >> 12);
+    CHECK_EQ(isInt<21>(pages), isInReach);
+    RelocationAttempt attempt = checkRelocationAttempt(RelocationKind::AddressFar, isInReach, [&](std::span<uint8_t> instructions) {
+        return ARM64Assembler::setAdrpThenAddTarget(instructions, site, target);
+    });
+    if (!isInReach)
+        return;
+    checkPCRelativeWord(instructionAt(attempt.linked.span(), 0), adrpOpcode, pages);
+    checkAddSubtractImmediateWord(instructionAt(attempt.linked.span(), 1), addImmediateOpcode, static_cast<uint32_t>(target & 0xfff));
+}
+#endif
+
+void checkReachCoversSection(RelocationKind kind)
+{
+    int64_t reach = MacroAssembler::relocationReach(kind);
+    int64_t size = MacroAssembler::relocationSize(kind);
+#if CPU(ARM64)
+    if (kind == RelocationKind::AddressFar) {
+        checkPageRelativeTarget(0, reach - 4, true);
+        checkPageRelativeTarget(reach - size, 0, true);
+        return;
+    }
+#endif
+    // The reach of Distance32 bounds what the word holds once it is linked.
+    int64_t addend = kind == RelocationKind::Distance32 ? distance32Addend : 0;
+    checkRelocationDistance(kind, reach - 4 - addend, true);
+    checkRelocationDistance(kind, -(reach - size) - addend, true);
+}
+
+struct DistanceBounds {
+    int64_t min;
+    int64_t max;
+    int64_t unit;
+};
+
+std::optional<DistanceBounds> distanceBounds(RelocationKind kind)
+{
+    constexpr int64_t minInt32 = std::numeric_limits<int32_t>::min();
+    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
+#if CPU(X86_64)
+    int64_t size = MacroAssembler::relocationSize(kind);
+    switch (kind) {
+    case RelocationKind::Call:
+    case RelocationKind::Jump:
+    case RelocationKind::ConditionalJump:
+    case RelocationKind::AddressNear:
+    case RelocationKind::AddressFar:
+    case RelocationKind::Load64:
+        return DistanceBounds { size + minInt32, size + maxInt32, 1 };
+    case RelocationKind::ShortJump:
+    case RelocationKind::ShortConditionalJump:
+        return DistanceBounds { size + std::numeric_limits<int8_t>::min(), size + std::numeric_limits<int8_t>::max(), 1 };
+    case RelocationKind::Distance32:
+        return DistanceBounds { minInt32 - distance32Addend, maxInt32 - distance32Addend, 1 };
+    case RelocationKind::ConditionalJumpThenNop:
+    case RelocationKind::TestBitJump:
+    case RelocationKind::TestBitJumpThenNop:
+    case RelocationKind::InvertedJumpThenJump:
+    case RelocationKind::InstanceOffset:
+        return std::nullopt;
+    }
+#else
+    constexpr int64_t instructionSize = sizeof(uint32_t);
+    constexpr int64_t testBitReach = 32 * KB;
+    constexpr int64_t nearReach = 1 * MB;
+    constexpr int64_t branchReach = 128 * MB;
+    static_assert(MacroAssembler::farAddressReachInBuffer == 4096 * 4096);
+    switch (kind) {
+    case RelocationKind::Call:
+    case RelocationKind::Jump:
+        return DistanceBounds { -branchReach, branchReach - instructionSize, instructionSize };
+    case RelocationKind::InvertedJumpThenJump:
+        return DistanceBounds { -branchReach + instructionSize, branchReach, instructionSize };
+    case RelocationKind::ConditionalJump:
+    case RelocationKind::ConditionalJumpThenNop:
+    case RelocationKind::Load64:
+        return DistanceBounds { -nearReach, nearReach - instructionSize, instructionSize };
+    case RelocationKind::TestBitJump:
+    case RelocationKind::TestBitJumpThenNop:
+        return DistanceBounds { -testBitReach, testBitReach - instructionSize, instructionSize };
+    case RelocationKind::AddressNear:
+        return DistanceBounds { -nearReach, nearReach - 1, 1 };
+    case RelocationKind::AddressFar:
+        return DistanceBounds { -4095 * 4096, MacroAssembler::farAddressReachInBuffer - 1, 1 };
+    case RelocationKind::Distance32:
+        return DistanceBounds { minInt32 - distance32Addend, maxInt32 - distance32Addend, 1 };
+    case RelocationKind::ShortJump:
+    case RelocationKind::ShortConditionalJump:
+    case RelocationKind::InstanceOffset:
+        return std::nullopt;
+    }
+#endif
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void checkDistanceBounds(RelocationKind kind, const DistanceBounds& bounds)
+{
+    checkRelocationDistance(kind, bounds.max, true);
+    checkRelocationDistance(kind, bounds.max + bounds.unit, false);
+    checkRelocationDistance(kind, bounds.min, true);
+    checkRelocationDistance(kind, bounds.min - bounds.unit, false);
+    if (bounds.unit > 1)
+        checkRelocationDistance(kind, bounds.unit / 2, false);
+}
+
+constexpr uint8_t unreachableByte = 0xcc;
+constexpr int32_t reachedTargetResult = 0x600d;
+constexpr int32_t fellThroughResult = 0xbad;
+
+struct SiteFunction {
+    Vector<uint8_t> bytes;
+    size_t site { 0 };
+};
+
+SiteFunction emitSiteFunction(RelocationKind kind)
+{
+    SiteFunction function;
+    CCallHelpers jit;
+    emitFunctionPrologue(jit);
+    if (transfersControl(kind)) {
+        jit.move(CCallHelpers::TrustedImm32(1 << testedBit), relocatedGPR);
+        jit.compareOnFlags32(relocatedGPR, relocatedGPR);
+    }
+    function.site = jit.m_assembler.codeSize();
+    emitRelocationSite(jit, kind);
+    if (transfersControl(kind) && kind != RelocationKind::Call)
+        jit.move(CCallHelpers::TrustedImm32(fellThroughResult), GPRInfo::returnValueGPR);
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    function.bytes = takeEmittedBytes(jit);
+    return function;
+}
+
+Vector<uint8_t> emitTargetBlock(RelocationKind kind)
+{
+    if (!transfersControl(kind))
+        return Vector<uint8_t>(asByteSpan(loadedWord));
+
+    CCallHelpers jit;
+    if (kind == RelocationKind::Call)
+        emitFunctionPrologue(jit);
+    jit.move(CCallHelpers::TrustedImm32(reachedTargetResult), GPRInfo::returnValueGPR);
+    emitFunctionEpilogue(jit);
+    jit.ret();
+    return takeEmittedBytes(jit);
+}
+
+struct RelocatedImage {
+    Vector<uint8_t> bytes;
+    size_t entry { 0 };
+    size_t site { 0 };
+    size_t target { 0 };
+};
+
+RelocatedImage layOutRelocatedImage(RelocationKind kind, int64_t distance)
+{
+    SiteFunction function = emitSiteFunction(kind);
+    Vector<uint8_t> targetBlock = emitTargetBlock(kind);
+
+    RelocatedImage image;
+    if (distance < 0) {
+        image.site = static_cast<size_t>(-distance);
+        RELEASE_ASSERT(image.site >= targetBlock.size() + function.site);
+    } else {
+        image.site = function.site;
+        image.target = image.site + static_cast<size_t>(distance);
+        RELEASE_ASSERT(image.target >= function.bytes.size());
+    }
+    image.entry = image.site - function.site;
+    image.bytes.fill(unreachableByte, std::max(image.entry + function.bytes.size(), image.target + targetBlock.size()));
+    memcpySpan(image.bytes.mutableSpan().subspan(image.entry), function.bytes.span());
+    memcpySpan(image.bytes.mutableSpan().subspan(image.target), targetBlock.span());
+    return image;
+}
+
+uint64_t expectedRunResult(RelocationKind kind, const uint8_t* target)
+{
+    if (transfersControl(kind))
+        return reachedTargetResult;
+    if (kind == RelocationKind::Load64)
+        return loadedWord;
+    RELEASE_ASSERT(kind == RelocationKind::AddressNear || kind == RelocationKind::AddressFar);
+    return reinterpret_cast<uintptr_t>(target);
+}
+
+void checkRelocatedCodeRuns(RelocationKind kind, int64_t distance)
+{
+    RelocatedImage image = layOutRelocatedImage(kind, distance);
+    CHECK_EQ(MacroAssembler::applyRelocation(kind, image.bytes.mutableSpan(), image.site, image.target), true);
+    auto executable = makeExecutable(image.bytes.span());
+    uint8_t* start = startOfCopiedCode(executable.code(), 0);
+    CHECK_EQ(invokeAt<uint64_t>(start + image.entry), expectedRunResult(kind, start + image.target));
+}
+
+void testLinkPCRelativeReach()
+{
+    constexpr int64_t maxExecutedDistance = 1 * MB;
+    for (RelocationKind kind : allRelocationKinds) {
+        std::optional<DistanceBounds> bounds = distanceBounds(kind);
+        CHECK_EQ(bounds.has_value(), MacroAssembler::relocationSize(kind) && kind != RelocationKind::InstanceOffset);
+        if (!bounds)
+            continue;
+        checkReachCoversSection(kind);
+        checkDistanceBounds(kind, *bounds);
+        if (kind == RelocationKind::Distance32)
+            continue;
+        checkRelocatedCodeRuns(kind, std::min(bounds->max, maxExecutedDistance));
+        checkRelocatedCodeRuns(kind, std::max(bounds->min, -maxExecutedDistance));
+    }
+
+#if CPU(ARM64)
+    constexpr uint64_t farReach = 1ULL << 32;
+    checkPageRelativeTarget(0xfff, farReach - 0x1000, true);
+    checkPageRelativeTarget(0xfff, farReach - 1, true);
+    checkPageRelativeTarget(0xfff, farReach, false);
+    checkPageRelativeTarget(0xfff, farReach - 1 + 0x1000, false);
+    checkPageRelativeTarget(farReach, 0, true);
+    checkPageRelativeTarget(farReach + 0xfff, 0xfff, true);
+    checkPageRelativeTarget(farReach + 0x1000, 0, false);
+    checkPageRelativeTarget(farReach + 0x1000, 0xfff, false);
+#endif
+}
+
+void testClearRelocation()
+{
+    constexpr size_t codeSize = 128;
+    for (RelocationKind kind : allRelocationKinds) {
+        size_t size = MacroAssembler::relocationSize(kind);
+        if (!size)
+            continue;
+
+        Vector<uint8_t> emitted = createRelocationSite(kind);
+        if (kind == RelocationKind::Distance32) {
+            MacroAssembler::clearRelocation(kind, emitted.mutableSpan());
+            CHECK_EQ(WTF::unalignedLoad<int32_t>(emitted.span().data()), distance32Addend);
+            continue;
+        }
+
+        auto linkTo = [&](size_t target) {
+            Vector<uint8_t> code;
+            code.fill(unreachableByte, codeSize);
+            memcpySpan(code.mutableSpan(), emitted.span());
+            CHECK_EQ(MacroAssembler::applyRelocation(kind, code.mutableSpan(), 0, target), true);
+            return code;
+        };
+        Vector<uint8_t> first = linkTo(16);
+        Vector<uint8_t> second = linkTo(64);
+        CHECK_EQ(first == second, false);
+        MacroAssembler::clearRelocation(kind, first.mutableSpan().first(size));
+        MacroAssembler::clearRelocation(kind, second.mutableSpan().first(size));
+        CHECK_EQ(first == second, true);
+    }
+}
+
+void testInstanceOffset()
+{
+    constexpr RelocationKind kind = RelocationKind::InstanceOffset;
+    constexpr uint64_t instance = 0x0000123400000000ULL;
+    constexpr uint64_t reach = MacroAssembler::relocationReach(kind);
+#if CPU(X86_64)
+    static_assert(reach == 0x80000000ULL);
+#endif
+
+    SiteFunction function = emitSiteFunction(kind);
+    auto computedAddress = [&] {
+        auto executable = makeExecutable(function.bytes.span());
+        return invokeAt<uint64_t>(startOfCopiedCode(executable.code(), 0), static_cast<uint64_t>(0), instance);
+    };
+    CHECK_EQ(computedAddress(), instance);
+    for (uint64_t offset : { static_cast<uint64_t>(0x12345678), reach - 1 }) {
+        CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, offset), true);
+        CHECK_EQ(computedAddress(), instance + offset);
+    }
+
+    Vector<uint8_t> linked = function.bytes;
+    CHECK_EQ(MacroAssembler::applyRelocation(kind, function.bytes.mutableSpan(), function.site, reach), false);
+    CHECK_EQ(function.bytes == linked, true);
+}
+
+template<typename Emit>
+void checkRecordingKeepsBytes(const Emit& emit)
+{
+    AssemblerPolicy plain = AssemblerPolicy::forJIT();
+    plain.blindsConstants = false;
+    AssemblerPolicy recording = plain;
+    recording.recordsProcessAddresses = true;
+    CHECK_EQ(emitWithPolicy(recording, emit) == emitWithPolicy(plain, emit), true);
+}
+
+struct AddressLog {
+    LinkedCode code;
+    uint32_t offset { 0 };
+};
+
+template<typename Emit>
+AddressLog recordAddressLog(const Emit& emit)
+{
+    AddressLog log;
+    CCallHelpers::Label start;
+    log.code = linkIntoStorage([&](CCallHelpers& jit) {
+        jit.nop();
+        start = jit.label();
+        emit(jit);
+    }, [&](LinkBuffer& linkBuffer) {
+        log.offset = linkBuffer.offsetOf(start);
+    });
+    CHECK_EQ(log.code.externalLinks.size(), 0u);
+    checkRecordingKeepsBytes(emit);
+    return log;
+}
+
+template<typename Emit>
+void checkLogsPointer(const void* pointer, const Emit& emit)
+{
+    AddressLog log = recordAddressLog(emit);
+    WideImmediate expected { log.offset, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(pointer) };
+    CHECK_EQ(log.code.hasProcessAddress, true);
+    CHECK_EQ(log.code.wideImmediates.contains(expected), true);
+}
+
+template<typename Emit>
+void checkLogsPatchablePointer(const Emit& emit)
+{
+    AddressLog log = recordAddressLog(emit);
+    CHECK_EQ(log.code.hasProcessAddress, true);
+    CHECK_EQ(log.code.wideImmediates.size(), 0u);
+}
+
+template<typename Emit>
+void checkLogsNoPointer(std::optional<uint64_t> loggedInteger, const Emit& emit)
+{
+    AddressLog log = recordAddressLog(emit);
+    CHECK_EQ(log.code.hasProcessAddress, false);
+    if (!loggedInteger) {
+        CHECK_EQ(log.code.wideImmediates.size(), 0u);
+        return;
+    }
+    WideImmediate expected { log.offset, ImmediateProvenance::Integer, *loggedInteger };
+    CHECK_EQ(log.code.wideImmediates.size(), 1u);
+    CHECK_EQ(log.code.wideImmediates[0] == expected, true);
+}
+
+void checkSoleExternalLink(const LinkedCode& code, uintptr_t target)
+{
+    CHECK_EQ(code.hasProcessAddress, true);
+    CHECK_EQ(code.externalLinks.size(), 1u);
+    CHECK_EQ(code.externalLinks[0].target, target);
+    CHECK_EQ(code.sites.size(), 0u);
+}
+
+struct OtherCode {
+    MacroAssemblerCodeRef<JSEntryPtrTag> code { compile([](CCallHelpers& jit) {
+        jit.emitNops(8);
+        jit.ret();
+    }) };
+    // Not the first byte: the end of a buffer counts as inside it, and this code may start there.
+    CodeLocationLabel<JSEntryPtrTag> location { code.code() + static_cast<size_t>(4) };
+    uintptr_t address { location.untaggedPtr<uintptr_t>() };
+};
+
+void checkExternalJump(const JumpSource& source)
+{
+    OtherCode other;
+    CCallHelpers::Jump jump;
+    checkSoleExternalLink(linkIntoExecutableMemory([&](CCallHelpers& jit) {
+        jump = source.emit(jit);
+    }, [&](LinkBuffer& linkBuffer) {
+        linkBuffer.link(jump, other.location);
+    }), other.address);
+}
+
+void functionOutsideExecutableMemory() { }
+
+void checkPointerImmediates(int* cell)
+{
+    constexpr GPRReg gpr = GPRInfo::regT1;
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImmPtr(cell), gpr);
+    });
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.storePtr(CCallHelpers::TrustedImmPtr(cell), CCallHelpers::Address(CCallHelpers::stackPointerRegister, -8));
+    });
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.branchPtr(CCallHelpers::Equal, gpr, CCallHelpers::TrustedImmPtr(cell));
+    });
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.load32(CCallHelpers::AbsoluteAddress(cell).m_ptr, gpr);
+    });
+#if CPU(X86_64)
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.load32(CCallHelpers::AbsoluteAddress(cell).m_ptr, X86Registers::eax);
+    });
+#endif
+    checkLogsPointer(cell, [&](CCallHelpers& jit) {
+        jit.add32(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(cell));
+    });
+    checkLogsPatchablePointer([&](CCallHelpers& jit) {
+        jit.moveWithPatch(CCallHelpers::TrustedImmPtr(nullptr), gpr);
+    });
+    checkLogsPatchablePointer([&](CCallHelpers& jit) {
+        jit.call(OperationPtrTag);
+    });
+
+#if CPU(ARM64)
+    CCallHelpers::Label end;
+    uint32_t endOffset = 0;
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        jit.load32(cell, gpr);
+        jit.load32(cell + 1, gpr);
+        end = jit.label();
+    }, [&](LinkBuffer& linkBuffer) {
+        endOffset = linkBuffer.offsetOf(end);
+    });
+    WideImmediate first { 0, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(cell) };
+    WideImmediate second { endOffset - 4, ImmediateProvenance::Pointer, reinterpret_cast<uintptr_t>(cell + 1) };
+    CHECK_EQ(code.wideImmediates.size(), 2u);
+    CHECK_EQ(code.wideImmediates[0] == first, true);
+    CHECK_EQ(code.wideImmediates[1] == second, true);
+#endif
+}
+
+void checkExternalLinks(int* cell)
+{
+    OtherCode other;
+    CCallHelpers::Call call;
+    auto linkCall = [&](LinkBuffer& linkBuffer) {
+        linkBuffer.link(call, other.location);
+    };
+    auto linkNothing = [](LinkBuffer&) { };
+
+    checkSoleExternalLink(linkIntoExecutableMemory([&](CCallHelpers& jit) {
+        call = jit.nearCall();
+    }, linkCall), other.address);
+    checkSoleExternalLink(linkIntoExecutableMemory([&](CCallHelpers& jit) {
+        call = jit.nearTailCall();
+    }, linkCall), other.address);
+    checkSoleExternalLink(linkIntoExecutableMemory([&](CCallHelpers& jit) {
+        jit.nearCallThunk(other.location);
+    }, linkNothing), other.address);
+    checkSoleExternalLink(linkIntoExecutableMemory([&](CCallHelpers& jit) {
+        jit.jumpThunk(other.location);
+    }, linkNothing), other.address);
+    checkExternalJump(unconditionalJump);
+
+    checkSoleExternalLink(linkIntoStorage([&](CCallHelpers& jit) {
+        call = jit.call(CFunctionPtrTag);
+    }, [&](LinkBuffer& linkBuffer) {
+        linkBuffer.link<CFunctionPtrTag>(call, functionOutsideExecutableMemory);
+    }), CodePtr<CFunctionPtrTag>(functionOutsideExecutableMemory).untaggedPtr<uintptr_t>());
+
+    CCallHelpers::DataLabelPtr patchablePointer;
+    checkSoleExternalLink(linkIntoStorage([&](CCallHelpers& jit) {
+        patchablePointer = jit.moveWithPatch(CCallHelpers::TrustedImmPtr(nullptr), GPRInfo::regT0);
+    }, [&](LinkBuffer& linkBuffer) {
+        linkBuffer.patch(patchablePointer, cell);
+    }), reinterpret_cast<uintptr_t>(cell));
+}
+
+void checkIntegerImmediates(int* cell)
+{
+    constexpr GPRReg gpr = GPRInfo::regT0;
+    constexpr size_t mask = 0xfffffffffffc000;
+    checkLogsNoPointer(mask, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImmPtr(mask), gpr);
+    });
+
+    int64_t cellBits = reinterpret_cast<intptr_t>(cell);
+    bool isWide = !isRepresentableAs<int32_t>(cellBits) && !isRepresentableAs<uint32_t>(cellBits);
+    checkLogsNoPointer(isWide ? std::optional<uint64_t>(cellBits) : std::nullopt, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImm64(cellBits), gpr);
+    });
+
+    checkLogsNoPointer(std::nullopt, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImmPtr(nullptr), gpr);
+    });
+    checkLogsNoPointer(std::nullopt, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImmPtr(static_cast<void*>(nullptr)), gpr);
+    });
+    checkLogsNoPointer(std::nullopt, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImm32(5), gpr);
+    });
+    checkLogsNoPointer(std::nullopt, [&](CCallHelpers& jit) {
+        jit.move(CCallHelpers::TrustedImm64(5), gpr);
+    });
+    checkLogsNoPointer(std::nullopt, [&](CCallHelpers& jit) {
+        jit.nearCall();
+    });
+}
+
+void checkLinksInsideBuffer()
+{
+    CCallHelpers::Call call;
+    CCallHelpers::Jump lateJump;
+    CCallHelpers::Label target;
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        call = jit.nearCall();
+        lateJump = jit.jump();
+        CCallHelpers::Jump jump = jit.jump();
+        jit.breakpoint();
+        jump.link(&jit);
+        target = jit.label();
+        jit.ret();
+    }, [&](LinkBuffer& linkBuffer) {
+        auto location = linkBuffer.locationOf<JSInternalPtrTag>(target);
+        linkBuffer.link(call, location);
+        linkBuffer.link(lateJump, location);
+    });
+    CHECK_EQ(code.hasProcessAddress, false);
+    CHECK_EQ(code.externalLinks.size(), 0u);
+    CHECK_EQ(code.wideImmediates.size(), 0u);
+    CHECK_EQ(code.sites.size(), 2u);
+}
+
+void testAddressLog()
+{
+    static int cells[2];
+    checkPointerImmediates(cells);
+    checkExternalLinks(cells);
+    checkIntegerImmediates(cells);
+    checkLinksInsideBuffer();
+}
+
+struct PointerHelper {
+    const char* name;
+    void (*emit)(CCallHelpers&, const void* pointer);
+};
+
+#define POINTER_HELPER(...) { #__VA_ARGS__, [](CCallHelpers& jit, const void* pointer) { jit.__VA_ARGS__; } }
+#define POINTER_HELPER_WITH_DATA_LABEL(...) { #__VA_ARGS__, [](CCallHelpers& jit, const void* pointer) { CCallHelpers::DataLabelPtr dataLabel; jit.__VA_ARGS__; } }
+
+const PointerHelper pointerHelpers[] = {
+    POINTER_HELPER(move(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(move(CCallHelpers::ImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(addPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(addPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0, GPRInfo::regT1)),
+    POINTER_HELPER(andPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(orPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(subPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(xorPtr(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(storePtr(CCallHelpers::TrustedImmPtr(pointer), CCallHelpers::Address(GPRInfo::regT0))),
+    POINTER_HELPER(storePtr(CCallHelpers::ImmPtr(pointer), CCallHelpers::Address(GPRInfo::regT0))),
+    POINTER_HELPER(storePtr(CCallHelpers::TrustedImmPtr(pointer), CCallHelpers::BaseIndex(GPRInfo::regT0, GPRInfo::regT1, CCallHelpers::TimesEight))),
+    POINTER_HELPER(store64(CCallHelpers::TrustedImmPtr(pointer), CCallHelpers::Address(GPRInfo::regT0))),
+    POINTER_HELPER(poke(CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(poke(CCallHelpers::ImmPtr(pointer))),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::ImmPtr(pointer))),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::TrustedImmPtr(pointer), jit.label())),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::ImmPtr(pointer), jit.label())),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, CCallHelpers::Address(GPRInfo::regT0), CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(patchableBranchPtr(CCallHelpers::Equal, CCallHelpers::Address(GPRInfo::regT0), CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(moveWithPatch(CCallHelpers::TrustedImmPtr(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(storePtrWithPatch(CCallHelpers::TrustedImmPtr(pointer), CCallHelpers::Address(GPRInfo::regT0))),
+    POINTER_HELPER_WITH_DATA_LABEL(branchPtrWithPatch(CCallHelpers::Equal, GPRInfo::regT0, dataLabel, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER_WITH_DATA_LABEL(branchPtrWithPatch(CCallHelpers::Equal, CCallHelpers::Address(GPRInfo::regT0), dataLabel, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER_WITH_DATA_LABEL(patchableBranchPtrWithPatch(CCallHelpers::Equal, CCallHelpers::Address(GPRInfo::regT0), dataLabel, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(farJump(CCallHelpers::TrustedImmPtr(pointer), JSEntryPtrTag)),
+    POINTER_HELPER(farJump(CCallHelpers::AbsoluteAddress(pointer), JSEntryPtrTag)),
+    POINTER_HELPER(loadDouble(CCallHelpers::TrustedImmPtr(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(loadFloat(CCallHelpers::TrustedImmPtr(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(storeDouble(FPRInfo::fpRegT0, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(addDouble(CCallHelpers::AbsoluteAddress(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(loadPtr(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(loadRegWord(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load64(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load32(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load8(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load64(CCallHelpers::ExtendedAddress(GPRInfo::regT1, reinterpret_cast<intptr_t>(pointer)), GPRInfo::regT0)),
+    POINTER_HELPER(load16(CCallHelpers::ExtendedAddress(GPRInfo::regT1, reinterpret_cast<intptr_t>(pointer)), GPRInfo::regT0)),
+    POINTER_HELPER(storePtr(GPRInfo::regT0, const_cast<void*>(pointer))),
+    POINTER_HELPER(storeRegWord(GPRInfo::regT0, const_cast<void*>(pointer))),
+    POINTER_HELPER(store64(GPRInfo::regT0, const_cast<void*>(pointer))),
+    POINTER_HELPER(store32(GPRInfo::regT0, const_cast<void*>(pointer))),
+    POINTER_HELPER(store8(GPRInfo::regT0, const_cast<void*>(pointer))),
+    POINTER_HELPER(store64(CCallHelpers::TrustedImm64(1), const_cast<void*>(pointer))),
+    POINTER_HELPER(store32(CCallHelpers::TrustedImm32(1), const_cast<void*>(pointer))),
+    POINTER_HELPER(store8(CCallHelpers::TrustedImm32(1), const_cast<void*>(pointer))),
+    POINTER_HELPER(add32(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(add32(CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(add64(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(add64(CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(addPtr(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(addPtr(CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(sub32(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or8(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or8(GPRInfo::regT0, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or16(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or16(GPRInfo::regT0, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or32(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(or32(GPRInfo::regT0, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branch8(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), CCallHelpers::TrustedImm32(1))),
+    POINTER_HELPER(branch16(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), CCallHelpers::TrustedImm32(1))),
+    POINTER_HELPER(branch32(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(branch32(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branch64(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), GPRInfo::regT0)),
+    POINTER_HELPER(branchTest8(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchTest16(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchTest32(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchTest64(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchTestPtr(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchTest8(CCallHelpers::NonZero, CCallHelpers::ExtendedAddress(GPRInfo::regT1, reinterpret_cast<intptr_t>(pointer)))),
+    POINTER_HELPER(branchTest16(CCallHelpers::NonZero, CCallHelpers::ExtendedAddress(GPRInfo::regT1, reinterpret_cast<intptr_t>(pointer)))),
+    POINTER_HELPER(branchAdd32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+#if CPU(X86_64)
+    POINTER_HELPER(load64(pointer, GPRInfo::regT1)),
+    POINTER_HELPER(load32(pointer, GPRInfo::regT1)),
+    POINTER_HELPER(store64(GPRInfo::regT1, const_cast<void*>(pointer))),
+    POINTER_HELPER(store32(GPRInfo::regT1, const_cast<void*>(pointer))),
+    POINTER_HELPER(and32(CCallHelpers::TrustedImm32(1), CCallHelpers::AbsoluteAddress(pointer))),
+    POINTER_HELPER(branchPtr(CCallHelpers::Equal, CCallHelpers::BaseIndex(GPRInfo::regT0, GPRInfo::regT1, CCallHelpers::TimesEight), CCallHelpers::TrustedImmPtr(pointer))),
+#else
+    POINTER_HELPER(load16(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load8SignedExtendTo32(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load8SignedExtendTo64(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load16SignedExtendTo32(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load16SignedExtendTo64(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(load32SignedExtendTo64(pointer, GPRInfo::regT0)),
+    POINTER_HELPER(store16(GPRInfo::regT0, pointer)),
+    POINTER_HELPER(store16(CCallHelpers::TrustedImm32(1), pointer)),
+    POINTER_HELPER(branch32(CCallHelpers::Equal, CCallHelpers::AbsoluteAddress(pointer), CCallHelpers::TrustedImm32(1))),
+    POINTER_HELPER(convertInt32ToDouble(CCallHelpers::AbsoluteAddress(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(loadFloat16(CCallHelpers::TrustedImmPtr(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(loadVector(CCallHelpers::TrustedImmPtr(pointer), FPRInfo::fpRegT0)),
+    POINTER_HELPER(storeVector(FPRInfo::fpRegT0, CCallHelpers::TrustedImmPtr(pointer))),
+    POINTER_HELPER(add64AndSetFlags(CCallHelpers::TrustedImm64(CCallHelpers::TrustedImmPtr(pointer)), GPRInfo::regT0, GPRInfo::regT1)),
+    POINTER_HELPER(move64ToDouble(CCallHelpers::TrustedImm64(CCallHelpers::TrustedImmPtr(pointer)), FPRInfo::fpRegT0)),
+    POINTER_HELPER(moveConditionally64(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::TrustedImm64(CCallHelpers::TrustedImmPtr(pointer)), GPRInfo::regT1, GPRInfo::regT2, GPRInfo::regT3)),
+    POINTER_HELPER(branchTest64(CCallHelpers::NonZero, GPRInfo::regT0, CCallHelpers::TrustedImm64(CCallHelpers::TrustedImmPtr(pointer)))),
+    POINTER_HELPER(compare64(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::TrustedImm64(CCallHelpers::TrustedImmPtr(pointer)), GPRInfo::regT1)),
+#endif
+};
+
+#undef POINTER_HELPER_WITH_DATA_LABEL
+#undef POINTER_HELPER
+
+void checkPointerHelper(const PointerHelper& helper, const void* pointer)
+{
+    auto emit = [&](CCallHelpers& jit) {
+        helper.emit(jit, pointer);
+    };
+    LinkedCode code = linkIntoStorage(emit, [](LinkBuffer&) { });
+    if (!code.hasProcessAddress)
+        dataLogLn("No address was logged for ", helper.name, " with ", RawPointer(pointer));
+    CHECK_EQ(code.hasProcessAddress, true);
+    checkRecordingKeepsBytes(emit);
+}
+
+void testAddressLogThroughEveryPointerHelper()
+{
+    const uintptr_t addresses[] = { 0x12345678, 0x412000, 0x123456789abc };
+    for (uintptr_t address : addresses) {
+        const void* pointer = reinterpret_cast<const void*>(address);
+        for (const PointerHelper& helper : pointerHelpers)
+            checkPointerHelper(helper, pointer);
+    }
+}
+
+#if CPU(ARM64)
+constexpr JumpSource compareAndBranch { [](CCallHelpers& jit) { return jit.branchTest64(CCallHelpers::NonZero, GPRInfo::regT0); } };
+constexpr JumpSource testBitAndBranch { [](CCallHelpers& jit) { return jit.branchTest64(CCallHelpers::NonZero, GPRInfo::regT0, CCallHelpers::TrustedImm32(8)); } };
+
+void checkPatchableBranch()
+{
+    constexpr RelocationKind kind = RelocationKind::ConditionalJumpThenNop;
+    CCallHelpers::Label after;
+    CCallHelpers::Label target;
+    LinkedSite expected { };
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        CCallHelpers::PatchableJump jump = jit.patchableBranch32(CCallHelpers::Equal, GPRInfo::regT0, CCallHelpers::TrustedImm32(5));
+        after = jit.label();
+        jit.emitNops(64);
+        jump.m_jump.link(&jit);
+        target = jit.label();
+        jit.ret();
+    }, [&](LinkBuffer& linkBuffer) {
+        expected = { linkBuffer.offsetOf(after) - MacroAssembler::relocationSize(kind), linkBuffer.offsetOf(target), kind };
+    });
+    CHECK_EQ(code.sites.size(), 1u);
+    checkLinkedSite(code.sites[0], expected);
+}
+#endif
+
+void checkAddressBetweenJumps()
+{
+    JumpSite first;
+    JumpSite last;
+    CCallHelpers::Label address;
+    CCallHelpers::Label target;
+    Vector<LinkedSite> expected;
+    LinkedCode code = linkIntoStorage([&](CCallHelpers& jit) {
+        first = emitJumpSite(jit, unconditionalJump);
+        address = jit.movePCRelativeAddress(GPRInfo::regT0, PCRelativeReach::Near);
+        last = emitJumpSite(jit, unconditionalJump);
+        jit.emitNops(200);
+        first.jump.link(&jit);
+        last.jump.link(&jit);
+        target = jit.label();
+        jit.ret();
+    }, [&](LinkBuffer& linkBuffer) {
+        CHECK_EQ(linkBuffer.link(address, RelocationKind::AddressNear, target), true);
+        expected.append(expectedLinkedSite(linkBuffer, first, target, RelocationKind::Jump));
+        expected.append(LinkedSite { linkBuffer.offsetOf(address), linkBuffer.offsetOf(target), RelocationKind::AddressNear });
+        expected.append(expectedLinkedSite(linkBuffer, last, target, RelocationKind::Jump));
+    });
+    CHECK_EQ(code.sites.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i)
+        checkLinkedSite(code.sites[i], expected[i]);
+    CHECK_EQ(code.hasProcessAddress, false);
+}
+
+void testLinkedSites()
+{
+    struct JumpCase {
+        JumpSource source;
+        size_t distance;
+        RelocationKind linkedWhileAssembling;
+        RelocationKind linkedLate;
+    };
+#if CPU(X86_64)
+    const JumpCase cases[] = {
+        { unconditionalJump, 64, RelocationKind::ShortJump, RelocationKind::Jump },
+        { unconditionalJump, 200, RelocationKind::Jump, RelocationKind::Jump },
+        { jumpOnFlags, 64, RelocationKind::ShortConditionalJump, RelocationKind::ConditionalJump },
+        { jumpOnFlags, 200, RelocationKind::ConditionalJump, RelocationKind::ConditionalJump },
+    };
+#else
+    const JumpCase cases[] = {
+        { unconditionalJump, 64, RelocationKind::Jump, RelocationKind::Jump },
+        { jumpOnFlags, 64, RelocationKind::ConditionalJump, RelocationKind::ConditionalJumpThenNop },
+        { jumpOnFlags, 1 * MB + 8, RelocationKind::InvertedJumpThenJump, RelocationKind::InvertedJumpThenJump },
+        { compareAndBranch, 64, RelocationKind::ConditionalJump, RelocationKind::ConditionalJumpThenNop },
+        { compareAndBranch, 1 * MB + 8, RelocationKind::InvertedJumpThenJump, RelocationKind::InvertedJumpThenJump },
+        { testBitAndBranch, 64, RelocationKind::TestBitJump, RelocationKind::TestBitJumpThenNop },
+        { testBitAndBranch, 16 * KB, RelocationKind::TestBitJumpThenNop, RelocationKind::TestBitJumpThenNop },
+        { testBitAndBranch, 32 * KB + 8, RelocationKind::InvertedJumpThenJump, RelocationKind::InvertedJumpThenJump },
+    };
+    checkPatchableBranch();
+#endif
+    for (const JumpCase& jumpCase : cases) {
+        checkJump(jumpCase.source, jumpCase.distance, JumpLinking::Forward, jumpCase.linkedWhileAssembling);
+        checkJump(jumpCase.source, jumpCase.distance, JumpLinking::Backward, jumpCase.linkedWhileAssembling);
+        checkJump(jumpCase.source, jumpCase.distance, JumpLinking::Late, jumpCase.linkedLate);
+    }
+    checkAddressBetweenJumps();
+    checkExternalJump(unconditionalJump);
+    checkExternalJump(jumpOnFlags);
+}
+
+template<typename T>
+bool evaluateCondition(MacroAssembler::RelationalCondition condition, T left, T right)
+{
+    using Unsigned = std::make_unsigned_t<T>;
+    Unsigned unsignedLeft = left;
+    Unsigned unsignedRight = right;
+    switch (condition) {
+    case MacroAssembler::Equal:
+        return left == right;
+    case MacroAssembler::NotEqual:
+        return left != right;
+    case MacroAssembler::Above:
+        return unsignedLeft > unsignedRight;
+    case MacroAssembler::AboveOrEqual:
+        return unsignedLeft >= unsignedRight;
+    case MacroAssembler::Below:
+        return unsignedLeft < unsignedRight;
+    case MacroAssembler::BelowOrEqual:
+        return unsignedLeft <= unsignedRight;
+    case MacroAssembler::GreaterThan:
+        return left > right;
+    case MacroAssembler::GreaterThanOrEqual:
+        return left >= right;
+    case MacroAssembler::LessThan:
+        return left < right;
+    case MacroAssembler::LessThanOrEqual:
+        return left <= right;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+constexpr unsigned numberOfFlagConsumers = 6;
+
+struct FlagConsumerSlots {
+    uint64_t results[numberOfFlagConsumers];
+    uint64_t left;
+    uint64_t right;
+};
+
+constexpr GPRReg flagsLeftGPR = GPRInfo::argumentGPR0;
+constexpr GPRReg flagsRightGPR = GPRInfo::argumentGPR1;
+constexpr GPRReg flagConsumerSlotsGPR = GPRInfo::argumentGPR2;
+constexpr uint64_t takenValue = 0x1111111122222222ULL;
+constexpr uint64_t notTakenValue = 0x3333333344444444ULL;
+
+template<typename EmitFlags>
+MacroAssemblerCodeRef<JSEntryPtrTag> compileFlagConsumers(MacroAssembler::RelationalCondition condition, const EmitFlags& emitFlags)
+{
+    constexpr GPRReg thenCase = GPRInfo::argumentGPR3;
+    constexpr GPRReg elseCase = GPRInfo::argumentGPR4;
+    constexpr GPRReg dest = GPRInfo::argumentGPR5;
+
+    return compile([&](CCallHelpers& jit) {
+        unsigned numberOfResults = 0;
+        auto storeResult = [&] {
+            jit.store64(dest, CCallHelpers::Address(flagConsumerSlotsGPR, static_cast<int32_t>(numberOfResults++ * sizeof(uint64_t))));
+        };
+
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm64(takenValue), thenCase);
+        jit.move(CCallHelpers::TrustedImm64(notTakenValue), elseCase);
+        emitFlags(jit);
+
+        jit.move(thenCase, dest);
+        CCallHelpers::Jump taken = jit.branchOnFlags(condition);
+        jit.move(elseCase, dest);
+        taken.link(&jit);
+        storeResult();
+
+        jit.move(elseCase, dest);
+        jit.moveConditionallyOnFlags64(condition, thenCase, dest);
+        storeResult();
+
+        jit.moveConditionallyOnFlags64(condition, thenCase, elseCase, dest);
+        storeResult();
+
+        jit.move(thenCase, dest);
+        jit.moveConditionallyOnFlags64(condition, dest, elseCase, dest);
+        storeResult();
+
+        jit.move(elseCase, dest);
+        jit.moveConditionallyOnFlags64(condition, thenCase, dest, dest);
+        storeResult();
+
+        jit.move(thenCase, dest);
+        jit.moveConditionallyOnFlags64(MacroAssembler::invert(condition), elseCase, dest);
+        storeResult();
+
+        RELEASE_ASSERT(numberOfResults == numberOfFlagConsumers);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+}
+
+template<typename T>
+void checkFlagConsumers(const MacroAssemblerCodeRef<JSEntryPtrTag>& code, T left, T right, bool isTaken)
+{
+    FlagConsumerSlots slots { };
+    slots.left = static_cast<std::make_unsigned_t<T>>(left);
+    slots.right = static_cast<std::make_unsigned_t<T>>(right);
+    invoke<void>(code, left, right, &slots);
+    for (uint64_t result : slots.results)
+        CHECK_EQ(result, isTaken ? takenValue : notTakenValue);
+}
+
+template<typename T>
+void checkCompareOnFlags(MacroAssembler::RelationalCondition condition)
+{
+    const T operands[] = { 0, 1, -1, std::numeric_limits<T>::min(), std::numeric_limits<T>::max(), 42 };
+    const int32_t immediates[] = { 0, 1, -1, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(), 42 };
+    auto compileComparison = [&](auto left, auto right) {
+        return compileFlagConsumers(condition, [&](CCallHelpers& jit) {
+            if constexpr (sizeof(T) == sizeof(int32_t))
+                jit.compareOnFlags32(left, right);
+            else
+                jit.compareOnFlags64(left, right);
+        });
+    };
+    auto checkAllOperands = [&](const MacroAssemblerCodeRef<JSEntryPtrTag>& code) {
+        for (T left : operands) {
+            for (T right : operands)
+                checkFlagConsumers<T>(code, left, right, evaluateCondition<T>(condition, left, right));
+        }
+    };
+    auto checkAllLeftOperands = [&](const MacroAssemblerCodeRef<JSEntryPtrTag>& code, int32_t right) {
+        for (T left : operands)
+            checkFlagConsumers<T>(code, left, 0, evaluateCondition<T>(condition, left, right));
+    };
+
+    checkAllOperands(compileComparison(flagsLeftGPR, flagsRightGPR));
+    for (int32_t immediate : immediates)
+        checkAllLeftOperands(compileComparison(flagsLeftGPR, CCallHelpers::TrustedImm32(immediate)), immediate);
+#if CPU(X86_64)
+    constexpr GPRReg indexGPR = GPRInfo::argumentGPR5;
+    constexpr int32_t leftOffset = OBJECT_OFFSETOF(FlagConsumerSlots, left);
+    CCallHelpers::Address leftSlot(flagConsumerSlotsGPR, leftOffset);
+    CCallHelpers::BaseIndex indexedLeftSlot(flagConsumerSlotsGPR, indexGPR, CCallHelpers::TimesEight, leftOffset - static_cast<int32_t>(sizeof(uint64_t)));
+    auto compileIndexedComparison = [&](auto right) {
+        return compileFlagConsumers(condition, [&](CCallHelpers& jit) {
+            jit.move(CCallHelpers::TrustedImm32(1), indexGPR);
+            if constexpr (sizeof(T) == sizeof(int32_t))
+                jit.compareOnFlags32(indexedLeftSlot, right);
+            else
+                jit.compareOnFlags64(indexedLeftSlot, right);
+        });
+    };
+
+    checkAllOperands(compileComparison(flagsLeftGPR, CCallHelpers::Address(flagConsumerSlotsGPR, OBJECT_OFFSETOF(FlagConsumerSlots, right))));
+    checkAllOperands(compileComparison(leftSlot, flagsRightGPR));
+    for (int32_t immediate : immediates)
+        checkAllLeftOperands(compileComparison(leftSlot, CCallHelpers::TrustedImm32(immediate)), immediate);
+    if constexpr (sizeof(T) == sizeof(int32_t)) {
+        for (int32_t immediate : immediates)
+            checkAllLeftOperands(compileIndexedComparison(CCallHelpers::TrustedImm32(immediate)), immediate);
+    } else
+        checkAllOperands(compileIndexedComparison(flagsRightGPR));
+#endif
+}
+
+template<typename T>
+void checkTestOnFlags(MacroAssembler::RelationalCondition condition)
+{
+    const T values[] = { 0, 1, -1, std::numeric_limits<T>::min(), std::numeric_limits<T>::max(), 42, 0x40, 0x80, 0xc0 };
+    const int32_t masks[] = { -1, 0x40, 0x80, std::numeric_limits<int32_t>::min() };
+    auto compileTest = [&](auto mask) {
+        return compileFlagConsumers(condition, [&](CCallHelpers& jit) {
+            if constexpr (sizeof(T) == sizeof(int32_t))
+                jit.testOnFlags32(flagsLeftGPR, mask);
+            else
+                jit.testOnFlags64(flagsLeftGPR, mask);
+        });
+    };
+
+    auto testWithRegister = compileTest(flagsRightGPR);
+    for (int32_t mask : masks) {
+        auto testWithImmediate = compileTest(CCallHelpers::TrustedImm32(mask));
+        for (T value : values) {
+            bool isTaken = evaluateCondition<T>(condition, value & static_cast<T>(mask), 0);
+            checkFlagConsumers<T>(testWithRegister, value, mask, isTaken);
+            checkFlagConsumers<T>(testWithImmediate, value, 0, isTaken);
+        }
+    }
+}
+
+void testOnFlags(MacroAssembler::RelationalCondition condition)
+{
+    checkCompareOnFlags<int32_t>(condition);
+    checkCompareOnFlags<int64_t>(condition);
+
+    switch (condition) {
+    case MacroAssembler::Equal:
+    case MacroAssembler::NotEqual:
+    case MacroAssembler::LessThan:
+    case MacroAssembler::GreaterThanOrEqual:
+        checkTestOnFlags<int32_t>(condition);
+        checkTestOnFlags<int64_t>(condition);
+        break;
+    case MacroAssembler::Above:
+    case MacroAssembler::AboveOrEqual:
+    case MacroAssembler::Below:
+    case MacroAssembler::BelowOrEqual:
+    case MacroAssembler::GreaterThan:
+    case MacroAssembler::LessThanOrEqual:
+        break;
+    }
+}
+#endif // CPU(X86_64) || CPU(ARM64)
+
 static void testGPRInfoConsistency()
 {
     for (unsigned index = 0; index < GPRInfo::numberOfRegisters; ++index) {
@@ -8825,6 +11426,30 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     // reset to check a conversion result
     RUN(testBranchTruncateDoubleToInt32(123, 123));
 
+#if CPU(X86_64) || CPU(ARM64)
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(0, 0));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-0.0, 0));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(42.7, 42));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-1234.56, -1234));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(2147483648.0, std::numeric_limits<int32_t>::min()));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-2147483648.0, std::numeric_limits<int32_t>::min()));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(4294967296.0, 0));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(4294967301.0, 5));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-4294967301.0, -5));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(9007199254740994.0, 2));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(9223372036854774784.0, -1024));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-9223372036854774784.0, 1024));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(9223372036854775808.0, std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-9223372036854775808.0, std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(std::numeric_limits<double>::infinity(), std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-std::numeric_limits<double>::infinity(), std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(std::numeric_limits<double>::max(), std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(-std::numeric_limits<double>::max(), std::nullopt));
+    // fcvtzs gives 0, which is ToInt32(NaN). cvttsd2si gives the value that reports a failure.
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(std::numeric_limits<double>::quiet_NaN(), isARM64() ? std::optional<int32_t>(0) : std::nullopt));
+    RUN(testBranchTruncateDoubleToInt32ViaInt64(123, 123));
+#endif
+
 #define FOR_EACH_DOUBLE_CONDITION_RUN(__test) \
     do { \
         RUN(__test(MacroAssembler::DoubleEqualAndOrdered)); \
@@ -8874,6 +11499,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testBranchTestBit64RegReg());
     RUN(testBranchTestBit64RegImm());
     RUN(testBranchTestBit64AddrImm());
+#endif
+
+#if CPU(ARM64)
+    RUN(testCanBranchWithoutFlags());
 #endif
 
 #if CPU(X86_64) || CPU(ARM64)
@@ -9092,10 +11721,13 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testBranchIfType());
     RUN(testBranchIfNotType());
 #if CPU(X86_64) || CPU(ARM64)
+    RUN(testAllocateFromFreeList());
     RUN(testBranchConvertDoubleToInt52());
 #endif
 
 #if CPU(X86_64)
+    RUN(testTagsInMemory());
+    RUN(testPrefetch());
     RUN(testAtomicAndEmitsCode());
 #endif
 
@@ -9126,9 +11758,32 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testCachedTempRegisterImm32Normalization());
 #endif
 
+#if CPU(X86_64)
+    RUN(testJumpShortening());
+    RUN(testJumpShorteningBounds());
+    RUN(testX86NamedInstructions());
+    RUN(testAddOrFromMemoryAliasing());
+#endif
+
+#if CPU(X86_64) || CPU(ARM64)
+    RUN(testImmediatesOf64BitOperationsAreSignExtended());
+    RUN(testAdd64OfRegisterToMemory());
+    RUN(testCPUFeatureSet());
+    RUN(testAssemblerPolicy());
+    RUN(testPCRelativeAddress());
+    RUN(testLoadPCRelative64());
+    RUN(testLinkPCRelativeReach());
+    RUN(testClearRelocation());
+    RUN(testInstanceOffset());
+    RUN(testAddressLog());
+    RUN(testAddressLogThroughEveryPointerHelper());
+    RUN(testLinkedSites());
+    FOR_EACH_RELATIONAL_CONDITION_RUN(testOnFlags);
+#endif
+
     RUN(testGPRInfoConsistency());
 
-    if (tasks.isEmpty())
+    if (!numberOfTests)
         usage();
 
     Lock lock;

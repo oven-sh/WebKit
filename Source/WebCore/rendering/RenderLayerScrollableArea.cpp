@@ -400,7 +400,7 @@ void RenderLayerScrollableArea::scrollTo(const ScrollPosition& position)
         }
 
         // Update regions, scrolling may change the clip of a particular region.
-        protect(renderer.document())->invalidateRenderingDependentRegions();
+        renderer.document().invalidateRenderingDependentRegions();
         DebugPageOverlays::didLayout(protect(renderer.frame()));
     }
 
@@ -486,8 +486,7 @@ int RenderLayerScrollableArea::scrollWidth() const
 {
     ASSERT(m_layer.renderBox());
     if (m_scrollDimensionsDirty) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
+        const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
     }
     // FIXME: This should use snappedIntSize() instead with absolute coordinates.
     return m_scrollWidth;
@@ -497,8 +496,7 @@ int RenderLayerScrollableArea::scrollHeight() const
 {
     ASSERT(m_layer.renderBox());
     if (m_scrollDimensionsDirty) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
+        const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
     }
     // FIXME: This should use snappedIntSize() instead with absolute coordinates.
     return m_scrollHeight;
@@ -2031,7 +2029,7 @@ void RenderLayerScrollableArea::animatedScrollDidEnd()
 
 float RenderLayerScrollableArea::deviceScaleFactor() const
 {
-    return protect(m_layer.renderer().document())->deviceScaleFactor();
+    return m_layer.renderer().document().deviceScaleFactor();
 }
 
 void RenderLayerScrollableArea::updateAnchorPositionedAfterScroll()

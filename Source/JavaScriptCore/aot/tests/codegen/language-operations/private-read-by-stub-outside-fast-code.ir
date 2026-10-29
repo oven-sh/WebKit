@@ -1,0 +1,33 @@
+# Outside fast code a private field of a receiver nobody has proven is read by one stub, which knows the slot of an instance and the property of any other object
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Holder" constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+function f0 name="inBalancedCode" captures=[{type=classtoken}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PrivateGet v1, v0 layout=L0 field=1
+    Return v2
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation operationAOTPrivateGet
+# CHECK: stub PrivateGet x1
+# S: f0 b0 Balanced
+function f1 name="inCompactCode" captures=[{type=classtoken}] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = PrivateGet v1, v0 layout=L0 field=1
+    Return v3
+  b2():
+    Return v1
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operation operationAOTPrivateGet
+# CHECK: stub PrivateGet x1
+# S: f1 b1 Compact
+function f2 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

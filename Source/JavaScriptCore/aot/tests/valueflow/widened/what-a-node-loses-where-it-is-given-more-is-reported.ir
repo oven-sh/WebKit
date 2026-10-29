@@ -1,0 +1,30 @@
+# nodes-that-the-seed-draws-are-given-more-and-nothing-is-lost.ir, where what a node is given takes the place of what the program brings it: the node of the literal holds the unknown object and no longer the literal.
+# The literal has not escaped, so the unknown object does not stand for it.
+# OPTIONS: flow=widened layout-seed=25 sabotage=WhatIsGivenTakesThePlaceOfWhatComes
+# RUN: valueflow-solve given-more
+# DIAGNOSTIC: FlowFindsLessFromMore 1
+# CHECK: given-more 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2
+    v4 = String string="text"
+    v5 = Call v0, -, v4
+    v6 = Call v1, -, v3
+    v7 = Call v1, -, v5
+    Return v7
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    PropSet v1, v0 key="x" mode=Strict
+    Return v1
+}
+function f2 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

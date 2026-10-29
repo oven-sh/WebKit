@@ -47,6 +47,7 @@
 #import "TestURLSchemeHandler.h"
 #import "WKPrinting.h"
 #import "WKWebViewFindStringFindDelegate.h"
+#import <ImageIO/ImageIO.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebCore/IntRect.h>
 #import <WebCore/SQLiteDatabase.h>
@@ -1061,6 +1062,52 @@ TEST(SiteIsolation, NavigationAfterWindowOpen)
 
     while (processStillRunning(webKitPid))
         Util::spinRunLoop();
+}
+
+TEST(SiteIsolation, CrossSiteIframeWithPendingNavigationIsRemovedWhenMainFrameCommitsInAnotherProcess)
+{
+    HTTPServer server({
+        { "/opener"_s, { "<iframe src='https://webkit.org/child' onload='w = window.open(\"https://example.com/opened\")'></iframe>"_s } },
+        { "/opened"_s, { "opened"_s } },
+        { "/child"_s, { "child"_s } },
+        { "/next"_s, { "next"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [opener, opened] = openerAndOpenedViews(server, @"https://example.com/opener");
+    checkFrameTreesInProcesses(opener.webView.get(), {
+        { "https://example.com"_s, { { RemoteFrame } } },
+        { RemoteFrame, { { "https://webkit.org"_s } } }
+    });
+
+    // The pending navigation keeps the iframe's WebFrameProxy alive after the UI process detaches it.
+    __block BlockPtr<void(WKNavigationActionPolicy)> heldDecision;
+    opener.navigationDelegate.get().decidePolicyForNavigationAction = ^(WKNavigationAction *action, void (^completionHandler)(WKNavigationActionPolicy)) {
+        if ([action.request.URL.path isEqualToString:@"/child2"]) {
+            heldDecision = makeBlockPtr(completionHandler);
+            return;
+        }
+        completionHandler(WKNavigationActionPolicyAllow);
+    };
+    [opener.webView evaluateJavaScript:@"location.href = '/child2'" inFrame:[opener.webView firstChildFrame] completionHandler:nil];
+    EXPECT_TRUE(Util::waitFor(^{
+        return !!heldDecision;
+    }));
+
+    // The opened window shares the browsing context group, so the main frame commits in another process and the UI process detaches its children.
+    [opener.webView evaluateJavaScript:@"location.href = 'https://apple.com/next'" completionHandler:nil];
+    [opener.navigationDelegate waitForDidFinishNavigation];
+
+    // The old main frame's process reports the removal of the detached iframe, which removes it from the iframe's process.
+    Vector<ExpectedFrameTree> expectedFrameTrees {
+        { "https://apple.com"_s },
+        { RemoteFrame },
+        { RemoteFrame }
+    };
+    while (!frameTreesMatch(frameTrees(opener.webView.get()).get(), Vector<ExpectedFrameTree> { expectedFrameTrees }))
+        Util::spinRunLoop();
+    checkFrameTreesInProcesses(opener.webView.get(), WTF::move(expectedFrameTrees));
+
+    heldDecision(WKNavigationActionPolicyCancel);
 }
 
 #if PLATFORM(MAC)
@@ -8226,6 +8273,40 @@ TEST(SiteIsolation, MainFrameRedirectBetweenExistingProcesses)
     EXPECT_EQ([webView _webProcessIdentifier], pidBefore);
 }
 
+TEST(SiteIsolation, MainFrameRedirectBackToCommittedProcessKeepsBackForwardCache)
+{
+    auto firstPageHTML = "<script>"
+        "  window.__pageshowPersisted = null;"
+        "  window.addEventListener('pageshow', (event) => { window.__pageshowPersisted = event.persisted });"
+        "</script>"_s;
+    HTTPServer server({
+        { "/first"_s, { firstPageHTML } },
+        { "/redirect"_s, { 302, { { "Location"_s, "https://example.com/second"_s } }, "redirecting..."_s } },
+        { "/second"_s, { "second"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/first"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    [webView objectByEvaluatingJavaScript:@"window.__marker = true"];
+    auto examplePID = [webView _webProcessIdentifier];
+
+    [webView evaluateJavaScript:@"location.href = 'https://webkit.org/redirect'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView URL].absoluteString, "https://example.com/second");
+    EXPECT_EQ([webView _webProcessIdentifier], examplePID);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return countWebPages(webView) == 1u;
+    }));
+
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView URL].absoluteString, "https://example.com/first");
+    EXPECT_EQ([webView _webProcessIdentifier], examplePID);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__marker === true"] boolValue]);
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"window.__pageshowPersisted === true"] boolValue]);
+}
+
 TEST(SiteIsolation, URLSchemeTask)
 {
     HTTPServer server({
@@ -10229,9 +10310,6 @@ TEST(SiteIsolation, AutoplayPolicyInRemoteFrameFollowsMainFrame)
     __block _WKWebsiteAutoplayPolicy subframePolicy = _WKWebsiteAutoplayPolicyAllow;
 
     auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration);
-#if PLATFORM(MAC)
-    [webView _setWindowOcclusionDetectionEnabled:NO];
-#endif
     [navigationDelegate setDecidePolicyForNavigationActionWithPreferences:^(WKNavigationAction *action, WKWebpagePreferences *preferences, void (^completionHandler)(WKNavigationActionPolicy, WKWebpagePreferences *)) {
         [preferences _setAutoplayPolicy:[action.request.URL.host isEqualToString:@"webkit.org"] ? subframePolicy : mainFramePolicy];
         completionHandler(WKNavigationActionPolicyAllow, preferences);
@@ -10285,7 +10363,6 @@ TEST(SiteIsolation, RemoteFrameMediaInheritsUserGestureFromMainFrame)
     WKPreferencesSetMediaUserGestureInheritsFromDocument((__bridge WKPreferencesRef)[configuration preferences], true);
 
     auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600));
-    [webView _setWindowOcclusionDetectionEnabled:NO];
     [navigationDelegate setDecidePolicyForNavigationActionWithPreferences:^(WKNavigationAction *, WKWebpagePreferences *preferences, void (^completionHandler)(WKNavigationActionPolicy, WKWebpagePreferences *)) {
         [preferences _setAutoplayPolicy:_WKWebsiteAutoplayPolicyAllowWithoutSound];
         completionHandler(WKNavigationActionPolicyAllow, preferences);
@@ -11300,9 +11377,7 @@ TEST(SiteIsolation, Events)
     Util::runFor(Seconds(0.1));
 
     NSArray *expectedExampleMessages = @[
-#if PLATFORM(IOS_FAMILY)
         @"pagereveal",
-#endif
         @"load",
         @"pageshow",
     ];
@@ -11314,9 +11389,7 @@ TEST(SiteIsolation, Events)
     NSArray *expectedWebKitMessages = @[
         @"load",
         @"pageshow",
-#if PLATFORM(IOS_FAMILY)
         @"pagereveal",
-#endif
         @"resize",
         @"pageswap",
     ];
@@ -11328,9 +11401,7 @@ TEST(SiteIsolation, Events)
     NSArray *expectedAppleMessages = @[
         @"load",
         @"pageshow",
-#if PLATFORM(IOS_FAMILY)
         @"pagereveal",
-#endif
     ];
     if (![appleMessages isEqualToArray:expectedAppleMessages]) {
         WTFLogAlways("Actual apple messages: %@", appleMessages.get());
@@ -18839,6 +18910,89 @@ TEST(SiteIsolation, CrossProcessHistoryTraversalSameFrameBackTwice)
     EXPECT_EQ([webView backForwardList].forwardList.count, (NSUInteger)2);
 }
 
+TEST(SiteIsolation, SameDocumentHistoryTraversalsInSeparateTasksAreNotCoalesced)
+{
+    HTTPServer server({
+        { "/page"_s, { "<script>"
+            "let states = [];"
+            "let timer;"
+            "onpopstate = (event) => {"
+            "    states.push(event.state);"
+            "    if (states.length == 1) {"
+            "        timer = setTimeout(() => alert(JSON.stringify(states)), 1000);"
+            "        return;"
+            "    }"
+            "    clearTimeout(timer);"
+            "    alert(JSON.stringify(states));"
+            "};"
+            "</script><iframe src='https://webkit.org/child'></iframe>"_s } },
+        { "/child"_s, { "child"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/page"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+
+    [webView objectByEvaluatingJavaScript:@"history.pushState('a', '', '/a'); history.pushState('b', '', '/b')"];
+
+    auto childFrames = [webView mainFrame].childFrames;
+    EXPECT_EQ(childFrames.count, 1u);
+    EXPECT_NE(childFrames[0].info._processIdentifier, [[webView mainFrame] info]._processIdentifier);
+
+    __block bool didEvaluateJavaScript = false;
+    [webView evaluateJavaScript:@"setTimeout(() => { history.back(); setTimeout(() => history.back(), 0) }, 0)" inFrame:childFrames[0].info completionHandler:^(id, NSError *) {
+        sleep(0.5_s);
+        didEvaluateJavaScript = true;
+    }];
+    Util::run(&didEvaluateJavaScript);
+    EXPECT_WK_STREQ("[\"a\",null]", [webView _test_waitForAlert]);
+}
+
+TEST(SiteIsolation, HistoryTraversalSupersedesUncommittedCrossDocumentTraversal)
+{
+    unsigned requestsForB = 0;
+    std::optional<Connection> heldConnectionForB;
+    HTTPServer server(HTTPServer::UseCoroutines::Yes, [&](Connection connection) -> ConnectionTask {
+        while (1) {
+            auto request = co_await connection.awaitableReceiveHTTPRequest();
+            if (HTTPServer::parsePath(request) == "/b"_s && ++requestsForB > 1) {
+                heldConnectionForB = connection;
+                continue;
+            }
+            co_await connection.awaitableSend(HTTPResponse({ { "Cache-Control"_s, "no-store"_s } }, "x"_s).serialize());
+        }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    [configuration setProcessPool:processPoolWithBackForwardCacheDisabled().get()];
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration);
+    for (NSString *url in @[ @"https://example.com/a", @"https://example.com/b", @"https://example.com/c" ]) {
+        [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:url]]];
+        [navigationDelegate waitForDidFinishNavigation];
+    }
+
+    unsigned didFinishCount = 0;
+    navigationDelegate.get().didFinishNavigation = makeBlockPtr([&](WKWebView *, WKNavigation *) {
+        ++didFinishCount;
+    }).get();
+
+    [webView evaluateJavaScript:@"history.back()" completionHandler:nil];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !!heldConnectionForB;
+    }));
+
+    [webView evaluateJavaScript:@"history.back()" completionHandler:nil];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !!didFinishCount;
+    }));
+
+    EXPECT_EQ(didFinishCount, 1u);
+    EXPECT_WK_STREQ(@"https://example.com/a", [[webView URL] absoluteString]);
+    EXPECT_EQ([webView backForwardList].backList.count, 0u);
+    EXPECT_EQ([webView backForwardList].forwardList.count, 2u);
+    navigationDelegate.get().didFinishNavigation = nil;
+}
+
 TEST(SiteIsolation, CrossProcessSameDocumentHistoryTraversalDoesNotStall)
 {
     HTTPServer server({
@@ -20024,15 +20178,15 @@ TEST(SiteIsolation, DrawPagesToPDFSynchronouslyDuringDOMPrintIncludesCrossSiteFr
     EXPECT_TRUE([text containsString:@"Subframe"]);
 }
 
-// Whether the pixel at a point, measured from the top left of a page, is close to an sRGB color. Unlike
-// TestPDFPage's colorAtPoint:, this can tell apart colors at different heights.
-static bool pdfPageHasColorAtPoint(NSData *data, size_t pageNumber, CGPoint point, std::array<uint8_t, 3> color)
+// The sRGB color of the pixel at a point, measured from the top left of a page. Unlike TestPDFPage's
+// colorAtPoint:, this can tell apart colors at different heights.
+static std::optional<std::array<uint8_t, 3>> pdfPageColorAtPoint(NSData *data, size_t pageNumber, CGPoint point)
 {
     RetainPtr provider = adoptCF(CGDataProviderCreateWithCFData(bridge_cast(data)));
     RetainPtr document = adoptCF(CGPDFDocumentCreateWithProvider(provider.get()));
     CGPDFPageRef page = CGPDFDocumentGetPage(document.get(), pageNumber);
     if (!page)
-        return false;
+        return std::nullopt;
     auto bounds = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
     size_t width = bounds.size.width;
     size_t height = bounds.size.height;
@@ -20043,8 +20197,16 @@ static bool pdfPageHasColorAtPoint(NSData *data, size_t pageNumber, CGPoint poin
     CGContextDrawPDFPage(context.get(), page);
     auto pixels = unsafeMakeSpan(static_cast<const uint8_t*>(CGBitmapContextGetData(context.get())), width * height * 4);
     auto pixel = pixels.subspan((static_cast<size_t>(point.y) * width + static_cast<size_t>(point.x)) * 4, 3);
+    return std::array { pixel[0], pixel[1], pixel[2] };
+}
+
+static bool pdfPageHasColorAtPoint(NSData *data, size_t pageNumber, CGPoint point, std::array<uint8_t, 3> color)
+{
+    auto actualColor = pdfPageColorAtPoint(data, pageNumber, point);
+    if (!actualColor)
+        return false;
     for (size_t i = 0; i < 3; ++i) {
-        if (std::abs(pixel[i] - color[i]) > 2)
+        if (std::abs((*actualColor)[i] - color[i]) > 2)
             return false;
     }
     return true;
@@ -20125,6 +20287,339 @@ TEST(SiteIsolation, DrawPagesToPDFDoesNotCarryTransformIntoNextPage)
 
     constexpr std::array<uint8_t, 3> green { 0, 128, 0 };
     EXPECT_TRUE(pdfPageHasColorAtPoint(data.get(), 2, CGPointMake(100, 100), green));
+}
+
+static void collectImageBitsPerComponent(CGPDFDictionaryRef resources, Vector<CGPDFInteger>& bitsPerComponent, unsigned depth = 0)
+{
+    CGPDFDictionaryRef xObjects = nullptr;
+    if (depth > 16 || !resources || !CGPDFDictionaryGetDictionary(resources, "XObject", &xObjects))
+        return;
+
+    CGPDFDictionaryApplyBlock(xObjects, ^bool(const char*, CGPDFObjectRef object, void*) {
+        CGPDFStreamRef stream = nullptr;
+        const char* subtypeName = nullptr;
+        if (!CGPDFObjectGetValue(object, kCGPDFObjectTypeStream, &stream) || !CGPDFDictionaryGetName(CGPDFStreamGetDictionary(stream), "Subtype", &subtypeName))
+            return true;
+        auto subtype = String::fromUTF8(subtypeName);
+        if (subtype == "Image"_s) {
+            CGPDFInteger value = 0;
+            if (CGPDFDictionaryGetInteger(CGPDFStreamGetDictionary(stream), "BitsPerComponent", &value))
+                bitsPerComponent.append(value);
+        } else if (subtype == "Form"_s) {
+            CGPDFDictionaryRef formResources = nullptr;
+            if (CGPDFDictionaryGetDictionary(CGPDFStreamGetDictionary(stream), "Resources", &formResources))
+                collectImageBitsPerComponent(formResources, bitsPerComponent, depth + 1);
+        }
+        return true;
+    }, nullptr);
+}
+
+// The bits per component of every image on the first page, including the images in form XObjects.
+static Vector<CGPDFInteger> imageBitsPerComponentOnFirstPage(NSData *data)
+{
+    RetainPtr provider = adoptCF(CGDataProviderCreateWithCFData(bridge_cast(data)));
+    RetainPtr document = adoptCF(CGPDFDocumentCreateWithProvider(provider.get()));
+    CGPDFPageRef page = CGPDFDocumentGetPage(document.get(), 1);
+    CGPDFDictionaryRef resources = nullptr;
+    if (!page || !CGPDFDictionaryGetDictionary(CGPDFPageGetDictionary(page), "Resources", &resources))
+        return { };
+
+    Vector<CGPDFInteger> bitsPerComponent;
+    collectImageBitsPerComponent(resources, bitsPerComponent);
+    return bitsPerComponent;
+}
+
+static RetainPtr<NSData> encodeImage(CGImageRef image, CFStringRef type)
+{
+    RetainPtr data = adoptNS([[NSMutableData alloc] init]);
+    RetainPtr destination = adoptCF(CGImageDestinationCreateWithData(bridge_cast(data.get()), type, 1, nullptr));
+    CGImageDestinationAddImage(destination.get(), image, nullptr);
+    CGImageDestinationFinalize(destination.get());
+    return data;
+}
+
+static RetainPtr<NSData> solidColorImageData(CGColorSpaceRef colorSpace, std::span<const CGFloat> components, CFStringRef type)
+{
+    constexpr size_t size = 100;
+    size_t bytesPerRow = size * CGColorSpaceGetNumberOfComponents(colorSpace);
+    RetainPtr context = adoptCF(CGBitmapContextCreate(nullptr, size, size, 8, bytesPerRow, colorSpace, kCGImageAlphaNone));
+    CGContextSetFillColorSpace(context.get(), colorSpace);
+    CGContextSetFillColor(context.get(), components.data());
+    CGContextFillRect(context.get(), CGRectMake(0, 0, size, size));
+    RetainPtr image = adoptCF(CGBitmapContextCreateImage(context.get()));
+    return encodeImage(image.get(), type);
+}
+
+// Images in other color models than RGB are sent to the GPU process as pixels drawn into an RGB bitmap.
+// 8-bit images stay 8-bit there, and look the same as when the page is printed without remote snapshotting.
+TEST(SiteIsolation, DrawPagesToPDFKeepsGrayAndCMYKImagesInCrossSiteFrames8Bit)
+{
+    RetainPtr grayColorSpace = adoptCF(CGColorSpaceCreateDeviceGray());
+    constexpr std::array<CGFloat, 2> gray { 0.5, 1 };
+    RetainPtr grayPNG = solidColorImageData(grayColorSpace.get(), gray, CFSTR("public.png"));
+    RetainPtr cmykColorSpace = adoptCF(CGColorSpaceCreateDeviceCMYK());
+    constexpr std::array<CGFloat, 5> cyan { 1, 0, 0, 0, 1 };
+    RetainPtr cmykJPEG = solidColorImageData(cmykColorSpace.get(), cyan, CFSTR("public.jpeg"));
+
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin:0'><iframe style='display:block;border:0;width:200px;height:300px' src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body style='margin:0'><img src='/gray.png' style='display:block'><img src='/cmyk.jpg' style='display:block'></body>"_s } },
+        { "/gray.png"_s, { { { "Content-Type"_s, "image/png"_s } }, grayPNG.get() } },
+        { "/cmyk.jpg"_s, { { { "Content-Type"_s, "image/jpeg"_s } }, cmykJPEG.get() } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto print = [&](bool siteIsolationAndRemoteSnapshotting) -> RetainPtr<NSData> {
+        RetainPtr configuration = server.httpsProxyConfiguration();
+        setFeatureEnabled(configuration.get(), @"RemoteSnapshottingEnabled", siteIsolationAndRemoteSnapshotting);
+        auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600), siteIsolationAndRemoteSnapshotting);
+        [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/mainframe"]]];
+        [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+
+        RetainPtr<WKFrameInfo> mainFrame = [webView mainFrame].info;
+        RetainPtr<WKFrameInfo> subframe = [webView mainFrame].childFrames.firstObject.info;
+        EXPECT_EQ([mainFrame _processIdentifier] != [subframe _processIdentifier], siteIsolationAndRemoteSnapshotting);
+
+        __block bool computedPages = false;
+        [webView _computePagesForPrinting:[mainFrame _handle] completionHandler:^{
+            computedPages = true;
+        }];
+        Util::run(&computedPages);
+        return [webView _drawPagesToPDFSynchronouslyForTesting:[mainFrame _handle] pageCount:1];
+    };
+
+    RetainPtr localData = print(false);
+    RetainPtr remoteData = print(true);
+    ASSERT_NOT_NULL(localData.get());
+    ASSERT_NOT_NULL(remoteData.get());
+
+    auto bitsPerComponent = imageBitsPerComponentOnFirstPage(remoteData.get());
+    EXPECT_EQ(bitsPerComponent.size(), 2u);
+    for (auto value : bitsPerComponent)
+        EXPECT_EQ(value, 8);
+
+    for (auto point : { CGPointMake(50, 50), CGPointMake(50, 150) }) {
+        auto localColor = pdfPageColorAtPoint(localData.get(), 1, point);
+        ASSERT_TRUE(localColor);
+        EXPECT_TRUE(pdfPageHasColorAtPoint(remoteData.get(), 1, point, *localColor));
+    }
+}
+
+static pid_t printProcessIdentifier(WKWebView *webView)
+{
+    __block pid_t result = 0;
+    __block bool done = false;
+    [webView _printProcessIdentifierForTesting:^(pid_t identifier) {
+        result = identifier;
+        done = true;
+    }];
+    Util::run(&done);
+    return result;
+}
+
+static std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> loadPageForPrintProcess(const HTTPServer& server, bool enablePrintProcess = true, bool enableLockdownMode = false, WKProcessPool *processPool = nil)
+{
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    if (processPool)
+        [configuration setProcessPool:processPool];
+    setFeatureEnabled(configuration.get(), @"RemoteSnapshottingEnabled", true);
+    setFeatureEnabled(configuration.get(), @"RemoteSnapshottingPrintProcessEnabled", enablePrintProcess);
+    if (enableLockdownMode)
+        [configuration defaultWebpagePreferences].lockdownModeEnabled = YES;
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectMake(0, 0, 800, 600));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    return { webView, navigationDelegate };
+}
+
+static void computePagesForPrinting(TestWKWebView *webView)
+{
+    __block bool done = false;
+    [webView _computePagesForPrinting:[[webView mainFrame].info _handle] completionHandler:^{
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+static void createPDF(WKWebView *webView)
+{
+    __block bool done = false;
+    [webView createPDFWithConfiguration:nil completionHandler:^(NSData *data, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_NOT_NULL(data);
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+TEST(SiteIsolation, PrintProcessIsDedicated)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+    EXPECT_NE(printProcess, [webView mainFrame].info._processIdentifier);
+    EXPECT_NE(printProcess, [webView mainFrame].childFrames.firstObject.info._processIdentifier);
+
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://c.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    EXPECT_NE([webView mainFrame].info._processIdentifier, printProcess);
+    EXPECT_NE([webView mainFrame].childFrames.firstObject.info._processIdentifier, printProcess);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedWithoutCrossSiteFrames)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://a.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    computePagesForPrinting(webView.get());
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedWithoutPreference)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server, false);
+
+    computePagesForPrinting(webView.get());
+    createPDF(webView.get());
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessIsNotLaunchedForDisplaySnapshots)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    __block bool done = false;
+    [webView takeSnapshotWithConfiguration:nil completionHandler:^(Util::PlatformImage *image, NSError *error) {
+        EXPECT_NULL(error);
+        EXPECT_NOT_NULL(image);
+        done = true;
+    }];
+    Util::run(&done);
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+
+TEST(SiteIsolation, PrintProcessExitsWhenIdle)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    [webView _setPrintProcessIdleTimeoutForTesting:3];
+    createPDF(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !processStillRunning(printProcess);
+    }));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+
+    createPDF(webView.get());
+    auto newPrintProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(newPrintProcess, 0);
+    EXPECT_NE(newPrintProcess, printProcess);
+}
+
+#if PLATFORM(MAC)
+TEST(SiteIsolation, PrintProcessIsKeptUntilPrintingEnds)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    [webView _setPrintProcessIdleTimeoutForTesting:1];
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    Util::runFor(3_s);
+    EXPECT_TRUE(processStillRunning(printProcess));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+
+    __block bool endedPrinting = false;
+    [webView _endPrintingForTesting:^{
+        endedPrinting = true;
+    }];
+    Util::run(&endedPrinting);
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !processStillRunning(printProcess);
+    }));
+    EXPECT_EQ(printProcessIdentifier(webView.get()), 0);
+}
+#endif
+
+TEST(SiteIsolation, PrintProcessFollowsLockdownMode)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [lockdownWebView, lockdownNavigationDelegate] = loadPageForPrintProcess(server, true, true);
+    computePagesForPrinting(lockdownWebView.get());
+    auto lockdownPrintProcess = printProcessIdentifier(lockdownWebView.get());
+    EXPECT_NE(lockdownPrintProcess, 0);
+
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server, true, false, [lockdownWebView configuration].processPool);
+    computePagesForPrinting(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+    EXPECT_NE(printProcess, lockdownPrintProcess);
+
+    computePagesForPrinting(lockdownWebView.get());
+    EXPECT_EQ(printProcessIdentifier(lockdownWebView.get()), lockdownPrintProcess);
+    EXPECT_EQ(printProcessIdentifier(webView.get()), printProcess);
+    EXPECT_TRUE(processStillRunning(lockdownPrintProcess));
+    EXPECT_TRUE(processStillRunning(printProcess));
+}
+
+TEST(SiteIsolation, PrintProcessIsRelaunchedAfterCrash)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    createPDF(webView.get());
+    auto printProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(printProcess, 0);
+
+    kill(printProcess, 9);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return !printProcessIdentifier(webView.get());
+    }));
+
+    createPDF(webView.get());
+    auto newPrintProcess = printProcessIdentifier(webView.get());
+    EXPECT_NE(newPrintProcess, 0);
+    EXPECT_NE(newPrintProcess, printProcess);
 }
 
 #endif // HAVE(PDFKIT)

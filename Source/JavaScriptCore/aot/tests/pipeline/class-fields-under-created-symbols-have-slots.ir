@@ -1,0 +1,80 @@
+# const kFirst = Symbol("one"), kSecond = Symbol("one"), kLate = Symbol("late")
+# class Meter { total: number; [kSecond]: number; [kFirst]: number; [kLate]?: number; constructor(n) { this[kFirst] = n; this.total = n; this[kSecond] = n + 1 } }
+# function readBy(o, key) { return o[key] }  function writeBy(o, key, value) { o[key] = value }  function late(m: Meter) { return m[kLate] }
+# Two symbols with one description are two fields. The keys come in the order of the stores, names in front of symbols. A key that compiled code knows nothing of finds the slot by the symbol.
+# A field that was never stored is looked for above the object
+# FORM: AsRead
+# RUN(IR): pipeline ChooseCallingConventions
+# RUN: run-in-shell globalThis.register = (Meter, readBy, writeBy, late, first, second, lateKey) => { const symbols = o => { let text = ""; for (const s of Object.getOwnPropertySymbols(o)) text += (text ? "," : "") + (s === first ? "first" : s === second ? "second" : "late"); return text; }; const m = new Meter(5); print(readBy(m, first), readBy(m, second), readBy(m, "total"), readBy(m, lateKey)); print(symbols(m), Reflect.ownKeys(m).length); writeBy(m, second, 20); print(m[second], readBy(m, second), m[first]); print(late(m), lateKey in m); Meter.prototype[lateKey] = 77; print(late(m), readBy(m, lateKey), Object.hasOwn(m, lateKey)); writeBy(m, lateKey, 8); print(late(m), Object.hasOwn(m, lateKey), symbols(m)); Object.freeze(m); try { "use strict"; writeBy(m, first, 1); } catch (e) { print(e.constructor.name); } print(readBy(m, first), Object.isFrozen(m)); const n = new Meter(1); Object.defineProperty(n, first, { value: 3, writable: false }); try { writeBy(n, first, 4); } catch (e) { print(e.constructor.name); } print(readBy(n, first)); };
+# IR: PutSlotOrAdd {{*}} key=symbol("one")@m0:100
+# IR: PutSlotOrAdd {{*}} key=symbol("one")@m0:120
+# IR: = GetSlot {{*}} key=symbol("late")@m0:140
+# CHECK: 5 6 5 undefined
+# CHECK-NEXT: first,second 3
+# CHECK-NEXT: 20 20 5
+# CHECK-NEXT: undefined false
+# CHECK-NEXT: 77 77 false
+# CHECK-NEXT: 8 true first,second,late
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 5 true
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=400 kind=Parameter
+typesite w1 module=m0 position=440 kind=Parameter
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}, {key=symbol("one")@m0:120 declared={type=number} flags=[IsRequired]}, {key=symbol("one")@m0:100 declared={type=number} flags=[IsRequired]}, {key=symbol("late")@m0:140 declared={type=undefined|number}}]
+variable g0 name="kFirst" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="kSecond" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="kLate" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = String string="one"
+    v2 = Call v0, -, v1 callNumber=100 @100
+    PutModuleVariable v2 variable=g0
+    v4 = Call v0, -, v1 callNumber=120 @120
+    PutModuleVariable v4 variable=g1
+    v6 = String string="late"
+    v7 = Call v0, -, v6 callNumber=140 @140
+    PutModuleVariable v7 variable=g2
+    v9 = NewClosure function=f1
+    v10 = NewClass v9 layout=L0
+    v11 = FinishClass v10 layout=L0
+    v12 = NewClosure function=f2
+    v13 = NewClosure function=f3
+    v14 = NewClosure function=f4
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="register" [isFreeName]
+    v17 = Call v16, -, v11, v12, v13, v14, v2, v4, v7
+    Return
+}
+function f1 name="Meter" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="kFirst"
+    ElemSet v3, v5, v1 mode=Strict
+    PropSet v3, v1 key="total" mode=Strict
+    v8 = GetModuleVariable variable=g1
+    v9 = CheckInitialized v8 name="kSecond"
+    v10 = Integer integer=1
+    v11 = Add v1, v10
+    ElemSet v3, v9, v11 mode=Strict
+    Return v3
+}
+function f2 name="readBy" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="writeBy" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+function f4 name="late" flags=[IsChecked] parameters=[{type=L0 site=w1}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="kLate"
+    v3 = ElemGet v0, v2
+    Return v3
+}

@@ -1,0 +1,147 @@
+# function twiceTheArea(box: Box): number {
+#   return box.area * 2;
+# }
+# class Box {
+#   width: number;
+#   height: number;
+#   constructor(width: number, height: number) {
+#     this.width = width;
+#     this.height = height;
+#   }
+#   get area(): number {
+#     return this.width * this.height;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = twiceTheArea(new Box(+input, +input));
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable-in=0:1
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=22 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=128 kind=Parameter function=f2
+typesite w3 module=m0 position=143 kind=Parameter function=f2
+typesite w4 module=m0 position=81 kind=Field
+typesite w5 module=m0 position=98 kind=Field
+typesite w6 module=m0 position=217 kind=This
+typesite w7 module=m0 position=217 kind=Result
+typesite w8 module=m0 position=349 kind=CallResult
+typesite w9 module=m0 position=336 kind=CallResult
+typesite w10 module=m0 position=51 kind=PropertyRead
+typesite w11 module=m0 position=165 kind=Field
+typesite w12 module=m0 position=189 kind=Field
+layout L0 kind=Instance name="Box" module=m0 position=73 constructor=f2 fields=[{key="width" declared={type=number site=w4} flags=[IsRequired]}, {key="height" declared={type=number site=w5} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f3
+    DefineMethod v3, v5 layout=L0 methodKind=Getter key="area"
+    v7 = FinishClass v3 layout=L0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="globalThis" [isFreeName]
+    v12 = Convert v11 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="input" [isFreeName]
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = ToNumber v20
+    v22 = Construct v9, -, v17, v21 calleeName="Box"
+    v23 = Convert v22 declared={type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]}
+    v24 = Call v1, -, v23 calleeName="twiceTheArea"
+    v25 = Convert v24 declared={type=number site=w9}
+    PropSet v13, v25 key="answer"
+    v27 = Undefined
+    Return v27
+}
+function f1 name="twiceTheArea" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="area"
+    v2 = Convert v1 declared={type=number site=w10} illTypedCause=Assertion
+    v3 = Integer integer=2
+    v4 = Mul v2, v3
+    v5 = Convert v4 declared={type=number site=w1}
+    Return v5
+}
+function f2 name="Box" module=m0 position=127 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f4
+    v7 = Convert v1 declared={type=number site=w11}
+    PropSet v5, v7 key="width"
+    v9 = Convert v2 declared={type=number site=w12}
+    PropSet v5, v9 key="height"
+    v11 = Undefined
+    v12 = TypeTest v11 testedType=object
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v13):
+    Jump -> next b4(v13)
+  b3(v14):
+    Jump -> next b4(v5)
+  b4(v15):
+    Return v15
+}
+function f3 name="area" module=m0 position=217 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w6} results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="width"
+    v2 = PropGet v0 key="height"
+    v3 = Mul v1, v2
+    v4 = Convert v3 declared={type=number site=w7}
+    Return v4
+}
+function f4 module=m0 position=73 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Undefined
+    PropDefine v1, v2 key="width"
+    v4 = Undefined
+    PropDefine v1, v4 key="height"
+    v6 = Undefined
+    Return v6
+}
+
+# Calls are inlined everywhere but in the body of the module. The getter is found at compile time and its body stands in place of the read:
+# two loads and a product. Nothing loads the prototype, tests the class or calls.
+# CHECK-LABEL: name="twiceTheArea" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[box]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[width]] = Load(b@[[box]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[height]] = Load(b@[[box]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[area]] = Mul(b@[[width]], b@[[height]],
+# CHECK-NEXT: Double b@[[twice]] = Add(b@[[area]], b@[[area]],
+# CHECK-NEXT: Return(b@[[twice]], Terminal)
+# CHECK-LABEL: end of function
+# X64-LABEL: name="twiceTheArea" role=Source
+# X64-NEXT: instructions: 4, patchpoints: 0
+# ARM64-LABEL: name="twiceTheArea" role=Source
+# ARM64-NEXT: instructions: 5, patchpoints: 0

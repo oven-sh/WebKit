@@ -28,7 +28,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AssemblyHelpers.h"
 #include "SIMDInfo.h"
@@ -599,4 +599,4 @@ private:
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

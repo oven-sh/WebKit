@@ -34,6 +34,7 @@
 #include "CoordinatedPlatformLayerBufferHolePunch.h"
 #include "CoordinatedPlatformLayerBufferVideo.h"
 #include "CoordinatedTileBuffer.h"
+#include "CoordinatedTileManager.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayerCoordinated.h"
 #include "NativeImage.h"
@@ -46,7 +47,6 @@
 
 #if USE(SKIA)
 #include "SkiaCompositingLayer.h"
-#include "SkiaPaintingEngine.h"
 #endif
 
 namespace WebCore {
@@ -65,7 +65,7 @@ CoordinatedPlatformLayer::CoordinatedPlatformLayer(Client* client)
     : m_client(client)
     , m_id(PlatformLayerIdentifier::generate())
 #if !USE(TEXTURE_MAPPER)
-    , m_threadSafeGrContext(m_client ? m_client->paintingEngine().threadSafeGrContext() : nullptr)
+    , m_threadSafeGrContext(m_client ? m_client->tileManager().threadSafeGrContext() : nullptr)
 #endif
 {
     ASSERT(isMainThread());
@@ -95,6 +95,14 @@ GraphicsLayerCoordinated* CoordinatedPlatformLayer::owner() const
 {
     assertIsMainThread();
     return m_owner;
+}
+
+CoordinatedTileManager& CoordinatedPlatformLayer::tileManager() const
+{
+    assertIsMainThread();
+    ASSERT(m_client);
+
+    return m_client->tileManager();
 }
 
 #if USE(TEXTURE_MAPPER)
@@ -955,7 +963,7 @@ void CoordinatedPlatformLayer::updateContents(bool affectedByTransformAnimation)
         }
     } else {
         if (m_backingStoreProxy) {
-            m_backingStoreProxy->invalidate();
+            m_backingStoreProxy->invalidate(*this);
             m_backingStoreProxy = nullptr;
             m_pendingChanges.add(Change::BackingStore);
         }
@@ -971,7 +979,7 @@ void CoordinatedPlatformLayer::purgeBackingStores()
 {
     Locker locker { m_lock };
     if (m_backingStoreProxy) {
-        m_backingStoreProxy->invalidate();
+        m_backingStoreProxy->invalidate(*this);
         m_backingStoreProxy = nullptr;
     }
     m_imageBackingStore.current = nullptr;
@@ -1014,11 +1022,11 @@ void CoordinatedPlatformLayer::didPaintTile()
         m_client->didPaintTile();
 }
 
-void CoordinatedPlatformLayer::waitUntilPaintingComplete()
+void CoordinatedPlatformLayer::waitUntilPaintingFinished()
 {
     Locker locker { m_lock };
     if (m_backingStoreProxy)
-        m_backingStoreProxy->waitUntilPaintingComplete();
+        m_backingStoreProxy->waitUntilPaintingFinished();
 }
 
 void CoordinatedPlatformLayer::flushPendingState()

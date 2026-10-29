@@ -1,0 +1,309 @@
+# [1].map(double); step0(), which hands out bare0.bind(), Function.prototype.call.bind(throughCall0, undefined), Function.prototype.apply.bind(throughApply0, undefined),
+# Reflect.apply.bind(undefined, throughReflectApply0, undefined, [1]), Reflect.construct.bind(undefined, throughReflectConstruct0, [1]) and step1, which does the same with its own five functions and step2, up to step4
+# The function of the library that runs for Array.prototype.map resolves a promise of a constructor that it knows nothing about, which constructs that constructor.
+# Only whoever was handed a step can call it, so the bound functions of each step are handed out later than those of the step before. Whoever holds a bound function can call it:
+# all twenty-five functions are entered, whichever of the bound functions are handed out at the time when the library constructs.
+# bound-call-apply-and-reflect-enter-their-targets-while-library-code-constructs-an-unknown-constructor.ir with another order of the rules: the answer is the same.
+# LIBRARY: own
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-why reached=f4 reached=f5 reached=f6 reached=f7 reached=f8 reached=f10 reached=f11 reached=f12 reached=f13 reached=f14 reached=f16 reached=f17 reached=f18 reached=f19 reached=f20 reached=f22 reached=f23 reached=f24 reached=f25 reached=f26 reached=f28 reached=f29 reached=f30 reached=f31 reached=f32
+# CHECK: reached=f4
+# CHECK-NEXT: f4 <- 
+# CHECK: reached=f5
+# CHECK-NEXT: f5 <- 
+# CHECK: reached=f6
+# CHECK-NEXT: f6 <- 
+# CHECK: reached=f7
+# CHECK-NEXT: f7 <- 
+# CHECK: reached=f8
+# CHECK-NEXT: f8 <- 
+# CHECK: reached=f10
+# CHECK-NEXT: f10 <- 
+# CHECK: reached=f11
+# CHECK-NEXT: f11 <- 
+# CHECK: reached=f12
+# CHECK-NEXT: f12 <- 
+# CHECK: reached=f13
+# CHECK-NEXT: f13 <- 
+# CHECK: reached=f14
+# CHECK-NEXT: f14 <- 
+# CHECK: reached=f16
+# CHECK-NEXT: f16 <- 
+# CHECK: reached=f17
+# CHECK-NEXT: f17 <- 
+# CHECK: reached=f18
+# CHECK-NEXT: f18 <- 
+# CHECK: reached=f19
+# CHECK-NEXT: f19 <- 
+# CHECK: reached=f20
+# CHECK-NEXT: f20 <- 
+# CHECK: reached=f22
+# CHECK-NEXT: f22 <- 
+# CHECK: reached=f23
+# CHECK-NEXT: f23 <- 
+# CHECK: reached=f24
+# CHECK-NEXT: f24 <- 
+# CHECK: reached=f25
+# CHECK-NEXT: f25 <- 
+# CHECK: reached=f26
+# CHECK-NEXT: f26 <- 
+# CHECK: reached=f28
+# CHECK-NEXT: f28 <- 
+# CHECK: reached=f29
+# CHECK-NEXT: f29 <- 
+# CHECK: reached=f30
+# CHECK-NEXT: f30 <- 
+# CHECK: reached=f31
+# CHECK-NEXT: f31 <- 
+# CHECK: reached=f32
+# CHECK-NEXT: f32 <- 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=64 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="map"
+    v4 = Call v3, v1, v2 calleeKey="map"
+    v5 = NewClosure function=f3
+    v6 = Call v5
+    Return
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=LinkTimeConstantPromiseResolve
+    v4 = Call v3, -, v1, v2
+    Return v4
+}
+function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="step0" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Undefined
+    v2 = Integer integer=1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewClosure function=f4
+    v6 = Call v0, v5
+    v7 = Call v4, -, v6
+    v8 = NewClosure function=f5
+    v9 = Builtin builtin=FunctionPrototypeCall
+    v10 = Call v0, v9, v8, v1
+    v11 = Call v4, -, v10
+    v12 = NewClosure function=f6
+    v13 = Builtin builtin=FunctionPrototypeApply
+    v14 = Call v0, v13, v12, v1
+    v15 = Call v4, -, v14
+    v16 = NewClosure function=f7
+    v17 = NewArray v2 contents=anything
+    v18 = Builtin builtin=ReflectApply
+    v19 = Call v0, v18, v1, v16, v1, v17
+    v20 = Call v4, -, v19
+    v21 = NewClosure function=f8
+    v22 = NewArray v2 contents=anything
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Call v0, v23, v1, v21, v22
+    v25 = Call v4, -, v24
+    v26 = NewClosure function=f9
+    v27 = Call v4, -, v26
+    Return
+}
+function f4 name="bare0" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f5 name="throughCall0" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f6 name="throughApply0" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f7 name="throughReflectApply0" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f8 name="throughReflectConstruct0" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f9 name="step1" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Undefined
+    v2 = Integer integer=1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewClosure function=f10
+    v6 = Call v0, v5
+    v7 = Call v4, -, v6
+    v8 = NewClosure function=f11
+    v9 = Builtin builtin=FunctionPrototypeCall
+    v10 = Call v0, v9, v8, v1
+    v11 = Call v4, -, v10
+    v12 = NewClosure function=f12
+    v13 = Builtin builtin=FunctionPrototypeApply
+    v14 = Call v0, v13, v12, v1
+    v15 = Call v4, -, v14
+    v16 = NewClosure function=f13
+    v17 = NewArray v2 contents=anything
+    v18 = Builtin builtin=ReflectApply
+    v19 = Call v0, v18, v1, v16, v1, v17
+    v20 = Call v4, -, v19
+    v21 = NewClosure function=f14
+    v22 = NewArray v2 contents=anything
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Call v0, v23, v1, v21, v22
+    v25 = Call v4, -, v24
+    v26 = NewClosure function=f15
+    v27 = Call v4, -, v26
+    Return
+}
+function f10 name="bare1" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f11 name="throughCall1" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f12 name="throughApply1" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f13 name="throughReflectApply1" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f14 name="throughReflectConstruct1" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f15 name="step2" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Undefined
+    v2 = Integer integer=1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewClosure function=f16
+    v6 = Call v0, v5
+    v7 = Call v4, -, v6
+    v8 = NewClosure function=f17
+    v9 = Builtin builtin=FunctionPrototypeCall
+    v10 = Call v0, v9, v8, v1
+    v11 = Call v4, -, v10
+    v12 = NewClosure function=f18
+    v13 = Builtin builtin=FunctionPrototypeApply
+    v14 = Call v0, v13, v12, v1
+    v15 = Call v4, -, v14
+    v16 = NewClosure function=f19
+    v17 = NewArray v2 contents=anything
+    v18 = Builtin builtin=ReflectApply
+    v19 = Call v0, v18, v1, v16, v1, v17
+    v20 = Call v4, -, v19
+    v21 = NewClosure function=f20
+    v22 = NewArray v2 contents=anything
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Call v0, v23, v1, v21, v22
+    v25 = Call v4, -, v24
+    v26 = NewClosure function=f21
+    v27 = Call v4, -, v26
+    Return
+}
+function f16 name="bare2" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f17 name="throughCall2" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f18 name="throughApply2" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f19 name="throughReflectApply2" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f20 name="throughReflectConstruct2" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f21 name="step3" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Undefined
+    v2 = Integer integer=1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewClosure function=f22
+    v6 = Call v0, v5
+    v7 = Call v4, -, v6
+    v8 = NewClosure function=f23
+    v9 = Builtin builtin=FunctionPrototypeCall
+    v10 = Call v0, v9, v8, v1
+    v11 = Call v4, -, v10
+    v12 = NewClosure function=f24
+    v13 = Builtin builtin=FunctionPrototypeApply
+    v14 = Call v0, v13, v12, v1
+    v15 = Call v4, -, v14
+    v16 = NewClosure function=f25
+    v17 = NewArray v2 contents=anything
+    v18 = Builtin builtin=ReflectApply
+    v19 = Call v0, v18, v1, v16, v1, v17
+    v20 = Call v4, -, v19
+    v21 = NewClosure function=f26
+    v22 = NewArray v2 contents=anything
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Call v0, v23, v1, v21, v22
+    v25 = Call v4, -, v24
+    v26 = NewClosure function=f27
+    v27 = Call v4, -, v26
+    Return
+}
+function f22 name="bare3" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f23 name="throughCall3" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f24 name="throughApply3" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f25 name="throughReflectApply3" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f26 name="throughReflectConstruct3" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f27 name="step4" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeBind
+    v1 = Undefined
+    v2 = Integer integer=1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewClosure function=f28
+    v6 = Call v0, v5
+    v7 = Call v4, -, v6
+    v8 = NewClosure function=f29
+    v9 = Builtin builtin=FunctionPrototypeCall
+    v10 = Call v0, v9, v8, v1
+    v11 = Call v4, -, v10
+    v12 = NewClosure function=f30
+    v13 = Builtin builtin=FunctionPrototypeApply
+    v14 = Call v0, v13, v12, v1
+    v15 = Call v4, -, v14
+    v16 = NewClosure function=f31
+    v17 = NewArray v2 contents=anything
+    v18 = Builtin builtin=ReflectApply
+    v19 = Call v0, v18, v1, v16, v1, v17
+    v20 = Call v4, -, v19
+    v21 = NewClosure function=f32
+    v22 = NewArray v2 contents=anything
+    v23 = Builtin builtin=ReflectConstruct
+    v24 = Call v0, v23, v1, v21, v22
+    v25 = Call v4, -, v24
+    Return
+}
+function f28 name="bare4" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f29 name="throughCall4" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f30 name="throughApply4" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f31 name="throughReflectApply4" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f32 name="throughReflectConstruct4" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

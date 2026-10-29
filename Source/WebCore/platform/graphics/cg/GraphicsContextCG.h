@@ -54,7 +54,8 @@ public:
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
     void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
+    using GraphicsContext::drawNativeImage;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions = { }) final;
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
@@ -107,7 +108,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) final;
 
     using GraphicsContext::scale;
     void scale(const FloatSize&) final;
@@ -166,6 +167,12 @@ private:
     void setCGColorMatrix(const GraphicsColorMatrix&);
 #endif
     void setCGStyle(const std::optional<GraphicsStyle>&, bool shadowsIgnoreTransforms);
+
+    FloatRect boundsIncludingDropShadow(const FloatRect&);
+    void paintGradientInClip(Gradient&, const AffineTransform& gradientSpaceTransform, NOESCAPE const Invocable<FloatRect()> auto& computeContentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
+#if !HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
+    void paintGradientInCGLayer(Gradient&, const AffineTransform& gradientSpaceTransform, const FloatRect& contentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
+#endif
 
     // Returns the platform context for purposes of context state change, not draws.
     const RetainPtr<CGContextRef>& LEGACY_NODELETE contextForState() const;

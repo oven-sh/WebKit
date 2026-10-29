@@ -1,0 +1,19 @@
+# The generic version of a function is cold however hot the function is: a call goes on in it only once a test at the entrance has failed. Its code is compact
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: code-shapes
+# CHECK: f0 b0 Balanced
+# CHECK: f1 b0 Compact heat=0.00
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="square" module=m0 parameters=[{type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number):
+    v1 = Mul v0, v0
+    Return v1
+}
+
+function f1 name="square" module=m0 role=GenericVersion parameters=[{type=number flags=[IsExpected]}] results=[{type=number|bigint}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f0} creator=Version{provenVersion=f0} {
+  b0(v0: anything ~ number):
+    v1 = Mul v0, v0
+    Return v1
+}

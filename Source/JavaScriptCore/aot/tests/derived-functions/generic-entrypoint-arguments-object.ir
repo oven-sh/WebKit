@@ -1,0 +1,16 @@
+# The generic entrypoint of a function that reads its arguments object passes the number of arguments and the arguments past the parameters
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsArguments" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    Return
+}
+# CHECK: role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}]{{*}}creator=Entrypoint{target=f0} {
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything):
+# CHECK-NEXT: [[first]]: anything = GetArgument
+# CHECK-NEXT: [[rest]]: Array{{*}} = CreateRest firstArgument=1
+# CHECK-NEXT: [[count]]:{{*}}= GetRestLength
+# CHECK-NEXT: = CallDirect [[count]], [[first]], [[rest]] function=f0

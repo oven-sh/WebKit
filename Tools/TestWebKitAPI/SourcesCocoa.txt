@@ -170,6 +170,7 @@ Tests/WebKit/WKWebView/FormValidation.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenAlert.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenDelegate.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenLayoutConstraints.mm @nonARC
+Tests/WebKit/WKWebView/FullscreenRedundantExitRequest.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenRemoveNodeBeforeEnter.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenScrollAndResize.mm @nonARC
 Tests/WebKit/WKWebView/FullscreenVideoTextRecognition.mm @nonARC
@@ -272,6 +273,7 @@ Tests/WebKit/WKWebView/Preconnect.mm @nonARC
 Tests/WebKit/WKWebView/Preferences.mm @nonARC
 Tests/WebKit/WKWebView/PreferredAudioBufferSize.mm @nonARC
 Tests/WebKit/WKWebView/PrepareForMoveToWindow.mm @nonARC
+Tests/WebKit/WKWebView/PresentationIntents.mm @nonARC
 Tests/WebKit/WKWebView/PrivateClickMeasurement.mm @nonARC
 Tests/WebKit/WKWebView/ProcessInfo.mm @nonARC
 Tests/WebKit/WKWebView/ProcessJetsamPriority.mm @nonARC
@@ -335,7 +337,7 @@ Tests/WebKit/WKWebView/TabOutOfWebView.mm @nonARC
 Tests/WebKit/WKWebView/TestAwakener.mm @nonARC
 Tests/WebKit/WKWebView/SOAuthorizationTests.mm @nonARC
 Tests/WebKit/WKWebView/TestURLSchemeHandler.mm @nonARC
-Tests/WebKit/WKWebView/TextManipulation.mm @nonARC
+Tests/WebKit/WKWebView/TextScaleMeta.mm @nonARC
 Tests/WebKit/WKWebView/UIDelegate.mm @nonARC
 Tests/WebKit/WKWebView/UnifiedPDFTests.mm @nonARC
 Tests/WebKit/WKWebView/UploadDirectory.mm @nonARC
@@ -396,6 +398,7 @@ Tests/WebKit/WKWebView/WKWebViewAlwaysShowsScroller.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewCandidateTests.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewCloseAllMediaPresentations.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewConfiguration.mm @nonARC
+Tests/WebKit/WKWebView/WKWebViewContentInversion.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewDefaultNavigationDelegate.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewDiagnosticLogging.mm @nonARC
 Tests/WebKit/WKWebView/WKWebViewDisableSelection.mm @nonARC

@@ -450,10 +450,10 @@ webkit_web_view_new_with_user_content_manager        (WebKitUserContentManager  
 
 #if PLATFORM(WPE)
 #if USE(LIBWPE)
-WEBKIT_API WebKitWebView *
+WEBKIT_DEPRECATED WebKitWebView *
 webkit_web_view_new                                  (WebKitWebViewBackend      *backend);
 
-WEBKIT_API WebKitWebViewBackend *
+WEBKIT_DEPRECATED WebKitWebViewBackend *
 webkit_web_view_get_backend                          (WebKitWebView             *web_view);
 #endif
 
@@ -530,6 +530,9 @@ webkit_web_view_is_loading                           (WebKitWebView             
 
 WEBKIT_API gboolean
 webkit_web_view_is_playing_audio                     (WebKitWebView             *web_view);
+
+WEBKIT_API gboolean
+webkit_web_view_has_protected_media                  (WebKitWebView             *web_view);
 
 WEBKIT_API void
 webkit_web_view_set_is_muted                         (WebKitWebView             *web_view,

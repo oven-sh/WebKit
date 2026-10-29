@@ -28,7 +28,7 @@
 
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
-#include "ImagePaintingOptions.h"
+#include "ImageDrawingOptions.h"
 #include "ImageSizingContext.h"
 #include "NinePieceGeometry.h"
 #include "RenderElement.h"
@@ -37,14 +37,14 @@
 namespace WebCore {
 namespace Style {
 
-static ImageDrawResult drawImageAsPattern(GraphicsContext& context, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, const WebCore::ImageDrawingExtras* extras)
+static ImageDrawResult drawImageAsPattern(GraphicsContext& context, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, const WebCore::ImageDrawingExtras* extras)
 {
     image.drawPattern(context, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options, extras);
     image.startAnimation();
     return ImageDrawResult::DidDraw;
 }
 
-ImageDrawResult Image::drawIntoDestinationImpl(GraphicsContext& context, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, const ScopedLambda<DestinationPaint>& paint)
+ImageDrawResult Image::drawIntoDestinationImpl(GraphicsContext& context, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options, const ScopedLambda<DestinationPaint>& paint)
 {
     GraphicsContextStateSaver stateSaver(context);
     context.setCompositeOperation(options.compositeOperator(), options.blendMode());
@@ -63,7 +63,7 @@ ImageDrawResult Image::drawIntoDestinationImpl(GraphicsContext& context, const F
     return paint(context);
 }
 
-ImageDrawResult Image::drawTiledUsingImpl(GraphicsContext& ctxt, NaturalDimensions naturalDimensions, const ScopedLambda<TiledDraw>& draw, const ScopedLambda<TiledDrawPattern>& drawPattern, ConcreteObjectSize concreteObjectSize, const FloatRect& destRect, const FloatPoint& srcPoint, const FloatSize& scaledTileSize, const FloatSize& spacing, ImagePaintingOptions options)
+ImageDrawResult Image::drawTiledUsingImpl(GraphicsContext& ctxt, NaturalDimensions naturalDimensions, const ScopedLambda<TiledDraw>& draw, const ScopedLambda<TiledDrawPattern>& drawPattern, ConcreteObjectSize concreteObjectSize, const FloatRect& destRect, const FloatPoint& srcPoint, const FloatSize& scaledTileSize, const FloatSize& spacing, ImageDrawingOptions options)
 {
     FloatSize intrinsicTileSize = concreteObjectSize.size();
     if (!naturalDimensions.width)
@@ -265,20 +265,34 @@ ImageDrawResult Image::drawNinePieceUsingImpl(GraphicsContext& context, const Sc
     return result;
 }
 
-FloatRect Image::mapSourceToSize(const FloatRect& source, ConcreteObjectSize concreteObjectSize, const FloatSize& size)
+static FloatRect scaleRect(const FloatRect& rect, const FloatSize& from, const FloatSize& to)
 {
-    auto box = concreteObjectSize.size() * concreteObjectSize.zoom();
-    if (box.isEmpty())
-        return { { }, size };
+    if (from.isEmpty())
+        return { { }, to };
 
-    auto mapX = [&](float x) { return narrowPrecisionToFloat(static_cast<double>(x) * size.width() / box.width()); };
-    auto mapY = [&](float y) { return narrowPrecisionToFloat(static_cast<double>(y) * size.height() / box.height()); };
-    auto minX = mapX(source.x());
-    auto minY = mapY(source.y());
-    return { minX, minY, mapX(source.maxX()) - minX, mapY(source.maxY()) - minY };
+    auto mapX = [&](float x) { return narrowPrecisionToFloat(static_cast<double>(x) * to.width() / from.width()); };
+    auto mapY = [&](float y) { return narrowPrecisionToFloat(static_cast<double>(y) * to.height() / from.height()); };
+    auto minX = mapX(rect.x());
+    auto minY = mapY(rect.y());
+    return { minX, minY, mapX(rect.maxX()) - minX, mapY(rect.maxY()) - minY };
 }
 
-RefPtr<NativeImage> Image::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImagePaintingOptions options) const
+FloatRect Image::mapSourceToSize(const FloatRect& rect, ConcreteObjectSize concreteObjectSize, const FloatSize& size)
+{
+    return scaleRect(rect, concreteObjectSize.size() * concreteObjectSize.zoom(), size);
+}
+
+FloatRect Image::mapSizeToSource(const FloatRect& rect, const FloatSize& size, ConcreteObjectSize concreteObjectSize)
+{
+    return scaleRect(rect, size, concreteObjectSize.size() * concreteObjectSize.zoom());
+}
+
+FloatRect Image::mapChangedRectToSource(const RenderElement&, ConcreteObjectSize concreteObjectSize, const FloatRect&) const
+{
+    return { { }, concreteObjectSize.size() * concreteObjectSize.zoom() };
+}
+
+RefPtr<NativeImage> Image::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImageDrawingOptions options) const
 {
     auto pixelSize = FloatSize { calculateImageBufferBackendSize(concreteObjectSize.size(), resolutionScale) };
     RefPtr imageBuffer = ImageBuffer::create(pixelSize, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
@@ -289,19 +303,19 @@ RefPtr<NativeImage> Image::nativeImage(const RenderElement& renderer, ConcreteOb
     return ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
 }
 
-ImageDrawResult Image::drawResolved(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options) const
+ImageDrawResult Image::drawResolved(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options) const
 {
     auto extras = drawingExtrasForRenderer(renderer);
-    return context.drawImage(image, concreteObjectSize, destination, source, options, &extras);
+    return image.draw(context, concreteObjectSize, destination, source, options, &extras);
 }
 
-ImageDrawResult Image::drawResolvedAsPattern(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options) const
+ImageDrawResult Image::drawResolvedAsPattern(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options) const
 {
     auto extras = drawingExtrasForRenderer(renderer);
     return drawImageAsPattern(context, image, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options, &extras);
 }
 
-ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, NaturalDimensions tileNaturalDimensions, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options) const
+ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, NaturalDimensions tileNaturalDimensions, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions options) const
 {
     if (auto color = image.singlePixelSolidColor()) {
         WebCore::Image::fillWithSolidColor(context, destination, *color, options.compositeOperator());
@@ -311,13 +325,13 @@ ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderE
 
     auto extras = drawingExtrasForRenderer(renderer);
     return drawTiledUsing(context, tileNaturalDimensions, [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-        return context.drawImage(image, tileConcreteObjectSize, destination, source, options, &extras);
+        return image.draw(context, tileConcreteObjectSize, destination, source, options, &extras);
     }, [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
         return drawImageAsPattern(context, image, tileConcreteObjectSize, destination, tile, patternTransform, phase, spacing, options, &extras);
     }, concreteObjectSize, destination, phase, tileSize, spacing, options);
 }
 
-ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
+ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImageDrawingOptions options) const
 {
     // FIXME: With 'border-image-repeat: space', partial tiles should be discarded so the gaps around the tiles are
     // empty. Similarly, the whole region should be left empty if no tile fits.
@@ -339,7 +353,7 @@ ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const Ren
 
     auto extras = drawingExtrasForRenderer(renderer);
     return drawNinePieceUsing(context, [&](GraphicsContext& context, ConcreteObjectSize pieceConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
-        return context.drawImage(image, pieceConcreteObjectSize, destination, source, options, &extras);
+        return image.draw(context, pieceConcreteObjectSize, destination, source, options, &extras);
     }, [&](GraphicsContext& context, ConcreteObjectSize pieceConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
         if (singlePixelSolidColor) {
             WebCore::Image::fillWithSolidColor(context, destination, *singlePixelSolidColor, options.compositeOperator());
@@ -349,7 +363,7 @@ ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const Ren
     }, concreteObjectSize, pieceGeometry);
 }
 
-ImageDrawResult Image::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
+ImageDrawResult Image::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions options, bool isForFirstLine) const
 {
     if (!canDrawAtSize(renderer, tileSize) || context.paintingDisabled())
         return ImageDrawResult::DidNothing;
@@ -361,7 +375,7 @@ ImageDrawResult Image::drawTiled(GraphicsContext& context, const RenderElement& 
     }, ConcreteObjectSize::fixed(tileSize), destination, phase, tileSize, spacing, options);
 }
 
-ImageDrawResult Image::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
+ImageDrawResult Image::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImageDrawingOptions options) const
 {
     auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
     if (!canDrawAtSize(renderer, size) || context.paintingDisabled())

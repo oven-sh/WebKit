@@ -1,0 +1,42 @@
+# class Base { constructor(first, second) { first(); } }  class Derived extends Base { }  new Derived(one, two)
+# The constructor that the language gives Derived is `constructor(...args) { super(...args) }`. It does nothing with the array of its rest parameter but spread it into one call, so nobody else
+# gets hold of the array: it holds at each index what the caller has passed at that position, and each argument reaches the parameter of its position and no other.
+# RUN: valueflow-solve calls
+# CHECK: f1 v5 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = Construct v6, -, v7, v8
+    Return
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0 fields=[]
+    v5 = Call v1, -
+    Return v4
+}
+function f2 name="Derived" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="one" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="two" module=m0 results=[{type=anything}] {
+    Return
+}

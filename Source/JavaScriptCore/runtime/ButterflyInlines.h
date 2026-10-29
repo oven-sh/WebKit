@@ -45,10 +45,13 @@ inline size_t LEGACY_NODELETE nextLength(size_t length)
 
 inline size_t Butterfly::preCapacity(Structure* structure)
 {
-    if (!hasAnyArrayStorage(structure->indexingType())) [[likely]]
-        return 0;
+    if (hasAnyArrayStorage(structure->indexingType())) [[unlikely]]
+        return IndexingHeader::from(this)->arrayStorage()->m_indexBias;
 
-    return IndexingHeader::from(this)->arrayStorage()->m_indexBias;
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        return IndexingHeader::from(this)->elementsStartOffset(structure->outOfLineCapacity());
+
+    return 0;
 }
 
 inline size_t Butterfly::indexingPayloadSizeInBytes(Structure* structure)
@@ -134,9 +137,10 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
 
 inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
 {
-    Butterfly* result = tryCreate(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingHeader, indexingPayloadSizeInBytes);
-
-    RELEASE_ASSERT(result);
+    Butterfly* result = createUninitialized(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
+    if (hasIndexingHeader)
+        *result->indexingHeader() = indexingHeader;
+    memset(result->propertyStorage() - propertyCapacity, 0, propertyCapacity * sizeof(EncodedJSValue));
     return result;
 }
 
@@ -169,6 +173,8 @@ inline Butterfly* Butterfly::createOrGrowPropertyStorage(
         oldButterfly->propertyStorage() - oldPropertyCapacity,
         totalSize(0, oldPropertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes));
     memset(result->propertyStorage() - newPropertyCapacity, 0, (newPropertyCapacity - oldPropertyCapacity) * sizeof(EncodedJSValue));
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        result->indexingHeader()->elementsStartOffset(newPropertyCapacity) = preCapacity;
     return result;
 }
 
@@ -182,9 +188,15 @@ inline Butterfly* Butterfly::createOrGrowArrayRight(
             vm, intendedOwner, 0, propertyCapacity, true, IndexingHeader(),
             newIndexingPayloadSizeInBytes);
     }
-    return oldButterfly->growArrayRight(
-        vm, intendedOwner, oldStructure, propertyCapacity, hadIndexingHeader,
-        oldIndexingPayloadSizeInBytes, newIndexingPayloadSizeInBytes);
+    ASSERT_UNUSED(oldStructure, !oldButterfly->preCapacity(oldStructure));
+    ASSERT(hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
+    Butterfly* result = createUninitialized(vm, intendedOwner, 0, propertyCapacity, true, newIndexingPayloadSizeInBytes);
+    // Use memcpy since this butterfly is not tied to any object yet.
+    memcpy(
+        static_cast<JSValue*>(result->base(0, propertyCapacity)),
+        static_cast<JSValue*>(oldButterfly->base(0, propertyCapacity)),
+        totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes));
+    return result;
 }
 
 inline Butterfly* Butterfly::growArrayRight(

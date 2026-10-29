@@ -42,6 +42,15 @@ from webkitpy.results.upload import Upload  # noqa: E402
 from webkitcorepy import Timeout
 
 UNKNOWN_CRASH_STR = "CRASH_OR_PROBLEM_IN_TEST_EXECUTABLE"
+API_TESTS_DIRECTORY = "Tools/TestWebKitAPI/Tests/"
+TEST_EXPECTATIONS_PATH = "Tools/TestWebKitAPI/glib/TestExpectations.json"
+GOOGLE_TEST_PROGRAMS_BY_DIRECTORY = {
+    "JavaScriptCore": "TestJavaScriptCore",
+    "WTF": "TestWTF",
+    "WebCore": "TestWebCore",
+    "WebKit": "TestWebKit",
+}
+GOOGLE_TEST_RE = re.compile(r'\bTEST(?:_F)?\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)')
 
 def port_options(options):
     port_options = optparse.Values()
@@ -78,7 +87,7 @@ class TestRunner(object):
             self._timeout = 10 if self._build_type == 'Debug' else 5
 
         self._programs_path = common.binary_build_path(self._port)
-        expectations_file = os.path.join(common.top_level_path(), "Tools", "TestWebKitAPI", "glib", "TestExpectations.json")
+        expectations_file = os.path.join(self._source_directory(), TEST_EXPECTATIONS_PATH)
         self._expectations = TestExpectations(self._port.name(), expectations_file, self._build_type, self._port.architecture())
         print("Test expectations: port=%s, build_type=%s, architecture=%s" % (self._port.name(), self._build_type, self._port.architecture()))
         self._initial_test_list = tests
@@ -87,6 +96,9 @@ class TestRunner(object):
 
     def _test_programs_base_dir(self):
         return os.path.join(self._programs_path, "TestWebKitAPI")
+
+    def _source_directory(self):
+        return common.top_level_path()
 
     def _get_tests_from_dir(self, test_dir):
         if not os.path.isdir(test_dir):
@@ -359,6 +371,14 @@ class TestRunner(object):
         sys.stderr.write("WARNING: %s doesn't seem to be a supported test program.\n" % test_program)
         return {}
 
+    def _run_test_repeatedly(self, test_program, subtests, skipped_test_cases):
+        results = {}
+        for _ in range(self._options.repeat_each):
+            for test_case, result in self._run_test(test_program, subtests, skipped_test_cases).items():
+                if test_case not in results or results[test_case] in self._expectations.get_expectation(os.path.basename(test_program), test_case):
+                    results[test_case] = result
+        return results
+
     def _has_gpu_available(self):
         return os.access("/dev/dri/card0", os.R_OK | os.W_OK) and os.access("/dev/dri/renderD128", os.R_OK | os.W_OK)
 
@@ -390,6 +410,14 @@ class TestRunner(object):
                 test_list.append({"name": self._get_test_name_for_upload(test, test_case), "output": None})
         return test_list
 
+    def _results_for_upload(self, tests_to_upload):
+        results = {}
+        for test, test_cases in tests_to_upload.items():
+            for test_case, actual, expected in test_cases:
+                name = self._get_test_name_for_upload(test, test_case)
+                results[name] = Upload.create_test_result(actual=actual, expected=' '.join(expected) if expected else None)
+        return results
+
     def _binary_and_subtest(self, test_name):
         # Accept both the "<binary>:<subtest>" (GLib) and "<binary>.<case>"
         # (Google Test) forms. Split the dotted form only when the bare name is
@@ -418,6 +446,65 @@ class TestRunner(object):
                     return []  # If there is any entry matching without a subtest, return [] which means run all subtests.
         return sorted(set(subtests_to_run))  # Remove duplicates and sort
 
+    def _git(self, *args):
+        return subprocess.check_output(['git'] + list(args), cwd=self._source_directory(), encoding='utf-8')
+
+    def _changed_expectations(self, base):
+        old_expectations = json.loads(self._git('show', f'{base}:{TEST_EXPECTATIONS_PATH}'))
+        with open(os.path.join(self._source_directory(), TEST_EXPECTATIONS_PATH)) as fd:
+            new_expectations = json.load(fd)
+
+        changed = []
+        for test in sorted(set(old_expectations) | set(new_expectations)):
+            old_entry, new_entry = old_expectations.get(test, {}), new_expectations.get(test, {})
+            if old_entry.get('expected') != new_entry.get('expected'):
+                changed.append(test)
+                continue
+            old_subtests, new_subtests = old_entry.get('subtests', {}), new_entry.get('subtests', {})
+            changed.extend(f'{test}:{subtest}' for subtest in sorted(set(old_subtests) | set(new_subtests))
+                           if old_subtests.get(subtest) != new_subtests.get(subtest))
+        return changed
+
+    def _changed_source_tests(self, path):
+        test_name = os.path.splitext(os.path.basename(path))[0]
+        if test_name.endswith('Test'):
+            test_name = 'Test' + test_name[:-len('Test')]
+        test_program = self._resolve_test_program(test_name)
+        if os.path.isfile(test_program) and os.access(test_program, os.X_OK) and self.is_glib_test(test_program):
+            return [test_name]
+
+        google_test_name = GOOGLE_TEST_PROGRAMS_BY_DIRECTORY.get(path[len(API_TESTS_DIRECTORY):].split('/')[0])
+        if not google_test_name:
+            return []
+        google_test_program = self._resolve_test_program(google_test_name)
+        if not os.path.isfile(google_test_program):
+            return []
+        with open(os.path.join(self._source_directory(), path)) as fd:
+            test_cases = [f'{suite}.{name}' for suite, name in GOOGLE_TEST_RE.findall(fd.read())]
+        available_test_cases = self._get_tests_from_google_test_suite(google_test_program, [])
+        return [f'{google_test_name}.{test_case}' for test_case in test_cases if test_case in available_test_cases]
+
+    def _changed_tests(self, ref):
+        base = self._git('merge-base', ref, 'HEAD').strip()
+        changed_tests = {}
+        for path in self._git('diff', '--name-only', '--diff-filter=d', base).splitlines():
+            if path == TEST_EXPECTATIONS_PATH:
+                tests = self._changed_expectations(base)
+            elif path.startswith(API_TESTS_DIRECTORY) and path.endswith('.cpp'):
+                tests = self._changed_source_tests(path)
+            else:
+                continue
+            for test in tests:
+                changed_tests.setdefault(test, path)
+
+        if not changed_tests:
+            print(f'No tests changed since {ref}.')
+        else:
+            print(f'Tests changed since {ref}:')
+            for test, path in sorted(changed_tests.items()):
+                print(f'    {test} ({path})')
+        return sorted(changed_tests)
+
     def list_tests(self):
         indent = ' ' * 4
         print(f'Tests available at {self._test_programs_base_dir()} are:')
@@ -425,13 +512,20 @@ class TestRunner(object):
         print(f'\n{indent}'.join(sorted(self._get_all_valid_test_names())))
 
     def run_tests(self):
-        if self._options.list_tests:
+        if self._options.list_tests and not self._options.changed_since:
             self.list_tests()
             return 0
 
         start_time = time.time()
 
         self._test_env = self._setup_testing_environment_for_driver(self._driver)
+
+        if self._options.changed_since:
+            self._initial_test_list = self._changed_tests(self._options.changed_since)
+            self._tests = self._get_tests(self._initial_test_list) if self._initial_test_list else []
+            if self._options.list_tests:
+                self._tear_down_testing_environment()
+                return 0
 
         configuration_for_upload = self._port.configuration_for_upload(self._port.target_host(0))
 
@@ -498,7 +592,7 @@ class TestRunner(object):
                 skipped_subtests = self._test_cases_to_skip(test)
                 number_of_skipped_tests += len(skipped_subtests)
                 number_of_total_tests += len(skipped_subtests if not subtests else set(skipped_subtests).intersection(subtests))
-                results = self._run_test(test, subtests, skipped_subtests)
+                results = self._run_test_repeatedly(test, subtests, skipped_subtests)
                 number_of_executed_subtests_for_test = len(results)
                 if number_of_executed_subtests_for_test > 0:
                     # When adding the subtests to the total, substract 1 because the maintest was initially counted as one subtest.
@@ -546,22 +640,19 @@ class TestRunner(object):
         report(timed_out_tests, "timeouts", self._test_programs_base_dir())
         report(passed_tests, "passes", self._test_programs_base_dir())
 
+        results = self._results_for_upload(tests_to_upload)
+
         if self._options.json_output:
             result_dictionary = {}
             result_dictionary['Failed'] = self._generate_test_list_for_json_output(failed_tests)
             result_dictionary['Crashed'] = self._generate_test_list_for_json_output(crashed_tests)
             result_dictionary['Timedout'] = self._generate_test_list_for_json_output(timed_out_tests)
+            result_dictionary['results'] = {name: result for name, result in results.items() if result.get('actual')}
             self._port.host.filesystem.write_text_file(self._options.json_output, json.dumps(result_dictionary, indent=4))
 
         if self._options.report_urls:
             sys.stderr.write("\n")
             sys.stderr.write("Preparing upload data ...\n")
-
-            results = {}
-            for test, test_cases in tests_to_upload.items():
-                for test_case in test_cases:
-                    name = self._get_test_name_for_upload(test, test_case[0])
-                    results[name] = Upload.create_test_result(actual=test_case[1], expected=' '.join(test_case[2]) if test_case[2] else None)
 
             upload = Upload(
                 suite=self._options.suite or 'api-tests',
@@ -642,6 +733,10 @@ def create_option_parser():
                              help='List the tests (main tests) available to run.')
     option_parser.add_option('--json-output', action='store', default=None,
                              help='Save test results as JSON to file')
+    option_parser.add_option('--repeat-each', action='store', type='int', dest='repeat_each', default=1,
+                             help='Number of times to run the requested tests in a row, failing on any unexpected result')
+    option_parser.add_option('--changed-since', action='store', default=None, metavar='REF',
+                             help='Run the tests changed since the merge base of REF and HEAD, or list them with -l')
     return option_parser
 
 

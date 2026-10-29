@@ -507,6 +507,19 @@ header: <WebCore/ElementTargetingTypes.h>
     bool hasAudibleMedia
 };
 
+header: <WebCore/ElementTargetingTypes.h>
+[CustomHeader] struct WebCore::TargetedTextMatch {
+    Vector<WebCore::TargetedElementInfo> targets
+};
+
+using WebCore::TargetedTextSearchItem = Variant<WebCore::TargetedTextMatch, WebCore::FrameIdentifier>;
+
+header: <WebCore/ElementTargetingTypes.h>
+[CustomHeader] struct WebCore::TargetedTextSearchResult {
+    HashMap<WebCore::FrameIdentifier, Vector<WebCore::TargetedTextSearchItem>> itemsByFrame
+    HashMap<WebCore::FrameIdentifier, Vector<WebCore::TargetedElementInfo>> targetsBySubframe
+};
+
 header: <WebCore/RenderStyleConstants.h>
 [CustomHeader] enum class WebCore::PositionType : uint8_t {
     Static,
@@ -698,7 +711,7 @@ struct WebCore::ApplicationManifest {
 struct WebCore::RetrieveRecordsOptions {
     WebCore::ResourceRequest request;
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
-    WebCore::DocumentIsolationPolicy documentIsolationPolicy;
+    WebCore::DocumentIsolationPolicyValue documentIsolationPolicy;
     Ref<WebCore::SecurityOrigin> sourceOrigin;
     bool ignoreSearch;
     bool ignoreMethod;
@@ -1744,9 +1757,9 @@ header: <WebCore/TextIndicator.h>
     WebCore::FloatRect contentImageWithoutSelectionRectInRootViewCoordinates;
     Vector<WebCore::FloatRect> textRectsInBoundingRectCoordinates;
     float contentImageScaleFactor;
-    RefPtr<WebCore::BitmapImage> contentImageWithHighlight;
-    RefPtr<WebCore::BitmapImage> contentImageWithoutSelection;
-    RefPtr<WebCore::BitmapImage> contentImage;
+    RefPtr<WebCore::NativeImage> contentImageWithHighlight;
+    RefPtr<WebCore::NativeImage> contentImageWithoutSelection;
+    RefPtr<WebCore::NativeImage> contentImage;
     WebCore::Color estimatedBackgroundColor;
     WebCore::TextIndicatorPresentationTransition presentationTransition;
     OptionSet<WebCore::TextIndicatorOption> options;
@@ -2597,7 +2610,6 @@ header: <WebCore/FEComponentTransfer.h>
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEImage {
     WebCore::SourceImage sourceImage();
     WebCore::FloatRect sourceImageRect();
-    WebCore::SVGPreserveAspectRatioValue preserveAspectRatio();
 };
 
 [RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::FEMerge {
@@ -2673,11 +2685,6 @@ header: <WebCore/SVGFilterExpression.h>
     unsigned index;
     unsigned level;
     std::optional<WebCore::FilterEffectGeometry> geometry;
-};
-
-[AdditionalEncoder=StreamConnectionEncoder] class WebCore::SVGPreserveAspectRatioValue {
-    WebCore::SVGPreserveAspectRatioValue::SVGPreserveAspectRatioType m_align;
-    WebCore::SVGPreserveAspectRatioValue::SVGMeetOrSliceType m_meetOrSlice;
 };
 
 header: <WebCore/ModalContainerTypes.h>
@@ -2835,7 +2842,14 @@ struct WebCore::CrossOriginEmbedderPolicy {
 };
 
 header: <WebCore/DocumentIsolationPolicy.h>
-enum class WebCore::DocumentIsolationPolicy : bool
+enum class WebCore::DocumentIsolationPolicyValue : bool
+
+struct WebCore::DocumentIsolationPolicy {
+    WebCore::DocumentIsolationPolicyValue value;
+    WebCore::DocumentIsolationPolicyValue reportOnlyValue;
+    String reportingEndpoint;
+    String reportOnlyReportingEndpoint;
+};
 
 struct WebCore::SameSiteInfo {
     bool isSameSite;
@@ -3529,7 +3543,7 @@ header: <WebCore/ImageTypes.h>
 };
 #endif
 
-[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImagePaintingOptions {
+[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageDrawingOptions {
     WebCore::CompositeOperator compositeOperator();
     WebCore::BlendMode blendMode();
     WebCore::DecodingMode decodingMode();
@@ -5828,13 +5842,9 @@ class WebCore::ContentSecurityPolicyResponseHeaders {
     int httpStatusCode();
 };
 
-class WebCore::DragImage {
-    RefPtr<WebCore::TextIndicator> textIndicator();
-    std::optional<WebCore::Path> visiblePath();
-};
-
 struct WebCore::DragItem {
-    WebCore::DragImage image;
+    RefPtr<WebCore::TextIndicator> textIndicator;
+    std::optional<WebCore::Path> visiblePath;
     WebCore::FloatPoint imageAnchorPoint;
     std::optional<WebCore::DragSourceAction> sourceAction;
     std::optional<WebCore::FrameIdentifier> rootFrameID;
@@ -5851,6 +5861,7 @@ struct WebCore::DragItem {
     Markable<WebCore::PlatformLayerIdentifier> modelLayerID;
 #endif
     [NotSerialized] WebCore::PasteboardWriterData data;
+    [NotSerialized] WebCore::DragImage image;
 };
 
 #if PLATFORM(COCOA)
@@ -6146,6 +6157,8 @@ header: <WebCore/OffscreenCanvas.h>
     WebCore::IntSize size();
     bool originClean();
     std::optional<WebCore::RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier();
+    String inheritedLanguage();
+    WebCore::TextDirection inheritedDirection();
 };
 #endif
 
@@ -6291,6 +6304,11 @@ header: <WebCore/Image.h>
 
 header: <WebCore/BitmapImage.h>
 [RefCounted] class WebCore::BitmapImage {
+    RefPtr<WebCore::ShareableBitmap> toShareableBitmap();
+};
+
+header: <WebCore/NativeImage.h>
+[RefCounted] class WebCore::NativeImage {
     RefPtr<WebCore::ShareableBitmap> toShareableBitmap();
 };
 
@@ -6842,26 +6860,6 @@ using ProcessID = pid_t;
 using WebCore::IntDegrees = int32_t;
 using WebCore::PageOverlay::PageOverlayID = uint64_t
 
-[Nested] enum class WebCore::SVGPreserveAspectRatioValue::SVGPreserveAspectRatioType : uint8_t {
-    SVG_PRESERVEASPECTRATIO_UNKNOWN,
-    SVG_PRESERVEASPECTRATIO_NONE,
-    SVG_PRESERVEASPECTRATIO_XMINYMIN,
-    SVG_PRESERVEASPECTRATIO_XMIDYMIN,
-    SVG_PRESERVEASPECTRATIO_XMAXYMIN,
-    SVG_PRESERVEASPECTRATIO_XMINYMID,
-    SVG_PRESERVEASPECTRATIO_XMIDYMID,
-    SVG_PRESERVEASPECTRATIO_XMAXYMID,
-    SVG_PRESERVEASPECTRATIO_XMINYMAX,
-    SVG_PRESERVEASPECTRATIO_XMIDYMAX,
-    SVG_PRESERVEASPECTRATIO_XMAXYMAX
-}
-
-[Nested] enum class WebCore::SVGPreserveAspectRatioValue::SVGMeetOrSliceType : uint8_t {
-    SVG_MEETORSLICE_UNKNOWN,
-    SVG_MEETORSLICE_MEET,
-    SVG_MEETORSLICE_SLICE
-}
-
 [WebKitPlatform] enum class WebCore::NotificationDirection : uint8_t {
     Auto,
     Ltr,
@@ -7387,6 +7385,7 @@ header: <WebCore/AXObjectTypes.h>
     bool isAXHidden;
     bool isInert;
     bool isRenderHidden;
+    String hostingFrameName;
 };
 
 header: <WebCore/AXObjectTypes.h>
@@ -7706,20 +7705,21 @@ header: <WebCore/ViewportSegments.h>
     Vector<WebCore::FloatRect> segmentRects;
 };
 
-webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <WebCore/RuntimeQuirkTable.h>
+webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <WebCore/QuirkTable.h>
 
 [WebKitPlatform] enum class WebCore::URLEnvironment : uint8_t {
     SmallScreen,
     TubularApp,
     LensApp,
     SafariWebApp,
+    HomeView,
 };
 
 [CustomHeader, WebKitPlatform] class WebCore::QuirkMatchPattern {
     [Validator='WebCore::QuirkMatchPattern::parse(*string)'] String string()
 };
 
-[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirkBehavior {
+[CustomHeader, WebKitPlatform] struct WebCore::QuirkBehavior {
     [Validator='*id != WebCore::QuirkBehaviorID::NumberOfIDs'] WebCore::QuirkBehaviorID id;
     String script;
     String userAgent;
@@ -7730,16 +7730,16 @@ webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <W
     Vector<WebCore::QuirkMatchPattern> secondaryURL;
 };
 
-[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirk {
+[CustomHeader, WebKitPlatform] struct WebCore::Quirk {
     Vector<WebCore::QuirkMatchPattern> matches;
     Vector<WebCore::QuirkMatchPattern> embeddedMatches;
     Vector<WebCore::QuirkMatchPattern> excludeMatches;
     String queryContains;
     String fragmentContains;
     std::optional<WebCore::URLEnvironment> environment;
-    Vector<WebCore::RuntimeQuirkBehavior> behaviors;
+    Vector<WebCore::QuirkBehavior> behaviors;
 };
 
-[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirkTable {
-    Vector<WebCore::RuntimeQuirk> quirks;
+[CustomHeader, WebKitPlatform] struct WebCore::QuirkTable {
+    Vector<WebCore::Quirk> quirks;
 };

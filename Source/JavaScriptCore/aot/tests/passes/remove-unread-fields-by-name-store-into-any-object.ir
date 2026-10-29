@@ -1,0 +1,48 @@
+# A field that nothing reads stays while a store or a definition by name under its key takes an object of any layout: on an object without the field it would add the key as an extra property
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="StoredThroughAnyValue" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="DefinedThroughAnyObject" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="BesideStoreIntoOtherLayout" fields=[{key="mark" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="OtherLayout" fields=[{key="mark" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="BesideStoreIntoListedReceivers" fields=[{key="kind" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="ListedReceiver" fields=[{key="kind" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="StoredThroughAnyValue" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L1 name="DefinedThroughAnyObject" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 name="BesideStoreIntoOtherLayout" fields=[{key="mark"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L4 name="BesideStoreIntoListedReceivers" fields=[{key="kind"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+
+function f0 name="storedThroughAnyValue" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v0 key="id" mode=Strict
+    Return v2
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v1, v0 key="id"
+}
+
+function f1 name="definedThroughAnyObject" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    PropDefine v1, v0 key="tag"
+    Return v2
+# CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+# CHECK-NEXT: PropDefine v1, v0 key="tag"
+}
+
+function f2 name="besideStoreIntoOtherLayout" parameters=[{type=number}, {type=L3}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    PropSet v1, v0 key="mark" mode=Strict
+    Return v2
+# CHECK: = NewObject -, v0 layout=L2 fields=[1]
+# CHECK-NEXT: PropSet v1, v0 key="mark"
+}
+
+function f3 name="besideStoreIntoListedReceivers" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
+    PropSet v1, v0 key="kind" mode=Strict receivers=[L5]
+    Return v2
+# CHECK: = NewObject -, v0 layout=L4 fields=[1]
+# CHECK-NEXT: PropSet v1, v0 key="kind"
+}

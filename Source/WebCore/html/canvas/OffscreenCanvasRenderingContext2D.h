@@ -44,7 +44,6 @@ public:
     OffscreenCanvas& canvas() const { return downcast<OffscreenCanvas>(canvasBase()); }
 
     void setFont(const String&);
-    CanvasDirection LEGACY_NODELETE direction() const;
     void fillText(const String& text, double x, double y, std::optional<double> maxWidth = std::nullopt);
     void strokeText(const String& text, double x, double y, std::optional<double> maxWidth = std::nullopt);
     Ref<TextMetrics> measureText(const String& text);
@@ -54,6 +53,8 @@ private:
     void drawText(const String& text, double x, double y, bool fill, std::optional<double> maxWidth = std::nullopt);
     RefPtr<ImageBuffer> transferToImageBuffer() final;
     const FontProxy* fontProxy() final;
+    AtomString inheritedLanguage() const final;
+    TextDirection toTextDirection(Direction) const;
 };
 
 } // namespace WebCore

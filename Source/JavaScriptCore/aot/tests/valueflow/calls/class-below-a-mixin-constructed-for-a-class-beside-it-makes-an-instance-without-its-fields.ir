@@ -1,0 +1,57 @@
+# function Root() {}  const mix = base => class Mixed extends base {}  class Left extends Root { count = 0 }  class Right extends mix(Root) {}  Reflect.construct(Right, [], Left).count = 1
+# What stands above Mixed is an expression. The class objects found above it end at Root, which allocates for Left as well: the constructor of Left, which makes `count`, has not run. The store makes the field.
+# RUN: valueflow-apply
+# CHECK-NOT: name="Left" {{*}} initialization=SetAtCreation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Root" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Mixed" constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Left" base=L0 constructor=f3 fields=[{key="count" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L3 kind=Instance name="Right" base=L1 constructor=f4 supertypes=[L1] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f5
+    v2 = Call v1, -, v0
+    v3 = ResolveHeritage v0
+    v4 = NewClosure function=f3
+    v5 = NewClass v4, v0, v3 layout=L2
+    v6 = FinishClass v5 layout=L2
+    v7 = ResolveHeritage v2
+    v8 = NewClosure function=f4
+    v9 = NewClass v8, v2, v7 layout=L3
+    v10 = FinishClass v9 layout=L3
+    v11 = Construct v10, v6
+    v12 = Integer integer=1
+    PropSet v11, v12 key="count"
+    v14 = Construct v6
+    Return v12
+}
+function f1 name="Root" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Mixed" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="Left" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Integer integer=0
+    PropDefine v4, v5 key="count"
+    Return v4
+}
+function f4 name="Right" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L3
+    Return v4
+}
+function f5 name="mix" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    Return v4
+}

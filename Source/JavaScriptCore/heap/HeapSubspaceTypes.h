@@ -106,7 +106,6 @@
 #include "NativeExecutable.h"
 #include "ProgramExecutable.h"
 #include "PropertyTable.h"
-#include "ProxyRevoke.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ShadowRealmObject.h"
@@ -128,6 +127,12 @@
 #include "WebAssemblyFunction.h"
 #include "WebAssemblyModuleRecord.h"
 #include "WebAssemblyWrapperFunction.h"
+
+#if ENABLE(AOT)
+#include "AOTCompiledStructure.h"
+#include "AOTModuleRecord.h"
+#include "AOTStringBuilderStorage.h"
+#endif
 
 #if JSC_OBJC_API_ENABLED
 #include "ObjCCallbackFunction.h"

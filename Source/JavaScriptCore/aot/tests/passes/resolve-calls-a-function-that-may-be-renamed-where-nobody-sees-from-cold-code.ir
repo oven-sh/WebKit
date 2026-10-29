@@ -1,0 +1,20 @@
+# The test and the second arm cost bytes: cold code calls a function whose function objects may get another name where nobody sees by value.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ResolveCalls
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="renamedWhereNobodySees" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    Return v1
+}
+function f1 name="renamedInSight" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee] {
+    Return v0
+}
+
+function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: = Call v0, -, v1
+}

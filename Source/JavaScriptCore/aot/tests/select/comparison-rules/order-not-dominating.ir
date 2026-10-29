@@ -1,0 +1,43 @@
+# No order is shared where neither comparison dominates the other
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SharedStringOrderGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arms-of-diamond" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=boolean}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Less v0, v1
+    Jump -> next b3(v3)
+  b2():
+    v4 = Greater v0, v1
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+# CHECK-NOT: StringOrder
+# CHECK: boolean = Less v0, v1
+# CHECK-NOT: StringOrder
+# CHECK: boolean = Greater v0, v1
+# CHECK-NOT: StringOrder
+}
+
+function f1 name="one-after-the-other-under-handler" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string) handler=b3():
+    v2 = Less v0, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Greater v0, v1
+    Jump -> next b2()
+  b2():
+    v4 = StrictEq v2, v3
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK-NEXT: b0(v0: string, v1: string) handler=b3():
+# CHECK-NEXT: [[order]]: int[-1, 1] = StringOrder v0, v1
+# CHECK: boolean = Less [[order]],
+# CHECK: b1() handler=b3():
+# CHECK-NOT: StringOrder
+# CHECK: boolean = Greater [[order]],
+}

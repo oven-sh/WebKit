@@ -1,0 +1,27 @@
+# Each of two ways tests that position 0 lies inside the view, and each block has a constant of its own for the 0. The two guards meet in one parameter, and the store behind relies on it.
+# One number written twice is one position: the parameter proves what both tests prove.
+# FORM: Prepared
+# RUN: verify
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoWays" parameters=[{type=Uint8Array}, {type=boolean}, {type=int[0, 255]}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v3 = Integer integer=0
+    v4 = IsInsideView v0, v3 typedArrayType=2 [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b6()
+  b2(v5):
+    Jump -> next b5(v5)
+  b3():
+    v6 = Integer integer=0
+    v7 = IsInsideView v0, v6 typedArrayType=2 [keyIsIntegral]
+    Branch v7 -> taken b4(| 0), notTaken b6()
+  b4(v8):
+    Jump -> next b5(v8)
+  b5(v9: guard):
+    v10 = Integer integer=0
+    PutTypedArrayElement v0, v10, v2, v9 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return
+  b6():
+    Return
+}

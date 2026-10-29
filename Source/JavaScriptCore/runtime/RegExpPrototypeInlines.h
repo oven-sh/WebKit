@@ -22,6 +22,7 @@
 
 #include "CommonIdentifiers.h"
 #include "JSGlobalObject.h"
+#include "JSObjectInlines.h"
 #include "RegExpObject.h"
 #include "RegExpPrototype.h"
 #include "StructureCreateInlines.h"
@@ -42,7 +43,7 @@ ALWAYS_INLINE bool regExpExecWatchpointIsValid(VM& vm, JSGlobalObject* globalObj
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->exec) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->exec);
 }
 
 inline Structure* RegExpPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

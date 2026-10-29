@@ -87,16 +87,14 @@ ImageFrameAnimator* BitmapImageSource::frameAnimator() const
     if (!isAnimated())
         return nullptr;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST lazyInitialize(m_frameAnimator, makeUniqueWithoutRefCountedCheck<ImageFrameAnimator>(const_cast<BitmapImageSource&>(*this)));
+    lazyInitialize(m_frameAnimator, makeUniqueWithoutRefCountedCheck<ImageFrameAnimator>(const_cast<BitmapImageSource&>(*this)));
     return m_frameAnimator.get();
 }
 
 ImageFrameWorkQueue& BitmapImageSource::workQueue() const
 {
     if (!m_workQueue) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST m_workQueue = ImageFrameWorkQueue::create(const_cast<BitmapImageSource&>(*this));
+        m_workQueue = ImageFrameWorkQueue::create(const_cast<BitmapImageSource&>(*this));
     }
     return *m_workQueue;
 }
@@ -338,7 +336,7 @@ bool BitmapImageSource::hasEverAnimated() const
     return m_frameAnimator && m_frameAnimator->hasEverAnimated();
 }
 
-DecodingDestination BitmapImageSource::preferredDecodingDestination(GraphicsContext& context, ImagePaintingOptions options) const
+DecodingDestination BitmapImageSource::preferredDecodingDestination(GraphicsContext& context, ImageDrawingOptions options) const
 {
     if (options.drawsHDRContent() == DrawsHDRContent::No || options.dynamicRangeLimit() == PlatformDynamicRangeLimit::standard() || !hasHDRGainMap())
         return DecodingDestination::Base;
@@ -519,7 +517,7 @@ void BitmapImageSource::cacheNativeImageAtIndex(unsigned index, SubsamplingLevel
     decodedSizeIncreased(destination.sizeInBytes());
 }
 
-void BitmapImageSource::drawNativeImage(GraphicsContext& context, NativeImage& nativeImage, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options)
+void BitmapImageSource::drawNativeImage(GraphicsContext& context, NativeImage& nativeImage, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions options)
 {
     Ref protectedNativeImage { nativeImage };
     auto sizeBeforeDrawing = protectedNativeImage->sizeInBytes();
@@ -692,6 +690,25 @@ RefPtr<NativeImage> BitmapImageSource::nativeImageAtIndex(unsigned index)
     return RefPtr { nativeImage->ptr() };
 }
 
+RefPtr<NativeImage> BitmapImageSource::primaryNativeImageForUnpremultipliedPixels()
+{
+    if (!m_decoder)
+        return nullptr;
+
+    auto index = primaryFrameIndex();
+    if (index >= m_frames.size())
+        return nullptr;
+
+    if (isPendingDecodingAtIndex(index, SubsamplingLevel::Default, DecodingMode::Asynchronous))
+        return nullptr;
+
+    auto result = protect(m_decoder)->createNativeImageAtIndex(index, SubsamplingLevel::Default, { DecodingMode::Synchronous, DecodingDestination::Base });
+    if (!result)
+        return nullptr;
+
+    return RefPtr { std::get<Ref<NativeImage>>(*result).ptr() };
+}
+
 RefPtr<NativeImage> BitmapImageSource::preTransformedNativeImageAtIndex(unsigned index, ImageOrientation orientation)
 {
     RefPtr nativeImage = nativeImageAtIndex(index);
@@ -720,20 +737,17 @@ RefPtr<NativeImage> BitmapImageSource::preTransformedNativeImageAtIndex(unsigned
 
 IntSize BitmapImageSource::frameSizeAtIndex(unsigned index, SubsamplingLevel subsamplingLevel) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index, subsamplingLevel).size();
+    return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index, subsamplingLevel).size();
 }
 
 Seconds BitmapImageSource::frameDurationAtIndex(unsigned index) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).duration();
+    return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).duration();
 }
 
 ImageOrientation BitmapImageSource::frameOrientationAtIndex(unsigned index) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).orientation();
+    return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).orientation();
 }
 
 void BitmapImageSource::setHasHDRContentForTesting()
@@ -749,8 +763,7 @@ void BitmapImageSource::setHasHDRContentForTesting()
 
 DecodingStatus BitmapImageSource::frameDecodingStatusAtIndex(unsigned index) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).decodingStatus();
+    return const_cast<BitmapImageSource&>(*this).frameAtIndexCacheIfNeeded(index).decodingStatus();
 }
 
 RefPtr<ImageObserver> BitmapImageSource::imageObserver() const

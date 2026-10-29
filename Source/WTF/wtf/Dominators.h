@@ -62,17 +62,12 @@ public:
         if (m_graph.numNodes() <= maxNodesForSemiNCADominance) [[likely]] {
             SemiNCA semiNCA(m_graph);
             semiNCA.compute();
-
-            for (unsigned blockIndex = m_graph.numNodes(); blockIndex--;) {
-                typename Graph::Node block = m_graph.node(blockIndex);
-                if (!block)
-                    continue;
-
-                typename Graph::Node idomBlock = semiNCA.immediateDominator(block);
-                m_data[block].idomParent = idomBlock;
-                if (idomBlock)
-                    m_data[idomBlock].idomKids.append(block);
-            }
+            semiNCA.forEachNumberedNode([&](typename Graph::Node block, typename Graph::Node idomBlock, unsigned preNumber, unsigned postNumber) {
+                BlockData& data = m_data[block];
+                data.idomParent = idomBlock;
+                data.preNumber = preNumber;
+                data.postNumber = postNumber;
+            });
         } else {
             LengauerTarjan lengauerTarjan(m_graph);
             lengauerTarjan.compute();
@@ -84,33 +79,32 @@ public:
 
                 typename Graph::Node idomBlock = lengauerTarjan.immediateDominator(block);
                 m_data[block].idomParent = idomBlock;
-                if (idomBlock)
-                    m_data[idomBlock].idomKids.append(block);
             }
-        }
+            ensureKids();
 
-        // From here we want to build a spanning tree with both upward and downward links and we want
-        // to do a search over this tree to compute pre and post numbers that can be used for dominance
-        // tests.
-    
-        unsigned nextPreNumber = 0;
-        unsigned nextPostNumber = 0;
-    
-        // Plain stack-based worklist because we are guaranteed to see each block exactly once anyway.
-        Vector<GraphNodeWithOrder<typename Graph::Node>> worklist;
-        worklist.append(GraphNodeWithOrder<typename Graph::Node>(m_graph.root(), GraphVisitOrder::Pre));
-        while (!worklist.isEmpty()) {
-            GraphNodeWithOrder<typename Graph::Node> item = worklist.takeLast();
-            switch (item.order) {
-            case GraphVisitOrder::Pre:
-                m_data[item.node].preNumber = nextPreNumber++;
-                worklist.append(GraphNodeWithOrder<typename Graph::Node>(item.node, GraphVisitOrder::Post));
-                for (typename Graph::Node kid : m_data[item.node].idomKids)
-                    worklist.append(GraphNodeWithOrder<typename Graph::Node>(kid, GraphVisitOrder::Pre));
-                break;
-            case GraphVisitOrder::Post:
-                m_data[item.node].postNumber = nextPostNumber++;
-                break;
+            // From here we want to build a spanning tree with both upward and downward links and we want
+            // to do a search over this tree to compute pre and post numbers that can be used for dominance
+            // tests.
+
+            unsigned nextPreNumber = 0;
+            unsigned nextPostNumber = 0;
+
+            // Plain stack-based worklist because we are guaranteed to see each block exactly once anyway.
+            Vector<GraphNodeWithOrder<typename Graph::Node>> worklist;
+            worklist.append(GraphNodeWithOrder<typename Graph::Node>(m_graph.root(), GraphVisitOrder::Pre));
+            while (!worklist.isEmpty()) {
+                GraphNodeWithOrder<typename Graph::Node> item = worklist.takeLast();
+                switch (item.order) {
+                case GraphVisitOrder::Pre:
+                    m_data[item.node].preNumber = nextPreNumber++;
+                    worklist.append(GraphNodeWithOrder<typename Graph::Node>(item.node, GraphVisitOrder::Post));
+                    for (typename Graph::Node kid : m_data[item.node].idomKids)
+                        worklist.append(GraphNodeWithOrder<typename Graph::Node>(kid, GraphVisitOrder::Pre));
+                    break;
+                case GraphVisitOrder::Post:
+                    m_data[item.node].postNumber = nextPostNumber++;
+                    break;
+                }
             }
         }
     
@@ -179,6 +173,7 @@ public:
     template<typename Functor>
     void forAllBlocksStrictlyDominatedBy(typename Graph::Node from, NOESCAPE const Functor& functor) const
     {
+        ensureKids();
         Vector<typename Graph::Node, 16> worklist;
         worklist.appendVector(m_data[from].idomKids);
         while (!worklist.isEmpty()) {
@@ -191,6 +186,7 @@ public:
     template<typename Functor>
     void forAllBlocksDominatedBy(typename Graph::Node from, NOESCAPE const Functor& functor) const
     {
+        ensureKids();
         Vector<typename Graph::Node, 16> worklist;
         worklist.append(from);
         while (!worklist.isEmpty()) {
@@ -222,9 +218,10 @@ public:
             }
         };
 
-        if constexpr (childOrder == DominatorTreeChildOrder::Any)
+        if constexpr (childOrder == DominatorTreeChildOrder::Any) {
+            ensureKids();
             walk([&](Node block) -> const auto& { return m_data[block].idomKids; });
-        else {
+        } else {
             Vector<Node> postOrder;
             postOrder.reserveInitialCapacity(m_graph.numNodes());
             appendNodesInOrder(m_graph, GraphOrder::PostOrder, postOrder);
@@ -348,6 +345,7 @@ public:
     void dump(PrintStream& out) const
     {
         for (unsigned blockIndex = 0; blockIndex < m_data.size(); ++blockIndex) {
+            ensureKids();
             if (m_data[blockIndex].preNumber == UINT_MAX)
                 continue;
             
@@ -393,6 +391,8 @@ private:
             // All per-DFS-number state lives in one array for locality. noDFSNumber is 0, so a
             // zero-initialized BlockData is the correct starting state for every field.
             m_data.fill(BlockData { }, numNodes + 1);
+            uint16_t* nodeToDFS = m_nodeToDFS.mutableSpan().data();
+            BlockData* blockData = m_data.mutableSpan().data();
 
             // Step 1: assign DFS numbers and record each node's parent in the DFS spanning tree.
             uint16_t count = 0;
@@ -406,22 +406,23 @@ private:
                 worklist.append({ static_cast<uint16_t>(m_graph.index(m_graph.root())), noDFSNumber });
                 while (!worklist.isEmpty()) {
                     auto item = worklist.takeLast();
-                    if (m_nodeToDFS[item.nodeIndex] != noDFSNumber)
+                    if (nodeToDFS[item.nodeIndex] != noDFSNumber)
                         continue;
                     uint16_t dfs = ++nextDFSNumber;
-                    m_nodeToDFS[item.nodeIndex] = dfs;
-                    BlockData& data = m_data[dfs];
+                    nodeToDFS[item.nodeIndex] = dfs;
+                    BlockData& data = blockData[dfs];
                     data.nodeIndex = item.nodeIndex;
                     data.parent = item.parentDFS;
                     data.semi = dfs;
                     data.label = dfs;
                     for (auto successor : m_graph.successors(m_graph.node(item.nodeIndex))) {
                         uint16_t successorIndex = m_graph.index(successor);
-                        if (m_nodeToDFS[successorIndex] == noDFSNumber)
+                        if (nodeToDFS[successorIndex] == noDFSNumber)
                             worklist.append({ successorIndex, dfs });
                     }
                 }
                 count = nextDFSNumber;
+                m_count = count;
             }
 
             // Step 2: compute semidominators in reverse DFS order, then LINK each node to its parent.
@@ -434,33 +435,33 @@ private:
                 // semidominator. We compress the path iteratively to avoid deep recursion.
                 Vector<uint16_t, 64> compressStack;
                 auto eval = [&](uint16_t v) -> uint16_t {
-                    if (m_data[v].ancestor == noDFSNumber)
-                        return m_data[v].label;
+                    if (blockData[v].ancestor == noDFSNumber)
+                        return blockData[v].label;
 
                     compressStack.shrink(0);
                     uint16_t u = v;
-                    while (m_data[m_data[u].ancestor].ancestor != noDFSNumber) {
+                    while (blockData[blockData[u].ancestor].ancestor != noDFSNumber) {
                         compressStack.append(u);
-                        u = m_data[u].ancestor;
+                        u = blockData[u].ancestor;
                     }
                     for (unsigned i = compressStack.size(); i--;) {
-                        BlockData& data = m_data[compressStack[i]];
+                        BlockData& data = blockData[compressStack[i]];
                         uint16_t ancestor = data.ancestor;
-                        if (m_data[m_data[ancestor].label].semi < m_data[data.label].semi)
-                            data.label = m_data[ancestor].label;
-                        data.ancestor = m_data[ancestor].ancestor;
+                        if (blockData[blockData[ancestor].label].semi < blockData[data.label].semi)
+                            data.label = blockData[ancestor].label;
+                        data.ancestor = blockData[ancestor].ancestor;
                     }
-                    return m_data[v].label;
+                    return blockData[v].label;
                 };
 
                 for (uint16_t w = count; w >= 2; --w) {
-                    BlockData& wData = m_data[w];
+                    BlockData& wData = blockData[w];
                     for (auto predecessor : m_graph.predecessors(m_graph.node(wData.nodeIndex))) {
-                        uint16_t v = m_nodeToDFS[m_graph.index(predecessor)];
+                        uint16_t v = nodeToDFS[m_graph.index(predecessor)];
                         if (v == noDFSNumber)
                             continue; // Predecessor not reachable from the root.
                         uint16_t u = eval(v);
-                        wData.semi = std::min(wData.semi, m_data[u].semi);
+                        wData.semi = std::min(wData.semi, blockData[u].semi);
                     }
                     wData.ancestor = wData.parent;
                 }
@@ -473,12 +474,41 @@ private:
             // We do not need to walk up in semidominator side. This is because semidominator is guaranteed
             // to be on the path between idom(w) -> ... -> parent(w).
             if (count >= 1)
-                m_data[1].idom = 1;
+                blockData[1].idom = 1;
             for (uint16_t w = 2; w <= count; ++w) {
-                uint16_t idom = m_data[w].parent;
-                while (idom > m_data[w].semi)
-                    idom = m_data[idom].idom;
-                m_data[w].idom = idom;
+                uint16_t idom = blockData[w].parent;
+                while (idom > blockData[w].semi)
+                    idom = blockData[idom].idom;
+                blockData[w].idom = idom;
+            }
+        }
+
+        void forEachNumberedNode(NOESCAPE const Invocable<void(typename Graph::Node, typename Graph::Node, unsigned, unsigned)> auto& functor)
+        {
+            if (!m_count)
+                return;
+            struct Numbers {
+                uint16_t size { 1 };
+                uint16_t depth { 0 };
+                uint16_t pre { 0 };
+                uint16_t next { 1 };
+            };
+            Vector<Numbers, 64> numbers;
+            numbers.fill(Numbers { }, m_count + 1);
+            Numbers* numbersOf = numbers.mutableSpan().data();
+            BlockData* blockData = m_data.mutableSpan().data();
+            for (uint16_t w = m_count; w >= 2; --w)
+                numbersOf[blockData[w].idom].size += numbersOf[w].size;
+            functor(m_graph.node(blockData[1].nodeIndex), nullptr, 0, numbersOf[1].size - 1);
+            for (uint16_t w = 2; w <= m_count; ++w) {
+                uint16_t idom = blockData[w].idom;
+                Numbers& own = numbersOf[w];
+                Numbers& above = numbersOf[idom];
+                own.pre = above.next;
+                above.next += own.size;
+                own.next = own.pre + 1;
+                own.depth = above.depth + 1;
+                functor(m_graph.node(blockData[w].nodeIndex), m_graph.node(blockData[idom].nodeIndex), own.pre, own.pre + own.size - 1 - own.depth);
             }
         }
 
@@ -507,6 +537,7 @@ private:
         Graph& m_graph;
         Vector<uint16_t, 64> m_nodeToDFS;  // node index -> DFS number (noDFSNumber if unreachable)
         Vector<BlockData, 64> m_data;      // DFS number -> per-node Semi-NCA state
+        uint16_t m_count { 0 };
     };
 
     // This implements Lengauer and Tarjan's "A Fast Algorithm for Finding Dominators in a Flowgraph"
@@ -552,6 +583,23 @@ private:
         }
 
     private:
+        // A graph that makes a list for successors() says the two things that the numbering asks at each step without one.
+        unsigned numSuccessorsOf(typename Graph::Node block)
+        {
+            if constexpr (requires { m_graph.numSuccessors(block); })
+                return m_graph.numSuccessors(block);
+            else
+                return m_graph.successors(block).size();
+        }
+
+        typename Graph::Node successorAt(typename Graph::Node block, unsigned index)
+        {
+            if constexpr (requires { m_graph.successorAt(block, index); })
+                return m_graph.successorAt(block, index);
+            else
+                return m_graph.successors(block)[index];
+        }
+
         void computeDepthFirstPreNumbering()
         {
             // Use a block worklist that also tracks the index inside the successor list. This is
@@ -578,19 +626,20 @@ private:
                 // We initially push with successorIndex = 0 regardless of whether or not we have any
                 // successors. This is so that we can assign our prenumber. Subsequently we get pushed
                 // with higher successorIndex values, but only if they are in range.
-                ASSERT(!successorIndex || successorIndex < m_graph.successors(block).size());
+                unsigned numSuccessors = numSuccessorsOf(block);
+                ASSERT(!successorIndex || successorIndex < numSuccessors);
 
                 if (!successorIndex) {
                     m_data[block].semiNumber = m_blockByPreNumber.size();
                     m_blockByPreNumber.append(block);
                 }
             
-                if (successorIndex < m_graph.successors(block).size()) {
+                if (successorIndex < numSuccessors) {
                     unsigned nextSuccessorIndex = successorIndex + 1;
-                    if (nextSuccessorIndex < m_graph.successors(block).size())
+                    if (nextSuccessorIndex < numSuccessors)
                         worklist.forcePush(block, nextSuccessorIndex);
 
-                    typename Graph::Node successorBlock = m_graph.successors(block)[successorIndex];
+                    typename Graph::Node successorBlock = successorAt(block, successorIndex);
                     if (worklist.push(successorBlock, 0))
                         m_data[successorBlock].parent = block;
                 }
@@ -967,8 +1016,23 @@ private:
         unsigned postNumber;
     };
     
+    void ensureKids() const
+    {
+        if (m_hasKids)
+            return;
+        m_hasKids = true;
+        for (unsigned blockIndex = m_graph.numNodes(); blockIndex--;) {
+            typename Graph::Node block = m_graph.node(blockIndex);
+            if (!block)
+                continue;
+            if (typename Graph::Node idomBlock = m_data[block].idomParent)
+                m_data[idomBlock].idomKids.append(block);
+        }
+    }
+
     Graph& m_graph;
-    typename Graph::template Map<BlockData> m_data;
+    mutable typename Graph::template Map<BlockData> m_data;
+    mutable bool m_hasKids { false };
 };
 
 } // namespace WTF

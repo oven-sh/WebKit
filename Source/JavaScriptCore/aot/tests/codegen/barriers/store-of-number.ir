@@ -1,0 +1,17 @@
+# A store of a value that is never a cell gets no barrier, and none of the three counters counts it.
+# FORM: Selected
+# OPTIONS: disable=pass:RemoveRedundantBarriers
+# RUN: generate-code
+# STATISTIC: BarriersEmitted = 0
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 0
+# CHECK: f0: size=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}]
+function f0 name="storeOfNumber" results=[{type=undefined}] {
+    v0 = Integer integer=1
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+}

@@ -401,7 +401,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
 
     Ref element = *elementPtr;
 
-    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
+    if (auto* input = dynamicDowncast<HTMLInputElement>(element)) {
         if (input->isTextButton())
             return StyleAppearance::Button;
 
@@ -472,7 +472,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
     if (element->isInUserAgentShadowTree()) {
         auto& part = element->userAgentPart();
 
-        if (RefPtr button = dynamicDowncast<DataListButtonElement>(element)) {
+        if (auto* button = dynamicDowncast<DataListButtonElement>(element)) {
             ASSERT(part == UserAgentParts::webkitListButton());
             if (!button->canAdjustStyleForAppearance())
                 return StyleAppearance::None;
@@ -755,6 +755,16 @@ void RenderTheme::updateControlPartForRenderer(ControlPart& part, const RenderEl
 
 OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRendererInternal(const RenderElement& renderer) const
 {
+    auto useDarkAppearance = [](const RenderElement& renderer) {
+        if (renderer.useDarkAppearance())
+            return true;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        auto options = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
+        if (options.contains(StyleColorOptions::UseDarkAppearance))
+            return true;
+#endif
+        return false;
+    };
     OptionSet<ControlStyle::State> states;
     if (isHovered(renderer)) {
         states.add(ControlStyle::State::Hovered);
@@ -782,7 +792,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
         states.add(ControlStyle::State::Presenting);
     if (useFormSemanticContext())
         states.add(ControlStyle::State::FormSemanticContext);
-    if (renderer.useDarkAppearance())
+    if (useDarkAppearance(renderer))
         states.add(ControlStyle::State::DarkAppearance);
     if (renderer.writingMode().isInlineFlipped())
         states.add(ControlStyle::State::InlineFlippedWritingMode);
@@ -860,7 +870,7 @@ bool RenderTheme::paint(const RenderBox& box, ControlPart& part, const PaintInfo
 
     updateControlPartForRenderer(part, box);
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     auto zoomedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
     auto borderShape = BorderShape::shapeForBorderRect(box.usedStyle(), LayoutRect(zoomedRect));
     auto controlStyle = extractControlStyleForRenderer(box);
@@ -888,7 +898,7 @@ bool RenderTheme::paint(const RenderBox& box, const PaintInfo& paintInfo, const 
     if (!canPaint(paintInfo, protect(box.settings()), appearance)) [[unlikely]]
         return false;
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
 
     switch (appearance) {
@@ -1007,7 +1017,7 @@ void RenderTheme::paintDecorations(const RenderBox& box, const PaintInfo& paintI
     if (paintInfo.context().paintingDisabled())
         return;
 
-    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, protect(box.document())->deviceScaleFactor());
+    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, box.document().deviceScaleFactor());
 
     // Call the appropriate paint method based off the appearance value.
     switch (box.style().usedAppearance()) {
@@ -1243,7 +1253,7 @@ bool RenderTheme::isFocused(const RenderElement& renderer) const
 
     Ref document = delegate->document();
     RefPtr frame = document->frame();
-    return delegate == document->focusedElement() && frame && protect(frame->selection())->isFocusedAndActive();
+    return delegate == document->focusedElement() && frame && frame->selection().isFocusedAndActive();
 }
 
 bool RenderTheme::isPressed(const RenderElement& renderer) const
@@ -1254,7 +1264,7 @@ bool RenderTheme::isPressed(const RenderElement& renderer) const
 
 bool RenderTheme::isSpinUpButtonPartPressed(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->active() && spinButton->upDownState() == SpinButtonElement::Up;
     return false;
 }
@@ -1268,9 +1278,9 @@ bool RenderTheme::isReadOnlyControl(const RenderElement& renderer) const
 
 bool RenderTheme::isHovered(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->hovered() && spinButton->upDownState() != SpinButtonElement::Indeterminate;
-    if (RefPtr element = renderer.element())
+    if (auto* element = renderer.element())
         return element->hovered();
     return false;
 }
@@ -1662,14 +1672,14 @@ void RenderTheme::paintPlatformResizer(const RenderLayerModelObject& renderer, G
         context.translate(resizerCornerRect.x() + cornerResizerSize.width(), resizerCornerRect.y() + resizerCornerRect.height() - cornerResizerSize.height());
         context.scale(FloatSize(-1.0, 1.0));
         if (resizeCornerImage)
-            context.drawBitmapImage(*resizeCornerImage, FloatRect { FloatPoint { }, cornerResizerSize });
+            resizeCornerImage->draw(context, FloatRect { { }, cornerResizerSize });
         return;
     }
 
     if (!resizeCornerImage)
         return;
     FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), document->deviceScaleFactor());
-    context.drawBitmapImage(*resizeCornerImage, imageRect);
+    resizeCornerImage->draw(context, imageRect);
 }
 
 void RenderTheme::paintPlatformResizerFrame(const RenderLayerModelObject&, GraphicsContext& context, const LayoutRect& resizerAbsRect)
@@ -2195,7 +2205,7 @@ String RenderTheme::fileListNameForWidth(const FileList* fileList, const FontCas
 }
 
 #if USE(SYSTEM_PREVIEW)
-void RenderTheme::paintSystemPreviewBadge(Image&, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderTheme::paintSystemPreviewBadge(RefPtr<NativeImage>&&, const PaintInfo& paintInfo, const FloatRect& rect)
 {
     paintSystemPreviewBadge(paintInfo, rect);
 }

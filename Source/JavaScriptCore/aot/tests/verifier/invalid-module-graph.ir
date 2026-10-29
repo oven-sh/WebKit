@@ -1,0 +1,78 @@
+# a library requests nothing, and a module named by an export or a required name is reached over requests, directly or not; so is a file whose variable the code of another file names, over requests and what code loads
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 6
+
+variable g0 name="ofLast" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="ofItself" module=m13 declared={type=anything} initialization=Undefined
+variable g2 name="ofLibrary" module=m7 declared={type=anything} initialization=Undefined
+module m0 path="main" displayPath="main" requests=[{target=m1 completes=true}]
+module m1 path="middle" displayPath="middle" requests=[{target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="last" displayPath="last"
+module m3 path="external" displayPath="external" kind=External referrer=m1
+module m4 path="goodDirect" displayPath="goodDirect" requests=[{target=m2 completes=true}] exports=[{name="n" kind=Namespace module=m2}] requiredNames=[{module=m2 name="a"}]
+module m5 path="goodOverTwoRequests" displayPath="goodOverTwoRequests" requests=[{target=m0 completes=true}] exports=[{name="i" kind=Indirect module=m3 importName="x"}, {name="n" kind=Namespace module=m2}] requiredNames=[{module=m2 name="a"}]
+module m6 path="goodItself" displayPath="goodItself" exports=[{name="n" kind=Namespace module=m6}]
+module m7 path="goodLibrary" displayPath="goodLibrary" flags=[IsLibrary]
+module m8 path="badLibraryWithRequest" displayPath="badLibraryWithRequest" flags=[IsLibrary] requests=[{target=m2 completes=true}]
+module m9 path="badNamespaceNotReached" displayPath="badNamespaceNotReached" requests=[{target=m2 completes=true}] exports=[{name="n" kind=Namespace module=m0}]
+module m10 path="badIndirectExportNotReached" displayPath="badIndirectExportNotReached" requests=[{target=m2 completes=true}] exports=[{name="i" kind=Indirect module=m3 importName="x"}]
+module m11 path="badRequiredNameNotReached" displayPath="badRequiredNameNotReached" requiredNames=[{module=m2 name="a"}]
+module m12 path="goodReadOverTwoRequests" displayPath="goodReadOverTwoRequests" requests=[{target=m0 completes=true}]
+module m13 path="goodReadOfItself" displayPath="goodReadOfItself"
+module m14 path="goodReadOfLibrary" displayPath="goodReadOfLibrary"
+module m15 path="badReadNotReached" displayPath="badReadNotReached" requests=[{target=m13 completes=true}]
+module m16 path="badStoreNotReached" displayPath="badStoreNotReached"
+module m17 path="goodReadBehindWhatCodeLoads" displayPath="goodReadBehindWhatCodeLoads"
+module m18 path="goodReadOverModuleBeside" displayPath="goodReadOverModuleBeside"
+module m19 path="#19" displayPath="goodReadOverModuleBeside" body=f6 requests=[{target=m2 completes=true}]
+module m20 path="goodReadInModuleBeside" displayPath="goodReadInModuleBeside" requests=[{target=m2 completes=true}]
+module m21 path="#21" displayPath="goodReadInModuleBeside" body=f8
+function f0 name="goodReadOverTwoRequests" module=m12 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f1 name="goodReadOfItself" module=m13 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}
+function f2 name="goodReadOfLibrary" module=m14 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    Return v0
+}
+function f3 name="badReadNotReached" module=m15 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f4 name="badStoreNotReached" module=m16 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+function f5 name="goodReadBehindWhatCodeLoads" module=m17 results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m1 referrer=m17
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+function f6 name="beside" module=m18 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="goodReadOverModuleBeside" module=m18 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f8 name="goodReadInModuleBeside" module=m20 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+entry module=m0

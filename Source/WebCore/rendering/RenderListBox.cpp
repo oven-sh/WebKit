@@ -371,15 +371,13 @@ std::optional<LayoutRect> RenderListBox::localBoundsOfOptGroup(const HTMLOptGrou
     int rowIndex = 0;
 
     for (auto& item : protect(selectElement())->listItems()) {
-        if (is<HTMLOptGroupElement>(*item)) {
-            if (item == &optGroupElement)
-                boundingBox = itemBoundingBoxRect({ }, rowIndex);
-        } else if (is<HTMLOptionElement>(*item)) {
-            if (item->parentNode() != &optGroupElement)
+        if (boundingBox) {
+            if (!item->isDescendantOf(optGroupElement))
                 break;
 
             boundingBox->setHeight(boundingBox->height() + itemBoundingBoxRect({ }, rowIndex).height());
-        }
+        } else if (item == &optGroupElement)
+            boundingBox = itemBoundingBoxRect({ }, rowIndex);
         ++rowIndex;
     }
 
@@ -1179,7 +1177,7 @@ void RenderListBox::destroyScrollbar()
         return;
 
     if (!m_scrollbar->isCustomScrollbar())
-        ScrollableArea::willRemoveScrollbar(*protect(m_scrollbar), protect(m_scrollbar)->orientation());
+        ScrollableArea::willRemoveScrollbar(*protect(m_scrollbar), m_scrollbar->orientation());
     protect(m_scrollbar)->removeFromParent();
     m_scrollbar = nullptr;
 }

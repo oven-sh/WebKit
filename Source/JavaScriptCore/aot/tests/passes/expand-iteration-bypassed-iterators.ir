@@ -1,0 +1,240 @@
+# An iteration over entries(), keys() or values() of a collection walks the receiver, and nobody uses the iterator object
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 6
+# STATISTIC: IterationsExpandedGenerically = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="mapValues" parameters=[{type=Map<string, number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=MapPrototypeValues/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: [[iterator0]]: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
+# CHECK-NOT: [[iterator0]]
+# CHECK: = CollectionTable v0
+# CHECK-NOT: [[iterator0]]
+# CHECK: [[step0]]: undefined = MapNext v0,
+# CHECK: [[value0]]: {{*}} = ResultAt [[step0]] index=3
+# CHECK-NOT: [[iterator0]]
+# CHECK: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no0]], [[value0]],
+# CHECK-NOT: [[iterator0]]
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: NewArray
+}
+
+function f1 name="mapKeys" parameters=[{type=Map<string, number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=MapPrototypeKeys/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: [[iterator1]]: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0
+# CHECK-NOT: [[iterator1]]
+# CHECK: [[step1]]: undefined = MapNext v0,
+# CHECK: [[key1]]: {{*}} = ResultAt [[step1]] index=2
+# CHECK-NOT: [[iterator1]]
+# CHECK: [[no1]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no1]], [[key1]],
+# CHECK-NOT: [[iterator1]]
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: NewArray
+}
+
+function f2 name="setEntries" parameters=[{type=Set<number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=SetPrototypeEntries/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: [[iterator2]]: SetIterator = CallBuiltin v0 overload=SetPrototypeEntries/0
+# CHECK-NOT: [[iterator2]]
+# CHECK: [[step2]]: undefined = SetNext v0,
+# CHECK: [[element2]]: {{*}} = ResultAt [[step2]] index=2
+# CHECK-NOT: [[iterator2]]
+# CHECK: [[pair2]]: Array = NewArray [[element2]], [[element2]] contents=anything
+# CHECK-NEXT: Jump -> next {{*}}, [[pair2]],
+# CHECK-NOT: [[iterator2]]
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+}
+
+function f3 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeEntries/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: [[iterator3]]: ArrayIterator = CallBuiltin v0 overload=ArrayPrototypeEntries/0
+# CHECK-NOT: [[iterator3]]
+# CHECK: = PropGet v0 key="length"
+# CHECK-NOT: [[iterator3]]
+# CHECK: [[element3]]: {{*}} = ElemGet v0, [[index3]] [keyIsIntegral]
+# CHECK: [[pair3]]: Array = NewArray [[index3]], [[element3]] contents=anything
+# CHECK-NEXT: Jump -> next {{*}}, [[pair3]],
+# CHECK-NOT: [[iterator3]]
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+}
+
+function f4 name="throughCast" parameters=[{type=Set<number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=SetPrototypeValues/0
+    v2 = Upcast v1 castType=object
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b1()
+  b2():
+    Return v7
+# CHECK: [[cast4]]: SetIterator = Upcast v1 castType=object
+# CHECK-NOT: [[cast4]]
+# CHECK: = SetNext v0,
+# CHECK-NOT: [[cast4]]
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+}
+
+function f5 name="iteratorHasOtherUse" parameters=[{type=Map<string, number>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0 overload=MapPrototypeValues/0
+    v3 = Call v1, -, v2
+    v4 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b1()
+  b2():
+    Return v8
+# CHECK: = Call v1, -, v2
+# CHECK-NEXT: [[open5]]: undefined = CallDirect v2 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open5]] index=1
+# ABSENT-NOT: CollectionTable
+# ABSENT-NOT: MapNext
+}
+
+function f6 name="joinsAnotherValue" parameters=[{type=Map<string, number>}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0 overload=MapPrototypeValues/0
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4):
+    v5 = IteratorOpen v4
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b5(), notTaken b4()
+  b5():
+    Return v9
+# The cases of a join: expand-iteration-iterators-made-before-merges.ir.
+# CHECK: [[receiver6]]: Map<string, number> = Upcast v0 castType=Map<string, number>
+# CHECK: b3(v4: anything|unspecified, [[arm6]]: int[0, 1], [[map6]]: unspecified|Map<string, number>):
+# CHECK-NEXT: Switch [[arm6]] cases=[0]
+# CHECK: = MapNext [[mapInArm6]],
+# CHECK: [[mapInArm6]]: Map<string, number> = AssumeType [[map6]], [[isMap6]] provenType=Map<string, number>
+# CHECK: [[open6]]: undefined = CallDirect {{*}} function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open6]] index=1
+# ABSENT-NOT: b3(v3
+}
+
+function f7 name="receiverNotProven" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=MapPrototypeValues/0 builtinCallForm=AnyReceiver
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: v1: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: [[open7]]: undefined = CallDirect v1 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open7]] index=1
+# ABSENT-NOT: CollectionTable
+# ABSENT-NOT: MapNext
+}
+
+function f8 name="openInLoopAroundNoCall" parameters=[{type=Map<string, number>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0 overload=MapPrototypeValues/0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorOpen v2
+    v5 = IteratorResume v4
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Call v1, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b2():
+    Return v7
+# Each run of the loop goes on where the one iterator object stands, so only the first run starts at the first entry.
+# CHECK: LoopHint
+# CHECK-NEXT: [[open8]]: undefined = CallDirect v2 function=f9 [isNeverInlined]
+# CHECK: = ResultAt [[open8]] index=1
+# ABSENT-NOT: CollectionTable
+# ABSENT-NOT: MapNext
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

@@ -31,6 +31,7 @@
 #include "ArgumentCoders.h"
 #include "Attachment.h"
 #include "AuxiliaryProcessMessages.h"
+#include "DisplayListDataTester.h"
 #include "GPUConnectionToWebProcess.h"
 #include "GPUProcessConnectionParameters.h"
 #include "GPUProcessCreationParameters.h"
@@ -76,6 +77,7 @@
 #if PLATFORM(COCOA)
 #include "ArgumentCodersCocoa.h"
 #include <WebCore/CoreAudioCaptureUnit.h>
+#include <WebCore/IOSurface.h>
 #include <WebCore/UTIUtilities.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #endif
@@ -228,6 +230,11 @@ void GPUProcess::lowMemoryHandler(Critical critical, Synchronous synchronous)
         connection->lowMemoryHandler(critical, synchronous);
 
     WebCore::releaseGraphicsMemory(critical, synchronous);
+
+#if PLATFORM(COCOA)
+    if (critical == Critical::Yes)
+        WebCore::IOSurface::releaseCGIOSurfaceContextResources();
+#endif
 }
 
 void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters, CompletionHandler<void()>&& completionHandler)
@@ -1033,6 +1040,11 @@ WorkQueue& GPUProcess::libWebRTCCodecsQueue()
 void GPUProcess::webProcessConnectionCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
 {
     completionHandler(GPUConnectionToWebProcess::objectCountForTesting());
+}
+
+void GPUProcess::runDisplayListDataTestsForTesting(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
+{
+    completionHandler(testDisplayListData());
 }
 
 void GPUProcess::terminateWebProcess(WebCore::ProcessIdentifier identifier, IPC::MessageName invalidMessageName)

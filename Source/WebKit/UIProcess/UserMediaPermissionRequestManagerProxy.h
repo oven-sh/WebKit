@@ -114,6 +114,10 @@ public:
     void clearCachedState();
     void captureDevicesChanged();
 
+#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+    void showMediaCapturePermissionPrompt(MediaPermissionPromptCustomization&&, UserMediaPermissionRequestProxy::PromptResultHandler&&);
+#endif
+
     void captureStateChanged(WebCore::MediaProducerMediaStateFlags oldState, WebCore::MediaProducerMediaStateFlags newState);
     void syncWithWebCorePrefs() const;
 
@@ -129,6 +133,9 @@ public:
     bool hasPendingCapture() const { return m_hasPendingCapture; }
 
     void checkUserMediaPermissionForSpeechRecognition(WebCore::FrameIdentifier mainFrameIdentifier, FrameInfoData&&, const WebCore::SecurityOrigin&, const WebCore::SecurityOrigin&, const WebCore::CaptureDevice&, CompletionHandler<void(bool)>&&);
+
+    void askDelegateToDecide(UserMediaPermissionRequestProxy&);
+    void delegateDecisionEnded(UserMediaPermissionRequestProxy&);
 
     struct DeniedRequest {
         WebCore::FrameIdentifier mainFrameID;
@@ -195,6 +202,7 @@ private:
 
     void processNextUserMediaRequestIfNeeded();
     void decidePolicyForUserMediaPermissionRequest();
+    void askDelegateAboutNextWaitingRequest();
     void updateStoredRequests(UserMediaPermissionRequestProxy&);
 
     String ephemeralDeviceHashSaltForFrame(WebCore::FrameIdentifier);
@@ -203,6 +211,8 @@ private:
 
     RefPtr<UserMediaPermissionRequestProxy> m_currentUserMediaRequest;
     Deque<Ref<UserMediaPermissionRequestProxy>> m_pendingUserMediaRequests;
+    WeakPtr<UserMediaPermissionRequestProxy> m_requestAwaitingDelegateDecision;
+    Deque<Ref<UserMediaPermissionRequestProxy>> m_requestsWaitingForDelegate;
     HashSet<MediaDevicePermissionRequestIdentifier> m_pendingDeviceRequests;
 
     WeakPtr<WebPageProxy> m_page;

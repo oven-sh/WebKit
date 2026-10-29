@@ -1,0 +1,32 @@
+# var maybe; maybe = [element]; maybe.slice();  Array.prototype.slice.call({ a: other })
+# The variable holds undefined before the store, so the receiver of `slice` is the array or undefined. The array takes the overload for arrays. The overload for any object refuses undefined:
+# the built-in throws for it before it does anything else. So that overload is not applied, and nobody calls `element`.
+# An object that is no array does take it. What the built-in keeps of it goes into the new array and nowhere else, so nobody calls `other` either.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> ArrayPrototypeSlice
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# UNREACHED-NEXT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="maybe" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    PutModuleVariable v1 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Builtin builtin=ArrayPrototypeSlice
+    v5 = Call v4, v3
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = Call v4, v7
+    Return
+}
+function f1 name="element" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="other" kind=Arrow results=[{type=anything}] {
+    Return
+}

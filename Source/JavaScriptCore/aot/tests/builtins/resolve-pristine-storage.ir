@@ -1,0 +1,151 @@
+# An overload that demands pristine storage is taken on a proof by type, or on a proof that holds since the allocation: then the call carries a flag and no user code runs between proof and call
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenByType" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v3, v0, v1
+    v5 = Builtin builtin=ArrayPrototypeIndexOf
+    v6 = Call v5, v0, v2
+    Return v6
+# CHECK-NOT: needsPristineReceiver
+# CHECK: v4: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+# CHECK-NOT: needsPristineReceiver
+# CHECK: v6: int[-1, 4294967295] = CallBuiltin v0, v2 overload=ArrayPrototypeIndexOf/0
+# CHECK-NOT: needsPristineReceiver
+}
+
+function f1 name="joinSinceAllocation" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v1 contents=anything
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v3, v2, v0
+    Return v4
+# CHECK: v4: string = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+}
+
+function f2 name="indexOfSinceAllocation" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ArrayPrototypeIndexOf
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK: v3: int[-1, 4294967295] = CallBuiltin v1, v0 overload=ArrayPrototypeIndexOf/0 [needsPristineReceiver]
+}
+
+function f3 name="noProof" parameters=[{type=Array}, {type=Array<anything, pristine[Names]>}, {type=string}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v3, v0, v2
+    v5 = Call v3, v1, v2
+    Return v5
+# CHECK-NOT: IsPristine
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK: v4: string = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: v5: string = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+}
+
+function f4 name="unknownCodeBeforeCall" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v0
+    v5 = Call v3, v2, v1
+    Return v5
+# CHECK: v4: anything = Call v0
+# CHECK-NEXT: v5: string = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+}
+
+function f5 name="unknownCodeSeesArrayBeforeCall" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = Call v0, -, v2
+    v5 = Call v3, v2, v1
+    Return v5
+# CHECK-NOT: needsPristineReceiver
+# CHECK: v4: anything = Call v0, -, v2
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v5: string = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+}
+
+function f6 name="conversionWithoutUserCode" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = Builtin builtin=ArrayPrototypeJoin
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK: [[text6]]: string = ToString v0
+# CHECK-NEXT: v3: string = CallBuiltin v1, [[text6]] overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+}
+
+function f7 name="conversionThatCanRunUserCode" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = Builtin builtin=ArrayPrototypeJoin
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK-NOT: ToString
+# CHECK-NOT: needsPristineReceiver
+# CHECK: v3: string = CallBuiltin v1, v0 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v3
+}
+
+function f8 name="userCodeInFrontOfProofByType" parameters=[{type=RegExp<pristine[Names]>}, {type=object}] results=[{type=anything}] {
+    v2 = Builtin builtin=RegExpPrototypeTest
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK: [[text8]]: string = ToString v1
+# CHECK-NEXT: v3: boolean = CallBuiltin v0, [[text8]] overload=RegExpPrototypeTest/0
+# CHECK-NEXT: Return v3
+}
+
+function f9 name="userCodeBehindProofSinceAllocation" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewRegExp pattern="a+"
+    v2 = Builtin builtin=RegExpPrototypeTest
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK-NOT: ToString
+# CHECK-NOT: needsPristineReceiver
+# CHECK: v3: boolean = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v3
+}
+
+function f10 name="noUserCodeBehindProofSinceAllocation" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewRegExp pattern="a+"
+    v2 = Builtin builtin=RegExpPrototypeTest
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK: [[text10]]: string = ToString v0
+# CHECK-NEXT: v3: boolean = CallBuiltin v1, [[text10]] overload=RegExpPrototypeTest/0 [needsPristineReceiver]
+}
+
+function f11 name="listProvenByType" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathMax
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2
+    Return v4
+# CHECK-NOT: IsPristine
+# CHECK: v4: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+# CHECK-NEXT: Return v4
+}
+
+function f12 name="listSinceAllocation" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    v2 = Builtin builtin=MathMin
+    v3 = NewArray v0, v1 contents=number
+    v4 = NewArray contents=anything
+    AppendSpread v4, v3
+    v6 = CallList v2, -, v4
+    Return v6
+# CHECK-NOT: IsPristine
+# CHECK: v6: number = CallBuiltin -, v3 overload=MathMin/0 builtinCallForm=List [needsPristineReceiver]
+}
+
+function f13 name="listWithNamesProvenOnly" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathMax
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2
+    Return v4
+# CHECK: [[isPristine13]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch [[isPristine13]] -> taken
+# CHECK: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+# CHECK: frequency=Unlikely:
+# CHECK: anything = CallList v1, -,
+}

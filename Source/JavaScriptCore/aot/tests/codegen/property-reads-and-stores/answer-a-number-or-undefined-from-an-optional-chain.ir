@@ -1,0 +1,109 @@
+# type Parcel = { weight: number };
+# function weightOf(parcel?: Parcel): number | undefined {
+#   return parcel?.weight;
+# }
+# declare const input: any;
+# (globalThis as any).answer = weightOf(input ? { weight: +input } : undefined);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(BRANCHES): lower-to-b3 optimized f1
+# REQUIRES(BRANCHES): unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=52 kind=Parameter function=f1
+typesite w1 module=m0 position=34 kind=Result
+typesite w2 module=m0 position=173 kind=CallResult
+layout L0 name="Parcel" module=m0 position=5 fields=[{key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = ToBoolean v7
+    Branch v8 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v9):
+    Jump -> next b3()
+  b3():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = ToNumber v12
+    v14 = Convert v13 declared={type=number}
+    v15 = NewObject -, v14 layout=L0 fields=[0]
+    v16 = FinishObject v15
+    Jump -> next b6(v16)
+  b4(v17):
+    Jump -> next b5()
+  b5():
+    v18 = Undefined
+    Jump -> next b6(v18)
+  b6(v19):
+    v20 = Call v1, -, v19 calleeName="weightOf"
+    v21 = Convert v20 declared={type=undefined|number site=w2}
+    PropSet v5, v21 key="answer"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="weightOf" module=m0 position=34 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull]}] results=[{type=undefined|number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = Undefined
+    Jump -> next b5(v3)
+  b4(v4):
+    v5 = PropGet v4 key="weight"
+    Jump -> next b5(v5)
+  b5(v6):
+    v7 = Convert v6 declared={type=undefined|number site=w1}
+    Return v7
+}
+
+# The answer is a number or undefined, and it stays a double: undefined is the bits of a NaN with a payload, which no double has. One comparison with undefined and one load.
+# Nothing is boxed.
+# CHECK-LABEL: name="weightOf" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[parcel]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[undefined]] = Const64(10,
+# CHECK-NEXT: Int32 b@[[isUndefined]] = Equal(b@[[parcel]], $10(b@[[undefined]]),
+# CHECK-NEXT: Branch(b@[[isUndefined]], Terminal,
+# CHECK-NEXT: Successors: Then:Unlikely:#{{*}}, Else:#[[read]]
+# CHECK-NEXT: BB#[[read]]:
+# CHECK-NEXT: Predecessors:
+# CHECK-NEXT: Double b@[[weight]] = Load(b@[[parcel]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Double b@[[answer]] = Phi(ReadsLocalState, {{*}}:Parameter)
+# CHECK-NEXT: Return(b@[[answer]], Terminal)
+# CHECK-LABEL: end of function
+# BRANCHES-LABEL: name="weightOf" role=Source
+# BRANCHES-COUNT-1: Branch(
+# BRANCHES-NOT: Branch(
+# BRANCHES-LABEL: end of function
+# NONE-LABEL: name="weightOf" role=Source
+# NONE-NOT: ExitsSideways
+# NONE-NOT: pureFunction
+# NONE-NOT: Reads:JSCell
+# NONE-LABEL: end of function
+# X64-LABEL: name="weightOf" role=Source
+# X64-NEXT: instructions: 6, patchpoints: 0
+# ARM64-LABEL: name="weightOf" role=Source
+# ARM64-NEXT: instructions: 6, patchpoints: 1

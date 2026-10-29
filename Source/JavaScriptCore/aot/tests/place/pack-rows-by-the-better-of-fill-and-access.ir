@@ -1,0 +1,84 @@
+# A cell has room for five of the twenty references that nothing is known about: far more objects are made than any store runs. r0 to r9 are stored in a loop, r10 to r19 once;
+# r18 and r19 are read in a loop inside a loop. By how often their stores run r0 to r4 would get the room, and every read of r18 and r19 would go through the Extension.
+# By how often they are accessed r18 and r19 come first. A row is as good as the better of its two ranks: r0 and r18, r1 and r19, then r2
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow heat=EverythingIsHot testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Resolved" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="r0" declared={type=undefined|L1}}, {key="r1" declared={type=undefined|L1}}, {key="r2" declared={type=undefined|L1}}, {key="r3" declared={type=undefined|L1}}, {key="r4" declared={type=undefined|L1}}, {key="r5" declared={type=undefined|L1}}, {key="r6" declared={type=undefined|L1}}, {key="r7" declared={type=undefined|L1}}, {key="r8" declared={type=undefined|L1}}, {key="r9" declared={type=undefined|L1}}, {key="r10" declared={type=undefined|L1}}, {key="r11" declared={type=undefined|L1}}, {key="r12" declared={type=undefined|L1}}, {key="r13" declared={type=undefined|L1}}, {key="r14" declared={type=undefined|L1}}, {key="r15" declared={type=undefined|L1}}, {key="r16" declared={type=undefined|L1}}, {key="r17" declared={type=undefined|L1}}, {key="r18" declared={type=undefined|L1}}, {key="r19" declared={type=undefined|L1}}]
+layout L1 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v8 = NewObject -, v2 layout=L0 fields=[0]
+    v9 = FinishObject v8
+# REPEAT: i = 4..6
+    v%(i*2+2) = Call v0
+    v%(i*2+3) = ToBoolean v%(i*2+2)
+    Branch v%(i*2+3) -> taken b%(i*-1+7)(), notTaken b%(i)()
+  b%(i)():
+# END REPEAT
+    v16 = CallDirect v9, v4 function=f1
+    v17 = CallDirect v9 function=f2
+    v18 = ForInOpen v9
+    Return
+}
+function f1 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+# REPEAT: i = 10..19
+    PropSet v0, v1 key="r%(i)"
+# END REPEAT
+    v12 = Builtin builtin=MathRandom
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 0..9
+    PropSet v0, v1 key="r%(i)"
+# END REPEAT
+    v24 = Call v12
+    v25 = ToBoolean v24
+    Branch v25 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathRandom
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = PropGet v0 key="r18"
+    v5 = PropGet v0 key="r19"
+    v6 = Call v1
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b3():
+    v8 = Call v1
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+# CHECK: L0 CompiledObject size=48
+# CHECK: .1 "r0" OptionalCell32 @
+# CHECK-NEXT: .2 "r1" OptionalCell32 @
+# CHECK-NEXT: .3 "r2" OptionalCell32 @
+# CHECK-NEXT: .4 "r3" OptionalCell32 out@
+# CHECK-NEXT: .5 "r4" OptionalCell32 out@
+# CHECK: .19 "r18" OptionalCell32 @
+# CHECK-NEXT: .20 "r19" OptionalCell32 @

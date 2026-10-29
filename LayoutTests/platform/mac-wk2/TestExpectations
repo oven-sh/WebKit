@@ -87,13 +87,16 @@ fast/scrolling/unfocusing-page-while-keyboard-scrolling.html [ Pass ]
 
 http/tests/security/clipboard/drag-drop-html-cross-origin-iframe-in-same-origin.html [ Pass ]
 
+http/tests/ssl/applepay/ApplePayReferenceSession.https.html [ Skip ]
 http/tests/ssl/applepay [ Pass ]
+http/tests/ssl/applepay/ApplePaySession-estimatedLineItem.html [ Skip ]
 
 fast/visual-viewport/rubberbanding-viewport-rects.html [ Pass ]
 fast/visual-viewport/rubberbanding-viewport-rects-header-footer.html  [ Pass ]
 
 http/tests/paymentrequest/ApplePayModifier-disbursementRequest.https.html [ Skip ]
 http/tests/paymentrequest/paymentrequest-isDelegatedRequest.https.html [ Skip ]
+http/tests/paymentrequest/ApplePayModifier-estimatedLineItem.https.html [ Skip ]
 http/tests/paymentrequest [ Pass ]
 http/tests/inspector/paymentrequest [ Pass ]
 imported/w3c/web-platform-tests/payment-request [ Pass ]
@@ -1213,6 +1216,7 @@ webkit.org/b/259403 [ x86_64 ] fast/canvas/webgl/texImage2D-video-flipY-false.ht
 webkit.org/b/325612 [ x86_64 ] http/wpt/webcodecs/webgl-texImage2D-videoFrame-I420.html [ Failure ]
 # The expected file records the incorrect drawImage() conversion, which rounds differently on Intel.
 [ x86_64 ] http/wpt/webcodecs/2d-drawImage-videoFrame-I420-SMPTE240M.html [ Failure ]
+[ x86_64 ] imported/w3c/web-platform-tests/webcodecs/videoFrame-orientation-webgl-i420.window.html [ Failure ]
 
 webkit.org/b/259464 fast/events/wheel/redispatched-wheel-event.html [ Pass Failure ]
 
@@ -1401,6 +1405,7 @@ http/tests/webgpu/webgpu/api/validation/capability_checks/features/texture_compo
 
 # Skip tests due to taking too long to run on EWS
 [ Debug ] http/tests/webgpu/webgpu/api/operation/render_pipeline/sample_mask.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/operation/texture_view/texture_component_swizzle.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/api/validation/image_copy/texture_related.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/api/validation/state/device_lost/destroy.html [ Skip ]
 
@@ -2080,6 +2085,13 @@ http/tests/webgpu/webgpu/web_platform/copyToTexture/image.html [ Pass Timeout ]
 # Very slow: 233s on Release arm64, past the 150s that Slow buys. Crashes on Intel, see below.
 [ arm64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Skip Slow ]
 
+# Since the whole file above cannot run, this runs the part of from_ImageData which covers an
+# ImageBitmap holding unpremultiplied channels: 33s on Release arm64. Skipped on Intel for the same
+# reasons the two tests around it are.
+[ Release arm64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap-from_ImageData-unpremultiplied-flipY.html [ Slow ]
+[ Debug arm64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap-from_ImageData-unpremultiplied-flipY.html [ Skip ]
+[ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap-from_ImageData-unpremultiplied-flipY.html [ Skip ]
+
 # skip on intel for now due to small precision error differences
 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/video.html [ Skip ]
 [ Release x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageData.html [ Skip ]
@@ -2504,10 +2516,6 @@ webkit.org/b/322051 [ Release ] media/picture-in-picture/picture-in-picture-inte
 [ Tahoe+ ] http/tests/storageAccess/request-and-grant-access-cross-origin-sandboxed-iframe-from-prevalent-domain-with-user-interaction-and-access-from-right-frame.https.html [ Failure ]
 [ Tahoe+ ] http/tests/storageAccess/request-and-grant-access-cross-origin-sandboxed-iframe-from-prevalent-domain-with-user-interaction-but-access-from-wrong-frame.https.html [ Failure ]
 
-webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-001.html [ Crash ]
-webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-004.html [ Crash ]
-webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ Crash ]
-
 webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback-content-2.html [ Timeout Pass ]
 
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Crash Timeout ]
@@ -2586,8 +2594,10 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate Debug ] imported/w3c/web-platform-tests/media-source/mediasource-video-is-visible.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/media-source/media-source-video-renders.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/media-source/media-source-vp8-hiddenframes.html [ ImageOnlyFailure ]
+[ GoldenGate Debug ] media/media-source/media-source-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/media-sources-selection.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/media-vp8-hiddenframes.html [ ImageOnlyFailure ]
+[ GoldenGate Debug ] media/media-vp8-hiddenframes-decoder-in-content-process.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/media-vp9-yuv422p10.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] media/video-object-fit.html [ ImageOnlyFailure ]
 [ GoldenGate Debug ] svg/text/bidi-dir-rtl.html [ ImageOnlyFailure ]
@@ -2674,6 +2684,9 @@ webkit.org/b/327445 [ Debug arm64 ] imported/w3c/web-platform-tests/content-secu
 webkit.org/b/319930 [ Release ] media/video-webkit-playsinline.html [ Pass Timeout ]
 webkit.org/b/328134 [ Release ] accessibility/isolated-tree/datetime/time-input-meridiem.html [ Failure ]
 
-webkit.org/b/328239 [ x86_64 ] imported/w3c/web-platform-tests/svg/painting/inline-svg-resize-viewport-dependent-mask.html [ Failure ]
+webkit.org/b/328278 [ x86_64 ] imported/w3c/web-platform-tests/css/css-images/cross-fade-target-alpha.html [ ImageOnlyFailure ]
 
-webkit.org/b/328264 [ Debug ] http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Failure ]
+webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation.html [ ImageOnlyFailure ]
+webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-flipped.html [ ImageOnlyFailure ]
+webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-perspective.html [ ImageOnlyFailure ]
+webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation-rotate-y.html [ ImageOnlyFailure ]

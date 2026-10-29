@@ -1,0 +1,49 @@
+# A set that is tested with a bit set and is the declared type of a field has its words in the table of shape sets, where the run time's test of the field's type reads them
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
+# RUN: place shapes
+# RUN(TABLES): tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+# REPEAT: i = 1..64
+layout L%(i) name="Middle%(i)" fields=[{key="x" declared={type=number}}]
+# END REPEAT
+layout L65 name="Last" fields=[{key="x" declared={type=number}}]
+layout L66 name="Holder" fields=[{key="member" declared={type=L0|L65} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+# REPEAT: i = 0..66; a = 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4
+    v%(i*2+3) = NewObject -, v%(a) layout=L%(i) fields=[0]
+    v%(i*2+4) = FinishObject v%(i*2+3)
+# END REPEAT
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v138 = PropGet v0 key="value0" [isFreeName]
+    v139 = TypeTest v138 testedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33
+    v140 = PropGet v139 key="x"
+    v141 = PropGet v0 key="value1" [isFreeName]
+    v142 = TypeTest v141 testedType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64
+    v143 = PropGet v142 key="x"
+    v144 = PropGet v0 key="value2" [isFreeName]
+    v145 = TypeTest v144 testedType=L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65
+    v146 = PropGet v145 key="x"
+    v147 = ToBoolean v146
+    Branch v147 -> taken b1(), notTaken b2()
+  b2():
+    v148 = Convert v1 declared={type=L0|L65 flags=[IsExpected]}
+    v149 = PropGet v148 key="x"
+    v150 = NewObject -, v134 layout=L66 fields=[0]
+    v151 = FinishObject v150
+    Return
+}
+# The three sets that are tested in each iteration of the loop put First and Last at the two ends of the 64 layouts between them.
+# CHECK: L0 shapes 1..1
+# CHECK: L65 shapes 66..66
+# CHECK: set [L0, L65] bitset 1..66 @3 cost=9
+# TABLES: shapeSetBits 2 16

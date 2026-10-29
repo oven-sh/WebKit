@@ -118,6 +118,7 @@
 #include "SVGNames.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
+#include "SimulatedClick.h"
 #include "TextCheckerClient.h"
 #include "TextCheckingHelper.h"
 #include "TextControlInnerElements.h"
@@ -705,8 +706,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
     if (!cache)
         return nullptr;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+    RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     while (accessibleObject && !isAccessible(*accessibleObject)) {
         axNode = NodeTraversal::next(*axNode);
 
@@ -716,8 +716,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
         if (!axNode)
             return nullptr;
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+        accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     }
 
     return accessibleObject.unsafeGet();
@@ -1619,7 +1618,7 @@ bool AccessibilityObject::press()
     RefPtr<Element> hitTestElement;
     RefPtr document = this->document();
     if (document) {
-        constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AccessibilityHitTest };
+        constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AccessibilityHitTest };
         HitTestResult hitTestResult { clickPoint() };
         document->hitTest(hitType, hitTestResult);
         if (RefPtr innerNode = hitTestResult.innerNode()) {
@@ -1645,9 +1644,14 @@ bool AccessibilityObject::press()
     UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, document.get());
 
     bool dispatchedEvent = false;
+    bool dispatchedSimulatedTouch = false;
 #if PLATFORM(IOS_FAMILY)
-    if (hasTouchEventListener())
+    if (hasTouchEventListener()) {
+#if ENABLE(IOS_TOUCH_EVENTS)
+        dispatchedSimulatedTouch = !!localMainFrame();
+#endif
         dispatchedEvent = dispatchTouchEvent();
+    }
 #endif
 
     if (dispatchedEvent)
@@ -1659,6 +1663,12 @@ bool AccessibilityObject::press()
             return true;
         }
     }
+
+    // The simulated touch already dispatched pointerdown and pointerup, so like a tap, follow it with the
+    // compatibility mouse events and a click, but not a second set of pointer events.
+    std::optional<SimulatedClickWithoutPointerEventsScope> withoutPointerEventsScope;
+    if (dispatchedSimulatedTouch)
+        withoutPointerEventsScope.emplace();
 
     return pressElement->accessKeyAction(true) || pressElement->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents);
 }
@@ -1839,7 +1849,7 @@ VisiblePosition AccessibilityObject::visiblePositionForPoint(const IntPoint& poi
 #else
         pointToUse = point;
 #endif
-        constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active };
+        constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active };
         HitTestResult result { pointToUse };
         protect(renderView->document())->hitTest(hitType, result);
         innerNode = result.innerNode();
@@ -3437,7 +3447,7 @@ RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters&
         return nullptr;
 
     // Draw the source image scaled into the buffer.
-    imageBuffer->context().drawImage(*image, concreteObjectSize, FloatRect({ }, bufferSize), FloatRect({ }, imageSize), { renderImage->imageOrientation() });
+    image->draw(imageBuffer->context(), concreteObjectSize, FloatRect({ }, bufferSize), FloatRect({ }, imageSize), { renderImage->imageOrientation() });
 
     // Determine the extraction rect from subrect parameters or full image.
     IntRect extractionRect;
@@ -3475,7 +3485,8 @@ const Style::ComputedStyle* AccessibilityObject::style() const
             // Trying to get the style from a RenderText that has no parent (e.g. because it hasn't been
             // set yet, or it was destroyed as part of an in-progress render-tree update) will cause a
             // crash because RenderTexts get their style from their parent.
-            return renderText->parent() ? &renderText->style() : nullptr;
+            // Non-inherited properties like the background color come from the parent.
+            return renderText->parent() ? &renderText->parent()->style() : nullptr;
         }
         return &renderer->style();
     }

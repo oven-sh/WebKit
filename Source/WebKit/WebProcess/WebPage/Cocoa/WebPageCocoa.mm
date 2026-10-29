@@ -76,6 +76,7 @@
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 #import <WebCore/ContentChangeObserver.h>
 #endif
+#import <WebCore/CornerRadii.h>
 #import <WebCore/DeprecatedGlobalSettings.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DocumentMarkerController.h>
@@ -849,6 +850,13 @@ void WebPage::getContentsAsAttributedString(CompletionHandler<void(const WebCore
 {
     RefPtr localFrame = corePage()->localMainFrame();
     completionHandler(localFrame ? attributedString(makeRangeSelectingNodeContents(*protect(localFrame->document())), IgnoreUserSelectNone::No) : AttributedString { });
+}
+
+void WebPage::getSelectionAsAttributedStringForTesting(CompletionHandler<void(const WebCore::AttributedString&)>&& completionHandler)
+{
+    RefPtr frame = corePage()->focusController().focusedOrMainFrame();
+    auto range = frame ? frame->selection().selection().firstRange() : std::nullopt;
+    completionHandler(range ? attributedString(*range, IgnoreUserSelectNone::Yes) : AttributedString { });
 }
 
 HashMap<WebCore::FrameIdentifier, WebCore::AttributedString> WebPage::attributedStringsForRemoteFrames(WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>& selectedSubframeIdentifiers)
@@ -2859,13 +2867,6 @@ static void convertPositionInformationToMainFrameCoordinates(const LocalFrameVie
     information.dataDetectorBounds = convertRect(information.dataDetectorBounds);
 #endif
 
-    if (RefPtr textIndicator = information.textIndicator) {
-        // textRectsInBoundingRectCoordinates() are relative to the bounding rect, so they follow it.
-        textIndicator->setSelectionRectInMainFrameViewCoordinates(convertRect(textIndicator->selectionRectInMainFrameViewCoordinates()));
-        textIndicator->setTextBoundingRectInRootViewCoordinates(convertRect(textIndicator->textBoundingRectInRootViewCoordinates()));
-        textIndicator->setContentImageWithoutSelectionRectInRootViewCoordinates(convertRect(textIndicator->contentImageWithoutSelectionRectInRootViewCoordinates()));
-    }
-
     if (information.elementContext)
         information.elementContext->boundingRect = convertRect(information.elementContext->boundingRect);
 
@@ -3654,7 +3655,7 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
             auto highlightColor = Color::transparentBlack;
 #endif
             auto highlightQuads = Vector { FloatQuad { WTF::move(*rect) } };
-            send(Messages::WebPageProxy::DidGetTapHighlightGeometries(requestID, WTF::move(highlightColor), WTF::move(highlightQuads), { }, { }, { }, { }, true));
+            send(Messages::WebPageProxy::DidGetTapHighlightGeometries(requestID, WTF::move(highlightColor), WTF::move(highlightQuads), { }, true));
             return;
         }
     }
@@ -3674,13 +3675,13 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
                 quad = view->contentsToMainFrameView(quad);
         }
 
-        LayoutRoundedRect::Radii borderRadii;
+        CornerRadii cornerRadii;
         if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*renderer))
-            borderRadii = renderBox->borderRadii();
+            cornerRadii = renderBox->borderRadii();
 
         RefPtr element = dynamicDowncast<Element>(*updatedNode);
         bool nodeHasBuiltInClickHandling = element && (is<HTMLFormControlElement>(*element) || is<HTMLAnchorElement>(*element) || is<HTMLLabelElement>(*element) || is<HTMLSummaryElement>(*element) || element->isLink());
-        send(Messages::WebPageProxy::DidGetTapHighlightGeometries(requestID, highlightColor, quads, roundedIntSize(borderRadii.topLeft()), roundedIntSize(borderRadii.topRight()), roundedIntSize(borderRadii.bottomLeft()), roundedIntSize(borderRadii.bottomRight()), nodeHasBuiltInClickHandling));
+        send(Messages::WebPageProxy::DidGetTapHighlightGeometries(requestID, highlightColor, quads, WTF::move(cornerRadii), nodeHasBuiltInClickHandling));
     }
 #else
     UNUSED_PARAM(requestID);

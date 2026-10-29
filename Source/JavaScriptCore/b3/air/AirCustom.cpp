@@ -29,7 +29,9 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCCallingConvention.h"
+#include "AirFrameEmission.h"
 #include "AirInstInlines.h"
+#include "AirOpcodeUtils.h"
 #include "B3CCallValue.h"
 #include "B3ProcedureInlines.h"
 #include "B3ValueInlines.h"
@@ -254,6 +256,48 @@ MacroAssembler::Jump WasmBoundsCheckCustom::generate(Inst& inst, CCallHelpers& j
 
     // We said we were not a terminal.
     return MacroAssembler::Jump();
+}
+
+bool EnterFrameCustom::isValidForm(Inst& inst)
+{
+    if (inst.args().empty() || !inst.args()[0].isImm())
+        return false;
+
+    int64_t numberOfScratchRegisters = inst.args()[0].value();
+    if (numberOfScratchRegisters < 0 || static_cast<uint64_t>(numberOfScratchRegisters) > inst.args().size() - 1)
+        return false;
+
+    for (Arg& arg : inst.args().subspan(1)) {
+        if (!arg.isReg() && !arg.isImm())
+            return false;
+    }
+    return true;
+}
+
+MacroAssembler::Jump EnterFrameCustom::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
+{
+    emitFrameSetup(jit, context, inst);
+    context.setFrameIsSetUp(jit, true);
+    return { };
+}
+
+bool LeaveFrameCustom::isValidForm(Inst& inst)
+{
+    for (Arg& arg : inst.args()) {
+        if (!arg.isReg() && !arg.isImm())
+            return false;
+    }
+    return true;
+}
+
+MacroAssembler::Jump LeaveFrameCustom::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
+{
+    context.setFrameIsSetUp(jit, false);
+    std::optional<GPRReg> deadRegister;
+    if (context.currentBlock)
+        deadRegister = registerDeadBehindFrameTeardown(*context.code, context.currentBlock, context.indexInBlock);
+    emitFrameTeardown(jit, *context.code, deadRegister, inst.args().subspan(context.code->calleeSaveRegisterAtOffsetList().registerCount()));
+    return { };
 }
 
 } } } // namespace JSC::B3::Air

@@ -1,0 +1,49 @@
+# A guard about a new list lasts over a call of code that nobody knows while that code cannot reach the list.
+# A list that was stored into another one is out of reach only while the other one is seen to be allocated in this function: what a call returns may be known to anybody.
+# So the holder stays in the function. The same allocation in functions without a guard is outlined
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readListUnderGuardAcrossCallWhileAnotherListHoldsIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = Integer integer=7
+    v4 = NewArray v3, v3, v3, v3 contents=anything
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewArray contents=anything
+    Jump -> next b3(v5)
+  b3(v6: Array):
+    AppendElement v6, v2
+    v8 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    v10 = Integer integer=1
+    v11 = Call v0, -
+    v12 = GetArrayElement v2, v10, v9 level=Expected [keyIsIntegral]
+    Return v12
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-3: = NewArray
+# CHECK-LABEL: function f1
+# CHECK: = CallDirect function=
+# REPEAT: i = 1..8
+
+function f%(i) name="plain%(i)" parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = Integer integer=7
+    v2 = NewArray v1, v1, v1, v1 contents=anything
+    Return v2
+  b2():
+    Return
+}
+# END REPEAT

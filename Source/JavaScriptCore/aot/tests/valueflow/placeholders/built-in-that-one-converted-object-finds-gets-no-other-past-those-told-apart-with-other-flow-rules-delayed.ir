@@ -1,0 +1,48 @@
+# plain = { held }; plain + 1; first = { valueOf: Date.prototype[Symbol.toPrimitive] }; first.valueOf = somethingNoTableLists; first + 1; second = { given }; second + 1
+# More objects lie in the hub of conversions than the analysis tells apart: it tells the plain object apart, and looks at the other two together. The first finds a built-in that calls valueOf of its receiver
+# and hands on what that answers, and later a function nobody knows. The second finds Object.prototype.valueOf, which answers its receiver to the conversion alone.
+# The built-in gets the object that finds it, whether or not the function nobody knows has arrived by then: the second object stays in the program, and nobody enters what it holds.
+# built-in-that-one-converted-object-finds-gets-no-other-past-those-told-apart.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayOtherFlowRules
+# OPTIONS: limit=MaxValueFlowMembersToldApart:1
+# LOSS: MaxValueFlowMembersToldApart
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped-layout=L1 escaped-layout=L2
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L1
+# ESCAPED: n0 escaped
+# ESCAPED: escaped-layout=L2
+# ESCAPED-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="First" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Second" fields=[{key="given" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Builtin builtin=DatePrototypeSymbolToPrimitive
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    PropSet v5, v7 key="valueOf"
+    v9 = Add v5, v2
+    v10 = NewClosure function=f2
+    v11 = NewObject -, v10 layout=L2 fields=[0]
+    v12 = Add v11, v2
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="given" kind=Arrow results=[{type=anything}] {
+    Return
+}

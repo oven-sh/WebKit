@@ -66,7 +66,6 @@
 #include "RenderListItem.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
-#include "RenderQuote.h"
 #include "RenderSVGContainer.h"
 #include "RenderSVGGradientStop.h"
 #include "RenderSVGInlineText.h"
@@ -198,7 +197,9 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
     if (behavior.contains(RenderAsTextFlag::ShowAddresses))
         ts << ' ' << &o;
 
-    if (auto value = o.style().usedZIndex().tryValue(); value && value->value) // FIXME: This should log even when value->value is zero.
+    // Text dumps the z-index of its parent.
+    CheckedRef zIndexStyle = is<RenderText>(o) ? o.parent()->style() : o.style();
+    if (auto value = zIndexStyle->usedZIndex().tryValue(); value && value->value) // FIXME: This should log even when value->value is zero.
         ts << " zI: "_s << value->value;
 
     if (o.node()) {
@@ -848,7 +849,7 @@ String externalRepresentation(LocalFrame* frame, OptionSet<RenderAsTextFlag> beh
     ASSERT(frame->document());
 
     if (!(behavior.contains(RenderAsTextFlag::DontUpdateLayout)) && frame->view())
-        protect(protect(frame)->view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
+        protect(frame->view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
 
     CheckedPtr renderer = frame->contentRenderer();
     if (!renderer)
@@ -879,7 +880,7 @@ String externalRepresentation(Element* element, OptionSet<RenderAsTextFlag> beha
     ASSERT(!(behavior.contains(RenderAsTextFlag::PrintingMode)));
 
     if (!(behavior.contains(RenderAsTextFlag::DontUpdateLayout)) && element->document().view())
-        protect(protect(element)->document().view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
+        protect(element->document().view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
 
     CheckedPtr renderer = dynamicDowncast<RenderBox>(element->renderer());
     if (!renderer)

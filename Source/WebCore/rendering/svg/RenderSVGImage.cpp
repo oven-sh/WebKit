@@ -51,10 +51,6 @@
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-#include <WebKitAdditions/AXCustomColorModeController.h>
-#endif
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGImage);
@@ -157,34 +153,8 @@ ImageDrawResult RenderSVGImage::paintIntoRect(PaintInfo& paintInfo, const FloatR
     if (!styleImage || !styleImage->canDrawAtSize(*this, rect.size()))
         return ImageDrawResult::DidNothing;
 
-    auto concreteObjectSize = ConcreteObjectSize::fixed(imageRenderingSize);
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    auto invertContent = [&] {
-        if (styleImage->drawsSVGImage())
-            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
-
-        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size());
-    };
-#endif
-
-    ImagePaintingOptions options {
-        CompositeOperator::SourceOver,
-        DecodingMode::Synchronous,
-        imageOrientation(),
-        styleImage->interpolationQualityForImageDraw(paintInfo.context(), *this, concreteObjectSize, styleImage.get(), LayoutSize(rect.size())),
-        settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-        invertContent() ? InvertContent::Yes : InvertContent::No,
-#endif
-        settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
-        IgnoreRootPreserveAspectRatio::Yes,
-        settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
-        paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
-    };
-
-    auto drawResult = styleImage->draw(paintInfo.context(), *this, concreteObjectSize, rect, sourceRect, options);
+    auto options = calculateSVGImageDrawingOptions(*styleImage, *this, paintInfo.context(), imageRenderingSize, rect.size(), paintInfo.paintBehavior);
+    auto drawResult = styleImage->draw(paintInfo.context(), *this, ConcreteObjectSize::fixed(imageRenderingSize), rect, sourceRect, options);
     if (drawResult == ImageDrawResult::DidRequestDecoding)
         protect(imageResource().cachedImage())->addClientWaitingForAsyncDecoding(protect(cachedImageClient()));
 
@@ -294,12 +264,12 @@ void RenderSVGImage::repaintOrMarkForLayout(const IntRect* rect)
 
     FloatRect repaintRect = borderBoxRectEquivalent();
     if (RefPtr styleImage = imageResource().styleImage(); styleImage && rect) {
-        auto naturalDimensions = calculateSVGImageNaturalDimensions(*styleImage, *this);
         auto placement = calculateSVGImagePlacement(*styleImage, *this, imageElement().preserveAspectRatio(), repaintRect);
-
-        auto changedRectSpace = naturalDimensions.width && naturalDimensions.height ? FloatSize { *naturalDimensions.width, *naturalDimensions.height } : placement.imageRenderingRectangle.size();
-
-        repaintRect.intersect(enclosingIntRect(mapRect(*rect, FloatRect(FloatPoint(), changedRectSpace), placement.imageRenderingRectangle)));
+        auto concreteObjectSize = ConcreteObjectSize::fixed(placement.imageRenderingRectangle.size());
+        if (!concreteObjectSize.isEmpty()) {
+            auto changedRect = styleImage->mapChangedRectToSource(*this, concreteObjectSize, *rect);
+            repaintRect.intersect(enclosingIntRect(mapRect(changedRect, FloatRect { { }, concreteObjectSize.size() }, placement.imageRenderingRectangle)));
+        }
     }
 
     repaintRectangle(enclosingLayoutRect(repaintRect));
@@ -341,7 +311,7 @@ void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 
     repaintOrMarkForLayout(rect);
 
-    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+    if (CheckedPtr cache = document().existingAXObjectCache())
         cache->deferRecomputeIsIgnoredIfNeeded(protect(imageElement()).ptr());
 
     if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete()) {

@@ -1,0 +1,43 @@
+# let total = 0, label = 0;  function add(i) { total += i; return total & 255 }  function rename(i) { label = "many" }
+# In a file without types an int32 is expected of both variables. Every writer of `total` is seen and they store numbers alone, which a sum takes beyond int32:
+# the variable holds those numbers, as one that is declared a number does, and nothing that comes of a read of it is expected to be an int32 any more.
+# `label` also holds a text, so it stays a value of any type of which an int32 is expected.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="total" {{*}}declared={type=int|whole}
+# CHECK: variable g1 name="label" {{*}}flags=[IsExpected]
+# CHECK-LABEL: function f1 name="add"
+# CHECK: : int|whole = GetModuleVariable variable=g0
+# CHECK-NOT: ~ i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="total" module=m0 declared={type=i32|absent flags=[IsExpected]}
+variable g1 name="label" module=m0 declared={type=i32|absent flags=[IsExpected]}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v3 = NewClosure function=f1
+    v4 = Integer integer=3
+    v5 = Call v3, -, v4
+    v6 = NewClosure function=f2
+    v7 = Call v6
+    Return v5
+}
+function f1 name="add" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="total"
+    v3 = Add v2, v0
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="total"
+    v8 = Integer integer=255
+    v9 = BitAnd v7, v8
+    Return v9
+}
+function f2 name="rename" results=[{type=anything}] {
+    v0 = String string="many"
+    PutModuleVariable v0 variable=g1
+    Return
+}

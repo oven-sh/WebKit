@@ -38,6 +38,7 @@
 #include "WebProcess.h"
 #include <WebCore/AsyncScrollingCoordinator.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/CoordinatedTileManager.h>
 #include <WebCore/Damage.h>
 #include <WebCore/GraphicsLayerCoordinated.h>
 #include <WebCore/LocalFrame.h>
@@ -50,7 +51,6 @@
 #include <WebCore/RenderView.h>
 #include <WebCore/ScrollingThread.h>
 #include <WebCore/Settings.h>
-#include <WebCore/SkiaPaintingEngine.h>
 #include <WebCore/ThreadedScrollingTree.h>
 #include <WebCore/WindowEventLoop.h>
 #include <wtf/SetForScope.h>
@@ -110,9 +110,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
 
     lazyInitialize(m_compositor, ThreadedCompositor::create(webPage, *this, m_sceneState.get()));
 #if USE(TEXTURE_MAPPER)
-    m_skiaPaintingEngine = SkiaPaintingEngine::create(nullptr);
+    m_tileManager = CoordinatedTileManager::create(nullptr);
 #else
-    m_skiaPaintingEngine = SkiaPaintingEngine::create(m_compositor->threadSafeGrContext());
+    m_tileManager = CoordinatedTileManager::create(m_compositor->threadSafeGrContext());
 #endif
 
 #if ENABLE(DAMAGE_TRACKING)
@@ -131,7 +131,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
 
 LayerTreeHost::~LayerTreeHost()
 {
-    m_skiaPaintingEngine = nullptr;
+    m_tileManager = nullptr;
 
     // ThreadedCompositor must be invalidated before invalidating CoordinatedSceneState
     // to invalidate pending layers in the compositor thread.
@@ -233,9 +233,9 @@ void LayerTreeHost::updateRendering()
         return it.value->hasOneRef();
     });
 
-    if (m_waitUntilPaintingComplete) {
-        m_sceneState->waitUntilPaintingComplete();
-        m_waitUntilPaintingComplete = false;
+    if (m_waitUntilPaintingFinished) {
+        m_sceneState->waitUntilPaintingFinished();
+        m_waitUntilPaintingFinished = false;
     }
 }
 
@@ -281,10 +281,10 @@ void LayerTreeHost::updateRenderingWithForcedRepaint()
     protect(m_webPage)->corePage()->forceRepaintAllFrames();
     m_forceFrameSync = true;
 
-    // Make sure `m_sceneState->waitUntilPaintingComplete()` is invoked at the
+    // Make sure `m_sceneState->waitUntilPaintingFinished()` is invoked at the
     // end of the currently running layer flush, or after the next one if there
     // is none ongoing at present.
-    m_waitUntilPaintingComplete = true;
+    m_waitUntilPaintingFinished = true;
 
     // If updateRenderingWithForcedRepaint() is invoked via JS through e.g. a rAF() callback, a call
     // to `page->updateRendering()` _during_ a layer flush is responsible for that.
@@ -601,11 +601,11 @@ void LayerTreeHost::fillGLInformation(RenderProcessInfo&& info, CompletionHandle
 {
 #if USE(TEXTURE_MAPPER)
     if (ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext())
-        info.gpuPaintingThreadsCount = SkiaPaintingEngine::numberOfGPUPaintingThreads();
+        info.gpuPaintingThreadsCount = CoordinatedTileManager::numberOfGPUPaintingThreads();
     else
-        info.cpuPaintingThreadsCount = SkiaPaintingEngine::numberOfCPUPaintingThreads();
+        info.cpuPaintingThreadsCount = CoordinatedTileManager::numberOfCPUPaintingThreads();
 #else
-    auto threadsCount = SkiaPaintingEngine::numberOfCPUPaintingThreads();
+    auto threadsCount = CoordinatedTileManager::numberOfCPUPaintingThreads();
     if (ProcessCapabilities::canUseAcceleratedBuffers())
         info.gpuPaintingThreadsCount = threadsCount;
     else

@@ -28,6 +28,8 @@
 #include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/GCRequest.h>
 #include <JavaScriptCore/MachineStackMarker.h>
+#include <JavaScriptCore/Options.h>
+#include <JavaScriptCore/SlotVisitor.h>
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
 #include <wtf/ConcurrentPtrHashSet.h>
@@ -117,6 +119,8 @@ public:
     size_t LEGACY_NODELETE totalBytesAllocatedThisCycle();
     size_t LEGACY_NODELETE totalMaxEdenSize();
 
+    bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
+
     void dump(PrintStream&) const;
 
 private:
@@ -156,14 +160,20 @@ private:
     bool anyMutatorHasConnWithLock() WTF_REQUIRES_LOCK(*m_threadLock);
     void assertConn(GCConductor);
 
+    bool isNotRunning() const;
+    bool canSkipMarking();
+
     bool shouldCollectInCollectorThread() WTF_REQUIRES_LOCK(*m_threadLock);
     CollectionScope decideCollectionScope();
     void collectInCollectorThread();
     void collectInMutatorThread(Heap& conductor);
+    // A mutator gives the conn only to a thread that is there. False where there is work and the system refuses the thread.
+    bool tryEnsureThreadForWork();
 
     void startCollectingContinuously();
     void stopCollectingContinuously();
 
+    void shutDown();
     void stopThread();
 
     enum class RunCurrentPhaseResult {
@@ -190,6 +200,8 @@ private:
     // The per-heap part of the Begin and End phases.
     void beginCollectionInEachHeap(CollectionScope, MonotonicTime startTime);
     void setUpVisitors(CollectionScope);
+    static bool startsHelpersLazily() { return Options::runsCompiledImage(); }
+    void startHelpers();
     void endCollectionInEachHeap();
 
     void stopThePeriphery();
@@ -227,9 +239,11 @@ private:
     bool m_parallelMarkersShouldExit { false };
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
+    std::atomic<bool> m_hasStartedHelpers { false };
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
+    Vector<DeferredRootRegion> m_deferredRootRegions;
 
     // Cells whose visit lost a race, to be revisited before marking can terminate.
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
@@ -256,6 +270,7 @@ private:
     bool m_threadIsWorking WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
     bool m_threadShouldStop WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
     bool m_isCompilerThreadsSuspended { false };
+    std::atomic<bool> m_hasQueuedRequest { false };
     uint64_t m_phaseVersion { 0 };
     std::unique_ptr<MutatorScheduler> m_scheduler;
 
@@ -279,6 +294,8 @@ private:
     CurrentThreadState* m_conductingMutatorState { nullptr };
     // The heap whose mutator is conducting. Set by collectInMutatorThread() while it conducts, and null otherwise.
     Heap* m_conductingHeap { nullptr };
+    // The conducting mutator has nothing else to do, and no collector thread to hand the conn to: it marks through the concurrent phase too.
+    bool m_conductorMarksInConcurrentPhase { false };
 
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;

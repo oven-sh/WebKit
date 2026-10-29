@@ -2849,7 +2849,7 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
     if (startsWith(name.span(), "urisourcebin"_s) && !m_isLegacyPlaybin && m_preload == MediaPlayer::Preload::Auto) {
         m_urisourceBin = element;
         if (isBlob || isDataUri)
-            g_object_set(element, "ring-buffer-max-size", 2 * MB, nullptr);
+            g_object_set(element, "ring-buffer-max-size", static_cast<guint64>(2 * MB), nullptr);
         else if (!isMediaSource() && !isMediaStreamPlayer())
             g_object_set(element, "download", TRUE, nullptr);
 
@@ -3597,6 +3597,7 @@ void MediaPlayerPrivateGStreamer::setPlaybackFlags(bool isMediaStream)
     unsigned hasNativeVideo = getGstPlayFlag("native-video");
     unsigned hasNativeAudio = getGstPlayFlag("native-audio");
     unsigned hasSoftwareColorBalance = getGstPlayFlag("soft-colorbalance");
+    unsigned hasDeinterlace = getGstPlayFlag("deinterlace");
 
     unsigned flags = 0;
     g_object_get(pipeline(), "flags", &flags, nullptr);
@@ -3605,6 +3606,7 @@ void MediaPlayerPrivateGStreamer::setPlaybackFlags(bool isMediaStream)
     flags = flags & ~hasNativeAudio;
     flags = flags & ~hasNativeVideo;
     flags = flags & ~hasSoftwareColorBalance;
+    flags = flags & ~hasDeinterlace;
 
     if (isMediaStream)
         flags = flags & ~getGstPlayFlag("buffering");
@@ -3615,12 +3617,19 @@ void MediaPlayerPrivateGStreamer::setPlaybackFlags(bool isMediaStream)
     hasNativeVideo &= additionalFlags;
     hasNativeAudio &= additionalFlags;
 
-    GST_INFO_OBJECT(pipeline(), "text %s, audio %s (native %s), video %s (native %s, software color balance %s)", boolForPrinting(hasText),
+    if (!m_isUsingFallbackVideoSink) {
+        GST_INFO_OBJECT(pipeline(), "Hardware-accelerated video rendering is enabled, so enabling native-video as well");
+        hasNativeVideo = getGstPlayFlag("native-video");
+        hasSoftwareColorBalance = 0;
+        hasDeinterlace = 0;
+    }
+
+    GST_INFO_OBJECT(pipeline(), "text %s, audio %s (native %s), video %s (native %s, software color balance %s, deinterlace: %s)", boolForPrinting(hasText),
         boolForPrinting(hasAudio), boolForPrinting(hasNativeAudio), boolForPrinting(hasVideo), boolForPrinting(hasNativeVideo),
-        boolForPrinting(hasSoftwareColorBalance));
-    flags |= hasText | hasAudio | hasVideo | hasNativeVideo | hasNativeAudio | hasSoftwareColorBalance;
+        boolForPrinting(hasSoftwareColorBalance), boolForPrinting(hasDeinterlace));
+    flags |= hasText | hasAudio | hasVideo | hasNativeVideo | hasNativeAudio | hasSoftwareColorBalance | hasDeinterlace;
     g_object_set(pipeline(), "flags", flags, nullptr);
-    GST_DEBUG_OBJECT(pipeline(), "current pipeline flags %x", flags);
+    GST_DEBUG_OBJECT(pipeline(), "Current pipeline flags 0x%x", flags);
 
     if (m_shouldPreservePitch && hasAudio && hasNativeAudio) {
         GST_WARNING_OBJECT(pipeline(), "can't preserve pitch with native audio");
@@ -3699,8 +3708,6 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
 
     GST_INFO_OBJECT(pipeline(), "Using legacy playbin element: %s", boolForPrinting(m_isLegacyPlaybin));
 
-    setPlaybackFlags(isMediaStream);
-
     // Let also other listeners subscribe to (application) messages in this bus.
     GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
     gst_bus_enable_sync_message_emission(bus.get());
@@ -3758,6 +3765,8 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
         m_audioSink = createAudioSink();
 
     g_object_set(m_pipeline.get(), "audio-sink", m_audioSink.get(), "video-sink", createVideoSink(), nullptr);
+
+    setPlaybackFlags(isMediaStream);
 
     if (m_shouldPreservePitch && !isMediaStream && !GStreamerQuirksManager::singleton().needsCustomInstantRateChange()) {
         if (auto* scale = makeGStreamerElement("scaletempo"_s))
@@ -3966,7 +3975,11 @@ void MediaPlayerPrivateGStreamer::pushTextureToCompositor(IsDuplicateSample isDu
 #if USE(TEXTURE_MAPPER)
     auto buffer = CoordinatedPlatformLayerBufferVideo::create(WTF::move(frame), m_videoDecoderPlatform, !m_isUsingFallbackVideoSink, m_videoSourceOrientation);
 #else
-    auto buffer = CoordinatedPlatformLayerBufferVideo::create(WTF::move(frame), m_videoDecoderPlatform, !m_isUsingFallbackVideoSink, m_videoSourceOrientation, proxy->threadSafeGrContext());
+    sk_sp<GrContextThreadSafeProxy> context = proxy->threadSafeGrContext();
+    if (!context)
+        return;
+
+    auto buffer = CoordinatedPlatformLayerBufferVideo::create(WTF::move(frame), m_videoDecoderPlatform, !m_isUsingFallbackVideoSink, m_videoSourceOrientation, context);
 #endif
     if (isInitialBuffer == IsInitialBuffer::Yes)
         proxy->setInitialDisplayBuffer(WTF::move(buffer));
@@ -4555,22 +4568,14 @@ GstElement* MediaPlayerPrivateGStreamer::createVideoSink()
         if (!m_videoSink || isMediaStreamPlayer())
             return;
 
-        GstElement* sink = m_videoSink.get();
-        while (GST_IS_BIN(sink)) {
-            GUniquePtr<GstIterator> iter(gst_bin_iterate_sinks(GST_BIN_CAST(sink)));
-            GValue value = G_VALUE_INIT;
-            auto result = gst_iterator_next(iter.get(), &value);
-            ASSERT_UNUSED(result, result == GST_ITERATOR_OK);
-            sink = GST_ELEMENT_CAST(g_value_get_object(&value));
-            g_value_unset(&value);
-        }
+        auto sink = gstElementFindInnermostSink(m_videoSink.get());
 
-        if (gstObjectHasProperty(sink, "qos")) [[likely]]
-            g_object_set(sink, "qos", TRUE, nullptr);
+        if (gstObjectHasProperty(sink.get(), "qos")) [[likely]]
+            g_object_set(sink.get(), "qos", TRUE, nullptr);
 
-        if (gstObjectHasProperty(sink, "max-lateness"_s)) {
+        if (gstObjectHasProperty(sink.get(), "max-lateness"_s)) {
             uint64_t maxLateness = 100 * GST_MSECOND;
-            g_object_set(sink, "max-lateness", maxLateness, nullptr);
+            g_object_set(sink.get(), "max-lateness", maxLateness, nullptr);
         } else {
             GST_WARNING_OBJECT(pipeline(), "video sink does not have max-lateness property. This could result in A/V "
                 "desynchronization if it does not discard buffers that are arriving late (for example quality changes "

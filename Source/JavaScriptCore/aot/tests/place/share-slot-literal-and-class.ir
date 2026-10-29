@@ -1,0 +1,66 @@
+# An object literal and a class lie below one interface. The numbers of one are narrower than those of the other, and the class never gives "label" anything but undefined.
+# Each name gets the representation that holds what both layouts hold, and one location. The cell of Full has no byte to spare, so its "end" stays as narrow as it is
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 3
+# STATISTIC: SharesRefused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Range" fields=[{key="pos" declared={type=int[0, 255]} flags=[IsRequired]}, {key="end" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}]
+layout L1 kind=Instance name="Span" constructor=f1 fields=[{key="owner" declared={type=string} flags=[IsRequired]}, {key="end" declared={type=int[0, 255]} flags=[IsRequired]}, {key="pos" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string}}] supertypes=[L0]
+layout L2 name="Full" fields=[{key="end" declared={type=int[0, 255]} flags=[IsRequired]}, {key="small" declared={type=int[0, 255]} flags=[IsRequired]}, {key="middle" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="wide" declared={type=number} flags=[IsRequired]}]
+variable g0 name="range" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="rangeOrFull" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Integer integer=255
+    v5 = Integer integer=65535
+    v6 = BitAnd v2, v4
+    v7 = BitAnd v2, v5
+    v8 = NewClosure function=f1
+    v9 = NewClass v8 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = Construct v10, -, v3, v7, v6
+    v12 = NewObject -, v6, v7, v3 layout=L0 fields=[0, 1, 2]
+    v13 = FinishObject v12
+    v14 = NewObject -, v6, v6, v7, v3, v2 layout=L2 fields=[0, 1, 2, 3, 4]
+    v15 = FinishObject v14
+    PutModuleVariable v11 variable=g0
+    PutModuleVariable v13 variable=g0
+    PutModuleVariable v13 variable=g1
+    PutModuleVariable v15 variable=g1
+    v20 = GetModuleVariable variable=g0
+    v21 = PropGet v20 key="pos"
+    v22 = PropGet v20 key="end"
+    v23 = PropGet v20 key="label"
+    v24 = GetModuleVariable variable=g1
+    v25 = PropGet v24 key="end"
+    v26 = PropGet v11 key="owner"
+    v27 = PropGet v15 key="small"
+    v28 = PropGet v15 key="middle"
+    v29 = PropGet v15 key="text"
+    v30 = PropGet v15 key="wide"
+    Return
+}
+function f1 name="Span" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=string}, {type=int[0, 65535]}, {type=int[0, 255]}] results=[{type=anything}] {
+    v4 = GetConstructPrototype v0 layout=L1
+    v5 = Undefined
+    v6 = NewObject v4, v1, v3, v2, v5 layout=L1 fields=[0, 1, 2, 3]
+    v7 = FinishObject v6
+    Return v7
+}
+# CHECK: L2 CompiledObject size=32
+# CHECK-NEXT: "end" Uint8 @
+# CHECK: "pos" {L0 L1} read
+# CHECK-NEXT: one location Uint16 @
+# CHECK: "end" {L0 L1} read
+# CHECK-NEXT: one location Uint16 @
+# CHECK: "end" {L0 L2} read
+# CHECK-NEXT: 2 groups: {L0} Uint16 @{{*}}, {L2} Uint8 @
+# CHECK: "label" {L0 L1} read
+# CHECK-NEXT: one location OptionalCell32 @

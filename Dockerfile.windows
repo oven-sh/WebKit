@@ -279,6 +279,7 @@ COPY icu/ /icu-bun/
 # stage comment above); it lands in the cross-built sicuuc.lib. The host tools in `base` were built without it, which
 # is the same thing: the hook is null in them either way.
 RUN patch -p1 -d /icu-src < /icu-bun/udata-decompress-hook.patch
+RUN patch -p1 -d /icu-src < /icu-bun/decnum-allocation-failure.patch
 
 # Filter the prebuilt data package the same way the native build does
 # (build-icu.ps1 STAGE 1b): drop charset converters, transliteration rules,
@@ -406,6 +407,7 @@ RUN rm -rf /webkit/WebKitLibraries/windows && ln -s /winsdk /webkit/WebKitLibrar
 # (absolute-0) default, which is exactly the "hook absent" behaviour the
 # standalone shell wants. It only applies to jsc.exe — the packaged static
 # libraries are unchanged.
+#
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH};/winsdk" && \
     export CRT="MultiThreaded"; if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then CRT="MultiThreadedDebug"; fi && \
@@ -460,11 +462,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     "-DCMAKE_CXX_FLAGS_DEBUG=/FS /O0 /Ob0" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
+    # The programs ship without debug info: each .pdb is another copy of the libraries'.
+    rm -f /output/bin/*.pdb && \
     # Sanitizer builds ship the ASAN runtime with the artifact: anything that
     # links these instrumented static libs needs the version-matched import
     # lib and /MT runtime thunk, and anything that runs (bin/jsc.exe, a
@@ -492,6 +496,16 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output/ && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     { cp -rL $WEBKIT_OUT_DIR/WTF/DerivedSources/* /output/include/wtf/ 2>/dev/null || true; } && \
     cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf/* /output/include/wtf/ && \
     cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/* /output/include/bmalloc/ && \

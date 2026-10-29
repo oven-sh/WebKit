@@ -1,0 +1,46 @@
+# A set whose shapes lie further apart than the 64 bits of an immediate is tested with a bit set. Only code tests this one, with words of its own, so the table of shape sets has none
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
+# RUN: place shapes
+# RUN(TABLES): tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+# REPEAT: i = 1..64
+layout L%(i) name="Middle%(i)" fields=[{key="x" declared={type=number}}]
+# END REPEAT
+layout L65 name="Last" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+# REPEAT: i = 0..65
+    v%(i*2+3) = NewObject -, v2 layout=L%(i) fields=[0]
+    v%(i*2+4) = FinishObject v%(i*2+3)
+# END REPEAT
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v136 = PropGet v0 key="value0" [isFreeName]
+    v137 = TypeTest v136 testedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33
+    v138 = PropGet v137 key="x"
+    v139 = PropGet v0 key="value1" [isFreeName]
+    v140 = TypeTest v139 testedType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64
+    v141 = PropGet v140 key="x"
+    v142 = PropGet v0 key="value2" [isFreeName]
+    v143 = TypeTest v142 testedType=L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65
+    v144 = PropGet v143 key="x"
+    v145 = ToBoolean v144
+    Branch v145 -> taken b1(), notTaken b2()
+  b2():
+    v146 = Convert v1 declared={type=L0|L65 flags=[IsExpected]}
+    v147 = PropGet v146 key="x"
+    Return
+}
+# The three sets that are tested in each iteration of the loop put First and Last at the two ends of the 64 layouts between them.
+# CHECK: L0 shapes 1..1
+# CHECK: L65 shapes 66..66
+# CHECK: set [L0, L65] bitset 1..66 cost=9
+# TABLES: shapeSetBits 0 0

@@ -102,6 +102,18 @@ typedef NS_ENUM(NSUInteger, _WKDragInteractionPolicy) {
     _WKDragInteractionPolicyAlwaysDisable
 } WK_API_AVAILABLE(ios(11.0));
 
+typedef NS_ENUM(NSInteger, _WKEffectivePageAppearance) {
+    _WKEffectivePageAppearanceUnknown,
+    _WKEffectivePageAppearanceLight,
+    _WKEffectivePageAppearanceDark,
+} WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+typedef NS_ENUM(NSInteger, _WKContentInversion) {
+    _WKContentInversionSystem,
+    _WKContentInversionInverted,
+    _WKContentInversionNotInverted,
+} WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
 #else
 #import <WebKit/WKBase.h>
 #endif
@@ -135,6 +147,8 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @class _WKHitTestResult;
 @class _WKInspector;
 @class _WKJSHandle;
+@class _WKMediaCapturePermissionPromptConfiguration;
+@class _WKMediaCapturePermissionPromptResult;
 @class _WKRemoteObjectRegistry;
 @class _WKSafeBrowsingWarning;
 @class _WKSessionState;
@@ -330,6 +344,24 @@ for this property.
 - (void)_showSafeBrowsingWarningWithTitle:(NSString *)title warning:(NSString *)warning details:(NSAttributedString *)details completionHandler:(void(^)(BOOL))completionHandler WK_API_DEPRECATED_WITH_REPLACEMENT("-_showSafeBrowsingWarningWithURL:title:warning:detailsWithLinks:completionHandler:", macos(10.14.4, 10.15.4), ios(12.2, 13.2));
 - (void)_showSafeBrowsingWarningWithURL:(NSURL *)url title:(NSString *)title warning:(NSString *)warning details:(NSAttributedString *)details completionHandler:(void(^)(BOOL))completionHandler WK_API_DEPRECATED_WITH_REPLACEMENT("-_showSafeBrowsingWarningWithURL:title:warning:detailsWithLinks:completionHandler:", macos(10.14.4, 10.15.4), ios(12.2, 13.2));
 - (void)_showSafeBrowsingWarningWithURL:(NSURL *)url title:(NSString *)title warning:(NSString *)warning detailsWithLinks:(NSAttributedString *)details completionHandler:(void(^)(BOOL, NSURL *))completionHandler WK_API_AVAILABLE(macos(10.15.4), ios(13.2));
+
+/*! @abstract Shows WebKit's capture permission prompt for the current getUserMedia request and
+ reports what the user did.
+ @discussion Call this only from within
+ -webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:, then answer
+ that decision handler with WKPermissionDecisionGrant or WKPermissionDecisionDeny. The outcome is
+ advisory: the application has the final say through its own decision handler.
+
+ configuration may be nil for WebKit's unmodified prompt. If no capture request is being decided the
+ completion handler is called synchronously, with a dismissed outcome, because there is nothing for the
+ user to answer.
+
+ An action that denies does not make the denial persistent. WebKit forgets a denial when the main frame
+ loads a new document, and ignores it for a request made in response to a user gesture, so an
+ application offering a "never for this website" action must record that itself and answer
+ WKPermissionDecisionDeny for later requests.
+ */
+- (void)_showMediaCapturePermissionPromptWithConfiguration:(_WKMediaCapturePermissionPromptConfiguration *)configuration completionHandler:(void (^)(_WKMediaCapturePermissionPromptResult *result))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (void)_doAfterNextPresentationUpdate:(void (^)(void))updateBlock WK_API_AVAILABLE(macos(10.12), ios(10.0));
 - (void)_doAfterNextPresentationUpdateWithoutWaitingForPainting:(void (^)(void))updateBlock WK_API_AVAILABLE(macos(10.12.4), ios(10.3));
@@ -826,6 +858,17 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 - (void)_accessibilityRetrieveSpeakSelectionContent WK_API_AVAILABLE(ios(11.0));
 - (void)_accessibilityDidGetSpeakSelectionContent:(NSString *)content WK_API_AVAILABLE(ios(11.0));
+
+// Whether the page as currently displayed is light or dark, including any color transformations WebKit
+// applies to it. Without more specific information, based on whether white or black text has the higher
+// WCAG 2 contrast ratio against the page's background color, and Unknown when the page doesn't paint an
+// opaque background color, including when the web view is transparent or its background doesn't extend
+// beyond the page. Key-value observable.
+@property (nonatomic, readonly) _WKEffectivePageAppearance _effectivePageAppearance WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+// Tells the page whether the client is color-inverting its content, which determines whether the inverted-colors media
+// feature matches. System, the default, defers to UIAccessibilityIsInvertColorsEnabled().
+@property (nonatomic, setter=_setContentInversionForAccessibility:) _WKContentInversion _contentInversionForAccessibility WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 - (UIView *)_fullScreenPlaceholderView WK_API_AVAILABLE(ios(12.0));
 

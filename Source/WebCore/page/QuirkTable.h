@@ -25,62 +25,83 @@
 
 #pragma once
 
-#include <WebCore/QuirkBehaviors.h>
 #include <WebCore/QuirkMatchPattern.h>
+#include <WebCore/Quirks.h>
 #include <WebCore/QuirksData.h>
-#include <algorithm>
-#include <array>
-#include <initializer_list>
 #include <optional>
-#include <span>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-class QuirkBehaviorList {
-public:
-    constexpr QuirkBehaviorList() = default;
-    consteval QuirkBehaviorList(std::initializer_list<QuirkBehavior> behaviors)
-    {
-        for (auto& behavior : behaviors)
-            m_behaviors[m_count++] = behavior;
-
-        removeUnavailable();
-    }
-
-    constexpr std::span<const QuirkBehavior> span() const LIFETIME_BOUND { return std::span { m_behaviors }.first(m_count); }
-
-private:
-    static constexpr size_t maxBehaviors = 12;
-
-    constexpr void removeUnavailable()
-    {
-        const auto behaviors = std::span { m_behaviors }.first(m_count);
-        const auto unavailable = std::ranges::remove_if(behaviors, std::not_fn(&QuirkBehavior::isAvailable));
-        m_count -= unavailable.size();
-    }
-
-    std::array<QuirkBehavior, maxBehaviors> m_behaviors { };
-    size_t m_count { 0 };
-};
-
-enum class IsTopDocument : bool { No, Yes };
-
 struct Quirk {
-    URLPatternList matches { };
-    URLPatternList embeddedMatches { };
-    URLPatternList excludeMatches { };
-    ASCIILiteral queryContains { };
-    ASCIILiteral fragmentContains { };
-    std::optional<URLEnvironment> environment { };
-    QuirkBehaviorList behaviors { };
-    bool isAvailable { true };
+    Vector<QuirkMatchPattern> matches;
+    Vector<QuirkMatchPattern> embeddedMatches;
+    Vector<QuirkMatchPattern> excludeMatches;
+    String queryContains;
+    String fragmentContains;
+    std::optional<URLEnvironment> environment;
+
+    Vector<QuirkBehavior> behaviors;
+
+    WEBCORE_EXPORT bool appliesTo(const URLMatchContext& topContext, const URLMatchContext& documentContext, IsTopDocument) const;
+    void apply(QuirksData&) const;
+
+    friend bool operator==(const Quirk&, const Quirk&) = default;
 };
 
-WEBCORE_EXPORT QuirksData resolveSiteSpecificQuirks(const URL& topURL, const URL& documentURL, IsTopDocument);
+// The contents of QuirkTable.json, parsed at runtime; what quirkTable() and setQuirkTable() hold.
+struct QuirkTable {
+    Vector<Quirk> quirks;
+};
 
-// For callers with no Document, which therefore only see top-URL quirks.
-WEBCORE_EXPORT QuirksData resolveTopURLQuirks(const URL&);
+enum class QuirkTableParseErrorKind : uint8_t {
+    InvalidDocument,
+    InvalidRow,
+    InvalidBehavior,
+    UnknownField,
+    MissingField,
+    DisallowedField,
+    MissingMatches,
+    InvalidString,
+    InvalidStringArray,
+    InvalidMatchPattern,
+    InvalidEnvironment,
+    InvalidAvailableExpression,
+    InvalidBehaviors,
+    UnknownBehavior,
+    DuplicateBehavior,
+    InvalidBugs,
+    DuplicateBug,
+};
 
-WEBCORE_EXPORT std::span<const Quirk> LEGACY_NODELETE compiledQuirks();
+struct QuirkTableParseError {
+    struct Location {
+        std::optional<size_t> row;
+        String rowPattern;
+        std::optional<size_t> behavior;
+        std::optional<QuirkBehaviorID> behaviorID;
+    };
+
+    Location location;
+    QuirkTableParseErrorKind kind;
+    String field;
+    String value;
+
+    WEBCORE_EXPORT String description() const;
+};
+
+struct QuirkTableParseResult {
+    QuirkTable table;
+    Vector<QuirkTableParseError> errors;
+};
+
+WEBCORE_EXPORT QuirkTableParseResult parseQuirkTable(StringView json);
+
+WEBCORE_EXPORT String loadQuirkTableJSON();
+
+WEBCORE_EXPORT const QuirkTable& quirkTable();
+
+WEBCORE_EXPORT void setQuirkTable(QuirkTable&&);
 
 } // namespace WebCore

@@ -1,0 +1,33 @@
+# A required tail call by value boxes the result of its caller and leaves the declared type and every other function as they are
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 1
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: f0 Direct ({{*}}:JSValue, {{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}:JSValue, {{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: f2 Direct ({{*}}:JSValue, {{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="mustJump"
+# CHECK: results=[{type=number}]
+# CHECK: ReturnCall v2 casts=
+function f0 name="mustJump" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = Call v0, -, v1
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK-LABEL: function f1 name="usesResult"
+# CHECK: v2: number = CallDirect v0, v1 function=f0
+function f1 name="usesResult" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="mayJump"
+# CHECK: [[result]]: anything = Call v0, -, v1
+# CHECK-NEXT: [[number]]: number = AssumeType [[result]] provenType=number
+# CHECK-NEXT: Return [[number]]
+function f2 name="mayJump" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = Call v0, -, v1
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
+}

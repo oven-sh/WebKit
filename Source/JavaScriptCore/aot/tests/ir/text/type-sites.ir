@@ -1,0 +1,53 @@
+# Type site lines with every field and every kind; the reader adds the function whose parameter names a site
+# RUN: round-trip
+# CHECK: typesite w0 module=m0
+# CHECK-NEXT: typesite w1 module=m1 position=9 kind=Parameter text="number" function=f1
+# CHECK-NEXT: typesite w2 module=m0 position=1 kind=This
+# CHECK-NEXT: typesite w3 module=m0 position=2 kind=Capture
+# CHECK-NEXT: typesite w4 module=m0 position=3 kind=Result
+# CHECK-NEXT: typesite w5 module=m0 position=4 kind=Field
+# CHECK-NEXT: typesite w6 module=m0 position=5 kind=StaticField
+# CHECK-NEXT: typesite w7 module=m0 position=6 kind=Variable
+# CHECK-NEXT: typesite w8 module=m0 position=7 kind=Element
+# CHECK-NEXT: typesite w9 module=m0 position=8 kind=MapKey
+# CHECK-NEXT: typesite w10 module=m0 position=9 kind=MapValue
+# CHECK-NEXT: typesite w11 module=m0 position=10 kind=SetElement
+# CHECK-NEXT: typesite w12 module=m0 position=11 kind=PromiseValue
+# CHECK-NEXT: typesite w13 module=m0 position=12 kind=CallResult
+# CHECK-NEXT: typesite w14 module=m0 position=13 kind=PropertyRead
+# CHECK-NEXT: typesite w15 module=m0 position=14 kind=Assertion text="T"
+# CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
+# CHECK-NEXT: module m1 path="/b.ts" displayPath="b.ts"
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="f" module=m1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=string site=w4}]
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+typesite w0 module=m0
+typesite w1 module=m1 position=9 kind=Parameter text="number" function=f1
+typesite w2 module=m0 position=1 kind=This
+typesite w3 module=m0 position=2 kind=Capture
+typesite w4 module=m0 position=3 kind=Result
+typesite w5 module=m0 position=4 kind=Field
+typesite w6 module=m0 position=5 kind=StaticField
+typesite w7 module=m0 position=6 kind=Variable
+typesite w8 module=m0 position=7 kind=Element
+typesite w9 module=m0 position=8 kind=MapKey
+typesite w10 module=m0 position=9 kind=MapValue
+typesite w11 module=m0 position=10 kind=SetElement
+typesite w12 module=m0 position=11 kind=PromiseValue
+typesite w13 module=m0 position=12 kind=CallResult
+typesite w14 module=m0 position=13 kind=PropertyRead
+typesite w15 module=m0 position=14 kind=Assertion text="T"
+module m0 path="/a.ts" displayPath="a.ts" body=f0
+module m1 path="/b.ts" displayPath="b.ts"
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="f" module=m1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=string site=w4}]
+entry module=m0

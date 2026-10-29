@@ -1,0 +1,7 @@
+# No function has a second narrow reference out of a GetSlot that needs a pointer, so drop-guard=GetSlot:1 leaves nothing out and the check of references has nothing to say
+# FORM: AsRead
+# RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
+# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom drop-guard=GetSlot:1
+# OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
+# CHECK: statistic NarrowReferenceGuards 2
+# PROGRAM-OF: narrow-reference-has-pointer-over-call.ir

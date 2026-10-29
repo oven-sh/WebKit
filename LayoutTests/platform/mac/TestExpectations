@@ -148,6 +148,7 @@ http/tests/site-isolation/accessibility/client/absolute-position-nested-scrolled
 http/tests/site-isolation/accessibility/client/walk-up-from-iframe-content.html [ Pass ]
 http/tests/site-isolation/accessibility/client/search-past-remote-frame-immediate-descendants.html [ Pass ]
 http/tests/site-isolation/accessibility/client/search-from-remote-frame-host.html [ Pass ]
+http/tests/site-isolation/accessibility/client/iframe-name-propagates-to-web-area.html [ Pass ]
 
 # Shared-process site isolation accessibility tests using the accessibility client API:
 # Skip by default, enable tests that are stable.
@@ -2364,7 +2365,6 @@ imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creatio
 # rdar://172426568
 imported/w3c/web-platform-tests/websockets/constructor/013.html?default [ Pass Failure ] # rdar://172426568
 imported/w3c/web-platform-tests/websockets/constructor/013.html?wss [ Pass Failure ] # rdar://172426568
-http/tests/websocket/tests/hybi/websocket-blocked-sending-cookie-as-third-party-after-ws-redirect.html [ Pass Failure ]
 
 # rdar://172401706
 imported/w3c/web-platform-tests/service-workers/service-worker/navigation-preload/broken-chunked-encoding.https.html [ Pass Failure ] # rdar://172401706
@@ -2482,3 +2482,7 @@ webkit.org/b/285186 [ Sequoia Tahoe ] fast/webgpu/copy-external-image-image-bitm
 
 # Accelerated radial gradients produce premultiplied pixels with color greater than alpha.
 webkit.org/b/327400 fast/canvas/canvas-gradient-premultiplied-color-not-exceeding-alpha.html [ Failure ]
+
+# Multichannel (>2 ch) Opus decoding requires macOS 27.
+webkit.org/b/328460 [ Sequoia Tahoe ] http/wpt/webcodecs/audio-decoder-opus-multichannels.html [ Failure ]
+webkit.org/b/328460 [ Sequoia Tahoe ] webaudio/decode-audio-data-webm-opus-5.1.html [ Failure ]

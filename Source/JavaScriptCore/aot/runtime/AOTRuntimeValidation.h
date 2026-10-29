@@ -1,0 +1,118 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTRecordTypes.h"
+#include "CollectionScope.h"
+#include "JSCJSValue.h"
+#include "VM.h"
+#include <algorithm>
+#include <optional>
+#include <tuple>
+
+namespace JSC { namespace AOT {
+
+class Object;
+enum class Entry : uint16_t;
+struct FieldData;
+
+using Typed::ValidationFailureKind;
+
+struct ValidationFailure {
+    ValidationFailureKind kind;
+    FunctionID function;
+    Typed::ValueID value;
+    JSValue found;
+};
+
+// What ValidationFailure::found holds for CallChangedKeptRegister and UnwindingChangedKeptRegister: an int32 with the register and, if a call names it, the callee.
+struct ChangedRegister {
+    static constexpr unsigned calleeShift = 8;
+    static constexpr uint32_t unknownCallee = (1u << (32 - calleeShift)) - 1;
+    static constexpr uint32_t calleeIsStub = 1u << (31 - calleeShift);
+    static constexpr unsigned unknownRegister = (1u << calleeShift) - 1;
+
+    static constexpr int32_t encode(unsigned registerIndex, uint32_t callee)
+    {
+        return static_cast<int32_t>(registerIndex | std::min(callee, unknownCallee) << calleeShift);
+    }
+
+    template<typename Family>
+    static constexpr int32_t encodeForStub(Family family)
+    {
+        return encode(unknownRegister, calleeIsStub | static_cast<uint32_t>(family));
+    }
+};
+
+// What ValidationFailure::found holds for CallCollected and CallThrew: an int32 that says who was called.
+struct CalledCode {
+    enum class Kind : uint32_t { Operation, Stub, Function, Address };
+    static constexpr unsigned kindShift = 28;
+    static constexpr uint32_t maxNumber = (1u << kindShift) - 1;
+
+    static constexpr int32_t encode(Kind kind, uint32_t number) { return static_cast<int32_t>(static_cast<uint32_t>(kind) << kindShift | std::min(number, maxNumber)); }
+};
+
+// In a validated image two moves stand behind every call that has no site: into a scratch register on x86-64, into the zero register on ARM64. They say which value of the function calls, and whom.
+struct MarkOfCallWithoutSite {
+    static constexpr uint64_t tag = 0xa07c;
+    static constexpr unsigned tagShift = 32;
+
+    static constexpr uint64_t wordFor(uint32_t payload) { return tag << tagShift | payload; }
+    static std::optional<MarkOfCallWithoutSite> read(const void* returnAddress);
+
+    Typed::ValueID value;
+    int32_t callee;
+};
+
+// The third argument of operationAOTCompareOperandWithPhotograph: which photograph, and who was called between it and the comparison: an entry of the run-time table or a family of stubs.
+struct PhotographedCall {
+    static constexpr unsigned maxOperands = 8;
+    static constexpr unsigned calleeShift = 8;
+    static constexpr uint32_t calleeIsStub = 1u << (31 - calleeShift);
+
+    static constexpr uint32_t encode(unsigned position, uint32_t callee) { return position | callee << calleeShift; }
+};
+
+[[noreturn]] JS_EXPORT_PRIVATE void crashOnValidationFailure(VM&, const ValidationFailure&);
+
+// RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
+JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
+
+struct SlotOutsideType {
+    const FieldData* field;
+    uint64_t bits;
+    // Otherwise nothing was made of the bits.
+    bool isFormOfValue;
+    JSValue found;
+};
+
+// A slot is empty, holds undefined or null as a marker, or holds a value of the type of its field. A reference is followed only to a cell of the heap.
+JS_EXPORT_PRIVATE std::optional<SlotOutsideType> findSlotOutsideType(VM&, const Object&);
+JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
+
+ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
+
+struct OperationPermissions {
+    bool mayEnterVM { true };
+    bool mayCollect { true };
+};
+
+OperationPermissions permissionsOf(Entry);
+
+using CollectionVersions = std::tuple<HeapVersion, HeapVersion, HeapVersion>;
+CollectionVersions collectionVersionsOf(VM&);
+
+struct CollectionValidator {
+    void didFinishCollection(VM&, CollectionScope);
+};
+inline CollectionValidator collectionValidator;
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

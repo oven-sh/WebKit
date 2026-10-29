@@ -1,0 +1,42 @@
+# function mark(o: Markable) { o.marked = 2 }   function isMarked(o: Made2) { return o.marked }   three literals of three layouts are Markable, and unknown code has them all, with both functions.
+# One layout more than get room for the name. A layout keeps it where the program names it through a type of few layouts: the read names Made2, so Made2 has the field.
+# Nothing names it on Made0 and Made1. They get no room: in a large family most of the names that are stored through the wide type belong to other objects.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:2
+# LOSS: MaxValueFlowMembersToldApart x1 L0
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made0"
+# CHECK-NOT: IsAddedLate
+# CHECK: layout L2 name="Made2" {{*}}{key="marked" {{*}} flags=[IsAddedLate
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Made0" fields=[{key="flags" declared={type=number}}, {key="own0" declared={type=number}}] supertypes=[L3]
+layout L1 name="Made1" fields=[{key="flags" declared={type=number}}, {key="own1" declared={type=number}}] supertypes=[L3]
+layout L2 name="Made2" fields=[{key="flags" declared={type=number}}, {key="own2" declared={type=number}}] supertypes=[L3]
+layout L3 name="Markable" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="marked" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="publish" [isFreeName]
+    v8 = Call v7, -, v1, v2, v3, v4, v5
+    Return
+}
+function f1 name="mark" parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=L0|L1|L2|L3
+    v2 = Integer integer=2
+    PropSet v1, v2 key="marked" mode=Strict
+    Return
+}
+function f2 name="isMarked2" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=L2
+    v2 = PropGet v1 key="marked"
+    Return v2
+}

@@ -1,0 +1,62 @@
+# The iteration protocol reads `next` where a walk begins and `return` where it ends early, and the generator prototype adds a member where it is first read. A walk that is written out
+# calls neither. Where the keys of the prototype may be listed, an InitializeBuiltin stands in front of the walk, and one where it is left early. None stands in the loop.
+# FORM: AsRead
+# RUN: pipeline ExpandIteration
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectGetPrototypeOf
+    v3 = PropGet v0 key="prototype"
+    v4 = Call v2, v1, v3
+    v5 = Call v0
+    v6 = IteratorOpen v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = IteratorResume v6
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v11 = Integer integer=1
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b1(), notTaken b4()
+  b3():
+    v13 = CopyObject v4
+    v14 = Builtin builtin=Reflect
+    v15 = Builtin builtin=ReflectOwnKeys
+    v16 = Call v15, v14, v4
+    Return v16
+  b4():
+    IteratorClose v6
+    Jump -> next b3()
+}
+function f1 name="counted" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    InitialYield
+    v3 = Integer integer=1
+    v4 = Yield v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    v7 = Undefined
+    Return v7
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: InitializeBuiltin builtin=GeneratorPrototypeNext
+# CHECK: LoopHint
+# CHECK-NOT: InitializeBuiltin builtin=GeneratorPrototypeNext
+# CHECK: = StepGenerator
+# CHECK: InitializeBuiltin builtin=GeneratorPrototypeReturn
+# CHECK-NEXT: = Undefined
+# CHECK-NEXT: = StepGenerator {{*}}resumeMode=Return

@@ -1,0 +1,53 @@
+# A declared function over the budget stays a function, at its only call site as at two: whether the body would go with the copy is not known while callers are optimized
+# RUN: pipeline CheckPlacement
+# RUN(TWICE): pipeline CheckPlacement
+# RUN(VALUE): pipeline CheckPlacement
+
+variable g0 name="calledOnce" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="calledTwice" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="calledOnceAndKeptAsValue" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v3
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v5
+    v8 = GetModuleVariable variable=g2
+    v9 = Call v8, -, v7
+    v10 = PropGet v0 key="publish" [isFreeName]
+    v11 = Call v10, -, v9, v8
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NOT: = Mul
+# CHECK: Return
+# TWICE-LABEL: function f0 name="main"
+# TWICE: = CallDirect {{*}} function=f2
+# TWICE: = CallDirect {{*}} function=f2
+# VALUE-LABEL: function f0 name="main"
+# VALUE: = CallDirect {{*}} function=f3
+function f1 name="calledOnce" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..15
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v16
+}
+function f2 name="calledTwice" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..15
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v16
+}
+function f3 name="calledOnceAndKeptAsValue" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..15
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v16
+}

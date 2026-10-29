@@ -1,0 +1,29 @@
+# The summary of a body follows the functions that a call may run, one dependency for each part of each of them. Behind 64 functions at one call it stops counting: the call does whatever any code can do,
+# so a program in which each of N functions may call all N has N dependencies and not N times N
+# FORM: Prepared
+# RUN: effects summaries f67
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="written" declared={type=number} initialization=Undefined
+# REPEAT: i = 0..64
+function f%(i) name="member%(i)" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# END REPEAT
+function f65 name="mayRunSixtyFour" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    v2 = Call v0, -, v1 callees=[f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35, f36, f37, f38, f39, f40, f41, f42, f43, f44, f45, f46, f47, f48, f49, f50, f51, f52, f53, f54, f55, f56, f57, f58, f59, f60, f61, f62, f63]
+    Return
+}
+function f66 name="mayRunSixtyFive" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    v2 = Call v0, -, v1 callees=[f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35, f36, f37, f38, f39, f40, f41, f42, f43, f44, f45, f46, f47, f48, f49, f50, f51, f52, f53, f54, f55, f56, f57, f58, f59, f60, f61, f62, f63, f64]
+    Return
+}
+function f67 name="callsBoth" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f65
+    v3 = CallDirect v0, v1 function=f66
+    Return
+}
+# CHECK-LABEL: function f67
+# CHECK-NEXT: v2 CallDirect: writes(ModuleVariables/1) throws
+# CHECK-NEXT: v3 CallDirect: unknownCode

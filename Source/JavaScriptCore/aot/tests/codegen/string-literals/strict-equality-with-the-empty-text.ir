@@ -1,0 +1,37 @@
+# There is one empty text, so a value that is strictly equal to "" is that cell. Every code compares the two words in place and calls nothing.
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls StringLiteralsComparedInPlace
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="valueInFastCode" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = ValueEqualsLiteral v0 literal=""
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# S: f0 b1 Fast
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: stub ValueEqualsLiteral
+# CHECK-NOT: stub StringEqualsLiteral
+
+function f1 name="valueInBalancedCode" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueEqualsLiteral v0 literal=""
+    Return v1
+}
+# S: f1 b0 Balanced
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: stub ValueEqualsLiteral
+
+function f2 name="stringInBalancedCode" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = StringEqualsLiteral v0 literal=""
+    Return v1
+}
+# S: f2 b0 Balanced
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: stub StringEqualsLiteral
+# CHECK: statistic StringLiteralsComparedInPlace 0

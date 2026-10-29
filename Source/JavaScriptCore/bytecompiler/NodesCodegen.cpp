@@ -31,7 +31,7 @@
 #include "AbstractModuleRecord.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
-#include "BytecodeGeneratorBaseInlines.h"
+#include "BytecodeGeneratorInlines.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncDisposableStack.h"
@@ -50,6 +50,7 @@
 #include "JSWrapForValidIterator.h"
 #include "LabelScope.h"
 #include "LinkTimeConstant.h"
+#include "MarkedBlockCage.h"
 #include "ModuleScopeData.h"
 #include "StackAlignment.h"
 #include "UnlinkedMetadataTableInlines.h"
@@ -318,7 +319,12 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     if (!generator.needsTDZCheck(var))
         generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound);
     else {
+#if ENABLE(AOT)
+        // Nobody reads a temporary behind a check that has thrown.
+        RefPtr<RegisterID> uncheckedResult = Options::runsCompiledImage() && finalDest->isTemporary() ? finalDest : generator.newTemporary();
+#else
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
+#endif
         generator.emitGetFromScope(uncheckedResult.get(), scope.get(), var, ThrowIfNotFound);
         generator.emitTDZCheck(uncheckedResult.get(), m_ident);
         generator.move(finalDest, uncheckedResult.get());
@@ -499,10 +505,18 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
     auto newArray = [&](RegisterID* dst, ElementNode* elements, unsigned length) {
         if (length && !hadVariableExpression) {
             VM& vm = generator.vm();
+            IndexingType indexingTypeOfElements = recommendedIndexingType;
             recommendedIndexingType |= CopyOnWrite;
 
             Structure* cellButterflyStructure = allDenseStrings ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(recommendedIndexingType);
+            // The reserve has room for a small cell. Without room for a large one, the array is built when the code runs.
+            bool isLarge = JSCellButterfly::allocationSize(length).value() > MarkedSpace::largeCutoff;
+            std::optional<MarkedBlockCage::InfallibleAllocationScope> infallibleAllocation;
+            if (MarkedBlockCage::isRequired() && !isLarge)
+                infallibleAllocation.emplace(vm.heap.cage());
             auto* array = JSCellButterfly::tryCreate(generator.vm(), cellButterflyStructure, length);
+            if (!array && MarkedBlockCage::isRequired() && isLarge)
+                return generator.emitNewArray(dst, elements, length, indexingTypeOfElements);
             RELEASE_ASSERT(array);
 
             ASSERT(elements == m_element);
@@ -675,6 +689,40 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
             propertyList = propertyList->m_next;
         }
     }
+
+#if ENABLE(AOT)
+    if (!newObject && Options::runsCompiledImage()) {
+        constexpr unsigned maxNumberOfValues = 16;
+        Vector<PropertyNode*, maxNumberOfValues> properties;
+        bool canEvaluateValuesFirst = true;
+        for (auto* p = propertyList; p && canEvaluateValuesFirst; p = p->m_next) {
+            PropertyNode& node = *p->m_node;
+            ExpressionNode* value = node.m_assign;
+            canEvaluateValuesFirst = properties.size() < maxNumberOfValues
+                && (node.m_type & PropertyNode::Constant) && !(node.m_type & ~(PropertyNode::Constant | PropertyNode::Shorthand))
+                && node.name() && !parseIndex(*node.name()) && !node.isClassProperty() && !PropertyNode::isUnderscoreProtoSetter(generator.vm(), node)
+                && !(value->isBaseFuncExprNode() && static_cast<BaseFuncExprNode*>(value)->metadata()->superBinding() == SuperBinding::Needed);
+            properties.append(&node);
+        }
+        if (canEvaluateValuesFirst) {
+            Vector<bool, maxNumberOfValues> needsCopy(FillWith { }, properties.size(), false);
+            bool laterValuesArePure = true;
+            for (size_t index = properties.size(); index--;) {
+                needsCopy[index] = !laterValuesArePure;
+                laterValuesArePure &= properties[index]->m_assign->isPure(generator);
+            }
+            Vector<RefPtr<RegisterID>, maxNumberOfValues> values;
+            for (size_t index = 0; index < properties.size(); ++index) {
+                RefPtr<RegisterID> copy = needsCopy[index] ? generator.newTemporary() : nullptr;
+                values.append(generator.emitNode(copy.get(), properties[index]->m_assign));
+            }
+            newObject = generator.emitNewObject(generator.tempDestination(dst));
+            for (size_t index = 0; index < properties.size(); ++index)
+                generator.emitDirectPutById(newObject.get(), *properties[index]->name(), values[index].get());
+            return generator.move(dst, newObject.get());
+        }
+    }
+#endif
 
     if (!newObject)
         newObject = generator.emitNewObject(generator.tempDestination(dst));
@@ -1018,6 +1066,12 @@ void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, Reg
         if (node.type() & PropertyNode::PrivateMethod) {
             Variable var = generator.variable(*node.name());
             generator.emitPutToScope(generator.scopeRegister(), var, value.get(), DoNotThrowIfNotFound, InitializationMode::ConstInitialization);
+            return;
+        }
+
+        // Only built-in code can write such a name, and nothing lists what lies under it.
+        if (node.name() && node.name()->isPrivateName()) {
+            generator.emitDirectPutById(newObj, *node.name(), value.get());
             return;
         }
 
@@ -2131,7 +2185,9 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isPromise, IsPromise)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isRegExpObject, IsRegExpObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isMap, IsMap)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isSet, IsSet)
+#if ENABLE(SHADOW_REALM)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isShadowRealm, IsShadowRealm)
+#endif
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isArrayIterator, IsArrayIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isUndefinedOrNull, IsUndefinedOrNull)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isWrapForValidIterator, IsWrapForValidIterator)
@@ -4572,6 +4628,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     Ref<LabelScope> scope = generator.newLabelScope(LabelScope::Loop);
     Ref<Label> topOfLoop = generator.newLabel();
 
+    generator.emitProfileControlFlowForLoopHeader(m_expr);
     generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
     generator.emitLabel(topOfLoop.get());
@@ -4582,6 +4639,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     generator.emitLabel(*scope->continueTarget());
 
+    generator.emitProfileControlFlowForLoopHeader(m_expr);
     generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
 
     generator.emitLabel(scope->breakTarget());
@@ -4610,6 +4668,7 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
             }
 
             Ref<Label> topOfLoop = generator.newLabel();
+            generator.emitProfileControlFlowForLoopHeader(m_expr2);
             if (m_expr2)
                 generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
@@ -4621,9 +4680,11 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
             generator.emitLabel(*scope->continueTarget());
             generator.prepareLexicalScopeForNextForLoopIteration(this, forLoopSymbolTable);
+            generator.emitProfileControlFlowForLoopHeader(m_expr3);
             if (m_expr3)
                 generator.emitNodeInIgnoreResultPosition(m_expr3);
 
+            generator.emitProfileControlFlowForLoopHeader(m_expr2);
             if (m_expr2)
                 generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
             else
@@ -4786,6 +4847,9 @@ void ForInNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         generator.emitEnumeratorNext(propertyName.get(), mode.get(), index.get(), base.get(), enumerator.get());
         generator.emitJumpIfSentinelString(propertyName.get(), scope->breakTarget());
 
+        // The left side, up to `in`. The initializer of `for (var x = 1 in o)` ran once, before the loop.
+        if (!m_lexpr->isAssignResolveNode())
+            generator.emitProfileControlFlowForLoopHeader(divotStart().offset, divot().offset);
         this->emitLoopHeader(generator, propertyName.get());
 
         generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
@@ -4823,6 +4887,8 @@ void ForOfNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     auto extractor = [this, dst, isUsingDeclaration, isAwaitUsingDeclaration](BytecodeGenerator& generator, RegisterID* value)
     {
         auto emitBody = [&](BytecodeGenerator& generator) {
+            // The left side, up to `of`.
+            generator.emitProfileControlFlowForLoopHeader(divotStart().offset, divot().offset);
             if (m_lexpr->isResolveNode()) {
                 const Identifier& ident = static_cast<ResolveNode*>(m_lexpr)->identifier();
                 Variable var = generator.variable(ident);
@@ -5106,6 +5172,22 @@ void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterI
     } else {
         // Setup jumps
         SetForScope isInCaseTest(generator.isInCaseTest(), true);
+        // A variable that has a register of its own is stored into by this function alone, so neither a name nor a member of one changes it.
+        auto mayStoreIntoVariable = [&](ClauseListNode* list) {
+            for (; list; list = list->getNext()) {
+                ExpressionNode* expression = list->getClause()->expr();
+                while (expression->isDotAccessorNode())
+                    expression = static_cast<DotAccessorNode*>(expression)->base();
+                if (!expression->isConstant() && !expression->isResolveNode() && !expression->isThisNode())
+                    return true;
+            }
+            return false;
+        };
+        RefPtr<RegisterID> copyOfSwitchExpression;
+        if (!switchExpression->isTemporary() && (mayStoreIntoVariable(m_list1) || mayStoreIntoVariable(m_list2))) {
+            copyOfSwitchExpression = generator.move(generator.newTemporary(), switchExpression);
+            switchExpression = copyOfSwitchExpression.get();
+        }
         for (ClauseListNode* list = m_list1; list; list = list->getNext()) {
             RefPtr<RegisterID> clauseVal = generator.emitNode(list->getClause()->expr());
             Ref<Label> clauseLabel = generator.newLabel();

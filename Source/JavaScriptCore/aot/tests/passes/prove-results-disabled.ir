@@ -1,0 +1,12 @@
+# With the pass turned off a result stays expected
+# FORM: Prepared
+# OPTIONS: disable=pass:ProveResults
+# RUN: pass ProveResults
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsNumbersOnly" parameters=[{type=number}] results=[{type=number flags=[IsExpected]}] {
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="returnsNumbersOnly"{{*}}results=[{type=number flags=[IsExpected]}] 

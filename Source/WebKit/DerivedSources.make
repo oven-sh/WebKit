@@ -759,6 +759,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/Cocoa/SharedCARingBuffer.serialization.in \
 	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
 	Shared/CallbackID.serialization.in \
+	Shared/ContentInversion.serialization.in \
 	Shared/ContentWorldData.serialization.in \
 	Shared/ContextMenuContextData.serialization.in \
 	Shared/CoordinateSystem.serialization.in \
@@ -915,6 +916,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/cf/CoreIPCSecCertificate.serialization.in \
 	Shared/cf/CoreIPCSecKeychainItem.serialization.in \
 	Shared/cf/CoreIPCSecTrust.serialization.in \
+	Shared/graphics/DisplayListData.serialization.in \
 	Shared/graphics/RemoteImageBufferSetConfiguration.serialization.in \
 	Shared/mac/PDFContextMenuItem.serialization.in \
 	Shared/mac/WebHitTestResultPlatformData.serialization.in \
@@ -945,10 +947,8 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUImageCopyTexture.serialization.in \
 	Shared/WebGPU/WebGPUImageCopyTextureTagged.serialization.in \
 	Shared/WebGPU/WebGPUImageDataLayout.serialization.in \
-	Shared/WebGPU/WebGPUInternalError.serialization.in \
 	Shared/WebGPU/WebGPUMultisampleState.serialization.in \
 	Shared/WebGPU/WebGPUOrigin2D.serialization.in \
-	Shared/WebGPU/WebGPUOutOfMemoryError.serialization.in \
 	Shared/WebGPU/WebGPUPipelineDescriptorBase.serialization.in \
 	Shared/WebGPU/WebGPUPipelineLayoutDescriptor.serialization.in \
 	Shared/WebGPU/WebGPUPresentationContextDescriptor.serialization.in \
@@ -968,10 +968,8 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUVertexState.serialization.in \
 	Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in \
 	Shared/WebGPU/WebGPUVertexAttribute.serialization.in \
-	Shared/WebGPU/WebGPUValidationError.serialization.in \
 	Shared/WebGPU/WebGPUTextureBindingLayout.serialization.in \
 	Shared/WebGPU/WebGPUSupportedLimits.serialization.in \
-	Shared/WebGPU/WebGPUSupportedFeatures.serialization.in \
 	Shared/WebGPU/WebGPUStorageTextureBindingLayout.serialization.in \
 	Shared/WebGPU/WebGPUStencilFaceState.serialization.in \
 	Shared/WebGPU/WebGPURenderPassTimestampWrites.serialization.in \
@@ -1112,8 +1110,6 @@ EXTENSION_INTERFACES = \
     WebExtensionAPIScripting \
     WebExtensionAPISidePanel \
     WebExtensionAPISidebarAction \
-    WebExtensionAPIStorage \
-    WebExtensionAPIStorageArea \
     WebExtensionAPITabs \
     WebExtensionAPIWebNavigation \
     WebExtensionAPIWebNavigationEvent \
@@ -1127,6 +1123,8 @@ CPP_EXTENSION_INTERFACES = \
 	WebExtensionAPIAlarms \
 	WebExtensionAPINamespace \
     WebExtensionAPIRuntime \
+    WebExtensionAPIStorage \
+    WebExtensionAPIStorageArea \
     WebExtensionAPITest \
 	WebExtensionAPIWebPageNamespace \
     WebExtensionAPIWebPageRuntime \

@@ -1,0 +1,93 @@
+# An object has not escaped before the call that takes it, and may have escaped after that call and around a loop
+# FORM: AsRead
+# RUN: analyses escape-history history-points function=f0
+# RUN(WRITES): analyses history-points function=f0 history-uses=WritesContents
+# RUN(IGNORED): analyses history-points function=f0 ignored-blocks=b2
+# RUN(FRESH): analyses history-points function=f1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="beforeCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = Call v0
+    v5 = Call v0, -, v2
+    v6 = Call v0
+    Jump -> next b1(v1)
+  b1(v7):
+    LoopHint
+    v9 = TypeTest v6 testedType=object
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = NewArray contents=anything
+    v11 = NewArray contents=anything
+    v12 = TypeTest v7 testedType=object
+    AppendElement v10, v6
+    AppendElement v11, v6
+    v15 = Call v0, -, v3
+    Jump -> next b1(v11)
+  b3():
+    Return v1
+}
+function f1 name="escapesEachIteration" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v0 testedType=object
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = NewObject -, v1 layout=L0 fields=[0]
+    v6 = NewObject -, v1 layout=L0 fields=[0]
+    v7 = TypeTest v2 testedType=object
+    v8 = Call v0, -, v5, v6
+    Jump -> next b1(v6)
+  b3():
+    Return v1
+}
+# CHECK: function f0
+# CHECK: escape-history:
+# CHECK: b0 occurred at head: [o0]
+# CHECK: b0 unknown at head: []
+# CHECK: b1 occurred at head: [o0 o1 o2]
+# CHECK: b1 unknown at head: []
+# CHECK: history-points:
+# CHECK: b0:0 occurred: [o0]
+# CHECK: b0:3 occurred: [o0]
+# CHECK: b0:4 occurred: [o0]
+# CHECK: b0:5 occurred: [o0 o1]
+# CHECK: b0:6 occurred: [o0 o1]
+# CHECK: b1:0 occurred: [o0 o1 o2]
+# CHECK: b2:5 occurred: [o0 o1 o2]
+# CHECK: b2:5 unknown: []
+# CHECK: b3:0 occurred: [o0 o1 o2]
+# WRITES: function f0
+# WRITES: history-points:
+# WRITES: b0:6 occurred: [o0 o1]
+# WRITES: b1:0 occurred: [o0 o1 o2 o3 o4]
+# WRITES: b2:0 occurred: [o0 o1 o2 o3 o4]
+# WRITES: b2:1 occurred: [o0 o1 o2 o4]
+# WRITES: b2:2 occurred: [o0 o1 o2 o4]
+# WRITES: b2:3 occurred: [o0 o1 o2 o4]
+# WRITES: b2:4 occurred: [o0 o1 o2 o3 o4]
+# WRITES: b3:0 occurred: [o0 o1 o2 o3 o4]
+# IGNORED: function f0
+# IGNORED: history-points:
+# IGNORED: b1:0 occurred: [o0 o1]
+# IGNORED: b2:0 occurred: []
+# IGNORED: b2:0 unknown: [o0 o1 o2 o3 o4]
+# IGNORED: b3:0 occurred: [o0 o1]
+# IGNORED: b3:0 unknown: []
+# FRESH: function f1
+# FRESH: history-points:
+# FRESH: b0:0 occurred: [o0]
+# FRESH: b1:0 occurred: [o0 o1 o2]
+# FRESH: b2:0 occurred: [o0 o1 o2]
+# FRESH: b2:1 occurred: [o0 o2]
+# FRESH: b2:2 occurred: [o0 o2]
+# FRESH: b2:3 occurred: [o0 o2]
+# FRESH: b2:3 unknown: []
+# FRESH: b2:4 occurred: [o0 o1 o2]
+# FRESH: b3:0 occurred: [o0 o1 o2]

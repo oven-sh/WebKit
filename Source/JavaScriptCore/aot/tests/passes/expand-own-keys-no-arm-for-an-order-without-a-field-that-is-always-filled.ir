@@ -1,0 +1,50 @@
+# An order that leaves out a field that is always filled is the order of no object, so a walk over own keys has no arm for it and it takes no place under the limit
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="EveryFieldIsFilled" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}, {fields=[0]}, {fields=[0, 1]}]}
+layout L1 name="OneFieldMayBeMissing" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number}}] flow={constructorOrders=[{}, {fields=[1]}, {fields=[0]}, {fields=[0, 1]}]}
+layout L2 name="FourOrdersBehindOneOfNoObject" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}] flow={constructorOrders=[{}, {fields=[0]}, {fields=[0, 1]}, {fields=[0, 2]}, {fields=[0, 1, 2]}]}
+layout L3 name="NoOrderOfAnObject" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}]}
+
+function f0 name="everyFieldIsFilled" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+# CHECK-NOT: HasKeyOrder
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NOT: HasKeyOrder
+}
+
+function f1 name="oneFieldMayBeMissing" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+# CHECK-NOT: HasKeyOrder
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1]
+# CHECK-NOT: HasKeyOrder
+}
+
+function f2 name="fourOrdersBehindOneOfNoObject" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+# CHECK-NOT: HasKeyOrder
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 2]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1, 2]
+# CHECK-NOT: HasKeyOrder
+}
+
+function f3 name="noOrderOfAnObject" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L3):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+# CHECK: b0(v0: object ~ L3):
+# CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NEXT: Return
+}

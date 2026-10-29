@@ -45,6 +45,35 @@ class CachedCall : public CallLinkInfoBase {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSFunction*, int argumentCount);
+    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSObject* compiledCallee, const CallData&, int argumentCount);
+
+    static bool supports(const CallData& callData) { return callData.type == CallData::Type::JS || callData.type == CallData::Type::Compiled; }
+
+    static ALWAYS_INLINE CachedCall create(JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+    {
+        ASSERT(supports(callData));
+        if (callData.type == CallData::Type::JS) [[likely]]
+            return CachedCall(globalObject, uncheckedDowncast<JSFunction>(callee), argumentCount);
+        return CachedCall(globalObject, callee, callData, argumentCount);
+    }
+
+    static ALWAYS_INLINE std::optional<CachedCall> tryCreate(JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+    {
+        if (callData.type == CallData::Type::JS) [[likely]]
+            return std::optional<CachedCall>(std::in_place, globalObject, uncheckedDowncast<JSFunction>(callee), argumentCount);
+        if (callData.type == CallData::Type::Compiled)
+            return std::optional<CachedCall>(std::in_place, globalObject, callee, callData, argumentCount);
+        return std::nullopt;
+    }
+
+    static ALWAYS_INLINE CachedCall* tryEmplace(std::optional<CachedCall>& holder, JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+    {
+        if (callData.type == CallData::Type::JS) [[likely]]
+            return &holder.emplace(globalObject, uncheckedDowncast<JSFunction>(callee), argumentCount);
+        if (callData.type == CallData::Type::Compiled)
+            return &holder.emplace(globalObject, callee, callData, argumentCount);
+        return nullptr;
+    }
 
     ~CachedCall()
     {
@@ -61,6 +90,7 @@ public:
     JSFunction* function()
     {
         ASSERT(m_valid);
+        ASSERT(m_functionExecutable);
         return uncheckedDowncast<JSFunction>(m_protoCallFrame.calleeValue.unboxedCell());
     }
     FunctionExecutable* functionExecutable() { return m_functionExecutable; }

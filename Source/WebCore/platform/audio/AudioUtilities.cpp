@@ -23,14 +23,16 @@
  */
 
 #include "config.h"
-
-#if ENABLE(WEB_AUDIO)
-
 #include "AudioUtilities.h"
+#include "BitReader.h"
+#include <array>
 #include <random>
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 #include <wtf/WeakRandomNumber.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace WebCore {
 
@@ -102,8 +104,124 @@ void applyNoise(std::span<float> values, float standardDeviation)
     }
 }
 
+Vector<uint8_t> extractAudioSpecificConfigFromESDescriptor(std::span<const uint8_t> esDescriptor)
+{
+    constexpr uint8_t esDescriptorTag = 0x03;
+    constexpr uint8_t decoderConfigDescriptorTag = 0x04;
+    constexpr uint8_t decoderSpecificInfoTag = 0x05;
+
+    BitReader reader(esDescriptor);
+
+    // ES_Descriptor: tag (8 bits), size.
+    // Then ES_ID (16 bits), streamDependenceFlag (1 bit), URL_Flag (1 bit), OCRstreamFlag (1 bit), streamPriority (5 bits), optional fields, then the DecoderConfigDescriptor.
+    if (reader.readBits(8) != esDescriptorTag)
+        return { };
+    reader.readExpandableSize();
+    reader.consumeBits(16); // ES_ID
+    bool streamDependenceFlag = reader.readFlag();
+    bool urlFlag = reader.readFlag();
+    bool ocrStreamFlag = reader.readFlag();
+    reader.consumeBits(5); // streamPriority
+    if (streamDependenceFlag)
+        reader.consumeBits(16); // dependsOn_ES_ID
+    if (urlFlag) {
+        auto urlLength = reader.readBits(8);
+        reader.consumeBits(8 * urlLength); // URLstring
+    }
+    if (ocrStreamFlag)
+        reader.consumeBits(16); // OCR_ES_Id
+
+    // DecoderConfigDescriptor: tag (8 bits) + size.
+    // Then objectTypeIndication (8 bits), streamType (6 bits), upStream (1 bit), reserved (1 bit), bufferSizeDB (24 bits), maxBitrate (32 bits), avgBitrate (32 bits)
+    // Then the DecoderSpecificInfo.
+    if (reader.readBits(8) != decoderConfigDescriptorTag)
+        return { };
+    reader.readExpandableSize();
+
+    constexpr size_t objectTypeIndicationBits = 8;
+    constexpr size_t streamTypeUpStreamdAndReseveredBits = 8;
+    constexpr size_t bufferSizeDBBits = 24;
+    constexpr size_t maxBitrateBits = 32;
+    constexpr size_t avgBitrateBits = 32;
+    reader.consumeBits(objectTypeIndicationBits + streamTypeUpStreamdAndReseveredBits + bufferSizeDBBits + maxBitrateBits + avgBitrateBits);
+
+    // DecoderSpecificInfo: tag (8 bits), size.
+    // Then the AudioSpecificConfig, whose size is the number of bytes to read.
+    if (reader.readBits(8) != decoderSpecificInfoTag)
+        return { };
+    auto audioSpecificConfig = reader.readSpan(reader.readExpandableSize());
+
+    if (!reader.ok())
+        return { };
+    return audioSpecificConfig;
+}
+
+Vector<uint8_t> opusHeadWithoutPreSkip(std::span<const uint8_t> cookie)
+{
+    constexpr size_t preSkipOffset = 10;
+    Vector<uint8_t> result(cookie);
+    if (spanHasPrefix(cookie, "OpusHead"_span8) && result.size() >= preSkipOffset + sizeof(uint16_t))
+        zeroSpan(result.mutableSpan().subspan(preSkipOffset, sizeof(uint16_t)));
+    return result;
+}
+
+// Converts a WebCodecs flac description, the "fLaC" stream marker followed by the metadata blocks
+// (https://www.w3.org/TR/webcodecs-flac-codec-registration/#audiodecoderconfig-description), into the
+// magic cookie AudioToolbox expects: a 'dfLa' box holding the STREAMINFO block alone.
+Vector<uint8_t> createFLACMagicCookie(std::span<const uint8_t> description)
+{
+    static constexpr size_t markerSize = 4;
+    static constexpr size_t blockHeaderSize = 4;
+    static constexpr uint8_t streamInfoSize = 34;
+    static constexpr uint8_t streamInfoType = 0;
+    static constexpr uint8_t lastMetadataBlockFlag = 0x80;
+
+    BitReader reader(description);
+
+    // Stream marker, then the STREAMINFO block, which is always the first metadata block.
+    // Its header is the last-metadata-block flag (1 bit), the block type (7 bits) and the block length (24 bits).
+    if (!equalSpans(reader.readSpan(markerSize), "fLaC"_span8))
+        return { };
+    reader.consumeBits(1); // last-metadata-block flag
+    if (reader.readBits(7) != streamInfoType || reader.readBits(24) != streamInfoSize)
+        return { };
+    auto streamInfo = reader.readSpan(streamInfoSize);
+    if (!reader.ok())
+        return { };
+
+    static constexpr uint8_t boxSize = 4 + 4 + 4 + blockHeaderSize + streamInfoSize; // size + type + version and flags + STREAMINFO block
+    static constexpr std::array<uint8_t, boxSize - streamInfoSize> header {
+        0, 0, 0, boxSize, // size
+        'd', 'f', 'L', 'a', // type
+        0, 0, 0, 0, // version and flags
+        lastMetadataBlockFlag | streamInfoType, 0, 0, streamInfoSize // STREAMINFO block header
+    };
+    Vector<uint8_t> cookie;
+    cookie.reserveInitialCapacity(boxSize);
+    cookie.append(std::span { header });
+    cookie.append(streamInfo);
+    return cookie;
+}
+
+// Converts a 'dfLa' box (https://github.com/xiph/flac/blob/master/doc/isoflac.txt) into a WebCodecs flac
+// description: the "fLaC" stream marker followed by the box's metadata blocks.
+Vector<uint8_t> flacDescriptionFromFLACMagicCookie(std::span<const uint8_t> cookie)
+{
+    static constexpr size_t boxHeaderSize = 4 + 4 + 4; // size + type + version and flags
+
+    BitReader reader(cookie);
+    size_t boxSize = reader.readBits(32);
+    if (!equalSpans(reader.readSpan(4), "dfLa"_span8) || !reader.ok() || boxSize <= boxHeaderSize || boxSize > cookie.size())
+        return { };
+
+    auto metadataBlocks = cookie.subspan(boxHeaderSize, boxSize - boxHeaderSize);
+    Vector<uint8_t> description;
+    description.reserveInitialCapacity(4 + metadataBlocks.size());
+    description.append("fLaC"_span8);
+    description.append(metadataBlocks);
+    return description;
+}
+
 } // AudioUtilites
 
 } // WebCore
-
-#endif // ENABLE(WEB_AUDIO)

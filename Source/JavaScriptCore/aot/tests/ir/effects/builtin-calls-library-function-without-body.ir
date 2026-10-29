@@ -1,0 +1,36 @@
+# A library function that flow never enters has no body and is not compiled: a call of its built-in is unknown code as this program has it, and writes no variable that only compiled code writes
+# FORM: Prepared optimizing
+# RUN: effects summaries f0
+# RUN(W): write-overlap summaries f0
+# RUN(NOBODY): check-replacement summaries f0 v4 v3
+# RUN(ABSENT): check-replacement summaries f0 v6 v3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="writerHasOnlyDirectCallers" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="closes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, v0 calleeKey="return"
+    v4 = CallBuiltin v0 overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
+    v5 = CallBuiltin v0 overload=IteratorHelperPrototypeReturn/0 builtinCallForm=AnyReceiver
+    v6 = CallBuiltin v0 overload=WrapForValidIteratorPrototypeNext/0 builtinCallForm=AnyReceiver
+    Return
+}
+function f1 name="withoutBody" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}]
+function f2 name="withBody" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=86 thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+runtimefunction id=86 function=f2
+runtimefunction id=87 function=f1
+# CHECK: unknown code: reads(all) writes(ObjectFields,
+# CHECK: v3 Call: reads(all) writes(ObjectFields,
+# CHECK: v4 CallBuiltin: reads(all) writes(ObjectFields,
+# CHECK: v5 CallBuiltin: writes(ModuleVariables/1)
+# CHECK: v6 CallBuiltin: reads(all) writes(ObjectFields,
+# W: v3 on v2: None
+# W: v4 on v2: None
+# W: v5 on v2: May
+# W: v6 on v2: None
+# NOBODY: valid
+# ABSENT: valid

@@ -1,0 +1,154 @@
+# A test that tells a character from undefined is a test of the code unit, and the string it proves stands for the character: what compares it compares the unit
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="relations-after-string-test" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string="0"
+    v4 = String string="9"
+    v5 = TypeTest v2 testedType=string
+    Branch v5 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v6):
+    v7 = GreaterEq v6, v3
+    Branch v7 -> taken b2(), notTaken b4()
+  b2():
+    v8 = LessEq v6, v4
+    Return v8
+  b3(v9) frequency=Unlikely:
+    v10 = GreaterEq v9, v3
+    Return v10
+  b4():
+    Return v7
+# CHECK-NOT: StringRangeCharacter
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NOT: TypeTest
+# CHECK: [[undefined0]]: undefined = Undefined
+# CHECK: [[isUnit0]]: boolean = GreaterEq v2, {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch [[isUnit0]] -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NOT: ToUint32
+# CHECK: : boolean = GreaterEq v2, {{*}} form=Integers
+# CHECK: : boolean = LessEq v2, {{*}} form=Integers
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: : boolean = GreaterEq [[undefined0]], v3
+}
+
+function f1 name="comparison-after-undefined-test" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5):
+    v6 = String string="a"
+    v7 = StrictEq v5, v6
+    Return v7
+# CHECK-NOT: StringPrototypeAt
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK: [[undefined1]]: undefined = Undefined
+# CHECK: [[isAbsent1]]: boolean = Less [[unit1]], {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch [[isAbsent1]] -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return [[undefined1]]
+# CHECK-NEXT: b2():
+# CHECK: : boolean = StrictEq [[unit1]], {{*}} form=Integers
+}
+
+function f2 name="proven-string-is-returned" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v4):
+    v5 = String string="a"
+    v6 = Less v4, v5
+    Branch v6 -> taken b2(), notTaken b3(v4)
+  b2():
+    Return v4
+  b3(v7):
+    Return v7
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=string
+}
+
+function f3 name="number-of-proven-string" parameters=[{type=string}, {type=int}] results=[{type=number}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = ToNumber v4
+    Return v5
+  b2():
+    v6 = Double number=0.5
+    Return v6
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined {{*}}, -, -, v1
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=string
+# CHECK: b1(v4: string):
+# CHECK-NOT: v4
+# CHECK: v5: number = StringRangeToNumber
+}
+
+function f4 name="test-for-one-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType="a"
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = String string="b"
+    v6 = Less v4, v5
+    Return v6
+  b2():
+    Return v3
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v3: boolean = TypeTest v2 testedType="a"
+# CHECK-NOT: StringRangeCodeUnitOr
+}
+
+function f5 name="test-only" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Return v4
+  b2():
+    v5 = Integer integer=2
+    Return v5
+# CHECK-NOT: StringRangeCharacter
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK: v3: boolean = Less v2, {{*}} form=Integers
+}
+
+function f6 name="two-tests" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b1(| 0), notTaken b4(| 0)
+  b1(v5):
+    v6 = String string="a"
+    v7 = StrictEq v5, v6
+    v8 = ElemGet v0, v2
+    v9 = TypeTest v8 testedType=undefined
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v10):
+    Return v10
+  b3(v11):
+    v12 = StrictEq v11, v6
+    Branch v12 -> taken b5(), notTaken b6()
+  b4(v13):
+    Return v13
+  b5():
+    Return v7
+  b6():
+    Return v12
+# CHECK: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v1
+# CHECK-NOT: TypeTest
+# CHECK: [[firstUndefined]]: undefined = Undefined
+# CHECK-NOT: TypeTest
+# CHECK: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v2
+# CHECK-NOT: TypeTest
+# CHECK: [[secondUndefined]]: undefined = Undefined
+# CHECK-NOT: TypeTest
+# CHECK: b2():
+# CHECK-NEXT: Return [[secondUndefined]]
+# CHECK: b4():
+# CHECK-NEXT: Return [[firstUndefined]]
+}

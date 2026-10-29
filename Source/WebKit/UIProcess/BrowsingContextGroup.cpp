@@ -411,6 +411,12 @@ bool BrowsingContextGroup::hasVisiblePage() const
     return false;
 }
 
+void BrowsingContextGroup::forEachPage(NOESCAPE const Function<void(WebPageProxy&)>& function)
+{
+    for (Ref page : m_pages)
+        function(page);
+}
+
 void BrowsingContextGroup::forEachRemotePage(const WebPageProxy& page, NOESCAPE const Function<void(RemotePageProxy&)>& function)
 {
     auto it = m_remotePages.find(page);
@@ -534,7 +540,7 @@ std::pair<WebCore::AgentClusterAssignment, RefPtr<AgentClusterKeyingReservation>
     std::optional<WebCore::OriginKeyed> keyingToSettle;
     // https://html.spec.whatwg.org/multipage/origin.html#origin-keyed-agent-clusters
     // A document with a Document-Isolation-Policy is origin-keyed and does not use the historical agent cluster key map.
-    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicy::None)
+    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicyValue::None)
         assignment.isOriginKeyed = WebCore::OriginKeyed::Yes;
     else {
         switch (request.source) {
@@ -569,7 +575,7 @@ std::pair<WebCore::AgentClusterAssignment, RefPtr<AgentClusterKeyingReservation>
 
     // https://wicg.github.io/document-isolation-policy/#coi-agent-cluster-key
     std::optional<WebCore::SecurityOriginData> crossOriginIsolationKey;
-    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicy::None)
+    if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicyValue::None)
         crossOriginIsolationKey = origin;
     else if (m_crossOriginMode == WebCore::CrossOriginMode::Isolated)
         crossOriginIsolationKey = WebCore::SecurityOriginData::fromURL(request.topLevelCreationURL);

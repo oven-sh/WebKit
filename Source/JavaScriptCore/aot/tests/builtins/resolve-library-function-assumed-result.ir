@@ -1,0 +1,59 @@
+# The table says more about the result of an entry than the function of the library declares, whose types are only expected. A call that a pass created with the type of the table still becomes a direct call, and the result is assumed to have that type
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=30 function=f2
+runtimefunction id=64 function=f7
+runtimefunction id=88 function=f0
+runtimefunction id=131091 function=f1
+function f0 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v2
+}
+function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return v0
+}
+function f2 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v3 = Boolean boolean=true
+    Return v3
+}
+
+function f3 name="promisedBoolean" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSome/0
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK: [[called3]]: anything{{*}} = CallDirect v0, v1, v2 function=f0
+# CHECK-NEXT: v3: boolean = AssumeType [[called3]] provenType=boolean
+# CHECK-NEXT: Return v3
+}
+
+function f4 name="nothingPromised" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0, v1, v1, v1, v0, v0 overload=CompilerHelpersTraverseArray/0
+    Return v2
+# CHECK-NOT: AssumeType
+# CHECK: v2: anything = CallDirect v0, v1, v1, v1, v0, v0 function=f1
+}
+
+function f5 name="declaredByTheFunction" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeEvery/0
+    Return v3
+# CHECK-NOT: AssumeType
+# CHECK: v3: boolean = CallDirect v0, v1, v2 function=f2
+}
+
+function f6 name="promisedClass" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeMap/0
+    Return v3
+# The table promises the class and nothing about its contents
+# CHECK-NOT: CallBuiltin
+# CHECK: [[called6]]: anything{{*}} = CallDirect v0, v1, v2 function=f7
+# CHECK-NEXT: v3: Array = AssumeType [[called6]] provenType=Array
+}
+
+function f7 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}

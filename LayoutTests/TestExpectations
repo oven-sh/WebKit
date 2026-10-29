@@ -576,9 +576,6 @@ imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiobuffersourcenode
 # This test crashes.
 webkit.org/b/321393 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiocontext-interface/audiocontextoptions.html [ Skip ]
 
-# This test is timing out due to lack of support for SharedArrayBuffer.
-imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworklet-postmessage-sharedarraybuffer.https.html [ Skip ]
-
 # Webaudio tests that are flaky.
 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioparam-interface/k-rate-stereo-panner.html [ Pass Failure ]
 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/cors-check.https.html [ Pass Failure ]
@@ -639,21 +636,6 @@ imported/w3c/web-platform-tests/cookiestore/serviceworker_oncookiechange_eventha
 imported/w3c/web-platform-tests/cookiestore/change_eventhandler_for_already_expired.https.window.html [ Skip ]
 imported/w3c/web-platform-tests/cookiestore/change_eventhandler_for_no_change.https.window.html [ Skip ]
 
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/element/manual/text/canvas.2d.lang.dynamic.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/element/manual/text/canvas.2d.lang.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/element/manual/text/canvas.2d.lang.inherit.disconnected.canvas.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.lang.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.lang.inherit.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.transferred.lang.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.transferred.lang.inherit.document.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.transferred.lang.inherit.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.worker.lang.html [ ImageOnlyFailure ]
-webkit.org/b/285993 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.worker.lang.inherit.html [ ImageOnlyFailure ]
-
-webkit.org/b/290522 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.transferred.direction.inherit.document.html [ ImageOnlyFailure ]
-webkit.org/b/290522 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.transferred.direction.inherit.html [ ImageOnlyFailure ]
-webkit.org/b/290522 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/text/canvas.2d.offscreen.worker.direction.inherit.html [ ImageOnlyFailure ]
-
 # We need to fix our WebVTT implementation to pass most of the WebVTT rendering WPT (https://bugs.webkit.org/show_bug.cgi?id=277975).
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video [ ImageOnlyFailure ]
 
@@ -668,11 +650,15 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_start.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_start_wrapped.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/audio_has_no_subtitles.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/bidi_ruby.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/start_alignment.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u05D0_first.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u0628_first.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u06E9_no_strong_dir.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/vertical_lr.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/vertical_rl.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/cue_too_long.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/dom_override_remove_cue_while_paused.html [ Pass ]
-imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/embedded_style_cascade_priority.html [ Pass ]
-imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/embedded_style_cascade_priority_layer.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/embedded_style_imports_blocked.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/embedded_style_invalid_format.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/embedded_style_media_queries.html [ Pass ]
@@ -724,6 +710,8 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u0041_first.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/color_rgba.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/cue_selector_single_colon.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/font_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/font_shorthand.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/white-space_pre-line_wrapped.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/background_box.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/bold_object/bold_color.html [ Pass ]
@@ -751,6 +739,8 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/class_object/class_with_class_object_specific_selector.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/color_rgba.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/cue_func_selector_single_colon.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/font_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/font_shorthand.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_color.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_font_properties.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_font_shorthand.html [ Pass ]
@@ -799,6 +789,17 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/underline_object/underline_white-space_pre-line_wrapped.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/voice_object/voice_white-space_normal_wrapped.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/voice_object/voice_white-space_pre-line_wrapped.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/class_object/class_outline_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/class_object/class_outline_shorthand.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_outline_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/italic_object/italic_outline_shorthand.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/underline_object/underline_outline_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/underline_object/underline_outline_shorthand.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/voice_object/voice_outline_properties.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/voice_object/voice_outline_shorthand.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/2_cues_overlapping_partially_move_up.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_left_right_with_and_without_snap_to_lines.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/repaint.html [ Pass ]
 
 # WebVTT text-decoration passing tests #
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue/text-decoration_line-through.html [ Pass ]
@@ -832,9 +833,6 @@ imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customiz
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-popover-exit-animation.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-picker-exit-animation.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-picker-starting-style.html [ Skip ]
-
-# Untriaged.
-imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/selectedcontent-restore.optional.html [ Skip ]
 
 # Our selectedcontent avoids overflow, but test expects it.
 imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/customizable-select/select-button-text-and-icon-clipping.html [ ImageOnlyFailure ]
@@ -1113,7 +1111,6 @@ imported/w3c/web-platform-tests/html/rendering/replaced-elements/embedded-conten
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/adopt-from-image-document.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/image-loading-lazy-slow-aspect-ratio.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/range-tick-marks-02.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/html/semantics/forms/the-option-element/dynamic-content-change-rendering.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/rendering/non-replaced-elements/phrasing-content-0/font-element-text-decoration-color/001-x.xhtml [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/rendering/non-replaced-elements/phrasing-content-0/font-element-text-decoration-color/001-a.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/rendering/non-replaced-elements/phrasing-content-0/font-element-text-decoration-color/001-s.html [ ImageOnlyFailure ]
@@ -1767,8 +1764,6 @@ editing/spelling/grammar-text-effect-not-reapplied.html [ Skip ]
 # This test is somewhat heavy and better skipped for debug
 [ Debug ] fast/css/many-rules.html [ Skip ]
 
-webkit.org/b/315069 [ Debug ] fast/css/container-query-orientation-modal-dialog-crash.html [ Skip ]
-
 webkit.org/b/112521 [ Release ] webaudio/audioprocessingevent.html [ Pass Failure ]
 webkit.org/b/112521 [ Debug ] webaudio/audioprocessingevent.html [ Skip ]
 
@@ -1908,19 +1903,10 @@ webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-si
 webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/row-003.html [ ImageOnlyFailure ]
 webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/row-004.html [ ImageOnlyFailure ]
 webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/row-007.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-001.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-002.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-003.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-006.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-007.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-008.html [ ImageOnlyFailure ]
-webkit.org/b/116117 imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-009.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/stretch-flex-item-checkbox-input.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/stretch-flex-item-radio-input.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/webkit-box-vertical-writing-mode.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-020.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/aspect-ratio-intrinsic-size-009.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/multiline-shrink-to-fit.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/align-content-007.htm
 imported/w3c/web-platform-tests/css/css-flexbox/align-self-016.html
 imported/w3c/web-platform-tests/css/css-flexbox/abspos/flex-abspos-align-self-safe-outer-cb-001.tentative.html [ ImageOnlyFailure ]
@@ -1931,12 +1917,8 @@ imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-available-size-0
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-004.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-005.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-006.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-007.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-percentage-size-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/gap-collapse.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-dynamic.html [ ImageOnlyFailure ]
 
 # grid layout tests
 webkit.org/b/191508 fast/css-grid-layout/crash-large-positions.html [ Skip ]
@@ -1994,8 +1976,6 @@ webkit.org/b/231021 imported/w3c/web-platform-tests/css/css-grid/grid-items/repl
 imported/w3c/web-platform-tests/css/css-grid/grid-model/grid-layout-stale-002.html [ ImageOnlyFailure ]
 
 
-webkit.org/b/279411 imported/w3c/web-platform-tests/css/css-grid/subgrid/alignment-in-subgridded-axes-002.html [ Skip ]
-webkit.org/b/279411 imported/w3c/web-platform-tests/css/css-grid/subgrid/subgrid-baseline-012.html [ Skip ]
 webkit.org/b/279412 imported/w3c/web-platform-tests/css/css-grid/subgrid/subgrid-baseline-010.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-grid/subgrid/subgrid-button.html [ ImageOnlyFailure ]
 
@@ -2374,7 +2354,7 @@ imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/alignment/column-subgrid-alignment-in-subgridded-axis-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/alignment/column-subgrid-stretch-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/alignment/row-subgrid-stretch-001.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/alignment/row-subgrid-alignment-in-subgridded-axis-002.html [ ImageOnlyFailure Crash ]
+imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/alignment/row-subgrid-alignment-in-subgridded-axis-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/column-subgrid-orthogonal-writing-mode-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/column-subgrid-orthogonal-writing-mode-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/column-subgrid-orthogonal-writing-mode-003.html [ ImageOnlyFailure ]
@@ -2465,11 +2445,11 @@ imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/column-grid-lanes-item-baseline-subgrid-006.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-container-baseline-subgrid-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-001.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-002.html [ ImageOnlyFailure Crash ]
-imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-003.html [ ImageOnlyFailure Crash ]
+imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-006.html [ ImageOnlyFailure Crash ]
+imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-006.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/column-subgrid-button.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/row-subgrid-button.html [ ImageOnlyFailure ]
 
@@ -3813,8 +3793,9 @@ imported/w3c/web-platform-tests/css/css-text/word-break/word-break-break-all-004
 webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-break-all-020.html [ ImageOnlyFailure ]
 webkit.org/b/197430 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-break-all-023.html [ ImageOnlyFailure ]
 webkit.org/b/197430 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-break-all-024.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-text/word-break/word-break-keep-all-003.html [ ImageOnlyFailure ]
 webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-keep-all-006.html [ ImageOnlyFailure ]
+webkit.org/b/327360 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-keep-all-001.html [ ImageOnlyFailure ]
+webkit.org/b/327360 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-keep-all-011.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-normal-my-000.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/word-break/word-break-normal-tdd-000.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/word-space-transform/word-space-transform-001.html [ ImageOnlyFailure ]
@@ -4307,10 +4288,6 @@ imported/w3c/web-platform-tests/css/css-overflow/line-clamp/webkit-line-clamp-05
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-auto-063.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-text-overflow-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/webkit-line-clamp-035.html [ ImageOnlyFailure ]
-[ Debug ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-abspos-025.html [ Crash ]
-[ Release ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-abspos-025.html [ ImageOnlyFailure ]
-[ Debug ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-abspos-026.html [ Crash ]
-[ Release ] imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-with-abspos-026.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-bidi-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/line-clamp-auto-045.html [ ImageOnlyFailure ]
@@ -5004,6 +4981,10 @@ imported/w3c/web-platform-tests/css/css-fonts/font-weight-normal-001.xht [ Image
 # DEQP is skipped on the main fleet of bots because of the long run time.
 webgl/2.0.y/deqp [ Skip ]
 
+# These tests cause a real GPU failure, so they are run only manually, with run-webkit-tests --force.
+webgl/context-lost-gpu-reset-long-fragment-shader.html [ Skip ]
+webgl/context-lost-gpu-reset-long-vertex-shader.html [ Skip ]
+
 # Flaky failures
 
 webgl/1.0.x/conformance/glsl [ Slow ]
@@ -5174,8 +5155,6 @@ webkit.org/b/212046 imported/w3c/web-platform-tests/css/css-flexbox/scrollbars.h
 
 imported/w3c/web-platform-tests/css/css-flexbox/gap-019.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/inline-flexbox-vertical-rl-image-flexitem-crash-print.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-013.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/intrinsic-size/col-wrap-014.html [ ImageOnlyFailure ]
 
 # text-combine-upright bugs
 webkit.org/b/234704 imported/w3c/web-platform-tests/css/css-writing-modes/text-combine-upright-layout-rules-001.html [ ImageOnlyFailure ]
@@ -6001,14 +5980,12 @@ imported/w3c/web-platform-tests/css/filter-effects/filter-region-calc-001.html [
 imported/w3c/web-platform-tests/css/filter-effects/filter-region-transformed-child-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/filter-region-units-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/svg-mutation-filter-used-by-mask.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/svg-feimage-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-reference-filter-mutated.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-svg-blur.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/empty-element-with-filter-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/empty-element-with-filter-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/empty-element-with-filter-004.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/filter-region-html-content-viewport.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/filter-effects/svg-feimage-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-backdrop-root-clip-path-2.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-inline-positioning.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/filter-effects/fecolormatrix-special-value.html [ ImageOnlyFailure ]
@@ -8273,8 +8250,6 @@ imported/w3c/web-platform-tests/svg/linking/reftests/media-fragment-spatial-perc
 
 imported/w3c/web-platform-tests/scroll-animations/css/scroll-timeline-on-pseudo-002.html [ ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/css/css-box/margin-trim/block-container-block-in-inline-001.html [ Crash ]
-imported/w3c/web-platform-tests/css/css-box/margin-trim/block-container-block-in-inline-006.html [ Crash ]
 imported/w3c/web-platform-tests/css/css-box/margin-trim/block-container-block-end-self-collapsing-and-border.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-box/margin-trim/multicol-spanner-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-box/margin-trim/multicol-spanner-003.html [ ImageOnlyFailure ]
@@ -8299,4 +8274,3 @@ accessibility/line-clamp-text.html [ Skip ]
 accessibility/isolated-tree/line-clamp-text.html [ Skip ]
 
 webkit.org/b/327137 imported/w3c/web-platform-tests/resource-timing/resource-timing-failed-fetch.html [ Failure Pass ]
-webkit.org/b/328230 media/modern-media-controls/spatial-video-support/spatial-video-support-teardown-releases-context-objects.html [ Failure ]

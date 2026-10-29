@@ -40,11 +40,13 @@ struct WebKit::NavigationActionData {
     bool isInitialFrameSrcLoad;
     bool isContentRuleListRedirect;
     String openedMainFrameName;
+    WebCore::RegistrableDomain openedByScriptDomain;
     std::optional<WebCore::BackForwardItemIdentifier> targetBackForwardItemIdentifier;
     std::optional<WebCore::BackForwardItemIdentifier> sourceBackForwardItemIdentifier;
     WebCore::LockHistory lockHistory;
     WebCore::LockBackForwardList lockBackForwardList;
     WebCore::NavigationHistoryBehavior navigationHistoryBehavior;
+    WebCore::ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded;
     String clientRedirectSourceForHistory;
     WebCore::SandboxFlags effectiveSandboxFlags;
     WebCore::ReferrerPolicy effectiveReferrerPolicy;

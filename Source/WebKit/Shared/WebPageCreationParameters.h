@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ContentInversion.h"
 #include "DrawingAreaInfo.h"
 #include "FrameTreeCreationParameters.h"
 #include "LayerTreeContext.h"
@@ -57,6 +58,7 @@
 #include <WebCore/MediaProducer.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
@@ -203,6 +205,7 @@ struct WebPageCreationParameters {
     bool useElevatedUserInterfaceLevel { false };
     bool allowPostingLegacySynchronousMessages { false };
     bool backgroundTextExtractionEnabled { false };
+    ContentInversion contentInversion { ContentInversion::System };
 
 #if PLATFORM(MAC)
     std::optional<WebCore::ColorSpace> colorSpace { };
@@ -341,6 +344,7 @@ struct WebPageCreationParameters {
     std::optional<ProvisionalFrameCreationParameters> provisionalFrameCreationParameters { };
     WebCore::FrameIdentifier mainFrameIdentifier;
     String openedMainFrameName;
+    WebCore::RegistrableDomain openedByScriptDomain;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
     URL mainFrameOpenerURL;
     WebCore::SandboxFlags initialSandboxFlags;

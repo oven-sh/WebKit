@@ -26,7 +26,11 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
 #include "BuiltinNames.h"
+#include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -245,7 +249,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
         if (in.type == ImportEntryType::Namespace) {
             // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
-            JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, in.phase);
+            JSObject* ns = importedModule->moduleNamespaceObject(globalObject, in.phase);
             RETURN_IF_EXCEPTION(scope, void());
             // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
             // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -276,7 +280,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createExportNotFoundError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
 #endif
@@ -284,7 +288,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
             case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createAmbiguousExportError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -300,7 +304,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createMissingDefaultExportError(globalObject, importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
 #endif
@@ -310,7 +314,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 // 7.c.iii. If resolution.[[BindingName]] is NAMESPACE, then
                 if (vm.propertyNames->starNamespacePrivateName == resolution.localName) {
                     // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
-                    JSModuleNamespaceObject* ns = resolution.moduleRecord->getModuleNamespace(globalObject); // Force module namespace object materialization.
+                    JSObject* ns = resolution.moduleRecord->moduleNamespaceObject(globalObject); // Force module namespace object materialization.
                     RETURN_IF_EXCEPTION(scope, void());
                     // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
                     // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -542,7 +546,12 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Assert: module.[[Status]] is one of UNLINKED, LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    // A record that is evaluating may be linked and evaluated again where require() of an ES module re-enters it.
+    ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 2. Let stack be a new empty List.
     Vector<CyclicModuleRecord*, 8> stack;
     // 3. Let result be Completion(InnerModuleLinking(module, stack, 0)).
@@ -563,7 +572,11 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
         return;
     }
     // 5. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 6. Assert: stack is empty.
     ASSERT(stack.isEmpty());
     // 7. Return UNUSED.
@@ -583,7 +596,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: is this needed?
     // 2. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(m_status == Status::Linked || m_status == Status::Evaluating || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#else
     ASSERT(m_status == Status::Linked || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#endif
     CyclicModuleRecord* module = this;
     // 3. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
     if (m_status == Status::EvaluatingAsync || m_status == Status::Evaluated) {
@@ -637,7 +654,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 10. Else,
     } else {
         // 10.a. Assert: module.[[Status]] is either EVALUATING-ASYNC or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(module->status() == Status::Evaluating || module->status() == Status::EvaluatingAsync || module->status() == Status::Evaluated);
+#else
         ASSERT(module->status() == Status::EvaluatingAsync || module->status() == Status::Evaluated);
+#endif
         // 10.b. Assert: module.[[EvaluationError]] is EMPTY.
         ASSERT(module->evaluationError() == nullptr);
         // 10.c. If module.[[Status]] is EVALUATED, then
@@ -660,6 +681,10 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->execute(globalObject, capability));
+#endif
 #if ENABLE(WEBASSEMBLY)
     if (auto* wasmModule = dynamicDowncast<WebAssemblyModuleRecord>(this)) {
         wasmModule->initializeImports(globalObject, nullptr, Wasm::CreationMode::FromModuleLoader);
@@ -693,6 +718,10 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     // 2. Assert: module.[[HasTLA]] is true.
     ASSERT(hasTLA());
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->executeAsync(globalObject));
+#endif
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     // 4. Let fulfilledClosure be a new Abstract Closure with no parameters that captures module and performs the following steps when called:
@@ -714,7 +743,7 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, void());
 }
 
-static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList)
+static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, size_t firstParent = 0)
 {
     // GatherAvailableAncestors(module, execList)
     // https://tc39.es/ecma262/#sec-gather-available-ancestors
@@ -732,7 +761,7 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
     while (!worklist.isEmpty()) {
         CyclicModuleRecord* record = worklist.takeLast();
         // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
-        for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules()) {
+        for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules().subspan(std::exchange(firstParent, 0))) {
             auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
             // 1.a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
             // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
@@ -814,6 +843,10 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
         for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
             stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
     }
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::ModuleRecord::didFailModulesInJob(globalObject);
+#endif
     // 11. Return UNUSED.
 }
 
@@ -866,8 +899,19 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     std::ranges::sort(execList, [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
         return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
     });
+#if ENABLE(AOT)
+    // require(esm) in the body of one element evaluates modules while the list runs. One of them may come to wait for a later
+    // element, whose parents are gathered already, so the parents that joined since are gathered when that element has run.
+    Vector<size_t, 8> gatheredParents;
+    auto noteGatheredParents = [&] {
+        while (vm.hasCompiledCode() && gatheredParents.size() < execList.size())
+            gatheredParents.append(execList[gatheredParents.size()]->asyncParentModules().size());
+    };
+    noteGatheredParents();
+#endif
     // 12. For each Cyclic Module Record m of sortedExecList, do
-    for (CyclicModuleRecord* m : execList) {
+    for (size_t index = 0; index < execList.size(); ++index) {
+        CyclicModuleRecord* m = execList[index];
         // 12.a. If m.[[Status]] is EVALUATED, then
         if (m->status() == CyclicModuleRecord::Status::Evaluated) {
             // 12.a.i. Assert: m.[[EvaluationError]] is not EMPTY.
@@ -904,9 +948,24 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
                     // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
                     capability->fulfill(vm, jsUndefined());
                 }
+#if ENABLE(AOT)
+                if (vm.hasCompiledCode() && m->asyncParentModules().size() > gatheredParents[index]) [[unlikely]] {
+                    // They began after everything in the list, so they sort behind it.
+                    size_t sorted = execList.size();
+                    gatherAvailableAncestors(m, execList, gatheredParents[index]);
+                    std::ranges::sort(execList.mutableSpan().subspan(sorted), [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
+                        return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
+                    });
+                    noteGatheredParents();
+                }
+#endif
             }
         }
     }
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        RELEASE_AND_RETURN(scope, AOT::ModuleRecord::didEvaluateModulesInJob(globalObject));
+#endif
     // 13. Return UNUSED.
 }
 

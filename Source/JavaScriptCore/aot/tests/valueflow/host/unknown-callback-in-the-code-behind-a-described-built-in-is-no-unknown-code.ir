@@ -1,0 +1,39 @@
+# [1].map(double)
+# One function of the library runs for all calls of Array.prototype.map (runtimefunction 66), so it is entered with operands nobody knows, and it calls the callback among them.
+# The records of map have handed `double` the element where the call is. Nothing in this program is code that nobody compiles: no such code writes anything,
+# neither the array nor `double` is in unknown hands, and `double` gets the number and nothing else.
+# Without records: unknown-callback-in-library-code-that-no-record-describes-is-unknown-code.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f2 values=f2:v1 values=f1:v6
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 2 members: primitive0 primitive4
+# CHECK: values=f1:v6
+# CHECK: operand 0 {{*}} unknown
+# CHECK: result {{*}} unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=64 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="map"
+    v4 = Call v3, v1, v2 calleeKey="map"
+    Return
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="length"
+    v4 = Integer integer=0
+    v5 = ElemGet v0, v4
+    v6 = Call v1, v2, v5, v4, v0
+    Return v6
+}
+function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v0
+}

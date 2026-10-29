@@ -1,0 +1,114 @@
+# Every field here is declared a number, starts at 0 and then gets a number that nobody can bound. By its stores a position in a text cannot be told from a coordinate, which goes on with fractions.
+# By its uses it can: what is read from it goes where only an integer makes sense.
+# Range.position is handed to a function that passes it to charCodeAt, Entry.index is the index of an element of an array, and a function returns Numbered.id to a caller that indexes an array with it: int32 slots.
+# Particle.x is only added up. Cell.column is cut off with `| 0` before it is an index: that is what is done to a fraction. Split.middle is an index, and a store shows a quotient.
+# Passed.through goes through a function that returns its parameter, and what ANOTHER caller gets from that function is an index: that says nothing about this caller's argument. They keep eight bytes.
+# Inferred.position has the stores and the uses of Range.position, and a module without types declares it: there `number` is only what was inferred, and its readers take whatever comes. It keeps eight bytes too.
+# All of these have two more fields, a number and a string: 36 bytes with the header, a cell of 48. With four bytes fewer it is a cell of 32.
+# Lone.position has the stores and the uses of Range.position and is alone in its layout: 24 bytes or 20, the cell has 32. The guess would cost its tests and buy nothing: it keeps eight bytes
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# STATISTIC: FieldsNarrowedToInt32 = 3
+# CHECK: layout L0 name="Range" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L1 name="Entry" module=m0 fields=[{key="index" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L2 name="Numbered" module=m0 fields=[{key="id" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L3 name="Particle" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L4 name="Cell" module=m0 fields=[{key="column" declared={type=number} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L5 name="Split" module=m0 fields=[{key="middle" declared={type=number} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L6 name="Passed" module=m0 fields=[{key="through" declared={type=number} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L7 name="Inferred" module=m1 fields=[{key="position" declared={type=number} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L8 name="Lone" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired, IsEnforced]}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+module m1 path="plain.js" displayPath="plain.js" body=f4
+entry module=m0
+layout L0 name="Range" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L1 name="Entry" module=m0 fields=[{key="index" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L2 name="Numbered" module=m0 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L3 name="Particle" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L4 name="Cell" module=m0 fields=[{key="column" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L5 name="Split" module=m0 fields=[{key="middle" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L6 name="Passed" module=m0 fields=[{key="through" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L7 name="Inferred" module=m1 fields=[{key="position" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number}}, {key="label" declared={type=string}}]
+layout L8 name="Lone" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = String string="text"
+    v5 = NewArray v3, v3 contents=anything
+    v6 = NewObject -, v3 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    PropSet v7, v2 key="position" mode=Strict
+    v9 = PropGet v7 key="position"
+    v10 = CallDirect v9 function=f1
+    v11 = NewObject -, v3 layout=L1 fields=[0]
+    v12 = FinishObject v11
+    PropSet v12, v2 key="index" mode=Strict
+    v14 = PropGet v12 key="index"
+    v15 = ElemGet v5, v14
+    v16 = NewObject -, v3 layout=L2 fields=[0]
+    v17 = FinishObject v16
+    PropSet v17, v2 key="id" mode=Strict
+    v19 = CallDirect v17 function=f2
+    v20 = ElemGet v5, v19
+    v21 = NewObject -, v3 layout=L3 fields=[0]
+    v22 = FinishObject v21
+    PropSet v22, v2 key="x" mode=Strict
+    v24 = PropGet v22 key="x"
+    v25 = Add v24, v24
+    v26 = NewObject -, v3 layout=L4 fields=[0]
+    v27 = FinishObject v26
+    PropSet v27, v2 key="column" mode=Strict
+    v29 = PropGet v27 key="column"
+    v30 = BitOr v29, v3
+    v31 = ElemGet v5, v30
+    v32 = NewObject -, v3 layout=L5 fields=[0]
+    v33 = FinishObject v32
+    v34 = Integer integer=2
+    v35 = Div v2, v34
+    PropSet v33, v35 key="middle" mode=Strict
+    v37 = PropGet v33 key="middle"
+    v38 = ElemGet v5, v37
+    v39 = NewObject -, v3 layout=L6 fields=[0]
+    v40 = FinishObject v39
+    PropSet v40, v2 key="through" mode=Strict
+    v42 = PropGet v40 key="through"
+    v43 = CallDirect v42 function=f3
+    v44 = Add v43, v43
+    v45 = CallDirect v3 function=f3
+    v46 = ElemGet v5, v45
+    v47 = NewObject -, v3 layout=L7 fields=[0]
+    v48 = FinishObject v47
+    PropSet v48, v2 key="position" mode=Strict
+    v50 = PropGet v48 key="position"
+    v51 = CallDirect v50 function=f1
+    v52 = NewObject -, v3 layout=L8 fields=[0]
+    v53 = FinishObject v52
+    PropSet v53, v2 key="position" mode=Strict
+    v55 = PropGet v53 key="position"
+    v56 = CallDirect v55 function=f1
+    Return v25
+}
+
+function f1 name="codeUnitAt" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="text"
+    v2 = PropGet v1 key="charCodeAt"
+    v3 = Call v2, v1, v0
+    Return v3
+}
+
+function f2 name="idOf" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="id"
+    Return v1
+}
+
+function f3 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f4 name="plain" kind=Module results=[{type=anything}] {
+    Return
+}

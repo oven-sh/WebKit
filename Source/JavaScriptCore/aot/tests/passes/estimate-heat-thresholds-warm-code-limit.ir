@@ -1,0 +1,8 @@
+# What is not cold fits MaxWarmCodeValues: below the hottest blocks of that size everything is cold, however often it is expected to run. The hottest blocks are not cold however many they are
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:12
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Hot 97 100
+# CHECK-NEXT: f2 Cold 83 10
+# CHECK: thresholds: cold=10 hot=10
+# PROGRAM-OF: estimate-heat-thresholds.ir

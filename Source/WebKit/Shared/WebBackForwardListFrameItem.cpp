@@ -29,6 +29,7 @@
 #include "SessionState.h"
 #include "WebBackForwardListItem.h"
 #include "WebFrameProxy.h"
+#include <WebCore/SecurityOrigin.h>
 #include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
@@ -155,15 +156,24 @@ size_t WebBackForwardListFrameItem::insertionIndexForChild(std::optional<WebCore
 {
     RefPtr frame = WebFrameProxy::webFrame(frameID);
     RefPtr parentFrame = frame ? frame->parentFrame() : nullptr;
-    auto siblingIndex = frame ? frame->indexInFrameTreeSiblings() : std::nullopt;
-    if (!parentFrame || !siblingIndex)
+    if (!parentFrame)
+        return m_children.size();
+
+    auto& siblingFrames = parentFrame->childFrames();
+    auto iterator = siblingFrames.find(frame.get());
+    if (iterator == siblingFrames.end()) {
+        ASSERT_NOT_REACHED("This frame should be in its parent's child frames");
+        return m_children.size();
+    }
+
+    HashSet<WebCore::FrameIdentifier> laterSiblingFrameIDs;
+    for (++iterator; iterator != siblingFrames.end(); ++iterator)
+        laterSiblingFrameIDs.add((*iterator)->frameID());
+    if (laterSiblingFrameIDs.isEmpty())
         return m_children.size();
 
     for (size_t i = 0; i < m_children.size(); ++i) {
-        RefPtr siblingFrame = WebFrameProxy::webFrame(m_children[i]->frameID());
-        if (!siblingFrame || siblingFrame->parentFrame() != parentFrame)
-            continue;
-        if (auto index = siblingFrame->indexInFrameTreeSiblings(); index && *index > *siblingIndex)
+        if (auto childFrameID = m_children[i]->frameID(); childFrameID && laterSiblingFrameIDs.contains(*childFrameID))
             return i;
     }
     return m_children.size();
@@ -214,6 +224,20 @@ Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildren()
     Ref frameState = copyFrameState();
     for (auto& child : borrow(m_children))
         frameState->children.append(child->copyFrameStateWithChildren());
+    return frameState;
+}
+
+Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateForReplacingDocument(const URL& url)
+{
+    if (SecurityOrigin::create(URL { m_frameState->urlString })->isSameOriginAs(SecurityOrigin::create(url)))
+        return copyFrameState();
+    Ref frameState = FrameState::create();
+    frameState->itemID = m_frameState->itemID;
+    frameState->frameItemID = m_frameState->frameItemID;
+    frameState->frameID = m_frameState->frameID;
+    // These describe the entry rather than its document, so HistoryItem::reset() keeps them.
+    frameState->wasCreatedByJSWithoutUserInteraction = m_frameState->wasCreatedByJSWithoutUserInteraction;
+    frameState->wasRestoredFromSession = m_frameState->wasRestoredFromSession;
     return frameState;
 }
 

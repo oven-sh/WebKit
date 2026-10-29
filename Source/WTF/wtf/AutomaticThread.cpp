@@ -182,7 +182,18 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
+#if ENABLE(AOT)
+bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
+{
+    if (!m_hasUnderlyingThread)
+        start(locker, FailedCreation::IsReported);
+    return m_hasUnderlyingThread;
+}
+
+void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
+#else
 void AutomaticThread::start(const AbstractLocker&)
+#endif
 {
     RELEASE_ASSERT(m_isRunning);
     
@@ -202,8 +213,12 @@ void AutomaticThread::start(const AbstractLocker&)
         break;
     }
 
+#if ENABLE(AOT)
+    auto entryPoint =
+#else
     Thread::create(
         name(),
+#endif
         [=, this] () {
             if (verbose)
                 dataLog(RawPointer(this), ": Running automatic thread!\n");
@@ -306,7 +321,20 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
+#if ENABLE(AOT)
+        };
+
+    if (Thread::survivesFailedCreation() && (failedCreation == FailedCreation::IsReported || isOptional())) {
+        if (RefPtr thread = Thread::tryCreate(name(), WTF::move(entryPoint), m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec))
+            thread->detach();
+        else
+            m_hasUnderlyingThread = false;
+        return;
+    }
+    Thread::create(name(), WTF::move(entryPoint), m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+#else
         }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+#endif
 }
 
 void AutomaticThread::threadDidStart()

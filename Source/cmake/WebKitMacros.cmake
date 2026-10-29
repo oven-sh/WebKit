@@ -1239,10 +1239,15 @@ function(_webkit_platform_args_clang_prefix _outvar _depfile _mt_target _wtf_inc
         -include cmakeconfig.h
         -include wtf/Platform.h
     )
-    # Custom commands don't inherit add_compile_options; mirror the SDK stubs
-    # OptionsCocoa.cmake feeds C-family compiles, which Platform.h needs too.
+    # Custom commands don't inherit add_compile_options, so mirror the SDK stubs
+    # and headers OptionsCocoa.cmake feeds C-family compiles, which Platform.h
+    # needs too.
     if (WEBKIT_GENERATED_STUBS_INCLUDE_DIR)
         list(APPEND _cmd -isystem "${WEBKIT_GENERATED_STUBS_INCLUDE_DIR}")
+    endif ()
+    if (WEBKIT_DERIVED_SDK_HEADERS_DIR)
+        list(APPEND _cmd -isystem "${WEBKIT_DERIVED_SDK_HEADERS_DIR}/usr/include"
+            -iframework "${WEBKIT_DERIVED_SDK_HEADERS_DIR}/System/Library/Frameworks")
     endif ()
     set(${_outvar} ${_cmd} PARENT_SCOPE)
 endfunction()
@@ -1723,7 +1728,9 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
                 "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-clang-header-path ${_header_tmp_path}>")
             if (CAN_USE_EMIT_CLANG_HEADER_MIN_ACCESS)
                 list(APPEND _swift_emit_header_flags
-                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -emit-clang-header-min-access -Xfrontend ${${_target}_SWIFT_EMIT_CLANG_HEADER_MIN_ACCESS}>")
+                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -emit-clang-header-min-access -Xfrontend ${${_target}_SWIFT_EMIT_CLANG_HEADER_MIN_ACCESS}>"
+                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -clang-header-expose-decls=has-expose-attr-or-stdlib>"
+                )
             endif ()
             if (POLICY CMP0157)
                 # New Swift support: ${_target} is the only Swift compile, so emit here.

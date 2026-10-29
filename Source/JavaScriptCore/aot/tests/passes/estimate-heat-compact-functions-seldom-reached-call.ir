@@ -1,0 +1,74 @@
+# A call leads on from a function that runs often or that a loop calls if it has a weight of a hundredth or more there. A call behind two unlikely branches has less: what it calls is compact. A call behind one has more
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold 10 1
+# CHECK-NEXT: f2 Compact 10 1
+# CHECK-NEXT: f3 Cold 10 1
+# CHECK-NEXT: f4 Compact 10 1
+# CHECK-NEXT: f5 Cold 10 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0, v0 function=f1
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+# REPEAT: i = 2..73; a = 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
+    v%(i) = ToBoolean v%(a)
+# END REPEAT
+    Branch v72 -> taken b1(), notTaken b3()
+  b1() frequency=Unlikely:
+    Branch v73 -> taken b2(), notTaken b5()
+  b2() frequency=Unlikely:
+    v74 = CallDirect v0 function=f2
+    Return v74
+  b3():
+    Branch v73 -> taken b4(), notTaken b5()
+  b4() frequency=Unlikely:
+    v75 = CallDirect v0 function=f3
+    Return v75
+  b5():
+    Return v0
+}
+
+function f2 name="calledBehindTwoUnlikelyBranches" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f4
+    Return v71
+}
+
+function f3 name="calledBehindOneUnlikelyBranch" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f5
+    Return v71
+}
+
+function f4 name="calledByTheFirst" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f5 name="calledByTheSecond" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}

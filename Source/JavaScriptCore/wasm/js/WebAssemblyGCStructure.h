@@ -56,6 +56,7 @@ public:
     const Wasm::RTT& rtt() const LIFETIME_BOUND { return m_rtt; }
 
     static WebAssemblyGCStructure* create(VM&, const TypeInfo&, const ClassInfo*, Ref<const Wasm::RTT>&&);
+    static void destroy(JSCell*);
 
     static constexpr ptrdiff_t offsetOfRTT() { return OBJECT_OFFSETOF(WebAssemblyGCStructure, m_rtt); }
 

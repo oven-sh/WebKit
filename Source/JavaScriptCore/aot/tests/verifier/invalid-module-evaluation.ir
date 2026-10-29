@@ -1,0 +1,163 @@
+# a site that evaluates or records a module names a file of the program that its referrer requires; a bare site stands in the body of its referrer, where every run that ends passes it once and all of them in one order
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModuleEvaluation 15
+
+variable g0 name="c" module=m4 declared={type=anything} initialization=Undefined
+data d0 root=Null
+module m0 path="main" displayPath="main" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require}, {target=m4 kind=Require}, {target=m5 kind=Require}, {target=m6 completes=true}]
+module m1 path="first" displayPath="first"
+module m2 path="second" displayPath="second" kind=CommonJs body=f1
+module m3 path="data" displayPath="data" kind=Data data=d0
+module m4 path="library" displayPath="library" flags=[IsLibrary]
+module m5 path="waits" displayPath="waits" flags=[HasTopLevelAwait] body=f2
+module m6 path="imported" displayPath="imported"
+module m7 path="badInBranch" displayPath="badInBranch" body=f11 requests=[{target=m1 kind=Require}]
+module m8 path="badBehindReturn" displayPath="badBehindReturn" body=f12 requests=[{target=m1 kind=Require}]
+module m9 path="badInLoop" displayPath="badInLoop" body=f13 requests=[{target=m1 kind=Require}]
+module m10 path="badUnderHandler" displayPath="badUnderHandler" body=f14 requests=[{target=m1 kind=Require}]
+module m11 path="badInTwoArmsThatThrow" displayPath="badInTwoArmsThatThrow" body=f15 requests=[{target=m1 kind=Require}, {target=m2 kind=Require}]
+module m12 path="badInBodyThatWaits" displayPath="badInBodyThatWaits" flags=[HasTopLevelAwait] body=f16 requests=[{target=m1 kind=Require}]
+module m13 path="goodBehindBranchesAndThrows" displayPath="goodBehindBranchesAndThrows" body=f17 requests=[{target=m1 kind=Require}, {target=m2 kind=Require}]
+module m14 path="goodInArmOfBodyThatAlwaysThrows" displayPath="goodInArmOfBodyThatAlwaysThrows" body=f18 requests=[{target=m1 kind=Require}]
+entry module=m0
+function f0 name="good" module=m0 kind=Module results=[{type=anything}] {
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+}
+function f1 name="" module=m2 kind=CommonJsModule results=[{type=anything}]
+function f2 name="" module=m5 kind=Module flags=[IsAsync] results=[{type=anything}]
+function f3 name="goodLateSites" module=m0 results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    LoopHint
+    EvaluateModule module=m1 referrer=m0
+    RecordRequire module=m2 referrer=m0
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f4 name="badTargetIsData" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0
+    Return
+}
+function f5 name="badTargetIsLibrary" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m0
+    Return
+}
+function f6 name="badTargetWaits" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m0
+    Return
+}
+function f7 name="badRecordOfData" module=m0 results=[{type=anything}] {
+    RecordRequire module=m3 referrer=m0
+    Return
+}
+function f8 name="badTargetIsOnlyImported" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m6 referrer=m0
+    Return
+}
+function f9 name="badRecordWithoutRequest" module=m0 results=[{type=anything}] {
+    RecordRequire module=m7 referrer=m0
+    Return
+}
+function f10 name="badBareSiteOutsideBody" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+}
+function f11 name="" module=m7 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    EvaluateModule module=m1 referrer=m7 [isBare]
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f12 name="" module=m8 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    EvaluateModule module=m1 referrer=m8 [isBare]
+    Return
+}
+function f13 name="" module=m9 kind=Module results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    EvaluateModule module=m1 referrer=m9 [isBare]
+    v2 = GetModuleVariable variable=g0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f14 name="" module=m10 kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    EvaluateModule module=m1 referrer=m10 [isBare]
+    Return
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Throw v1
+}
+function f15 name="" module=m11 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    EvaluateModule module=m1 referrer=m11 [isBare]
+    Throw v0
+  b2():
+    EvaluateModule module=m2 referrer=m11 [isBare]
+    Throw v0
+}
+function f16 name="" module=m12 kind=Module flags=[IsAsync] results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m12 [isBare]
+    Return
+}
+function f17 name="" module=m13 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m13 [isBare]
+    v1 = GetModuleVariable variable=g0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Throw v1
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    EvaluateModule module=m2 referrer=m13
+    Jump -> next b4()
+  b4():
+    EvaluateModule module=m2 referrer=m13 [isBare]
+    Return
+}
+function f18 name="" module=m14 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    EvaluateModule module=m1 referrer=m14 [isBare]
+    Throw v0
+  b2():
+    Throw v0
+}
+function f19 name="badReferrerOfOtherBody" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m7 [isBare]
+    Return
+}
+function f20 name="badSiteOfReferrerWithoutRequests" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m1
+    Return
+}

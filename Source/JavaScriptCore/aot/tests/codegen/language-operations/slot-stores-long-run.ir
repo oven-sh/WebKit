@@ -1,0 +1,41 @@
+# A run that creates more fields than one word has slot keys for still has one test of the order word, and tells the run time about an object in another state a word at a time
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: generate-code calls
+# RUN(COMPACT): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Record" constructor=f0 fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="c" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="d" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="e" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="f" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="g" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="h" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="i" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] constructorOrders=[{fields=[0, 1, 2, 3, 4, 5, 6, 7, 8]}] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Record" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="four-fields" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlots v0, -, v1, v1, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+function f2 name="five-fields" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlots v0, -, v1, v1, v1, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}, {key="e" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+function f3 name="nine-fields" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlots v0, -, v1, v1, v1, v1, v1, v1, v1, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}, {key="e" level=Proven mayAdd=true}, {key="f" level=Proven mayAdd=true}, {key="g" level=Proven mayAdd=true}, {key="h" level=Proven mayAdd=true}, {key="i" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+function f4 name="nine-fields-on-a-rare-path" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PutSlots v0, -, v1, v1, v1, v1, v1, v1, v1, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}, {key="e" level=Proven mayAdd=true}, {key="f" level=Proven mayAdd=true}, {key="g" level=Proven mayAdd=true}, {key="h" level=Proven mayAdd=true}, {key="i" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+  b2():
+    Return
+}
+# CHECK: f1: size=
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub DidCreateField.Run x2
+# CHECK-NEXT: stub RememberKeyOrderStep x1
+# CHECK-NEXT: f3: size=
+# CHECK-NEXT: stub DidCreateField.Run x3
+# CHECK-NEXT: stub RememberKeyOrderStep x1
+# CHECK-NOT: DidCreateField.One
+# COMPACT: f4: size=
+# COMPACT-NEXT: stub DidCreateField.Run x3
+# COMPACT-NOT: operationAOTDidCreateFieldsAt

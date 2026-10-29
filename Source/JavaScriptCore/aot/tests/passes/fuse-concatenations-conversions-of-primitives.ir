@@ -1,0 +1,113 @@
+# A concatenation converts each of its parts as ToString does, so in a string that may become a key (it is one here, or it is returned) the ToString of a primitive that only the concatenation uses
+# goes away: a key is looked up by its parts. Nobody can tell when a primitive is converted, so a call between the conversion and the concatenation does not matter. A symbol throws and an object
+# runs code: their conversions stay. So do those of a string that goes elsewhere: there each part is converted in line, which takes more code
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoNumbersInTemplate" parameters=[{type=i32}, {type=number}, {type=string}] results=[{type=string}] {
+    v3 = ToString v0
+    v4 = String string=","
+    v5 = ToString v1
+    v6 = Strcat v3, v4, v5, v2
+    Return v6
+# CHECK-NOT: = ToString
+# CHECK: string = Strcat v0, v4, v1, v2
+}
+
+function f1 name="callBetween" parameters=[{type=i32}, {type=anything}] results=[{type=string}] {
+    v2 = ToString v0
+    v3 = Call v1, -
+    v4 = ToString v3
+    v5 = Strcat v2, v4
+    Return v5
+# CHECK: = Call v1
+# CHECK-NEXT: string = ToString v3
+# CHECK-NEXT: string = Strcat v0, v4
+}
+
+function f2 name="everyOtherPrimitive" parameters=[{type=boolean}, {type=undefined|null}, {type=bigint}] results=[{type=string}] {
+    v3 = ToString v0
+    v4 = ToString v1
+    v5 = ToString v2
+    v6 = Strcat v3, v4, v5
+    Return v6
+# CHECK-NOT: = ToString
+# CHECK: string = Strcat v0, v1, v2
+}
+
+function f3 name="symbolAndObjectStay" parameters=[{type=number|symbol}, {type=object}] results=[{type=string}] {
+    v2 = ToString v0
+    v3 = ToString v1
+    v4 = Strcat v2, v3
+    Return v4
+# CHECK: string = ToString v0
+# CHECK-NEXT: string = ToString v1
+# CHECK-NEXT: string = Strcat v2, v3
+}
+
+function f4 name="usedTwiceStays" parameters=[{type=i32}] results=[{type=string}] {
+    v1 = ToString v0
+    v2 = Strcat v1, v1
+    Return v2
+# CHECK: string = ToString v0
+# CHECK-NEXT: string = Strcat v1, v1
+}
+
+function f5 name="underAdd" parameters=[{type=i32}, {type=i32}] results=[{type=string}] {
+    v2 = ToString v0
+    v3 = ToString v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: = ToString
+# CHECK-NOT: = Add
+# CHECK: string = Strcat v0, v1
+}
+
+# The number comes converted from two ways: on the one where it is known to be a number it goes as it is; what may be an object is converted where it was.
+function f6 name="behindMerge" parameters=[{type=boolean}, {type=number}, {type=anything}, {type=string}] results=[{type=string}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ToString v1
+    Jump -> next b3(v4)
+  b2():
+    v5 = ToString v2
+    Jump -> next b3(v5)
+  b3(v6: string):
+    v7 = String string=","
+    v8 = Strcat v6, v7, v3
+    Return v8
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: string = ToString v2
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK: b3(v6: number|string):
+# CHECK: string = Strcat v6, v7, v3
+}
+
+# Somebody else reads the parameter, or an Add takes it: it stays a string.
+function f7 name="behindMergeWithAnotherReader" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=string}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToString v1
+    Jump -> next b3(v3)
+  b2():
+    v4 = ToString v2
+    Jump -> next b3(v4)
+  b3(v5: string):
+    v6 = Strcat v5, v5
+    Return v6
+# CHECK: string = ToString v1
+# CHECK: string = ToString v2
+# CHECK: b3(v5: string):
+}
+
+function f8 name="goesElsewhere" parameters=[{type=i32}, {type=string}, {type=anything}] results=[{type=undefined}] {
+    v3 = ToString v0
+    v4 = Strcat v3, v1
+    v5 = Call v2, -, v4
+    v6 = Undefined
+    Return v6
+# CHECK: string = ToString v0
+# CHECK-NEXT: string = Strcat v3, v1
+}
