@@ -253,3 +253,45 @@ let log = [];
     }
     shouldBe(settled.length, Object.keys(expectedSettled).length, "both imports settled");
 }
+
+// The job that runs the modules behind a top-level await gets the context of the load, not what the slot holds where
+// the load begins to evaluate. Here an import() under no context is loaded by a drain that something calls under A:
+// the awaiting module runs under A as far as its await, and behind it. The module that waits for it runs later, under
+// no context.
+{
+    log = [];
+    let open;
+    globalThis.laterGate = new Promise(resolve => { open = resolve; });
+    let settledUnder = "not settled";
+    const resources = "./resources/bun-async-context-propagation/";
+    import(resources + "later-importer.js").then(() => { settledUnder = get(); });
+    inContext(A, () => drainMicrotasks());
+    shouldBe(log.length, 1, "the dependency waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the module that waited");
+    const expected = { "later before its await": A, "later behind its await": A, "later importer": undefined };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "the module that waited ran");
+    shouldBe(settledUnder, undefined, "import() of later importer");
+}
+
+// Where the job of a load entered the context of the load, the job behind an await gets what is current where the
+// awaiting module begins, as any continuation does. Here that is what a module before it has put in the slot.
+{
+    log = [];
+    let open;
+    globalThis.enteredGate = new Promise(resolve => { open = resolve; });
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "sets-then-awaits.js");
+    });
+    drainMicrotasks();
+    shouldBe(log.length, 0, "the module waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the module that waited");
+    shouldBe(log.length, 1, "the module that waited ran");
+    shouldBe(log[0][1], globalThis.entered, "behind sets and awaits");
+}

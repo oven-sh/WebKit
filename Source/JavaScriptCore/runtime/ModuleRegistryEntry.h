@@ -75,7 +75,9 @@ public:
     AbstractModuleRecord* record() const;
     JSPromise* ensureFetchPromise(JSGlobalObject*);
     // asyncContext: of the load that asks. The first load that asks has the record made: ModuleRegistryFetchSettled makes
-    // it, which runs the body of a CommonJS module, under that context where it is a store.
+    // it, which runs the body of a CommonJS module, under that context where it is a store (ModuleLoaderAsyncContextScope:
+    // not in the drain of a synchronous load). An entry of a loader that has an async context of its own
+    // (JSModuleLoader::asyncContext()) keeps none: the host runs the body of its modules in the loader's.
     JSPromise* ensureModulePromise(JSGlobalObject*, JSValue asyncContext = { });
 #if USE(BUN_JSC_ADDITIONS)
     // For the job that makes the record. The entry does not keep the context behind it.
@@ -85,9 +87,6 @@ public:
         m_asyncContext.clear();
         return asyncContext;
     }
-    // For a synchronous load that takes the fetch over: the record is made inside the call of require(), in the
-    // context of its caller.
-    void clearAsyncContext() { m_asyncContext.clear(); }
 #endif
     JSPromise* loadPromise() const;
     JSValue error(JSGlobalObject*) const;

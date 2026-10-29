@@ -255,7 +255,7 @@ JSPromise* loadAndEvaluateModule(JSGlobalObject* globalObject, SourceCode&& sour
     RETURN_IF_EXCEPTION(scope, rejectPromise(scope, globalObject));
 #if USE(BUN_JSC_ADDITIONS)
     // The load keeps the async context of its caller: JSModuleLoader::asyncContextOfLoad().
-    auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, AsyncContextSwapScope::current(vm, globalObject));
+    auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, globalObject->moduleLoader()->asyncContextForLoad(vm, globalObject));
 #else
     auto graphLoadingState = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
 #endif

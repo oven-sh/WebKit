@@ -29,9 +29,6 @@
 #if ENABLE(AOT)
 #include "AOTModuleRecord.h"
 #endif
-#if USE(BUN_JSC_ADDITIONS)
-#include "AsyncContextSwapScope.h"
-#endif
 #include "BuiltinNames.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
@@ -739,8 +736,10 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
 #if USE(BUN_JSC_ADDITIONS)
-    // The modules that wait for this one run in that job, under the async context of whoever evaluates this one.
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, AsyncContextSwapScope::current(vm, globalObject));
+    // The modules that wait for this one run in that job. It continues the job of the module loader that evaluates this
+    // one: ModuleEvaluationAsyncContextScope says under which async context. An evaluation that no such job began hands
+    // on none.
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, moduleLoader()->asyncContextOfModulesThatWait(vm, globalObject));
 #else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
 #endif

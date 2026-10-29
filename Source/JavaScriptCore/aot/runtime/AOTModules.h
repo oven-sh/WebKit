@@ -553,6 +553,8 @@ private:
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
     bool isLeftToLoad(PlanOfLoad&, PlanOfLoad::Found&);
+    // What an import() that is called now keeps of the async context of its caller: JSModuleLoader::asyncContextForLoad().
+    JSValue asyncContextForImport() const;
     // For an import() that is kept outside the queue of jobs: the async context of its call, which the jobs that take it up again are queued with. Empty where there is none.
     Strong<Unknown> currentAsyncContext() const;
     struct CountedImport {

@@ -901,14 +901,11 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
-    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun) {
+    // Not where the files run under the async context of a load: each of them has a scope of its own then, in the loop below, as each has a job of its own under `bun run`.
+    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
-            {
-                // As for a file below. The files run in one call here, so one of them leaves the next what it entered.
-                ModuleLoaderAsyncContextScope asyncContextOfFiles(vm, m_instance.globalObject, asyncContextOfLoad);
-                callBodyUnderOwnMark(root, false, true);
-            }
+            callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
             if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
                 ModuleID file = *filesBeingRun.fileHandedToLoader;

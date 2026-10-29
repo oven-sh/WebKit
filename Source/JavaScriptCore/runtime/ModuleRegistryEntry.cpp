@@ -150,7 +150,8 @@ JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject
 
     JSPromise* fetchPromise = ensureFetchPromise(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
-    if (asyncContext && !asyncContext.isUndefined())
+    // Not for a loader that has an async context of its own: the host runs the body of its modules in that one.
+    if (asyncContext && !asyncContext.isUndefined() && !m_loader->asyncContext())
         m_asyncContext.set(vm, this, asyncContext);
 #else
     UNUSED_PARAM(asyncContext);

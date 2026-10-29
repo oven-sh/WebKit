@@ -79,7 +79,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // The async context of the load that this request belongs to: what was current where import() was called. The jobs
     // that this context goes to (ModuleLoadStep, ModuleLoadTopSettled, ModuleLoadLinkEvaluateSettled) run under it where
-    // it is a store. Empty for a synchronous load, whose jobs all run inside the call of require().
+    // it is a store, but not in the drain of a synchronous load: ModuleLoaderAsyncContextScope. Empty for a synchronous
+    // load, which keeps none.
     JSValue asyncContext() const { return m_asyncContext.get(); }
 #endif
 

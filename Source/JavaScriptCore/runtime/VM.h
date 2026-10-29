@@ -147,6 +147,7 @@ class MicrotaskCallCache;
 class MicrotaskQueue;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
+class ModuleEvaluationAsyncContextScope;
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
 namespace FFI { class CallbackEntryScope; }
@@ -1553,6 +1554,9 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+    // The scope of the job of the module loader that evaluates modules now. CyclicModuleRecord::executeAsync() asks it
+    // for the async context of the modules that wait for a top-level await.
+    ModuleEvaluationAsyncContextScope* m_moduleEvaluationAsyncContextScope { nullptr };
 #if ENABLE(AOT)
     // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
     SynchronousModuleQueue* m_synchronousModuleQueueSetAside { nullptr };
@@ -1578,6 +1582,8 @@ public:
     private:
         VM& m_vm;
         SynchronousModuleQueue m_queue;
+        // What a synchronous load evaluates by itself is no job of the module loader.
+        ModuleEvaluationAsyncContextScope* m_moduleEvaluationAsyncContextScope;
     };
 private:
 #endif
