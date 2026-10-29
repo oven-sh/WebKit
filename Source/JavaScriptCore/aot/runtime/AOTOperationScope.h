@@ -126,12 +126,6 @@ constexpr bool isDeclaredNotToCollect(Entry entry)
     return operation && !Typed::declaredBoundOf(*operation).mayCollect;
 }
 
-constexpr bool isDeclaredNotToThrow(Entry entry)
-{
-    std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
-    return operation && !Typed::declaredBoundOf(*operation).mayThrow;
-}
-
 template<auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
 struct CallWithoutCollection {
     static constexpr auto call = operation;
@@ -146,73 +140,6 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
         return operation(arguments...);
     }
 };
-#endif
-
-// OPERATION_RETURN() throws the out-of-memory error that the operation itself made pending: it has allocated, so its caller expects a collection here.
-// An error that was already pending waits for a place that may collect.
-class AllocatingOperationScope final : public ThrowScope {
-public:
-    template<typename... Arguments>
-    ALWAYS_INLINE AllocatingOperationScope(Instance* instance, CallerFrameAndPC* frameRecordOfOperation, bool returnsException, Arguments&&... arguments)
-        : ThrowScope(std::forward<Arguments>(arguments)...)
-        , m_instance(*instance)
-        , m_frameRecordOfOperation(frameRecordOfOperation)
-        , m_returnsException(returnsException)
-        , m_wasPending(vm().traps().needsOutOfMemoryError())
-    {
-    }
-
-    // The stub reads the exception from the VM, so the error can be thrown last, however the operation returns.
-    ALWAYS_INLINE ~AllocatingOperationScope()
-    {
-        if (!m_returnsException)
-            throwOwedOutOfMemoryError();
-    }
-
-    ALWAYS_INLINE void willMakeResult()
-    {
-        if (m_returnsException)
-            throwOwedOutOfMemoryError();
-    }
-
-private:
-    ALWAYS_INLINE void throwOwedOutOfMemoryError()
-    {
-        if (vm().traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]] {
-#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-            // The callee opens a scope of its own, so this one has to have checked. The scope is not passed on: its address would escape in every operation.
-            if (exception())
-                return;
-#endif
-            throwOwedOutOfMemoryErrorBeforeReturn(m_instance, m_frameRecordOfOperation);
-        }
-    }
-
-    Instance& m_instance;
-    CallerFrameAndPC* m_frameRecordOfOperation;
-    bool m_returnsException;
-    bool m_wasPending;
-};
-
-template<typename T>
-ALWAYS_INLINE auto makeOperationResult(AllocatingOperationScope& scope, T result)
-{
-    scope.willMakeResult();
-    return JSC::makeOperationResult(static_cast<ThrowScope&>(scope), result);
-}
-
-ALWAYS_INLINE auto makeOperationResult(AllocatingOperationScope& scope)
-{
-    scope.willMakeResult();
-    return JSC::makeOperationResult(static_cast<ThrowScope&>(scope));
-}
-
-#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-#define AOT_DECLARE_ALLOCATING_OPERATION_SCOPE(vm, instance, frameRecordOfOperation, returnsException) \
-    JSC::AOT::AllocatingOperationScope(instance, frameRecordOfOperation, returnsException, vm, JSC::ExceptionEventLocation(EXCEPTION_SCOPE_POSITION_FOR_ASAN(vm), __FUNCTION__, __FILE__, __LINE__))
-#else
-#define AOT_DECLARE_ALLOCATING_OPERATION_SCOPE(vm, instance, frameRecordOfOperation, returnsException) \
-    JSC::AOT::AllocatingOperationScope(instance, frameRecordOfOperation, returnsException, vm)
 #endif
 
 #define AOT_OPERATION_BEGIN_WITH_SCOPE(instance, frameRecordOfOperation, entry, declaredScope) \
@@ -238,9 +165,7 @@ ALWAYS_INLINE auto makeOperationResult(AllocatingOperationScope& scope)
 
 #define AOT_OPERATION_BEGIN(instance, entry) \
     static_assert(!JSC::AOT::isDeclaredNotToCollect(entry), "an operation that is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
-    constexpr bool returnsException = !JSC::AOT::isDeclaredNotToThrow(entry); \
-    AOT_OPERATION_FIND_OWN_FRAME(); \
-    AOT_OPERATION_BEGIN_WITH_SCOPE(instance, frameRecord, entry, AOT_DECLARE_ALLOCATING_OPERATION_SCOPE(vm, instance, frameRecord, returnsException))
+    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
 // The operation puts collections off while it runs. An error is a new object, and what takes the exception runs the collection.
 #define AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry) \

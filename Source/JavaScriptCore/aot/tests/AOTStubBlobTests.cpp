@@ -11,6 +11,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArrays.h"
@@ -714,19 +715,23 @@ static void testLayoutSeed()
     checkDistinctBodyOffsets(seededBlob);
 }
 
-static void testAddressesAcrossLargeBlob()
+static void testAddressesInLargeBlob()
 {
-    // callMethodById() takes the address of callValueCell(), and the stubs that read one name each lie between the two.
-    constexpr uint32_t numberOfNames = 6000;
+    // callMethodById() takes the address of callValueCell().
     StubPolicy policy;
     Vector<StubKey> keys { callMethodById(2) };
-    for (uint32_t name = 1; name <= numberOfNames; ++name) {
+    for (uint32_t name = 1; name <= RowDisplacementTable::maxColumn; ++name) {
         policy.namesWithOwnStubByAccess[static_cast<size_t>(Typed::Access::Read)].set(name);
         keys.append(getById().withImmediate(name));
     }
-    StubCatalog catalog(StubOptions { }, WTF::move(policy));
-    StubBlob blob = buildBlob(catalog, keys.span(), { });
-    AOT_TEST_CHECK(*blob.offsetOf(callMethodById(2)) - *blob.offsetOf(callValueCell(2)) > 1 * MB);
+    for (uint32_t layoutSeed : { 0, 1 }) {
+        StubOptions options;
+        options.layoutSeed = layoutSeed;
+        StubCatalog catalog(options, StubPolicy { policy });
+        StubBlob blob = buildBlob(catalog, keys.span(), { });
+        AOT_TEST_CHECK(blob.code.bytes.size() > 8 * MB);
+        AOT_TEST_CHECK(std::max(*blob.offsetOf(callMethodById(2)), *blob.offsetOf(callValueCell(2))) < 1 * MB);
+    }
 }
 
 static unsigned numberOfRegExpCalls(const StubBlob& blob, StubKey thunk, uint16_t entry)
@@ -923,7 +928,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/operations-called"_s, testOperationsCalled },
         { "stub-blob/wide-references"_s, testWideReferences },
         { "stub-blob/layout-seed"_s, testLayoutSeed },
-        { "stub-blob/addresses-across-large-blob"_s, testAddressesAcrossLargeBlob },
+        { "stub-blob/addresses-in-large-blob"_s, testAddressesInLargeBlob },
         { "stub-blob/regexp-relocations"_s, testRegExpRelocations },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
         { "stub-blob/instructions-of-pushed-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPushedDoubles> },

@@ -98,6 +98,16 @@ static void cacheKeyListByStructure(VM& vm, Object* compiled)
     unsafeMakeSpan(compiled->instance().objects.keyLists, numberOfKeyLists)[indexOfKeyList(structureWord, compiled->orderWord())] = { compiled->orderWord(), structureWord, list };
 }
 
+// Such a list holds every own key: all are enumerable strings.
+static JSCellButterfly* findKeyListByStructure(const Object& compiled)
+{
+    uint32_t structureWord = compiled.structureID().bits() >> 1;
+    const KeyListCacheEntry& entry = unsafeMakeSpan(compiled.instance().objects.keyLists, numberOfKeyLists)[indexOfKeyList(structureWord, compiled.orderWord())];
+    if (entry.shapeWord != structureWord || entry.orderWord != compiled.orderWord())
+        return nullptr;
+    return uncheckedDowncast<JSCellButterfly>(entry.list);
+}
+
 // The keys go from the table of the extra properties into the list, with no list of names in between.
 static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compiled, JSObject* extra, OwnKeysKind kind)
 {
@@ -127,12 +137,19 @@ static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compi
 static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, OwnKeysKind kind)
 {
     VM& vm = globalObject->vm();
+    if (compiled.hasExtraProperties() && kind != OwnKeysKind::Symbols) {
+        if (JSCellButterfly* keys = findKeyListByStructure(compiled)) {
+            validateKeyListing(vm, compiled);
+            return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+        }
+    }
     if (JSObject* extra = compiled.extraProperties()) {
-        if (kind == OwnKeysKind::Keys) {
+        if (kind != OwnKeysKind::Symbols) {
             cacheKeyListByStructure(vm, &compiled);
             if (JSArray* list = compiled.tryCreateKeysArrayWithExtraProperties(globalObject))
                 return list;
-        } else if (kind != OwnKeysKind::Symbols) {
+        }
+        if (kind == OwnKeysKind::Names || kind == OwnKeysKind::All) {
             bool listsSymbols = kind == OwnKeysKind::All;
             JSCellButterfly* keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
             if (!keys)

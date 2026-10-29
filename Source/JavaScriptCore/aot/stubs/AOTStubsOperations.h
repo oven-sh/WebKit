@@ -25,41 +25,49 @@ struct OperationCallShape {
     OperationCall::FirstArgument firstArgument;
     OperationCall::Saves saves;
     bool checksException;
-    bool checksFailedAllocation { false };
+    bool pollsBeforeReturning { false };
 
     friend constexpr bool operator==(const OperationCallShape&, const OperationCallShape&) = default;
 };
 
-inline constexpr OperationCallShape operationCallShapes[15] = {
-    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+inline constexpr OperationCallShape operationCallShapes[18] = {
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::GlobalObject, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::None, OperationCall::Saves::Nothing, true },
-    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::GlobalObject, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::None, OperationCall::Saves::Nothing, true },
-    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true, true },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::GlobalObject, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::None, OperationCall::Saves::Nothing, true },
-    { OperationCall::Returns::Pair, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Pair, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
 };
 
-inline constexpr OperationCallShape preservingCallShapes[11] = {
-    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
-    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true },
-    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
-    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true },
+inline constexpr OperationCallShape preservingCallShapes[16] = {
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, false },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, false },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::None, OperationCall::Saves::CallerSavedRegisters, false },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::None, OperationCall::Saves::CallerSavedRegisters, false },
-    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
+    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, false, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, false, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true },
+    { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
 };
 
 constexpr std::optional<uint8_t> findOperationCallShape(std::span<const OperationCallShape> shapes, const OperationCallShape& shape)
@@ -72,11 +80,17 @@ constexpr std::optional<uint8_t> findOperationCallShape(std::span<const Operatio
 }
 
 // Only for an operation that can throw: any other leaves the register that the stub tests for an exception undefined.
-constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
+constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::FirstArgument firstArgument, bool pollsBeforeReturning)
 {
-    std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, firstArgument, OperationCall::Saves::Nothing, true });
+    std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, firstArgument, OperationCall::Saves::Nothing, true, pollsBeforeReturning });
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(form);
     return StubKey(StubFamily::CallOperation).withForm(*form);
+}
+
+// For whichever operation: one that gets the instance may allocate.
+constexpr StubKey callOperation(OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
+{
+    return callOperation(returns, firstArgument, firstArgument == OperationCall::FirstArgument::Instance);
 }
 
 constexpr StubKey tailCallOperation(OperationCall::FirstArgument firstArgument)
@@ -84,13 +98,13 @@ constexpr StubKey tailCallOperation(OperationCall::FirstArgument firstArgument)
     return StubKey(StubFamily::TailCallOperation).withForm(static_cast<uint8_t>(firstArgument));
 }
 
-// A stub that tail calls the operation has no place to test for the error of a failed allocation.
+// For an operation that cannot throw. A stub that tail calls the operation has no place to poll for the error of a failed allocation.
 constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns returns)
 {
     constexpr auto instance = OperationCall::FirstArgument::Instance;
     // These read the exception from the VM whatever the operation returns.
     if (returns == OperationCall::Returns::Double || returns == OperationCall::Returns::Pair)
-        return callOperation(returns, instance);
+        return callOperation(returns, instance, true);
     std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, instance, OperationCall::Saves::Nothing, false, true });
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(form);
     return StubKey(StubFamily::CallOperation).withForm(*form);
@@ -98,8 +112,10 @@ constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns retu
 
 constexpr StubKey callOperationFor(Entry entry, OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
 {
-    if (effectsOf(entry).mayThrow)
-        return callOperation(returns, firstArgument);
+    if (effectsOf(entry).mayThrow) {
+        // No operation that returns a pair allocates nothing.
+        return callOperation(returns, firstArgument, mayFailToAllocate(entry, firstArgument) || (returns == OperationCall::Returns::Pair && firstArgument == OperationCall::FirstArgument::Instance));
+    }
     return mayFailToAllocate(entry, firstArgument) ? callOperationThatMayFailToAllocate(returns) : tailCallOperation(firstArgument);
 }
 
@@ -115,7 +131,7 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
     if (call.returns == OperationCall::Returns::Double && call.saves == OperationCall::Saves::CallerSavedGPRs)
         return std::nullopt;
 
-    OperationCallShape shape { call.returns, call.firstArgument, call.saves, call.checksException, call.checksFailedAllocation };
+    OperationCallShape shape { call.returns, call.firstArgument, call.saves, call.checksException, call.pollsBeforeReturning };
     switch (call.firstArgument) {
     case OperationCall::FirstArgument::GlobalObject:
     case OperationCall::FirstArgument::VM:
@@ -126,10 +142,8 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
         shape.saves = OperationCall::Saves::CallerSavedRegisters;
         break;
     case OperationCall::FirstArgument::Instance:
-        if (call.returns == OperationCall::Returns::Double) {
+        if (call.returns == OperationCall::Returns::Double)
             shape.checksException = true;
-            shape.checksFailedAllocation = false;
-        }
         break;
     }
     if (shape.returns == OperationCall::Returns::Void && !shape.checksException)

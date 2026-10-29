@@ -66,7 +66,7 @@ void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& ope
     bool exceptionIsInRegister = operationCall.returns == OperationCall::Returns::Value || operationCall.returns == OperationCall::Returns::Void;
     RELEASE_ASSERT(!operationCall.checksException || !exceptionIsInRegister || effectsOf(entry).mayThrow);
     OperationCall call = operationCall;
-    call.checksFailedAllocation = mayFailToAllocate(entry, call.firstArgument) && !call.checksException;
+    call.pollsBeforeReturning = mayFailToAllocate(entry, call.firstArgument);
     emitOperationCallAndReturn(entry, call, beforeReturn);
 }
 
@@ -75,7 +75,6 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!operationCall.valueDestination || operationCall.returns == OperationCall::Returns::Value);
-    RELEASE_ASSERT(!operationCall.checksException || !operationCall.checksFailedAllocation);
     if (operationCall.spilledArguments) {
         RELEASE_ASSERT(!operationCall.secondArgumentIn && !operationCall.thirdArgumentIn && !operationCall.fourthArgumentIn && !operationCall.fifthArgumentIn);
         RELEASE_ASSERT(!operationCall.constantArguments[0] && !operationCall.constantArguments[1]);
@@ -162,6 +161,13 @@ GPRReg StubAssembler::setUpOperationCall(const CalledOperation& operation, const
     return function;
 }
 
+// No stub has an operand in it, and an operation does not preserve it.
+#if CPU(X86_64)
+static constexpr GPRReg scratchAfterOperation = CCallHelpers::s_scratchRegister;
+#else
+static constexpr GPRReg scratchAfterOperation = ARM64Registers::x16;
+#endif
+
 void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless && !operationCall.spilledArguments);
@@ -187,45 +193,51 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 #endif
     } else
         emitFunctionEpilogueWithEmptyFrame();
-    Jump exception;
-    auto testPendingException = [&] {
-        static_assert(noOverlap(gprOf(StubRegister::A3), GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2));
-        GPRReg vm = reuseScratch(StubRegister::A3);
-        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-        exception = branchTestPtr(NonZero, Address(vm, VM::exceptionOffset()));
-    };
-    if (operationCall.checksFailedAllocation)
-        testPendingException();
-    else if (operationCall.checksException) {
+    // A stub that another stub called leaves the poll to its caller.
+    const bool polls = operationCall.pollsBeforeReturning && !callerIsStub;
+    static_assert(noOverlap(scratchAfterOperation, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2, instanceGPR));
+    JumpList exceptionOrPoll;
+    bool hasPolled = false;
+    if (operationCall.checksException) {
         switch (operationCall.returns) {
         case OperationCall::Returns::Value:
-            exception = branchTestPtr(NonZero, GPRInfo::returnValueGPR2);
+        case OperationCall::Returns::Void: {
+            const GPRReg exception = operationCall.returns == OperationCall::Returns::Value ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
+            exceptionOrPoll.append(polls ? branchIfNonZeroOrPollIsDue(exception, scratchAfterOperation) : branchTestPtr(NonZero, exception));
+            hasPolled = polls;
             break;
-        case OperationCall::Returns::Void:
-            exception = branchTestPtr(NonZero, GPRInfo::returnValueGPR);
-            break;
+        }
         case OperationCall::Returns::Double:
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), function);
-            exception = branchTestPtr(NonZero, Address(function, VM::exceptionOffset()));
-            break;
         case OperationCall::Returns::Pair:
-            testPendingException();
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratchAfterOperation);
+            exceptionOrPoll.append(branchTestPtr(NonZero, Address(scratchAfterOperation, VM::exceptionOffset())));
             break;
         }
     }
+    if (polls && !hasPolled)
+        exceptionOrPoll.append(branchTestPtr(NonZero, pollIsDueWord()));
+    Label afterPoll = label();
     if (operationCall.valueDestination) {
         recordClobber(*operationCall.valueDestination);
         move(GPRInfo::returnValueGPR, *operationCall.valueDestination);
     }
     beforeReturn();
     ret();
-    if (!exception.isSet())
+    if (exceptionOrPoll.empty())
         return;
-    exception.link(this);
-    if (operationCall.checksFailedAllocation)
-        jumpToExceptionHandlerAfterFailedAllocation();
-    else
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && operationCall.checksException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratchAfterOperation);
+        hasNoException = branchTestPtr(Zero, Address(scratchAfterOperation, VM::exceptionOffset()));
+    }
+    if (operationCall.checksException)
         jumpToExceptionHandler();
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 
 #if CPU(X86_64)
@@ -286,14 +298,18 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    const bool testsException = operationCall.checksException || operationCall.checksFailedAllocation;
+    const bool testsException = operationCall.checksException;
+    const bool polls = operationCall.pollsBeforeReturning && key().callerFrame() != CallerFrame::StubFrame;
     if (testsException) {
-        if (returnsDouble || operationCall.checksFailedAllocation) {
+        if (returnsDouble) {
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
             loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
         } else
             move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
-    }
+        if (polls)
+            or64(pollIsDueWord(), scratch);
+    } else if (polls)
+        loadPtr(pollIsDueWord(), scratch);
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
         if (saved[i] == valueDestination)
             store64(GPRInfo::returnValueGPR, slot(i));
@@ -307,21 +323,30 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     if (valueDestination)
         recordClobber(*valueDestination);
     emitFunctionEpilogue();
-    Jump exception;
-    if (testsException)
-        exception = branchTestPtr(NonZero, scratch);
+    Jump exceptionOrPoll;
+    if (testsException || polls)
+        exceptionOrPoll = branchTestPtr(NonZero, scratch);
+    Label afterPoll = label();
     beforeReturn();
     ret();
-    if (!testsException)
+    if (!exceptionOrPoll.isSet())
         return;
-    exception.link(this);
-    if (operationCall.checksFailedAllocation) {
-        jumpToExceptionHandlerAfterFailedAllocation();
-        return;
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && testsException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        hasNoException = branchTestPtr(Zero, Address(scratch, VM::exceptionOffset()));
     }
-    if (key().callerFrame() == CallerFrame::StubFrame)
-        emitFunctionEpilogue();
-    jumpToStub(handleException(true));
+    if (testsException) {
+        if (key().callerFrame() == CallerFrame::StubFrame)
+            emitFunctionEpilogue();
+        jumpToStub(handleException(true));
+    }
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 #else
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
@@ -364,13 +389,21 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    const bool testsException = operationCall.checksException || operationCall.checksFailedAllocation;
+    const bool testsException = operationCall.checksException;
+    const bool polls = operationCall.pollsBeforeReturning && key().callerFrame() != CallerFrame::StubFrame;
+    if (polls)
+        loadPtr(pollIsDueWord(), scratch);
     if (testsException) {
-        if (returnsDouble || operationCall.checksFailedAllocation) {
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-            loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
-        } else
-            move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
+        // The registers that report the exception are restored below.
+        const GPRReg exception = returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
+        if (returnsDouble) {
+            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
+            loadPtr(Address(exception, VM::exceptionOffset()), exception);
+        }
+        if (polls)
+            or64(exception, scratch);
+        else
+            move(exception, scratch);
     }
     if (valueDestination) {
         recordClobber(*valueDestination);
@@ -385,21 +418,30 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     for (unsigned i = returnsDouble ? 2 : 0; i < numberOfFPRs; i += 2)
         loadPairDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i), fpr(i + 1));
     emitFunctionEpilogue();
-    Jump exception;
-    if (testsException)
-        exception = branchTestPtr(NonZero, scratch);
+    Jump exceptionOrPoll;
+    if (testsException || polls)
+        exceptionOrPoll = branchTestPtr(NonZero, scratch);
+    Label afterPoll = label();
     beforeReturn();
     ret();
-    if (!testsException)
+    if (!exceptionOrPoll.isSet())
         return;
-    exception.link(this);
-    if (operationCall.checksFailedAllocation) {
-        jumpToExceptionHandlerAfterFailedAllocation();
-        return;
+    exceptionOrPoll.link(this);
+    Jump hasNoException;
+    if (polls && testsException) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        hasNoException = branchTestPtr(Zero, Address(scratch, VM::exceptionOffset()));
     }
-    if (key().callerFrame() == CallerFrame::StubFrame)
-        emitFunctionEpilogue();
-    jumpToStub(handleException(true));
+    if (testsException) {
+        if (key().callerFrame() == CallerFrame::StubFrame)
+            emitFunctionEpilogue();
+        jumpToStub(handleException(true));
+    }
+    if (!polls)
+        return;
+    if (hasNoException.isSet())
+        hasNoException.link(this);
+    pollBeforeReturningFromOperation(afterPoll);
 }
 #endif
 
@@ -413,7 +455,7 @@ static bool isCalledByFrontEnd(Entry entry)
 void StubAssembler::emitOperationTailCall(const CalledOperation& operation, OperationCall::FirstArgument firstArgument)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
-    // After a tail call there is no place to test for the error of a failed allocation. A front end was called by a stub that tests.
+    // After a tail call there is no place to poll for the error of a failed allocation. A front end was called by a stub that polls.
     if (const Entry* entry = std::get_if<Entry>(&operation); entry && mayFailToAllocate(*entry, firstArgument) && !effectsOf(*entry).mayThrow && !isCalledByFrontEnd(*entry)) {
         callOperationAndReturn(*entry, { .firstArgument = firstArgument, .checksException = false });
         return;

@@ -1968,7 +1968,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             replacedChecks.append(observed.test);
         }
         const Type& expected = program.at(test.expectedType().predicted());
-        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), expected) || positions.turnsAwayEveryObject(held, expected)))
+        ValueSetID seen = inputs.seenValuesOf(maker, observed.operand);
+        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(seen, expected) || positions.turnsAwayEveryObject(held, expected) || positions.turnsAwayEverySeenObject(seen, expected)))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 

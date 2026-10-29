@@ -22,6 +22,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -482,7 +483,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
             context.numberOfBlocksWhenSinkingGaveUp = context.analyses.cfg().reversePostOrder().size();
 
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-        if (sinking.testElementsOfLists(builder) || sinking.duplicateLiveRange(builder))
+        // Splitting edges changes no plan. The ones that failed in the first round would fail again.
+        if (sinking.testElementsOfLists(builder) || (!round && sinking.duplicateLiveRange(builder)))
             return PassOutcome::Changed;
         if (!sinking.hasCandidates()) {
             sinking.recordLosses();
@@ -605,6 +607,15 @@ void AllocationSinking::count()
         countBlock(block);
 }
 
+void AllocationSinking::countIn(std::span<const BlockID> range)
+{
+    resetCounters();
+    findWhetherObjectsAreBuiltBeforeBranches();
+    ++m_numberOfSweeps;
+    for (BlockID block : range)
+        countBlock(block);
+}
+
 void AllocationSinking::countBlock(BlockID block)
 {
     const Block& source = m_function.at(block);
@@ -646,6 +657,14 @@ void AllocationSinking::countBlock(BlockID block)
     }
 
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+        if (isOutsideTrialRange(terminator.targets[targetIndex].block)) {
+            // The trial knows nothing past its range. An object that leaves it virtual may die virtual.
+            for (const ObjectEntry& entry : state.objects) {
+                if (!entry.state.isCell())
+                    at(entry.object).diesVirtual = true;
+            }
+            continue;
+        }
         const SinkingState* headOfTarget = headOf(terminator.targets[targetIndex].block);
         if (!headOfTarget || interpreter.isDeadEdge(terminator, targetIndex))
             continue;
@@ -990,27 +1009,72 @@ Vector<BlockID> AllocationSinking::collectLiveRange(VirtualObjectID object, Bloc
     return region;
 }
 
-bool AllocationSinking::paysWithoutEdges(VirtualObjectID object, std::span<const Edge> edges)
+static BitVector collectObjectsAllocatedOnEveryPath(std::span<const Candidate> candidates)
 {
-    BitVector allocatedOnEveryPath(m_candidates.size());
-    for (size_t index = 0; index < m_candidates.size(); ++index) {
-        if (allocatesOnEveryPath(m_candidates[index]))
-            allocatedOnEveryPath.quickSet(index);
+    BitVector result(candidates.size());
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        if (allocatesOnEveryPath(candidates[index]))
+            result.quickSet(index);
     }
+    return result;
+}
 
-    resetAnalysis(*this);
-    m_ignoredEdges.clear();
-    m_ignoredEdges.append(edges);
-    analyze();
-    m_ignoredEdges.clear();
-
-    const SinkingState* head = headOf(targetOf(m_function, edges.front()).block);
+bool AllocationSinking::savesAllocation(VirtualObjectID object, BlockID merge, const BitVector& allocatedOnEveryPath) const
+{
+    const SinkingState* head = headOf(merge);
     if (!head)
         return false;
     Vector<VirtualObjectID, 4> objects = collectReachableObjects(*head, object);
     return std::ranges::any_of(objects, [&](VirtualObjectID member) {
         return allocatedOnEveryPath.quickGet(member.index()) && !allocatesOnEveryPath(at(member));
     });
+}
+
+// Most plans fail because the object is built in the range to duplicate. Analyzing the range costs the same in a function of any size.
+bool AllocationSinking::mayPayWithoutEdges(VirtualObjectID object, std::span<const Edge> edges, std::span<const BlockID> range, const BitVector& allocatedOnEveryPath)
+{
+    BitVector isInRange(m_function.blocks.size());
+    for (BlockID block : range)
+        isInRange.quickSet(block.index());
+    SetForScope<const BitVector*> trialRange(m_trialRange, &isInRange);
+
+    Vector<Candidate> candidates = m_candidates;
+    SinkingDecisions decisions = m_decisions;
+    BitVector blocksEnteredWithNothing = m_blocksEnteredWithNothing;
+    Heads heads(range.size(), [&](size_t index) {
+        return m_heads[range[index].index()];
+    });
+
+    m_ignoredEdges.clear();
+    m_ignoredEdges.append(edges);
+    // The cells that came over the edges are behind many of the decisions.
+    m_decisions = SinkingDecisions { };
+    do {
+        m_mustSolveAgain = false;
+        solveAgainIn(range);
+    } while ((m_decisions.takeDidChange() || m_mustSolveAgain) && !hasSpentItsWork());
+    countIn(range);
+    m_ignoredEdges.clear();
+    bool result = !hasSpentItsWork() && savesAllocation(object, targetOf(m_function, edges.front()).block, allocatedOnEveryPath);
+
+    for (size_t index = 0; index < range.size(); ++index)
+        m_heads[range[index].index()] = WTF::move(heads[index]);
+    m_blocksEnteredWithNothing = WTF::move(blocksEnteredWithNothing);
+    m_candidates = WTF::move(candidates);
+    m_decisions = WTF::move(decisions);
+    return result;
+}
+
+bool AllocationSinking::paysWithoutEdges(VirtualObjectID object, std::span<const Edge> edges)
+{
+    BitVector allocatedOnEveryPath = collectObjectsAllocatedOnEveryPath(m_candidates.span());
+
+    resetAnalysis(*this);
+    m_ignoredEdges.clear();
+    m_ignoredEdges.append(edges);
+    analyze();
+    m_ignoredEdges.clear();
+    return savesAllocation(object, targetOf(m_function, edges.front()).block, allocatedOnEveryPath);
 }
 
 void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> region, std::span<const Edge> cellEdges)
@@ -1194,12 +1258,18 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
         return region;
     };
 
+    BitVector allocatedOnEveryPath = collectObjectsAllocatedOnEveryPath(m_candidates.span());
     resetAnalysis(*this);
     startWorkOver();
     solve();
     for (DuplicationPlan& plan : plans) {
         plan.cellEdges = collectCellEdges(plan.object, plan.merge);
-        if (!plan.cellEdges.isEmpty() && collectClonableRange(plan).isEmpty())
+        if (plan.cellEdges.isEmpty())
+            continue;
+        Vector<BlockID> region = collectClonableRange(plan);
+        // An object that pays already is planned for the sake of one it holds. Whether it holds cells was decided before the range.
+        bool rangeDecides = allocatedOnEveryPath.quickGet(plan.object.index());
+        if (region.isEmpty() || (rangeDecides && !mayPayWithoutEdges(plan.object, plan.cellEdges.span(), region.span(), allocatedOnEveryPath)))
             plan.cellEdges.clear();
     }
 

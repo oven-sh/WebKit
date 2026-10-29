@@ -465,6 +465,11 @@ public:
         BlockID root = m_cfg.root();
         m_blocksEnteredWithNothing.quickSet(root.index());
         m_isPending.quickSet(m_cfg.reversePostOrderIndex(root));
+        return solvePendingBlocks();
+    }
+
+    AllocationSinking::Heads solvePendingBlocks()
+    {
         std::span<const BlockID> order = m_cfg.reversePostOrder();
         for (bool shouldRepeat = true; shouldRepeat;) {
             shouldRepeat = false;
@@ -475,6 +480,25 @@ public:
             shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
         }
         return WTF::move(m_heads);
+    }
+
+    // Solves the trial range again from the heads of the blocks that enter it, and keeps all heads outside it.
+    AllocationSinking::Heads runIn(std::span<const BlockID> range, AllocationSinking::Heads&& heads, BitVector&& blocksEnteredWithNothing)
+    {
+        m_heads = WTF::move(heads);
+        m_blocksEnteredWithNothing = WTF::move(blocksEnteredWithNothing);
+        for (BlockID block : range) {
+            m_heads[block.index()] = std::nullopt;
+            m_blocksEnteredWithNothing.quickClear(block.index());
+        }
+        for (BlockID block : range) {
+            for (Edge edge : m_cfg.incomingEdges(block)) {
+                bool isReached = m_heads[edge.from.index()] || m_blocksEnteredWithNothing.quickGet(edge.from.index());
+                if (isReached && m_sinking.isOutsideTrialRange(edge.from))
+                    m_isPending.quickSet(m_cfg.reversePostOrderIndex(edge.from));
+            }
+        }
+        return solvePendingBlocks();
     }
 
 private:
@@ -525,6 +549,8 @@ private:
 
     bool propagate(Edge edge, SinkingState&& state, uint32_t fromOrder)
     {
+        if (m_sinking.isOutsideTrialRange(targetOf(m_function, edge).block))
+            return false;
         if (state.holdsNothing())
             return propagateNothing(edge, state.isReachable, fromOrder);
         m_sinking.didWork(1 + state.weight() + m_function.at(targetOf(m_function, edge).block).parameters.size());
@@ -535,6 +561,8 @@ private:
     bool propagateNothing(Edge edge, bool isReachable, uint32_t fromOrder)
     {
         BlockID target = targetOf(m_function, edge).block;
+        if (m_sinking.isOutsideTrialRange(target))
+            return false;
         bool isEnteredWithNothing = m_blocksEnteredWithNothing.quickGet(target.index());
         const std::optional<SinkingState>& head = m_heads[target.index()];
         if (!isReachable) {
@@ -688,6 +716,14 @@ void AllocationSinking::solve()
         }
         setAsideJoinsThatCarryOnlyCells();
     }
+}
+
+void AllocationSinking::solveAgainIn(std::span<const BlockID> range)
+{
+    ++m_numberOfSweeps;
+    SinkingSolver solver(*this);
+    m_heads = solver.runIn(range, WTF::move(m_heads), WTF::move(m_blocksEnteredWithNothing));
+    m_blocksEnteredWithNothing = solver.takeBlocksEnteredWithNothing();
 }
 
 void AllocationSinking::giveUpOnEveryCandidate()

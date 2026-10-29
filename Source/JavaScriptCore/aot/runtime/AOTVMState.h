@@ -71,9 +71,9 @@ public:
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
 
-    struct LoopPollPages {
+    struct PolledInstances {
         Lock lock;
-        Vector<void*, 1> pages WTF_GUARDED_BY_LOCK(lock);
+        Vector<Instance*, 1> instances WTF_GUARDED_BY_LOCK(lock);
     };
 
     const Image* image { nullptr };
@@ -119,7 +119,7 @@ public:
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
     StructuresWithFastIndexing structuresWithFastIndexing;
-    LoopPollPages loopPollPages;
+    PolledInstances polledInstances;
 };
 
 static_assert(sizeof(std::unique_ptr<RuntimeTable>) == sizeof(void*));

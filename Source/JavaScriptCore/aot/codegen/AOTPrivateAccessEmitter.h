@@ -22,6 +22,8 @@ public:
 
 private:
     uint16_t indexInLayoutRecord(const ValueContext&);
+    bool findsLocationInLine(const ValueContext&);
+    TypedPointer locationInKnownStructure(const ValueContext&, Boxed object, CellPointer token, LBasicBlock isUnknown);
     void storePrivateField(const ValueContext&, RuntimeOperation);
 };
 

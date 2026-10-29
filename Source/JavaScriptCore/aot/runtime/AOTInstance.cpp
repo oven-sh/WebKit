@@ -330,12 +330,13 @@ static void fillInstanceClassInfos(Instance& instance)
     instance.realm.instanceClassInfos = classInfos.data();
 }
 
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
-static void* loopPollPage(Instance* instance)
+CONCURRENT_SAFE void setPollsEnabled(Instance& instance, bool enabled)
 {
-    return reinterpret_cast<char*>(instance) + InstanceLayout::offsetOfLoopPollPage();
-}
+    WTF::atomicStore(&instance.pollIsDue, static_cast<uintptr_t>(enabled), std::memory_order_relaxed);
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
+    OSAllocator::protect(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage(), WTF::pageSize(), !enabled, !enabled);
 #endif
+}
 
 void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
 {
@@ -355,35 +356,30 @@ static void registerStackMirror(Instance* instance, VM& vm)
     vm.traps().registerMirror(instance->callsByValue.limit.get());
     if (FunctionTables* tables = vm.aotState().functionTables.get(); tables && tables->recordsCalleesOfCallsByValue())
         makeTailCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
-    VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
+    VMState::PolledInstances& polled = vm.aotState().polledInstances;
     // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.
-    decltype(loopPollPages.pages) pages;
-    size_t numberOfPages;
+    decltype(polled.instances) instances;
+    size_t numberOfInstances;
     {
-        Locker locker { loopPollPages.lock };
-        numberOfPages = loopPollPages.pages.size();
+        Locker locker { polled.lock };
+        numberOfInstances = polled.instances.size();
     }
-    pages.reserveInitialCapacity(numberOfPages + 1);
-    Locker locker { loopPollPages.lock };
-    void* page = loopPollPage(instance);
-    pages.appendVector(loopPollPages.pages);
-    pages.append(page);
-    loopPollPages.pages.swap(pages);
+    instances.reserveInitialCapacity(numberOfInstances + 1);
+    Locker locker { polled.lock };
+    instances.appendVector(polled.instances);
+    instances.append(instance);
+    polled.instances.swap(instances);
     if (vm.traps().stopsAtEveryPoll() || vm.traps().needsOutOfMemoryError())
-        OSAllocator::protect(page, WTF::pageSize(), false, false);
-#endif
+        setPollsEnabled(*instance, true);
 }
 
 static void unregisterStackMirror(Instance* instance, VM& vm)
 {
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
     {
-        VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
-        Locker locker { loopPollPages.lock };
-        loopPollPages.pages.removeFirst(loopPollPage(instance));
+        VMState::PolledInstances& polled = vm.aotState().polledInstances;
+        Locker locker { polled.lock };
+        polled.instances.removeFirst(instance);
     }
-#endif
     if (instance->callsByValue.limit.get().isOnList())
         vm.traps().unregisterMirror(instance->callsByValue.limit.get());
     vm.traps().unregisterMirror(instance->jsonLevels.limit.get());

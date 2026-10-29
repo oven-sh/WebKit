@@ -302,20 +302,32 @@ static size_t findPrefixOfMatch(JSGlobalObject* globalObject, VM& vm, RegExpObje
     RELEASE_AND_RETURN(scope, fillPrefixOfMatch(globalObject, vm, object->regExp(), string, count, elements));
 }
 
+// Does what RegExpObject::matchGlobal() does, without the list.
 static size_t findPrefixOfGlobalMatch(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* string, uint32_t count, EncodedJSValue* elements)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = regExpMatchFast(globalObject, object, string);
+    RegExp* regExp = object->regExp();
+    object->setLastIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, 0);
-    if (result.isNull())
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    MatchResult match = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, 0);
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (!match)
         return noMatchPrefixLength;
-    auto* array = uncheckedDowncast<JSArray>(result);
-    unsigned length = array->length();
-    for (unsigned i = 0; i < std::min(count, length); ++i) {
-        JSValue piece = array->getIndex(globalObject, i);
+
+    size_t length = 0;
+    do {
+        if (length == MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return 0;
+        }
+        if (length < count)
+            elements[length] = JSValue::encode(jsSubstringOfResolved(vm, string, match.start, match.end - match.start));
+        ++length;
+        findMatchBehind(globalObject, regExp, string, source, match);
         RETURN_IF_EXCEPTION(scope, 0);
-        elements[i] = JSValue::encode(piece);
-    }
+    } while (match);
     return length;
 }
 

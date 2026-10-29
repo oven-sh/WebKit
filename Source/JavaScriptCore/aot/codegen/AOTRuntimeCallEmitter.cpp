@@ -487,7 +487,7 @@ RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createEntryRequest(AOT::Entr
         && numberOfGPRArgumentsOf(signature, first) <= GPRInfo::numberOfArgumentRegisters
         && (first != OperationCall::FirstArgument::None || !checksException);
     if (callerOptions.isOnRarePath && canPreserveRegisters) {
-        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .checksFailedAllocation = !checksException && mayFailToAllocate(entry, first) };
+        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first) };
         request.key = callOperationPreservingRegisters(*request.preservingCall);
     } else
         request.key = callOperationFor(entry, returns, first);
@@ -668,6 +668,10 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
     applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects, !request.entry && key.family() == StubFamily::ClosureOfTable));
+    // The lookup records where it found the name. The effects of a read say nothing of that.
+    static constexpr OpcodeSet lookupsOfPrivateNames { Opcode::PrivateGet, Opcode::PrivateHas };
+    if (context && context->valueID() && lookupsOfPrivateNames.contains(m_function.at(context->valueID()).opcode))
+        m_callsThatLookForPrivateNames.append(patchpoint);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -892,6 +896,10 @@ void RuntimeCallEmitter::stateWhichCallsChangeWhatOnlyGeneratedCodeReads()
             continue;
         for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
             m_heaps.decoratePatchpointWrite(heap, patchpoint);
+    }
+    if (m_heaps.isNamedByMemoryAccess(m_heaps.AOTClassToken_records)) {
+        for (B3::PatchpointValue* patchpoint : m_callsThatLookForPrivateNames)
+            m_heaps.decoratePatchpointWrite(&m_heaps.AOTClassToken_records, patchpoint);
     }
 }
 

@@ -128,6 +128,7 @@ private:
 
     B3::Air::StackSlot* m_transientBuffer { nullptr };
     Vector<B3::PatchpointValue*, 16> m_callsThatMayChangeSlotsOfSites;
+    Vector<B3::PatchpointValue*, 4> m_callsThatLookForPrivateNames;
     B3::Air::StackSlot* m_keptRegisterStorage { nullptr };
     B3::Air::StackSlot* m_landingPadRegisterStorage { nullptr };
 };

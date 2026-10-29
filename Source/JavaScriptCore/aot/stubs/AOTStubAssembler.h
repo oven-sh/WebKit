@@ -55,8 +55,8 @@ struct OperationCall {
     FirstArgument firstArgument { FirstArgument::Instance };
     Saves saves { Saves::Nothing };
     bool checksException { true };
-    // For an operation that cannot throw but allocates. If the allocation fails, the error is pending in the VM when the operation returns.
-    bool checksFailedAllocation { false };
+    // For an operation that allocates. If an allocation fails, the operation goes on with the reserve, and the poll throws the error at the call site.
+    bool pollsBeforeReturning { false };
     // Set after the registers are saved, so a call that saves them leaves the argument registers as they were.
     std::optional<GPRReg> secondArgumentIn { };
     std::optional<GPRReg> thirdArgumentIn { };
@@ -67,7 +67,7 @@ struct OperationCall {
     std::optional<SpilledArguments> spilledArguments { };
 };
 
-// An operation of this run time that allocates throws the error of a failed allocation as it returns, even if it cannot throw otherwise.
+// The stub that calls an operation of this run time that allocates throws the error of a failed allocation, even if the operation cannot throw otherwise.
 constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
 {
     switch (entry) {
@@ -158,7 +158,6 @@ public:
 
     void callStub(StubKey);
     void jumpToStub(StubKey target) { linkToStub(jump(), target); }
-    void jumpToExceptionHandlerAfterFailedAllocation();
     void linkToStub(Jump, StubKey);
     void linkToStub(JumpList&, StubKey);
     void loadStubAddress(StubKey, GPRReg);
@@ -178,6 +177,8 @@ public:
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
     void pollBeforeReturningFromNativeCode();
+    void pollBeforeReturningFromOperation(Label afterPoll);
+    Jump branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch);
     // For a frame that ends at the address in the register.
     void checkStackBeforeEntering(GPRReg endOfFrame);
     // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
@@ -188,6 +189,7 @@ public:
     void pollBeforeCall(Label returnSite);
     static Address limitOfTailCallsByValue();
     static Address softStackLimitWord();
+    static Address pollIsDueWord();
     static Address trapAwareSoftStackLimitWord();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
@@ -343,9 +345,9 @@ private:
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
 
     void emitStackAlignmentCheck();
-    void emitStubCall(StubKey);
+    void emitStubCall(StubKey, StubReference::Kind = StubReference::Kind::Call);
     void pollIfBelow(Address limit, StubKey poll);
-    void pollAtStubEntry(StubKey poll);
+    void pollAtStubEntry(StubKey poll, StubReference::Kind = StubReference::Kind::Call);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
     void checkReturnsFlags(RelationalCondition) const;

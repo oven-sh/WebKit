@@ -627,6 +627,8 @@ SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefin
     std::optional<FieldAccess> access = fieldCreatedByDefinition(definition.value());
     if (!access)
         return { };
+    if (generator().validatesOrChecksProofs())
+        emitter<RuntimeValidationEmitter>().checkPrecondition(definition, emitter<ShapeTestEmitter>().isCompiledObject(cell));
     PropertyKeyID key = access->key;
     ValueID stored = definition->valueOperand();
     LBasicBlock leftToRunTime = nullptr;

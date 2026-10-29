@@ -1888,6 +1888,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
     learned.structure = nullptr;
     learned.wasFound = false;
     learned.isOnlySeen = false;
+    learned.consecutiveFailures = 0;
     learned.members.shrink(0);
     learned.keys.shrink(0);
     learned.stores.shrink(0);
@@ -2558,18 +2559,26 @@ static NEVER_INLINE const uint8_t* appendLearnedObjects(Instance& instance, VM& 
         element = next;
     }
     if (last && !runtime.isAttemptAbandoned())
-        last->wasFound = true;
+        last->consecutiveFailures = 0;
     return element;
 }
 
-static NEVER_INLINE void handleAbandonedAttempt(Instance& instance, VM& vm, JSONRuntime& runtime, uint32_t requestedShape)
+static NEVER_INLINE void handleAbandonedAttempt(Instance& instance, VM& vm, JSONRuntime& runtime, bool isListRequest)
 {
+    AOT_THRESHOLD(uint8_t, maxConsecutiveFailures, 4);
     JSONRuntime::LearnedObject* learned = runtime.outermostFailedForm();
     auto [shape, firstName] = runtime.unmatchedObject();
     runtime.resetAttemptState();
     if (!learned)
         return;
-    runtime.didRefuseTextOf(requestedShape);
+    if (!isListRequest) {
+        if (learned->shape)
+            runtime.didRefuseTextOf(learned->shape);
+    } else if (++learned->consecutiveFailures == maxConsecutiveFailures) {
+        learned->members.shrink(0);
+        learned->isOnlySeen = false;
+        return;
+    }
     if (!shape || !runtime.remembersTextsOf(shape) || runtime.isFinishCacheDisabled() || !runtime.mayLearnAnotherObject())
         return;
     if (JSONRuntime::LearnedObject* missing = runtime.learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName)); missing && missing != learned)
@@ -2582,7 +2591,7 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectAsLearned(Instance& instance, 
     JSONRuntime::LearnedObject* last = runtime.learnedObjectFoundLast();
     if (last && last->holdsMembersOf(shape)) {
         JSONRuntime::LearnedObject* matched = last;
-        if (const uint8_t* end = tryParseObjectInlineAs(instance, vm, matched, firstName, result)) [[likely]] {
+        if (const uint8_t* end = tryParseObjectAs(instance, vm, matched, firstName, result)) [[likely]] {
             runtime.didFindWholeTextOf(shape);
             if (matched != last) [[unlikely]] {
                 matched->wasFound = true;
@@ -2625,12 +2634,10 @@ static ALWAYS_INLINE const uint8_t* appendLearnedObjectsForRequest(Instance& ins
 {
     const uint8_t* end = appendLearnedObjects(instance, vm, shape, array, cursor, nullptr);
     if (runtime.isAttemptAbandoned()) [[unlikely]] {
-        handleAbandonedAttempt(instance, vm, runtime, shape);
+        handleAbandonedAttempt(instance, vm, runtime, true);
         runtime.noteAttemptReached(end);
-    } else if (end != cursor) {
-        runtime.didFindWholeTextOf(shape);
+    } else
         runtime.noteParsedThrough(end);
-    }
     return end;
 }
 
@@ -2638,7 +2645,7 @@ static ALWAYS_INLINE const uint8_t* parseWithLearnedForms(Instance& instance, VM
 {
     JSONRuntime& runtime = *instance.json.runtime;
     if (!runtime.canStartAttemptAt(cursor)) [[unlikely]] {
-        if (!isListRequest && runtime.wasParsedBeyond(cursor))
+        if (!isListRequest && !runtime.isBeforeFailedPosition(cursor))
             runtime.didRefuseTextOf(shape);
         return cursor;
     }
@@ -2649,7 +2656,7 @@ static ALWAYS_INLINE const uint8_t* parseWithLearnedForms(Instance& instance, VM
         return end;
     }
     if (runtime.isAttemptAbandoned())
-        handleAbandonedAttempt(instance, vm, runtime, shape);
+        handleAbandonedAttempt(instance, vm, runtime, false);
     return cursor;
 }
 

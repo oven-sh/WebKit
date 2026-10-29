@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTClassToken.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEffects.h"
 #include "AOTInstance.h"
@@ -16,6 +17,7 @@
 #include "B3AbstractHeapRepository.h"
 #include "B3Effects.h"
 #include "JSArrayBuffer.h"
+#include "JSCellButterfly.h"
 #include "JSGlobalObject.h"
 #include "JSPropertyNameEnumerator.h"
 #include <array>
@@ -66,6 +68,8 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_closureCells, 0, RuntimeState) \
     v(AOTInstance_misfit, 0, RuntimeState) \
     v(AOTInstance_globalBindings, 0, RuntimeState) \
+    v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), RuntimeState) \
+    v(AOTClassToken_records, 0, RuntimeState) \
     v(hostObjectCachedValues, 0, ExternalState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \

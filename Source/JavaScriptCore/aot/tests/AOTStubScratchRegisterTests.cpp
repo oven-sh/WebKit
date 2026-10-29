@@ -172,6 +172,8 @@ static void testCheckerAcceptsOrdinaryCode()
     AOT_TEST_CHECK(findConflicts({ 0xA9404410, 0xA9004410, 0xA9404410, 0x8B110200 }).isEmpty());
     // ldp x16, x17, [sp, #136] . add sp, sp, #352 . orr w16, wzr, #0x7fff . cmp w9, w16 . ldr x17, [x0]
     AOT_TEST_CHECK(findConflicts({ 0xA948C7F0, 0x910583FF, 0x32003BF0, 0x6B10013F, 0xF9400011 }).isEmpty());
+    // ldp x15, x16, [sp, #120] . ldur x17, [sp, #136] . ldur x17, [x26, #40] . cmp sp, x17
+    AOT_TEST_CHECK(findConflicts({ 0xA947C3EF, 0xF84883F1, 0xF8428351, 0xEB3163FF }).isEmpty());
     // ldp x16, x17, [sp], #16 . mov x16, #1 . str x16, [x0]
     AOT_TEST_CHECK(findConflicts({ 0xA8C147F0, 0xD2800030, 0xF9000010 }).isEmpty());
     // stxr w16, x1, [x2] . cbnz w16, -4 . mov x16, #1 . str x16, [x0]

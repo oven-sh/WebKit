@@ -296,6 +296,17 @@ bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
     return !ValueSets::isComplement(arriving) && !m_inputs.sets().meet(maker().intersect(arriving, universe.knownObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
+// Other code may bring objects that pass. What the program brings is the better guess at what arrives.
+// Only objects with a layout of the program count: what a built-in makes for a class below it is listed without its layout.
+bool ValueFlowPositions::turnsAwayEverySeenObject(ValueSetID seen, const Type& type)
+{
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    if (ValueSets::isComplement(seen) || !type.isJavaScriptValue() || !type.layouts || type.anyObject || type.anyFunction || !type.classes.isEmpty())
+        return false;
+    ValueSetID objects = maker().intersect(seen, universe.placeholders().objectsWithLayoutOfProgram);
+    return !m_inputs.sets().isEmpty(objects) && !m_inputs.sets().meet(objects, universe.maskOf(maker(), m_inputs.program, type));
+}
+
 // The contents of many instances are merged one instance at a time. A list of strings over the limit would be rewritten at every step, one string longer.
 bool ValueFlowPositions::keepContentStringsWithinLimit(ClassParts& parts)
 {

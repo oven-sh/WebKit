@@ -319,7 +319,8 @@ struct Instance : InstanceHeader {
 #define AOT_ADD_SIZE_OF_INSTANCE_PART(member, Type) + sizeof(Type)
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_DECLARE_INSTANCE_PART, AOT_SKIP_INSTANCE_PART)
     State* state;
-    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    uintptr_t pollIsDue;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
     void** runtimeTable;
     SlotHandlers handlers;
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
@@ -328,6 +329,8 @@ struct Instance : InstanceHeader {
 #else
     FOR_EACH_AOT_INSTANCE_PART(AOT_DECLARE_INSTANCE_PART)
     State* state;
+    // Not zero while the polls of the VM are switched on. A stub reads it after an operation that allocates.
+    uintptr_t pollIsDue;
 #endif
 #undef AOT_DECLARE_INSTANCE_PART
 
@@ -467,6 +470,7 @@ static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 // From now on every stub that is about to jump into the code of a function object polls first.
 void makeTailCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
+void setPollsEnabled(Instance&, bool);
 
 } } // namespace JSC::AOT
 

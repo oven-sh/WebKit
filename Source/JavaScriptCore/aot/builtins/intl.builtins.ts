@@ -120,7 +120,18 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
         reads: readByFormatting,
         implementation: b.generic,
       },
-      b.otherwise,
+      // Any other receiver. The getter looks for a formatter in it, and the function takes no locale: it uses the locale of that formatter.
+      {
+        this: b.any,
+        args: { [parameter]: b.any.optional },
+        returns: b.string,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: { this: [b.retained, mayHoldFormatter], [parameter]: [b.runs("ToPrimitive"), b.readsContents()] },
+        reads: readByFormatting,
+        implementation: b.generic,
+      },
     ],
   }) satisfies b.GetterField;
 

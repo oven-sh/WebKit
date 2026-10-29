@@ -93,9 +93,6 @@ bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 // Only where a collection may run: vm.topCallFrame is stale in an operation that records no frame.
 const void* returnAddressOfInnermostCompiledCall(VM&);
 
-// For an operation whose allocation failed. It throws only if the stub that called the operation tests for an exception and the function it returns to expects one there.
-void throwOwedOutOfMemoryErrorBeforeReturn(Instance&, CallerFrameAndPC* frameRecordOfOperation);
-
 } // namespace AOT
 } // namespace JSC
 

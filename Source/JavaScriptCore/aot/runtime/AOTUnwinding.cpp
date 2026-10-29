@@ -523,38 +523,6 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
-// Only where the operation returns to a stub that tests for an exception and then returns into a function: any other stub continues and must not find an exception.
-// The handler active at a return address is known if the address has its own site, or the function has no handlers.
-void throwOwedOutOfMemoryErrorBeforeReturn(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
-{
-    VM& vm = *instance.vm;
-    const Image& image = *vm.aotState().image;
-    // The error is thrown only after a collection has found no room. While the operation puts collections off, the error waits for a poll.
-    if (vm.exceptionForInspection() || vm.heap.isDeferred())
-        return;
-    CodeLocation location = image.locate(removeCodePtrTag(std::bit_cast<CallFrame*>(frameRecordOfOperation)->rawReturnPC()));
-    if (location.kind != CodeKind::Stub || location.stubFrameKind != StubFrameKind::ReturnsAfterOperation)
-        return;
-    location = image.locate(removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()));
-    if (location.kind != CodeKind::Function)
-        return;
-    if (catchesExceptions(image, location.function) && !image.returnSiteInfoAt(location.function, location.offset).site)
-        return;
-    if (vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) || !vm.traps().needsOutOfMemoryError())
-        return;
-    {
-        DeferGCForAWhile deferGC(vm);
-        auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            bool hasThrown = throwOutOfMemoryErrorIfOwed(vm, instance.globalObject, scope);
-            RELEASE_ASSERT(hasThrown);
-            scope.release();
-        }
-        EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
-    }
-}
-
 } // namespace JSC::AOT
 
 namespace JSC {

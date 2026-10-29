@@ -120,6 +120,7 @@ public:
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
     bool turnsAwayEveryObject(ValueSetID, const Type&);
+    bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
 
     Type typeOfObject(ValueFlowObjectID);
 

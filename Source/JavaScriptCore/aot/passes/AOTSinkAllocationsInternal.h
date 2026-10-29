@@ -583,6 +583,7 @@ public:
     void tagVariants(BlockID, VirtualObjectID, ObjectState&);
     void buildAtHeadForLackOfTagBits(BlockID, VirtualObjectID);
     bool isIgnored(Edge) const;
+    bool isOutsideTrialRange(BlockID block) const { return m_trialRange && !m_trialRange->quickGet(block.index()); }
     void addVirtualReturn(VirtualReturn&&);
     void addEdgeNeedingCode(Edge);
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
@@ -616,6 +617,7 @@ private:
     void computeInputsOf(BlockID);
 
     void solve();
+    void solveAgainIn(std::span<const BlockID> range);
     void giveUpOnEveryCandidate();
     bool startOverWithFewerCandidates();
     void giveUpForLackOfWork(std::span<const uint32_t> candidates);
@@ -629,6 +631,7 @@ private:
     void takeBackJoinsSetAside();
     void invalidateResults();
     void count();
+    void countIn(std::span<const BlockID> range);
     void countBlock(BlockID);
     bool abandonUnprofitableCandidates();
     bool buildBeforeBranchesInsteadOfAbandoning();
@@ -640,6 +643,8 @@ private:
     bool handOnToNextJoin(IRBuilder&, const Candidate& join);
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);
+    bool savesAllocation(VirtualObjectID, BlockID merge, const BitVector& allocatedOnEveryPath) const;
+    bool mayPayWithoutEdges(VirtualObjectID, std::span<const Edge>, std::span<const BlockID> range, const BitVector& allocatedOnEveryPath);
     bool paysWithoutEdges(VirtualObjectID, std::span<const Edge>);
     void duplicate(IRBuilder&, std::span<const BlockID> region, std::span<const Edge> cellEdges);
 
@@ -707,6 +712,7 @@ private:
     bool m_setsAsideJoins { false };
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
+    const BitVector* m_trialRange { nullptr };
     Vector<Edge, 2> m_edgesNeedingCode;
     Vector<ValueID, 2> m_testedListsThatMayNotFit;
     const FreshResultShape* m_resultShape { nullptr };

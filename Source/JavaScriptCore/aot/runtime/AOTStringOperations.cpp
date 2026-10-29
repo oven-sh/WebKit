@@ -610,13 +610,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, siz
     auto* string = cellArgument<JSString>(cell, Entry::operationAOTStringEqualsLiteralInRegister);
     unsigned length = string->length();
     RELEASE_ASSERT(length && length <= maxRegisterStringLength);
-    std::array<char16_t, maxRegisterStringLength> units;
-    string->resolveToBuffer(std::span { units }.first(length));
-    for (unsigned i = 0; i < length; ++i) {
-        if (!WTF::isLatin1(units[i]))
-            return false;
+    static_assert(maxRegisterStringLength == sizeof(uint64_t));
+    std::array<Latin1Character, maxRegisterStringLength> characters { };
+    if (string->is8Bit())
+        string->resolveToBuffer(std::span { characters }.first(length));
+    else {
+        std::array<char16_t, maxRegisterStringLength> units;
+        string->resolveToBuffer(std::span { units }.first(length));
+        for (unsigned i = 0; i < length; ++i) {
+            if (!WTF::isLatin1(units[i]))
+                return false;
+            characters[i] = static_cast<Latin1Character>(units[i]);
+        }
     }
-    return Typed::packStringIntoRegister(std::span<const char16_t> { units }.first(length)) == text;
+    // As packStringIntoRegister packs.
+    if (length == 7)
+        return (WTF::unalignedLoad<uint32_t>(characters.data()) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(characters.data() + 3)) << 32) == text;
+    return WTF::unalignedLoad<uint64_t>(characters.data()) == text;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTShortStringOfString, EncodedJSValue, (Instance*, EncodedJSValue encoded))

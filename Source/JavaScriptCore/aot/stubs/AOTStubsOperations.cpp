@@ -23,7 +23,7 @@ namespace JSC { namespace AOT {
 
 static constexpr OperationCall operationCallOf(const OperationCallShape& shape)
 {
-    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException, .checksFailedAllocation = shape.checksFailedAllocation };
+    return { .returns = shape.returns, .firstArgument = shape.firstArgument, .saves = shape.saves, .checksException = shape.checksException, .pollsBeforeReturning = shape.pollsBeforeReturning };
 }
 
 static constexpr bool savesAtLeast(OperationCall::Saves saves, OperationCall::Saves requested)
@@ -35,7 +35,7 @@ static consteval bool factoriesRoundTrip()
 {
     for (uint8_t form = 0; form < std::size(operationCallShapes); ++form) {
         const OperationCallShape& shape = operationCallShapes[form];
-        if ((shape.checksFailedAllocation ? callOperationThatMayFailToAllocate(shape.returns) : callOperation(shape.returns, shape.firstArgument)).form() != form)
+        if ((shape.checksException ? callOperation(shape.returns, shape.firstArgument, shape.pollsBeforeReturning) : callOperationThatMayFailToAllocate(shape.returns)).form() != form)
             return false;
     }
     for (uint8_t form = 0; form < std::size(preservingCallShapes); ++form) {

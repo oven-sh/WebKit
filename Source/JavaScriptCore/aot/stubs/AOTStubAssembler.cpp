@@ -445,12 +445,12 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     RegisterSet savedAround;
     switch (kind) {
     case StubReference::Kind::Jump:
-    case StubReference::Kind::JumpAfterFailedAllocation:
         if (!m_savedRegisterStack.isEmpty() && !neverReturns(target))
             crashWhileGenerating("it jumps to another stub out of a region that saves registers"_s);
         checkHasNoBorrowedFPRs();
         break;
     case StubReference::Kind::Call:
+    case StubReference::Kind::PollAfterOperation:
     case StubReference::Kind::Address:
         if (!m_savedRegisterStack.isEmpty())
             savedAround = m_savedRegisterStack.last();
@@ -461,9 +461,9 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     m_recording.references.appendIfNotContains(StubReference { target, kind, savedAround });
 }
 
-void StubAssembler::emitStubCall(StubKey target)
+void StubAssembler::emitStubCall(StubKey target, StubReference::Kind kind)
 {
-    addReference(target, StubReference::Kind::Call);
+    addReference(target, kind);
     m_pendingCalls.append({ CCallHelpers::nearCall(), target });
 }
 
@@ -477,16 +477,6 @@ void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
     addReference(target, StubReference::Kind::Jump);
     m_pendingJumps.append({ jump, target });
-}
-
-// Not the handler that preserves registers: it would carry the registers of the frame that ran out of memory, and with them the objects that filled the heap, into the frame of the handler.
-void StubAssembler::jumpToExceptionHandlerAfterFailedAllocation()
-{
-    if (key().callerFrame() == CallerFrame::StubFrame)
-        emitFunctionEpilogue();
-    StubKey handler = handleException(false);
-    addReference(handler, StubReference::Kind::JumpAfterFailedAllocation);
-    m_pendingJumps.append({ jump(), handler });
 }
 
 void StubAssembler::linkToStub(JumpList& jumps, StubKey target)
@@ -668,6 +658,34 @@ void StubAssembler::pollBeforeReturningFromNativeCode()
     });
 }
 
+CCallHelpers::Address StubAssembler::pollIsDueWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(pollIsDue));
+}
+
+// One test for the exception that an operation reports in a register and for the poll. Changes the register.
+CCallHelpers::Jump StubAssembler::branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch)
+{
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    or64(pollIsDueWord(), value);
+    return Jump(m_assembler.jCC(x86Condition(NonZero)));
+#else
+    loadPtr(pollIsDueWord(), scratch);
+    or64(scratch, value);
+    return branchTestPtr(NonZero, value);
+#endif
+}
+
+// The out-of-line part of a stub that has found a poll due after its operation, with sp as it was at the stub's entry. pollBeforeReturningFromNativeCode() says why.
+// A caller plans for the error of a failed allocation wherever a call may collect, so the poll adds nothing to the effects of the stub.
+void StubAssembler::pollBeforeReturningFromOperation(Label afterPoll)
+{
+    branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, this);
+    pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain), StubReference::Kind::PollAfterOperation);
+    jump().linkTo(afterPoll, this);
+}
+
 void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 {
     Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord());
@@ -701,12 +719,12 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
 }
 
 // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
-void StubAssembler::pollAtStubEntry(StubKey poll)
+void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
 {
 #if CPU(ARM64)
     move(linkRegister, ARM64Registers::x16);
 #endif
-    emitStubCall(poll);
+    emitStubCall(poll, kind);
 #if CPU(X86_64)
     bindReturnLabel(StubFrameKind::AtStubEntry);
 #endif

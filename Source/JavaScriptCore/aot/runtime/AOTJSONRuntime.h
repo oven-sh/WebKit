@@ -198,6 +198,7 @@ public:
         size_t allocationSize { 0 };
         bool hasPerCellBit { false };
         uint8_t numberOfExtraMembers { 0 };
+        uint8_t consecutiveFailures { 0 };
         bool wasFound { false };
         bool isOnlySeen { false };
         bool isBeingLearned { false };
@@ -272,7 +273,7 @@ public:
     {
         m_furthestAttemptedPosition = reached;
     }
-    bool wasParsedBeyond(const uint8_t* cursor) const { return cursor >= m_furthestFailedPosition && cursor < m_furthestAttemptedPosition; }
+    bool isBeforeFailedPosition(const uint8_t* cursor) const { return cursor < m_furthestFailedPosition; }
     bool isAttemptAbandoned() const { return m_isAttemptAbandoned; }
     void noteAttemptFailure(const uint8_t* reached, bool shouldAbandon)
     {
