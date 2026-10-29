@@ -125,7 +125,7 @@ inline constexpr OpcodeSet foldableOpcodes = [] {
 inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField };
 inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 // Whether a value is truthy never changes.
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean, Opcode::ForInStep };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean, Opcode::ForInStep, Opcode::CallBuiltin };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 

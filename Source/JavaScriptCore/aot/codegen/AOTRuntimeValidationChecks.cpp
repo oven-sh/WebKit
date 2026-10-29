@@ -198,7 +198,7 @@ void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& con
     const SlotPlan& slots = m_placement.slots();
     Vector<uint32_t, 8> shapes;
     for (LayoutID layout : layoutsProvenBy(m_program, m_function, *fact)) {
-        if (slots.storageOf(layout) != LayoutStorage::CompiledObject && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
+        if (!slots.holdsCompiledObjects(layout) && m_program.at(layout).flow.allocation != AllocationState::NeverAllocated)
             return;
         ShapeRange range = m_placement.shapes().shapesOf(layout);
         for (uint32_t shape = range.first; shape < range.end(); ++shape)
@@ -221,7 +221,7 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
         return;
     const SlotPlan& slots = m_placement.slots();
     bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
-        return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
+        return slots.holdsCompiledObjects(member) || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(access.receivers());
     if (!hasOnlyCompiledObjects || shapes.empty())

@@ -86,6 +86,7 @@ struct ReservedBytes {
 
 struct PlannedLayout {
     bool hasSlots() const { return storage == LayoutStorage::CompiledObject || storage == LayoutStorage::Environment; }
+    bool holdsCompiledObjects() const { return storage == LayoutStorage::CompiledObject && !isRecordAlone; }
     unsigned numberOfFields() const { return slots.isEmpty() ? 0 : slots.size() - numberOfHiddenWords; }
     FieldIndex extensionWordIndex() const { return numberOfFields(); }
     FieldIndex extraPropertiesWordIndex() const { return numberOfFields() + 1; }
@@ -96,6 +97,9 @@ struct PlannedLayout {
     JS_EXPORT_PRIVATE BitVector padding() const;
 
     LayoutStorage storage { LayoutStorage::None };
+    // A class below a built-in class that declares a private name has a record, where the generic operations find the name.
+    // Its instances are cells of the built-in class: they have no slots, no shape word and no order word.
+    bool isRecordAlone { false };
     bool holdsWideReferences { false };
     bool keysAreNeverEnumerated { false };
     uint16_t numberOfRecordFields { 0 };
@@ -184,6 +188,7 @@ public:
 
     const PlannedLayout& layout(LayoutID id) const { return id.index() < m_layouts.size() ? m_layouts[id.index()] : m_unplannedLayout; }
     LayoutStorage storageOf(LayoutID id) const { return layout(id).storage; }
+    bool holdsCompiledObjects(LayoutID id) const { return layout(id).holdsCompiledObjects(); }
 
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const
     {

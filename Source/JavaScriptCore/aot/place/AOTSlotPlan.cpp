@@ -161,6 +161,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
             return;
 
         bool isCompiledObject = planned.storage == LayoutStorage::CompiledObject;
+        planned.isRecordAlone = isCompiledObject && builtinBaseClassOf(context.program, id);
         planned.holdsWideReferences = holdsWideReferences(context, id);
         planned.keysAreNeverEnumerated = isCompiledObject && keysAreNeverEnumerated(context.program, context.inputs.flow, id);
         planned.size = packed.sizes[index];
@@ -365,7 +366,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
         if (program.at(member).flow.allocation == AllocationState::NeverAllocated)
             continue;
         std::optional<uint32_t> field;
-        if (storageOf(member) == LayoutStorage::CompiledObject)
+        if (holdsCompiledObjects(member))
             field = program.at(member).findField(key);
         if (!field || !slot(member, *field).hasStorage()) {
             agreement.membersWithoutSlot.append(member);
@@ -393,7 +394,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
     agreement.membersWithoutSlotKeepBytesZero = shared.storage == SlotStorage::Inline
         && representsAbsentAsZero(shared.representation)
         && std::ranges::all_of(agreement.membersWithoutSlot, [&](LayoutID member) {
-            return storageOf(member) == LayoutStorage::CompiledObject && layout(member).keepsZero(shared.offset, shared.width());
+            return holdsCompiledObjects(member) && layout(member).keepsZero(shared.offset, shared.width());
         });
     return agreement;
 }

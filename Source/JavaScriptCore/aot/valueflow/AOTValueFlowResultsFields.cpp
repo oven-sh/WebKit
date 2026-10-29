@@ -1648,7 +1648,8 @@ struct FieldResults {
         for (size_t steps = 0; current && steps < numberOfLayouts; ++steps) {
             if (findDeclaredMember(application.layouts[current.index()].classFlow, ClassSide::Prototype, key).isDeclared())
                 return true;
-            current = provenBaseOf(application, current);
+            // The answer only steers a prediction, so an unproven `extends` clause counts too.
+            current = application.layouts[current.index()].flow.baseState == BaseState::Unknown ? program.at(current).base : provenBaseOf(application, current);
         }
         return false;
     }

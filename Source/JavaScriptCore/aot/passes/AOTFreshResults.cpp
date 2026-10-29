@@ -471,7 +471,7 @@ static std::optional<FreshResultShape> tryReturnParts(const AnalysisContext& con
     FunctionAnalyses analyses(context, worker);
     IRBuilder builder(context, worker, types, &analyses);
     for (unsigned round = 0; round < maxEdgeSplittingRounds; ++round) {
-        AllocationSinking sinking(analyses, SinkingPolicy { ReturnedObjects::StayVirtual, true });
+        AllocationSinking sinking(analyses, SinkingPolicy { .returnedObjects = ReturnedObjects::StayVirtual, .recordsLosses = true, .types = &types });
         if (!sinking.collectCandidates())
             return std::nullopt;
         sinking.analyze();

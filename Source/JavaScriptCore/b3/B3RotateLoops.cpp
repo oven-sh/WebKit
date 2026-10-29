@@ -43,6 +43,7 @@ public:
             return false;
 
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
+        m_proc.resetValueOwners();
         for (auto& rotation : m_rotations) {
             m_didMergeBackEdges |= rotation.latches.size() > 1;
             hoistCommonIncrements(rotation);
@@ -363,6 +364,9 @@ private:
                     increments.append(incoming);
             }
             if (!allMatch || increments.size() < 2)
+                continue;
+            // An Add in the header or in a test block is computed before the body runs.
+            if (!std::ranges::all_of(increments, [&](Value* value) { return m_proc.dominators().dominates(rotation.body, value->owner); }))
                 continue;
             Value* increment = insertionSet.insert<Value>(index, Add, increments[0]->origin(), phi, insertionSet.insertIntConstant(index, increments[0]->origin(), phi->type(), *step));
             for (Value* duplicate : increments)

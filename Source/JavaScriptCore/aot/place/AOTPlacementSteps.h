@@ -25,6 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 struct PlacementContext {
     const SlotPlan& slots() const { return inputs.slots; }
     bool isCompiledObject(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::CompiledObject; }
+    bool holdsCompiledObjects(LayoutID id) const { return inputs.slots.holdsCompiledObjects(id); }
     bool isEnvironment(LayoutID id) const { return inputs.slots.storageOf(id) == LayoutStorage::Environment; }
     bool receivesShape(LayoutID id) const { return isCompiledObject(id) || isEnvironment(id) || id == closureLayout; }
 

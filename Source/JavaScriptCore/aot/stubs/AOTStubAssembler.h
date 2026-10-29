@@ -96,7 +96,7 @@ void readTagsFromInstance(CCallHelpers&);
 class StubAssembler final : public CCallHelpers {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    StubAssembler(const StubOptions&, const StubCatalog&);
+    StubAssembler(const StubOptions&, const StubCatalog&, PCRelativeReach addressReach = PCRelativeReach::Near);
 
     StubRecording generate(StubKey body);
     StubRecording generateForTesting(StubKey body, const ScopedLambda<void(StubAssembler&)>& generator) { return generateBody(body, generator); }
@@ -372,6 +372,7 @@ private:
     Vector<PendingCall> m_pendingCalls;
     Vector<PendingStubAddress> m_pendingStubAddresses;
     Vector<PendingLabelAddress> m_pendingLabelAddresses;
+    PCRelativeReach m_addressReach;
 };
 
 inline StubKey StubAssembler::key() const

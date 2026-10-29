@@ -241,6 +241,7 @@ struct SinkingPolicy {
     BlocksThatMayGetTests* blocksThatMayGetTests { nullptr };
     // Ascending: what addTracesOfFruitlessAllocations() has listed behind earlier analyses of the function. Allocations with such a number are not followed again.
     const Vector<uint64_t>* tracesOfFruitlessAllocations { nullptr };
+    TypeArena* types { nullptr };
 };
 
 // One rule for whatever puts a value into a field: a store, a copy out of the field of another object, and the look ahead that says which stores will fold.

@@ -267,7 +267,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     const PlannedLayout& planned = m_placement.layout(layout);
     const ShapeTable& shapes = m_placement.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.count != 1 || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated)
         return std::nullopt;
     if (m_placement.allocation(allocation->allocation()).layout != layout || m_placement.freeCellOffset(layout) || m_placement.slots().extensionWord(layout).hasStorage())
         return std::nullopt;
@@ -320,7 +320,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     const PlannedLayout& planned = m_placement.layout(layout);
     const ShapeTable& shapes = m_placement.shapes();
     ShapeRange shapesOfLayout = shapes.shapesOf(layout);
-    if (planned.storage != LayoutStorage::CompiledObject || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
+    if (!planned.holdsCompiledObjects() || planned.isEscapedOffset || shapesOfLayout.isEmpty() || shapes.shape(shapesOfLayout.first).keysAreNeverEnumerated) {
         defineTest(value, boolean(false));
         return;
     }

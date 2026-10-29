@@ -557,7 +557,7 @@ std::optional<FieldAccess> SlotAccessEmitter::fieldCreatedByDefinition(const Val
     ValueID stored = definition.valueOperand();
     const Type& object = typeOf(definition.objectOperand());
     LayoutID layoutID = object.hasOnlyLayouts() ? object.singleLayout(m_program) : LayoutID();
-    if (!layoutID || m_placement.layout(layoutID).storage != LayoutStorage::CompiledObject)
+    if (!layoutID || !m_placement.layout(layoutID).holdsCompiledObjects())
         return std::nullopt;
     ConstantKey constant = constantKeyOf(m_program, typeOf(definition.computedKeyOperand()));
     if (constant.kind != ConstantKeyKind::Text)

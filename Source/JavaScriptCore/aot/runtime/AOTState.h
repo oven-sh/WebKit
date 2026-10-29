@@ -104,6 +104,7 @@ class ZeroedTableArena {
     WTF_MAKE_NONCOPYABLE(ZeroedTableArena);
 public:
     ZeroedTableArena(ZeroedPages&, const ProgramTables&);
+    ZeroedTableArena(ZeroedPages&, size_t capacity);
 
     template<typename T> T* allocate(size_t count);
 

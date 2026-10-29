@@ -44,10 +44,11 @@ static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
 #endif
 }
 
-StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog)
+StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog, PCRelativeReach addressReach)
     : m_options(options)
     , m_catalog(catalog)
     , m_relocations(*this, AssemblerPolicy::forImage(featuresOfStubs(options.targetFeatures)))
+    , m_addressReach(addressReach)
 {
     readTagsFromInstance(*this);
 }
@@ -498,19 +499,19 @@ void StubAssembler::linkToStub(JumpList& jumps, StubKey target)
 void StubAssembler::loadStubAddress(StubKey target, GPRReg result)
 {
     addReference(target, StubReference::Kind::Address);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::returnStubAddress(StubKey target)
 {
     addReference(target, StubReference::Kind::ReturnedAddress);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), m_addressReach), target });
     returnToCaller();
 }
 
 void StubAssembler::loadLabelAddress(Label target, GPRReg result)
 {
-    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
@@ -742,11 +743,12 @@ bool StubAssembler::linkCallsAndAddresses(LinkBuffer& linkBuffer)
 {
     for (const PendingCall& pending : m_pendingCalls)
         linkBuffer.link<JITThunkPtrTag>(pending.call, linkBuffer.locationOf<JITThunkPtrTag>(labelOf(pending.target)));
+    RelocationKind addressKind = addressKindFor(m_addressReach);
     bool isInReach = true;
     for (const PendingStubAddress& pending : m_pendingStubAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, labelOf(pending.target));
+        isInReach &= linkBuffer.link(pending.site, addressKind, labelOf(pending.target));
     for (const PendingLabelAddress& pending : m_pendingLabelAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, pending.target);
+        isInReach &= linkBuffer.link(pending.site, addressKind, pending.target);
     return isInReach;
 }
 

@@ -12,6 +12,7 @@
 #include "AOTJSONValueParser.h"
 #include "AOTJSONWords.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "Allocator.h"
@@ -40,10 +41,11 @@ class JSONRuntime {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSONRuntime);
     WTF_MAKE_NONCOPYABLE(JSONRuntime);
 public:
-    JSONRuntime(Instance&, CacheRegistry&);
+    JSONRuntime(Instance&, CacheRegistry&, ZeroedTableArena&);
     ~JSONRuntime();
 
     bool open(JSValue textOrBytes, void* stackPointer);
+    bool openInline(JSValue textOrBytes, void* stackPointer);
     bool open(StringView text, void* stackPointer);
     bool open(std::span<const uint8_t> utf8, void* stackPointer);
     bool close(const uint8_t* cursor);
@@ -196,7 +198,6 @@ public:
         size_t allocationSize { 0 };
         bool hasPerCellBit { false };
         uint8_t numberOfExtraMembers { 0 };
-        uint8_t consecutiveFailures { 0 };
         bool wasFound { false };
         bool isOnlySeen { false };
         bool isBeingLearned { false };
@@ -262,13 +263,16 @@ public:
         m_unmatchedObjectShape = shape;
         m_unmatchedObjectFirstName = firstName;
     }
-    ALWAYS_INLINE void noteAttemptReached(const uint8_t* reached) { m_furthestAttemptedPosition = std::max(m_furthestAttemptedPosition, reached); }
+    void noteAttemptReached(const uint8_t* reached)
+    {
+        m_furthestAttemptedPosition = std::max(m_furthestAttemptedPosition, reached);
+        m_furthestFailedPosition = std::max(m_furthestFailedPosition, reached);
+    }
     ALWAYS_INLINE void noteParsedThrough(const uint8_t* reached)
     {
         m_furthestAttemptedPosition = reached;
-        m_furthestParsedPosition = reached;
     }
-    bool isBeforeParsedPosition(const uint8_t* cursor) const { return cursor < m_furthestParsedPosition; }
+    bool wasParsedBeyond(const uint8_t* cursor) const { return cursor >= m_furthestFailedPosition && cursor < m_furthestAttemptedPosition; }
     bool isAttemptAbandoned() const { return m_isAttemptAbandoned; }
     void noteAttemptFailure(const uint8_t* reached, bool shouldAbandon)
     {
@@ -343,17 +347,17 @@ private:
 
     Instance& m_instance;
     bool m_hasParsedRecords { false };
-    std::unique_ptr<RecordPlanCache> m_recordPlanCache;
-    std::unique_ptr<JSONValueParser::LearnedNames> m_learnedNames;
-    std::unique_ptr<LearnedExtraMembersTable> m_learnedExtraMembers;
-    std::unique_ptr<LearnedObjects> m_learnedObjects;
+    MadeInArena<RecordPlanCache> m_recordPlanCache;
+    MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
+    MadeInArena<LearnedExtraMembersTable> m_learnedExtraMembers;
+    MadeInArena<LearnedObjects> m_learnedObjects;
     unsigned m_numberOfObjectsLearned { 0 };
     LearnedObject* m_learnedObjectFoundLast { nullptr };
     bool m_waitsForShapeOfMember { false };
     uint8_t m_uncachedFinishesRemaining { 0 };
     bool m_isAttemptAbandoned { false };
     const uint8_t* m_furthestAttemptedPosition { nullptr };
-    const uint8_t* m_furthestParsedPosition { nullptr };
+    const uint8_t* m_furthestFailedPosition { nullptr };
     LearnedObject* m_outermostFailedForm { nullptr };
     uint32_t m_unmatchedObjectShape { 0 };
     const uint8_t* m_unmatchedObjectFirstName { nullptr };

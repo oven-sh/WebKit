@@ -39,7 +39,7 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_program(analyses.program())
     , m_function(analyses.function())
     , m_policy(policy)
-    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow }
+    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types }
     , m_candidateOfValue(analyses.function().values.size())
     , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
     , m_maxWork(limit(LimitID::MaxSinkingWork))
@@ -462,7 +462,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
 
     PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = lent;

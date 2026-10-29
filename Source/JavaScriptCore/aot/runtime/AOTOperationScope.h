@@ -41,26 +41,33 @@ public:
             m_assertNoGC.emplace();
 #endif
         if (validatesRuntime(vm)) [[unlikely]]
-            open(entry);
+            open(m_record, vm, entry);
     }
 
+    // Whether the run time validates is settled before the first operation runs.
     ALWAYS_INLINE ~OperationValidationScope()
     {
-        if (m_isOpen) [[unlikely]]
-            close();
+        if (validatesRuntime(m_vm)) [[unlikely]]
+            close(m_record);
     }
 
 private:
-    void open(Entry);
-    void close();
+    // Written and read only where the run time validates. Only its address is handed on, so an operation keeps nothing of the scope in memory otherwise.
+    struct Record {
+        VM& vm;
+        CollectionVersions collectionVersions;
+        Entry entry;
+        bool mayNotEnterVM;
+        bool mayNotCollect;
+        bool didEnterVMBefore;
+    };
+    static void open(Record&, VM&, Entry);
+    static void close(Record&);
 
     VM& m_vm;
-    CollectionVersions m_collectionVersions;
-    Entry m_entry;
-    bool m_mayNotEnterVM { false };
-    bool m_mayNotCollect { false };
-    bool m_didEnterVMBefore { false };
-    bool m_isOpen { false };
+    union {
+        Record m_record;
+    };
 #if ASSERT_ENABLED
     std::optional<AssertNoGC> m_assertNoGC;
 #endif
@@ -151,7 +158,7 @@ public:
         , m_instance(*instance)
         , m_frameRecordOfOperation(frameRecordOfOperation)
         , m_returnsException(returnsException)
-        , m_wasPending(instance->vm->traps().needsOutOfMemoryError())
+        , m_wasPending(vm().traps().needsOutOfMemoryError())
     {
     }
 
@@ -171,8 +178,14 @@ public:
 private:
     ALWAYS_INLINE void throwOwedOutOfMemoryError()
     {
-        if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]]
-            throwOwedOutOfMemoryErrorBeforeReturn(m_instance, m_frameRecordOfOperation, *this);
+        if (vm().traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]] {
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+            // The callee opens a scope of its own, so this one has to have checked. The scope is not passed on: its address would escape in every operation.
+            if (exception())
+                return;
+#endif
+            throwOwedOutOfMemoryErrorBeforeReturn(m_instance, m_frameRecordOfOperation);
+        }
     }
 
     Instance& m_instance;

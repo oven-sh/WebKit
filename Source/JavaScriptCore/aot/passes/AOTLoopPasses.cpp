@@ -791,6 +791,17 @@ static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder
 
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
+static bool isCollectionLookup(const Program& program, const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return false;
+    const BuiltinOverload& overload = program.builtins().at(value.overload());
+    if (overload.mode != BuiltinCallMode::Call)
+        return false;
+    BuiltinID builtin = program.builtins().canonicalID(overload.builtin);
+    return builtin == Builtins::MapPrototypeGet || builtin == Builtins::MapPrototypeHas || builtin == Builtins::SetPrototypeHas;
+}
+
 static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
@@ -815,7 +826,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean)
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -866,6 +877,14 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 return false;
             Effects effects = context.analyses.effectsOf(id).onAnyEdge();
             return effects.isUnobservable() && !effects.reads.overlaps(clobbers.writes);
+        }
+        // So does a look-up in a Map or a Set while the loop writes to none.
+        if (isCollectionLookup(program, value)) {
+            if (keptReads.get(id.index()) || !hasInvariantOperands(value))
+                return false;
+            // What the look-up writes itself is seen nowhere: the hash of a string, a table laid out anew. It throws only for lack of memory.
+            Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+            return effects.isRemovableWhenUnused() && !effects.reads.without(heapsWhoseWritesNobodySees).overlaps(clobbers.writes);
         }
         if (!hoistableReadOpcodes.contains(value.opcode))
             return false;

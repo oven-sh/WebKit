@@ -1794,7 +1794,7 @@ Vector<DescribedObject> AllocationSinking::collectAllocations()
             if (interpretedOf(m_function.at(id).opcode) != Interpretation::Allocation)
                 continue;
 
-            DescribedObject described = describeVirtualObject(m_analyses, id, m_policy.followsUndefinedAndNullInFields ? ListedValues::MayAlsoBeUndefinedOrNull : ListedValues::HaveTypesOfFields);
+            DescribedObject described = describeVirtualObject(m_analyses, id, m_policy.followsUndefinedAndNullInFields ? ListedValues::MayAlsoBeUndefinedOrNull : ListedValues::HaveTypesOfFields, m_policy.types);
             switch (described.support) {
             case VirtualObjectSupport::ExceedsLimit:
                 if (m_policy.recordsLosses)

@@ -183,12 +183,9 @@ std::optional<uint32_t> StubBlob::offsetOf(StubKey key) const
     return placement->offset;
 }
 
-std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+static std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, const ReachedStubs& reached, PCRelativeReach addressReach)
 {
-    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
-    orderBodies(reached.bodies, catalog.options().layoutSeed);
-
-    StubAssembler jit(catalog.options(), catalog);
+    StubAssembler jit(catalog.options(), catalog, addressReach);
     RELEASE_ASSERT(!jit.m_assembler.codeSize());
     for (auto& body : reached.bodies)
         checkRecording(catalog, jit.generate(body.key), *body.dryRun);
@@ -225,6 +222,18 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     Statistics& statistics = context.statistics();
     statistics.count(StatisticID::StubsGenerated, reached.bodies.size());
     statistics.count(StatisticID::StubBytes, blob.code.bytes.size());
+    return blob;
+}
+
+std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+{
+    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
+    orderBodies(reached.bodies, catalog.options().layoutSeed);
+
+    // A near address reaches 1 MB on ARM64. A large program has more stubs than that, because each name it uses often gets stubs of its own.
+    auto blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Near);
+    if (!blob && blob.error() == LinkFailure::OutOfPCRelativeReach)
+        blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Far);
     return blob;
 }
 

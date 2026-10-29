@@ -45,7 +45,7 @@ bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
 {
     const SlotPlan& slots = m_placement.slots();
     return known.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, known), [&](LayoutID member) {
-        return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
+        return slots.holdsCompiledObjects(member) || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
 }
 

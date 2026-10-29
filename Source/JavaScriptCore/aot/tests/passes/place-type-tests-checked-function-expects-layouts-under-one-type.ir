@@ -1,0 +1,21 @@
+# const list: any = [{ rank }, { a, rank }, { a, b, rank }]; for (const item of list) item.rank
+# The source says that `item` is the first literal. The checker put the three literals under one type, so in a checked function of the program the other two are expected as well,
+# if they have escaped. A layout that only happens to hold the name is not: there the checker's word stays.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Widest" fields=[{key="rankMark" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L1 name="First" fields=[{key="rankMark" declared={type=anything} flow={occupancy=AlwaysFilled}}] supertypes=[L0]
+layout L2 name="Second" fields=[{key="rankMark" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="a" declared={type=anything}}] supertypes=[L0]
+layout L3 name="Stranger" fields=[{key="rankMark" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="other" declared={type=anything}}]
+
+function f0 name="siblings-are-expected" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ L1 = Call v0, -
+    v2: anything = PropGet v1 key="rankMark"
+    Return v2
+# CHECK: = TypeTest v1 testedType=L0|L1|L2
+# CHECK: key="rankMark" receivers=[L0, L1, L2] level=Expected
+}

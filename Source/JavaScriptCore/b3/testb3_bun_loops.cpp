@@ -531,6 +531,46 @@ static void testRotateLoopsUsesLastUpsilonInLatch()
     }
 }
 
+// One latch passes back the index + 1 that the header computes and tests, the other an index + 1 of its own.
+static void testRotateLoopsKeepsIncrementComputedInHeader()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* odd = proc.addBlock();
+    BasicBlock* even = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* index = graph.phi(header, Int64);
+    Value* sum = graph.phi(header, Int64);
+    graph.upsilon(root, graph.int64(root, 0), index);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, header);
+    Value* nextInHeader = graph.make(header, Add, index, graph.int64(header, 1));
+    graph.branch(header, graph.make(header, LessEqual, nextInHeader, bound), body, exit);
+    graph.branch(body, graph.make(body, BitAnd, index, graph.int64(body, 1)), odd, even);
+    graph.upsilon(odd, nextInHeader, index);
+    graph.upsilon(odd, graph.make(odd, Add, sum, graph.int64(odd, 1)), sum);
+    graph.jump(odd, header);
+    graph.upsilon(even, graph.make(even, Add, index, graph.int64(even, 1)), index);
+    graph.upsilon(even, graph.make(even, Add, sum, graph.int64(even, 10)), sum);
+    graph.jump(even, header);
+    graph.ret(exit, sum);
+    resetAndValidate(proc);
+
+    CHECK(rotateLoops(proc));
+    CHECK(nextInHeader->opcode() == Add);
+    fixSSA(proc);
+    validate(proc);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+    CHECK_EQ(invoke<int64_t>(*code, 1), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 2), 11);
+    CHECK_EQ(invoke<int64_t>(*code, 5), 32);
+}
+
 static void testSimplifyTerminals()
 {
     for (int32_t constant : { 0, 1 }) {
@@ -723,6 +763,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());
     RUN(testRotateLoopsUsesLastUpsilonInLatch());
+    RUN(testRotateLoopsKeepsIncrementComputedInHeader());
     RUN(testSimplifyTerminals());
     RUN(testSimplifyTerminalsKeepsNonConstantBranch());
     RUN(testSimplifyTerminalsLooksThroughIdentity());

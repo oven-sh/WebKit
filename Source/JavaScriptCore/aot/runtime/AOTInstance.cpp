@@ -627,10 +627,15 @@ static size_t arenaCapacity(const ProgramTables& tables)
 }
 
 ZeroedTableArena::ZeroedTableArena(ZeroedPages& pages, const ProgramTables& tables)
-    : m_pages(pages)
+    : ZeroedTableArena(pages, arenaCapacity(tables))
 {
-    m_capacity = arenaCapacity(tables);
-    m_start = static_cast<char*>(pages.allocate(m_capacity));
+}
+
+ZeroedTableArena::ZeroedTableArena(ZeroedPages& pages, size_t capacity)
+    : m_pages(pages)
+    , m_start(static_cast<char*>(pages.allocate(capacity)))
+    , m_capacity(capacity)
+{
 }
 
 State::State(Instance& instance)

@@ -2006,6 +2006,20 @@ static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassCont
     return layouts;
 }
 
+static LayoutList layoutsUnderOneTypeWith(const Program& program, const auto& expected, const LayoutList& candidates)
+{
+    auto isSupertypeOf = [&](LayoutID above, LayoutID below) { return std::ranges::binary_search(program.at(below).supertypes, above); };
+    LayoutList related;
+    for (LayoutID candidate : candidates) {
+        bool isRelated = std::ranges::any_of(expected, [&](LayoutID layout) {
+            return isSupertypeOf(layout, candidate) || isSupertypeOf(candidate, layout) || std::ranges::any_of(program.at(layout).supertypes, [&](LayoutID shared) { return isSupertypeOf(shared, candidate); });
+        });
+        if (isRelated)
+            related.add(candidate);
+    }
+    return related;
+}
+
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
 static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues, ExpectedValues& widenedValues)
 {
@@ -2029,14 +2043,23 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     // In untyped code, a value's expected type is derived from the places observed to produce it. An escaped object arrives without an observed producer:
     // if the analysis saw nothing arrive either, the escaped layouts that hold the names are added to the expected type.
     // A name that built-ins also have says little about what arrives, and a test only handles so many layouts.
-    bool isExpectedFromSourceOnly = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
+    // In a checked function of the program only the layouts that the checker put under one type with an expected one are added: `[{ rank }, { a, rank }][i]`.
+    bool followsCheckerAlone = function.has(FunctionFlags::IsChecked) && isLibraryCode(context.program, function);
+    bool isExpectedFromSourceOnly = isFollowed && !followsCheckerAlone && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
     if (isExpectedFromSourceOnly && !waitsForOtherSubjects) {
         LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
         if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
-            Type arriving = Type::forLayouts(others.layouts.predicted().span(), context.types);
             for (const NamedUse& use : usesOfSubject) {
                 TypeID expected = function.at(use.receiver).expected().predicted();
-                if (!expected || !context.types.at(expected).layouts || arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+                if (!expected || !context.types.at(expected).layouts)
+                    continue;
+                LayoutList added = others.layouts.predicted();
+                if (function.has(FunctionFlags::IsChecked))
+                    added = layoutsUnderOneTypeWith(context.program, membersOf(context.program, context.types.at(expected)), added);
+                if (added.isEmpty())
+                    continue;
+                Type arriving = Type::forLayouts(added.span(), context.types);
+                if (arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
                     continue;
                 Type widened = context.types.at(expected).unionWith(arriving, context.types);
                 if (membersOf(context.program, widened).size() <= context.limit(LimitID::MaxDispatchCases))

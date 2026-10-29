@@ -1249,7 +1249,7 @@ static void deriveKnownSetTests(const PlacementContext& context, const PlacedSit
         ShapeTestWithinKnownSet& entry = tests[index];
         auto known = context.program.at(entry.known).all();
         bool areMemberShapesComplete = known && std::ranges::all_of(*known, [&](LayoutID member) {
-            return context.isCompiledObject(member) || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
+            return context.holdsCompiledObjects(member) || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
         });
         const ShapeTest& general = parts.testOfSet[entry.tested.index()];
         entry.test = areMemberShapesComplete ? shortenForKnownShapes(general, memberShapesOf(parts, entry.tested), memberShapesOf(parts, entry.known)) : general;

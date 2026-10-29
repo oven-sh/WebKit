@@ -349,6 +349,7 @@ struct PrivateLocation {
     const FieldData* declared;
     UniquedStringImpl* declaredName;
     bool hasBrand;
+    bool isOfOnlyEvaluation;
     bool belongsToEvaluation { false };
     PrivateProperty underDeclaredName { };
     PrivateProperty brand { };
@@ -381,7 +382,7 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
     const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
     const FieldData* brand = brandOf(state, declaringLayout, token);
     RuntimeLayoutTable& layouts = state.objects->layouts;
-    PrivateLocation location { compiledObjectOrNull(object), &declared, layouts.nameOf(vm, declared), !!brand };
+    PrivateLocation location { compiledObjectOrNull(object), &declared, layouts.nameOf(vm, declared), !!brand, declaringLayout.evaluation() == EvaluationState::ProvenOnce };
     bool hasDeclaringLayout = location.compiledObject && &location.compiledObject->layout() == &declaringLayout;
     auto find = [&](UniquedStringImpl* uid, const FieldData* fieldOfDeclaringLayout) {
         return findPrivateProperty(vm, state, object, location.compiledObject, uid, hasDeclaringLayout ? fieldOfDeclaringLayout : nullptr);
@@ -408,8 +409,8 @@ static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, u
 {
     if (found.compiledObject || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || object->structure()->isDictionary())
         return;
-    // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand.
-    bool needsBrand = found.name == found.declaredName && found.hasBrand;
+    // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand, nor does a class that is evaluated once.
+    bool needsBrand = found.name == found.declaredName && found.hasBrand && !found.isOfOnlyEvaluation;
     if (needsBrand && !isValidOffset(found.brand.offset))
         return;
     // Compiled code stores at a remembered location and tells the Structure nothing.

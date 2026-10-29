@@ -1990,7 +1990,8 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
     // An importer binds the names when it is linked. A load that fails before that keeps them too, if a require() inside the running file started it:
     // the steps of any other load reach the file after its body has returned.
     std::optional<uint32_t> countAtStart = ensureLoaded(file).synchronousLoadCountAtStart;
-    if (load != LoadOfFile::IsRootOfImport && countAtStart && m_activeSynchronousLoad > *countAtStart && !didCaptureExports(*face))
+    // A face whose importers bind no name of the file copies nothing.
+    if (load != LoadOfFile::IsRootOfImport && countAtStart && m_activeSynchronousLoad > *countAtStart && data(*face).capturesExports() && !didCaptureExports(*face))
         RELEASE_AND_RETURN(scope, captureExports(*face));
 }
 

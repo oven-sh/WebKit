@@ -467,27 +467,23 @@ CollectionVersions collectionVersionsOf(VM& vm)
     return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
 }
 
-NEVER_INLINE void OperationValidationScope::open(Entry entry)
+NEVER_INLINE void OperationValidationScope::open(Record& record, VM& vm, Entry entry)
 {
     OperationPermissions permissions = permissionsOf(entry);
-    m_entry = entry;
-    m_mayNotEnterVM = !permissions.mayEnterVM;
-    m_mayNotCollect = !permissions.mayCollect;
-    m_collectionVersions = collectionVersionsOf(m_vm);
-    m_didEnterVMBefore = std::exchange(m_vm.didEnterVM, false);
-    m_isOpen = true;
+    new (NotNull, &record) Record { vm, collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) };
 }
 
-NEVER_INLINE void OperationValidationScope::close()
+NEVER_INLINE void OperationValidationScope::close(Record& record)
 {
-    bool didEnterVM = m_mayNotEnterVM && m_vm.didEnterVM;
+    VM& vm = record.vm;
+    bool didEnterVM = record.mayNotEnterVM && vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
-    bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersionsOf(m_vm) != m_collectionVersions;
+    bool didCollect = record.mayNotCollect && !vm.exceptionForInspection() && collectionVersionsOf(vm) != record.collectionVersions;
     if (didEnterVM || didCollect) {
-        dataLogLn("AOT: ", nameOf(m_entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
-        crashOnValidationFailure(m_vm, { didEnterVM ? ValidationFailureKind::OperationEnteredVM : ValidationFailureKind::OperationCollected, { }, { }, { } });
+        dataLogLn("AOT: ", nameOf(record.entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
+        crashOnValidationFailure(vm, { didEnterVM ? ValidationFailureKind::OperationEnteredVM : ValidationFailureKind::OperationCollected, { }, { }, { } });
     }
-    m_vm.didEnterVM |= m_didEnterVMBefore;
+    vm.didEnterVM |= record.didEnterVMBefore;
 }
 
 static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* cell)
