@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTPropertyCachesStringKeys.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
@@ -27,6 +28,46 @@ StubSignature signatureOfIntegerToString(StubKey)
 #else
     return StubSignature::withGPRResult({ gprOf(StubRegister::A1) });
 #endif
+}
+
+StubSignature signatureOfConcatenateKeyOfPair(StubKey)
+{
+    return StubSignature::withGPRResult({ operationArgumentGPR(1), operationArgumentGPR(2) });
+}
+
+// The operation joins the parts and enters the pair.
+void generateConcatenateKeyOfPair(StubAssembler& jit)
+{
+    const GPRReg first = jit.operand(0);
+    const GPRReg second = jit.operand(1);
+    const GPRReg set = jit.result();
+    // StringKeyCache::hashOfPair().
+    jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
+    jit.mul32(TrustedImm32(StringKeyCache::keyOfPairMultiplier), set, set);
+    jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
+#if CPU(X86_64)
+    jit.and64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), set);
+#else
+    const GPRReg mask = jit.allocateScratch(StubRegister::T12);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), mask);
+    jit.and64(mask, set);
+#endif
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
+    for (unsigned way = 0; way < StringKeyCache::waysOfKeysOfPairs; ++way) {
+        const int32_t entry = way * sizeof(StringKeyCache::KeyOfPair);
+        Jump hasOtherFirst = jit.branch64(CCallHelpers::NotEqual, Address(set, entry + OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, first)), first);
+        Jump hasOtherSecond = jit.branch64(CCallHelpers::NotEqual, Address(set, entry + OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, second)), second);
+        jit.loadPtr(Address(set, entry + OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, key)), set);
+        jit.returnToCaller();
+        hasOtherFirst.link(&jit);
+        hasOtherSecond.link(&jit);
+    }
+    auto use = static_cast<ConcatenatedKeyForm>(jit.key().form()) == ConcatenatedKeyForm::Name ? StringBuilderStorage::StringUse::LikelyName : StringBuilderStorage::StringUse::LikelyKey;
+    jit.callOperationAndReturn(Entry::operationAOTConcatenatePair, {
+        .returns = OperationCall::Returns::Value,
+        .saves = OperationCall::Saves::CallerSavedGPRs,
+        .spilledArguments = OperationCall::SpilledArguments { 2, static_cast<uint32_t>(use) },
+    });
 }
 
 // The caches hold int32 keys. The operation takes every integer.

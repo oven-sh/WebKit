@@ -205,6 +205,8 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     // Empty where no array has such a kind.
     Vector<bool> receiversThatMayHaveDecidedStorage;
+    // 0: flow says nothing. 1: no object that was seen to arrive has the name of the access. Else the number of the stamped set plus 2. Empty where nothing is stamped.
+    Vector<uint32_t> receiversSeenAtSites;
     // Sorted by site.
     Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
@@ -212,6 +214,7 @@ struct FlowSiteTables {
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
     BitVector sitesOfObjectsThatNeverChange;
+    BitVector sitesOfListsNeverToldApart;
     BitVector layoutsNeverHeldWeakly;
     Vector<FlowSinkOperand> sinkOperands;
     Vector<FlowTypedResultCall> typedResultCalls;
@@ -237,6 +240,10 @@ struct FlowBuiltinTables {
     Vector<FlowLocaleUse> localeUses;
     // Sorted by path, without duplicates.
     Vector<FlowWorkerEntry> workerEntries;
+    // A place that may start a Worker and does not name the constructor: `new globalThis[name](..)`.
+    std::optional<Witness> workerStartWithoutName;
+    // The exports that a reached call of a spy may replace and that the front end has not made replaceable. Sorted.
+    Vector<VariableID> exportsThatSpiesReplace;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
     bool areFilled { false };
 };
@@ -369,6 +376,8 @@ public:
     const AllocationClass& at(AllocationClassID) const LIFETIME_BOUND;
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }
     bool objectsNeverChange(AllocationSiteID site) const { return m_tables.sites.sitesOfObjectsThatNeverChange.get(site.index()); }
+    // Nothing changes a list made at the site, and nothing can tell two of them apart: one cell may stand for all.
+    bool identityIsNeverObserved(AllocationSiteID site) const { return m_tables.sites.sitesOfListsNeverToldApart.get(site.index()); }
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
     // By code that flow has seen.
     bool closuresMayBeRenamed(FunctionID closureFunction) const;
@@ -394,6 +403,8 @@ public:
     // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
     // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.
     bool mayChangeStorageOfReceiver(AccessSiteID) const;
+    // What was stamped on the access, for a pass that meets the access after the stamp is gone. No answer: flow says nothing. No set: no object that was seen to arrive has the name of the access.
+    std::optional<LayoutSetID> receiversSeenAt(AccessSiteID) const;
     Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
@@ -415,6 +426,8 @@ public:
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }
     std::span<const FlowWorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.builtins.workerEntries.span(); }
+    std::optional<Witness> workerStartWithoutName() const { return m_tables.builtins.workerStartWithoutName; }
+    std::span<const VariableID> exportsThatSpiesReplace() const LIFETIME_BOUND { return m_tables.builtins.exportsThatSpiesReplace.span(); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     const BitVector& builtinsThatMayBeTrimmed() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatMayBeTrimmed; }
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }

@@ -38,7 +38,7 @@ public:
 
 private:
     CoroutineKind kindOfFunction() const;
-    CellPointer allocateGenerator(CellPointer closure, LBasicBlock slowPath);
+    CellPointer allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);

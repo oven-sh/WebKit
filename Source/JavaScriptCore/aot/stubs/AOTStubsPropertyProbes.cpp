@@ -309,15 +309,38 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
     readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), slotIsEmpty);
 
+    // operand holds the form and the operand of the entry, less this many forms.
+    unsigned formsTakenOff = 0;
+    auto branchUnlessFormIs = [&](Form form) {
+        int32_t difference = static_cast<int32_t>(form) - static_cast<int32_t>(formsTakenOff);
+        jit.sub32(TrustedImm32(difference * (1 << FieldTableEntry::formShift)), operand);
+        formsTakenOff = static_cast<unsigned>(form);
+        return jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
+    };
+    auto readOutOfLineValue = [&] {
+        Jump isNotOutOfLineValue = branchUnlessFormIs(Form::OutOfLineValue);
+        if (jit.options().useWideReferences)
+            otherwise.append(jit.jump());
+        else {
+            // Where the field may exist without storage it is undefined then, which is also the answer where it does not exist and nothing above has the name.
+            locateOutOfLineValue(jit, probe.receiver, operand, word, slotIsEmpty);
+            readValue(BaseIndex(word, operand, CCallHelpers::TimesOne), slotIsEmpty);
+        }
+        isNotOutOfLineValue.link(&jit);
+    };
+    const bool testsOutOfLineValuesSecond = jit.bindingPolicy().readsTestOutOfLineValuesSecond;
+
     isNotInlineValue.link(&jit);
-    Jump isNotInt32 = branchUnlessForm(jit, operand, Form::InlineInt32);
+    if (testsOutOfLineValuesSecond)
+        readOutOfLineValue();
+    Jump isNotInt32 = branchUnlessFormIs(Form::InlineInt32);
     jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
     slotIsSilent.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
     boxInt32(jit, word, result);
     finish();
 
     isNotInt32.link(&jit);
-    Jump isNotNarrowCell = branchUnlessForm(jit, operand, Form::InlineNarrowCell);
+    Jump isNotNarrowCell = branchUnlessFormIs(Form::InlineNarrowCell);
     jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
     decodeCell32(jit, word, result);
@@ -329,19 +352,16 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     finish();
 
     isNotNarrowCell.link(&jit);
-    Jump isNotOutOfLineValue = branchUnlessForm(jit, operand, Form::OutOfLineValue);
-    if (jit.options().useWideReferences)
-        otherwise.append(jit.jump());
-    else {
-        // Where the field may exist without storage it is undefined then, which is also the answer where it does not exist and nothing above has the name.
-        locateOutOfLineValue(jit, probe.receiver, operand, word, slotIsEmpty);
-        readValue(BaseIndex(word, operand, CCallHelpers::TimesOne), slotIsEmpty);
-    }
+    if (testsOutOfLineValuesSecond) {
+        jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
+        formsTakenOff = static_cast<unsigned>(Form::OutOfLineValue);
+    } else
+        readOutOfLineValue();
+    RELEASE_ASSERT(formsTakenOff == static_cast<unsigned>(Form::OutOfLineValue));
 
     // The form Field is the last one. What is left of the entry is one form and its operand.
     static_assert(static_cast<unsigned>(Form::Field) == static_cast<unsigned>(Form::OutOfLineValue) + 1);
     auto first = [](uint32_t firstOperand) { return static_cast<int32_t>((1u << FieldTableEntry::formShift) + firstOperand); };
-    isNotOutOfLineValue.link(&jit);
     Jump isNotInCell = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstEncodedByte)));
     Jump isNotEncodedByte = jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::firstBoolean)));
     jit.load8(BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne, -first(FieldTableEntry::firstEncodedByte)), word);
@@ -386,10 +406,19 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         goOnIn(slotIsEmpty, getByIdOfEmptySlot().withCallerFrame(*probe.answersMissingFields));
         goOnIn(slotIsSilent, getByIdOfSilentSlot().withCallerFrame(*probe.answersMissingFields));
         isNotInCell.link(&jit);
-        otherwise.append(jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstNarrowCellInExtension))));
+        Jump isNotInExtension = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstNarrowCellInExtension)));
         JumpList isNarrowCellInExtension;
         isNarrowCellInExtension.append(jit.jump());
         goOnIn(isNarrowCellInExtension, getByIdOfNarrowCellInExtension().withCallerFrame(*probe.answersMissingFields));
+
+        // A sum that has outgrown int32 goes the long way with the markers.
+        isNotInExtension.link(&jit);
+        otherwise.append(jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstInt64))));
+        jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -first(FieldTableEntry::firstInt64) * static_cast<int32_t>(sizeof(int64_t))), word);
+        jit.signExtend32ToPtr(word, operand);
+        otherwise.append(jit.branch64(CCallHelpers::NotEqual, word, operand));
+        boxInt32(jit, word, result);
+        finish();
     }
     if (!probe.answersAbsent) {
         otherwise.append(isNoField);
@@ -1182,6 +1211,15 @@ void returnByFrontCell(StubAssembler& jit, GPRReg receiver, GPRReg column, GPRRe
     jit.returnToCaller();
 
     isNotAbsent.link(&jit);
+    // `error.message`: an own value in the butterfly needs no handler.
+    constexpr int32_t upperBitsOfOwnOutOfLineValue = PackedSlot::isOutOfLine << 8;
+    Jump needsHandler = jit.branch16(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(upperBitsOfOwnOutOfLineValue));
+    jit.load32SignedExtendTo64(inCell(PackedSlot::offsetOfPayload()), cell);
+    jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), plane);
+    jit.load64(BaseIndex(plane, cell, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    needsHandler.link(&jit);
     jit.load64(inCell(0), cell);
 }
 #endif

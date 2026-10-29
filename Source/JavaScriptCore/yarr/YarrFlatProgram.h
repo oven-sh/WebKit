@@ -108,7 +108,8 @@ namespace JSC { namespace Yarr {
     FOR_EACH_FLAT_OP_WITHOUT_FRAME(macro)
 
 // The steps of a lookbehind that is read backward are made where a machine leaves its loop, as the enclosure by .* is. They have its kind, so that a machine that never meets one has nothing of them.
-enum class FlatStepBackward : uint16_t { None, Set, NeedsInput, BackReference };
+// So is the search for the next place where a run can end in front of a back reference, which goes forward for a lazy run.
+enum class FlatStepBackward : uint16_t { None, Set, NeedsInput, BackReference, LazyRunBeforeReference, GreedyRunBeforeReference, ShorterGreedyRunBeforeReference };
 
 struct FlatOp {
     enum class Kind : uint8_t {
@@ -119,12 +120,12 @@ struct FlatOp {
     Kind kind;
     uint16_t set { 0 }; // Index into FlatProgram::characterSets.
     uint16_t firstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what this alternative can begin with. *BeforeKnownCharacters: what follows the run.
-    uint16_t laterFirstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what any later alternative can begin with.
+    uint16_t laterFirstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what any later alternative can begin with. *RunBeforeReference: 0 if the group ended before the run, else one more than the units between the run and the end of the group.
     uint16_t registerIndex { 0 }; // DotStarEnclosure: a FlatStepBackward.
     uint16_t memoRow { 0 }; // One more than this op's first row of the table of failed searches. 0: the search from here on depends on more than the position, or makes no choice.
     uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins.
-    uint32_t target { 0 };
-    uint32_t needed { 0 }; // ChoiceByTable: where its table's part of FlatProgram::dispatchClasses begins. FlatStepBackward::BackReference: whether it ignores case.
+    uint32_t target { 0 }; // *RunBeforeReference: the units between the run and the reference, and from bit 16 up the register that holds the least end of a greedy run.
+    uint32_t needed { 0 }; // ChoiceByTable: where its table's part of FlatProgram::dispatchClasses begins. FlatStepBackward::BackReference: whether it ignores case. GreedyRunBeforeReference: the least length of the run.
 };
 
 // Says nothing about characters from 256 up.
@@ -247,6 +248,9 @@ public:
     // A lookbehind with a group, a run or a reference is read backward, a surrogate pair is taken as one character, and the table is kept beside references, by a machine of its own,
     // so that the machines for everything else stay small. needsFullMachine: from the start, and then stepsPerCharacterBeforeStopping is 0.
     uint8_t stepsPerCharacterBeforeStoppingOnFullMachine { 0 };
+    // FlatProgramForm::Fast: whether the pattern has a program of the form FindsEndsOfRuns, and that program. A search that has taken the steps above is made again with it.
+    bool hasRunBeforeReference { false };
+    std::unique_ptr<FlatProgram> programThatFindsEndsOfRuns;
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
     // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
@@ -301,7 +305,8 @@ public:
 // Fast: leaves out every part of the search that it can tell will fail. It gives up at matchLimit steps, which says nothing about where the JIT gives up.
 // CountsTurns: makes the same search as the bytecode, which tests for input where the JIT does, and takes one off matchLimit where the JIT does: see jitCountsTurnsOf(). Where no turn is left there is no match.
 // It still gives up at matchLimit steps between two turns.
-enum class FlatProgramForm : bool { Fast, CountsTurns };
+// FindsEndsOfRuns: Fast, but for a run in front of a back reference: see FlatProgramBuilder::tryEmitRunBeforeReference(). It needs the full machine, which costs a short search more than the form saves.
+enum class FlatProgramForm : uint8_t { Fast, CountsTurns, FindsEndsOfRuns };
 
 // A search that goes back far more often than its subject is long is making the same searches again. From an op that has a memoRow the search depends on the position alone, so where it has failed once
 // it fails again: a table of rows by positions says where, and how many turns the failed search began. With the table a match takes time in proportion to ops times positions.

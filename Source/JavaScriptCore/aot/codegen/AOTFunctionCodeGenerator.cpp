@@ -288,8 +288,11 @@ bool FunctionCodeGenerator::generateB3()
 #endif
     m_records.stubCalls.setCaller(m_id);
     m_records.stubCalls.setChecksPreservedRegisters(options.validatesBackEnd);
-    if (build.validates())
+    if (build.validates()) {
+        reportBrokenKnownProperties(policy, m_id);
+        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportValidationFailure));
+    }
 
     m_procedure = makeUnique<B3::Procedure>(policy, &m_worker.scratch);
     B3::Procedure& proc = *m_procedure;

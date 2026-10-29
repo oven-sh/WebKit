@@ -8,11 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChainDependents.h"
+#include "AOTCompiledCall.h"
 #include "AOTInstance.h"
+#include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
+#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -98,7 +103,92 @@ AOT_DEFINE_BINARY_OPERATION(operationAOTCompareStrictEq, size_t, JSValue::strict
 AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::encode(jsBitwiseNot(globalObject, operand)))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
-AOT_DEFINE_UNARY_OPERATION(operationAOTToString, JSCell*, operand.toString(globalObject))
+
+// What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
+// Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
+static JSCell* compiledToStringOrNull(Instance* instance, Object& object)
+{
+    VM& vm = *instance->vm;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    Structure* structure = object.structure();
+    const Slot* exotic = caches.findByKey(structure, vm.propertyNames->toPrimitiveSymbol.impl(), SlotAccess::Read);
+    if (!exotic) {
+        fileReadWithoutCode(instance, &object, vm.propertyNames->toPrimitiveSymbol);
+        return nullptr;
+    }
+    if (exotic->kind != Slot::Kind::Absent)
+        return nullptr;
+    const Slot* method = caches.findByKey(structure, vm.propertyNames->toString.impl(), SlotAccess::Read);
+    if (!method) {
+        fileReadWithoutCode(instance, &object, vm.propertyNames->toString);
+        return nullptr;
+    }
+    if (method->kind != Slot::Kind::Value || method->has(Slot::isOwn))
+        return nullptr;
+    JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
+    if (!function.isCell() || (function.asCell()->type() != SlimClosureType && function.asCell()->type() != CompiledClosureType))
+        return nullptr;
+    return function.asCell();
+}
+
+// JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
+static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = object->get(globalObject, vm.propertyNames->valueOf);
+    RETURN_IF_EXCEPTION(scope, { });
+    CallData callData = JSC::getCallData(function);
+    if (callData.type != CallData::Type::None) {
+        JSValue result = call(globalObject, function, callData, object, ArgList());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!result.isObject())
+            return result;
+    }
+    throwTypeError(globalObject, scope, "No default value"_s);
+    return { };
+}
+
+// Apart from the operation, which most often converts a number: that path saves few registers.
+static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& object)
+{
+    VM& vm = *instance->vm;
+    JSGlobalObject* globalObject = instance->globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSCell* method = compiledToStringOrNull(instance, object);
+    if (!method)
+        RELEASE_AND_RETURN(scope, JSValue(&object).toString(globalObject));
+    JSValue result = callCompiledCode(globalObject, method, &object, ArgList());
+    RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+    if (result.isString()) [[likely]]
+        return asString(result);
+    if (result.isObject()) {
+        result = primitiveFromValueOf(globalObject, &object);
+        RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+    }
+    RELEASE_AND_RETURN(scope, result.toString(globalObject));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, EncodedJSValue encodedOperand))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTToString);
+    JSValue operand = JSValue::decode(encodedOperand);
+    // As JSValue::toStringSlowCase(), which asks six questions about a cell before it looks at it.
+    if (operand.isCell()) {
+        JSCell* cell = operand.asCell();
+        if (cell->type() == CompiledObjectType)
+            OPERATION_RETURN(scope, toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(cell)));
+        JSString* string = cell->toStringInline(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
+        OPERATION_RETURN(scope, string);
+    }
+    if (operand.isInt32())
+        OPERATION_RETURN(scope, int32ToString(vm, operand.asInt32(), 10));
+    if (operand.isDouble())
+        OPERATION_RETURN(scope, numberToString(vm, operand.asDouble(), 10));
+    OPERATION_RETURN(scope, operand.toString(globalObject));
+}
+
 // The stub finds the text of a small index there the next time.
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION

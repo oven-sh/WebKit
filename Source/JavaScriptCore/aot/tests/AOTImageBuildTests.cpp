@@ -389,14 +389,15 @@ static void testEqualStreamsShare()
     AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[3]);
 }
 
-static void testFrameMapsDivide()
+static void testEqualFrameMapsShare()
 {
     BuildContext context(wireOptions());
-    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 })), context);
-    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 } };
+    LinkedFunctions functions = createLinkedFunctions(bodies(handlerBody(1, 5, { 1, 2 }), handlerBody(2, 5, { 1, 2 }), handlerBody(3, 5, { 1, 3 })), context);
+    Vector<Vector<uint8_t>> callSites { { 8 }, { 8 }, { 8 } };
     SideTables tables = encodeSideTables(functions, callSites.span(), context);
-    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[1]);
-    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 2 }));
+    AOT_TEST_CHECK(tables.offsets[0] == tables.offsets[1]);
+    AOT_TEST_CHECK(tables.offsets[0] != tables.offsets[2]);
+    AOT_TEST_CHECK(tables.frameMapWords == Vector<uint32_t>({ 1, 2, 1, 3 }));
 }
 
 static void testAppendAligns()
@@ -881,7 +882,7 @@ std::span<const NativeTest> imageBuildTests()
         { "image/callees/inline-frame-needs-none"_s, testInlineFrameNeedsNone },
         { "image/callees/alias"_s, testAliasResolves },
         { "image/side-tables/equal-streams-share"_s, testEqualStreamsShare },
-        { "image/side-tables/frame-maps-divide"_s, testFrameMapsDivide },
+        { "image/side-tables/equal-frame-maps-share"_s, testEqualFrameMapsShare },
         { "image/byte-streams/append-aligns"_s, testAppendAligns },
         { "image/byte-streams/append-all"_s, testAppendAll },
         { "image/byte-streams/append-all-threads"_s, testAppendAllThreads },

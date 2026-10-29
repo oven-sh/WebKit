@@ -67,7 +67,9 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
     uint32_t anyTime = numberOfModules;
     uint32_t whereJobsRun = anyTime + 1;
     uint32_t firstFunction = whereJobsRun + 1;
-    unsigned numberOfNodes = firstFunction + program.functions.size();
+    // A list of many callees stands between its callers and its members: n calls of any of n functions would be n * n edges.
+    uint32_t firstCalleeList = firstFunction + program.functions.size();
+    unsigned numberOfNodes = firstCalleeList + inputs.calleeLists.size();
     auto nodeOf = [&](FunctionID function) {
         return function == inputs.host() ? anyTime : firstFunction + function.index();
     };
@@ -208,11 +210,19 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
             if (ModuleID evaluatedModule = moduleWithBody[index])
                 addEdge(evaluatedModule.index(), nodeOf(FunctionID(index)));
         }
-        inputs.forEachCall([&](const FlowCall& call) {
+        for (const FlowCall& call : inputs.calls) {
             bool isEvaluationByLoader = call.caller == inputs.host() && moduleWithBody[call.callee.index()];
             if (!isEvaluationByLoader)
                 addEdge(nodeOf(call.caller), nodeOf(call.callee));
-        });
+        }
+        for (const FlowCallOfList& call : inputs.callsOfLists) {
+            RELEASE_ASSERT(call.caller != inputs.host());
+            addEdge(nodeOf(call.caller), firstCalleeList + call.calleeList);
+        }
+        for (uint32_t list = 0; list < inputs.calleeLists.size(); ++list) {
+            for (FunctionID callee : inputs.calleeLists[list])
+                addEdge(firstCalleeList + list, nodeOf(callee));
+        }
         for (size_t module : modulesThatLetTheHostRun)
             addEdge(static_cast<uint32_t>(module), anyTime);
     });

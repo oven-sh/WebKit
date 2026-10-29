@@ -45,7 +45,7 @@ variable g0 name="rows" declared={type=Array<L0>} initialization=Undefined
 # CHECK-NEXT: [[typedValue0]]:{{*}}= ResultAt [[typed0]] index=1
 # CHECK-NEXT: [[typedNext0]]: cursor = ResultAt [[typed0]] index=2
 # CHECK-NEXT: Jump -> next [[merge0]]([[typedValue0]], [[typedNext0]])
-# CHECK: [[plain0]]: anything = ResultAt [[generic0]] index=1
+# CHECK: [[plain0]]: null|boolean|number|string|object = ResultAt [[generic0]] index=1
 # CHECK-NEXT: [[plainNext0]]: cursor = ResultAt [[generic0]] index=2
 # CHECK-NEXT: [[isRow0]]: boolean = TypeTest [[plain0]] testedType=L0
 # CHECK-NEXT: Branch [[isRow0]] -> taken {{*}}, notTaken [[isNoRow0]](| 0)

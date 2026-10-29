@@ -37,6 +37,7 @@
 #include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -162,69 +163,229 @@ static Value makeTestOfConditions(const MemberConditionList& conditions)
     return test;
 }
 
+static auto orderOfCondition(const MemberConditionRecord& condition)
+{
+    return std::tuple { condition.kind, condition.layout, condition.side, condition.key };
+}
+
+// Each site holds a copy of the test it shares, so the work on a function grows with sites times conditions.
+static constexpr size_t maxConditionsOfSharedTest = 256;
+
 // Placement gives each set of conditions one bit, so a test costs the same however many conditions it lists.
 static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, BlockID block, std::span<const uint32_t> tests)
 {
-    if (tests.size() < 2)
-        return;
-    MemberConditionList conditions;
-    for (uint32_t test : tests)
-        appendConditionsOf(sites.tests[test], conditions);
-    AOT::sort(conditions, { }, [](const MemberConditionRecord& condition) { return std::tuple { condition.kind, condition.layout, condition.side, condition.key }; });
-    conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
-
-    Value shared = makeTestOfConditions(conditions);
-    if (context.analyses.findEarlierTest(shared, block) == EarlierTest::Failed)
-        return;
-    for (uint32_t test : tests)
-        sites.tests[test] = shared;
-}
-
-static void shareConditionsTestsIn(FunctionPassContext& context, TestSites& sites, std::span<const TestSite> sitesOfBlock)
-{
-    if (std::ranges::count_if(sitesOfBlock, [&](const TestSite& site) { return findConditionsTest(sites, site).has_value(); }) < 2)
-        return;
-
-    // The tests of member conditions that sites of one block make for one object, with nothing between the sites that ends what such a test proves.
-    Vector<std::pair<ValueID, Vector<uint32_t, 8>>, 2> testsOfObjects;
-    BlockID block = sitesOfBlock.front().point.block;
-    const BlockValues& values = context.function.at(block).values;
-    auto shareTestsOfObjects = [&] {
-        for (const auto& [object, tests] : testsOfObjects)
-            shareConditionsTest(context, sites, block, tests.span());
-        testsOfObjects.shrink(0);
-    };
-
-    uint32_t index = sitesOfBlock.front().point.index;
-    for (const TestSite& site : sitesOfBlock) {
-        for (; index < site.point.index; ++index) {
-            if (mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
-                shareTestsOfObjects();
+    while (tests.size() >= 2) {
+        MemberConditionList conditions;
+        size_t count = 0;
+        for (; count < tests.size(); ++count) {
+            if (count && conditions.size() + sites.tests[tests[count]].conditions().size() > maxConditionsOfSharedTest)
+                break;
+            appendConditionsOf(sites.tests[tests[count]], conditions);
         }
-        std::optional<uint32_t> test = findConditionsTest(sites, site);
-        if (ValueID object = test ? objectAskedAbout(context, site) : ValueID()) {
-            size_t position = testsOfObjects.findIf([&](const auto& known) { return known.first == object; });
-            if (position == notFound) {
-                position = testsOfObjects.size();
-                testsOfObjects.append({ object, { } });
-            }
-            testsOfObjects[position].second.append(*test);
-        }
-        if (mayEndMemberConditions(site.effectsWhenPassed))
-            shareTestsOfObjects();
-        ++index;
+        std::span<const uint32_t> sharers = tests.first(count);
+        tests = tests.subspan(count);
+        if (sharers.size() < 2)
+            continue;
+        AOT::sort(conditions, { }, orderOfCondition);
+        conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
+
+        Value shared = makeTestOfConditions(conditions);
+        if (context.analyses.findEarlierTest(shared, block) == EarlierTest::Failed)
+            continue;
+        for (uint32_t test : sharers)
+            sites.tests[test] = shared;
     }
-    shareTestsOfObjects();
 }
 
 // In the copy behind a failed test each site asks for itself, so one member that has changed costs the other sites of its object one test and not their fast paths.
 static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
 {
-    for (std::span<const TestSite> sitesOfBlock : sites.sites.span() | std::views::chunk_by([](const TestSite& a, const TestSite& b) { return a.point.block == b.point.block; })) {
-        if (context.function.at(sitesOfBlock[0].point.block).frequency.predicted() == BlockFrequency::Normal)
-            shareConditionsTestsIn(context, sites, sitesOfBlock);
+    const Function& function = context.function;
+    auto isShared = [&](const TestSite& site) {
+        return function.at(site.point.block).frequency.predicted() == BlockFrequency::Normal && findConditionsTest(sites, site).has_value();
+    };
+    if (std::ranges::count_if(sites.sites, isShared) < 2)
+        return;
+
+    // The tests of member conditions that sites make for one object. The block of the first site dominates the others, and nothing that runs as often stands between them that ends what such a test proves.
+    struct TestsOfObject {
+        ValueID object;
+        BlockID first;
+        Vector<uint32_t, 8> tests;
+    };
+    Vector<TestsOfObject, 2> testsOfObjects;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionOfObject;
+    auto shareTestsOfObjects = [&] {
+        for (const TestsOfObject& known : testsOfObjects)
+            shareConditionsTest(context, sites, known.first, known.tests.span());
+        testsOfObjects.shrink(0);
+        positionOfObject.clear();
+    };
+
+    const CFG& cfg = context.analyses.cfg();
+    std::span<const TestSite> rest = sites.sites.span();
+    while (!rest.empty() && !isShared(rest.front()))
+        rest = rest.subspan(1);
+    std::span<const BlockID> order = cfg.reversePostOrder();
+    for (BlockID block : order.subspan(cfg.reversePostOrderIndex(rest.front().point.block))) {
+        while (!rest.empty() && rest.front().point.block == block && function.at(block).frequency.predicted() != BlockFrequency::Normal)
+            rest = rest.subspan(1);
+        if (rest.empty())
+            break;
+        if (function.at(block).frequency.predicted() != BlockFrequency::Normal)
+            continue;
+        bool didRemove = testsOfObjects.removeAllMatching([&](const TestsOfObject& known) {
+            if (context.analyses.dominators().dominates(known.first, block))
+                return false;
+            shareConditionsTest(context, sites, known.first, known.tests.span());
+            return true;
+        });
+        if (didRemove) {
+            positionOfObject.clear();
+            for (uint32_t position = 0; position < testsOfObjects.size(); ++position)
+                positionOfObject.add(testsOfObjects[position].object.index(), position);
+        }
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (rest.empty() || rest.front().point.block != block || rest.front().point.index != index) {
+                if (!testsOfObjects.isEmpty() && mayEndMemberConditions(context.analyses.effectsOf(values[index]).normal))
+                    shareTestsOfObjects();
+                continue;
+            }
+            const TestSite& site = rest.front();
+            rest = rest.subspan(1);
+            std::optional<uint32_t> test = findConditionsTest(sites, site);
+            if (ValueID object = test ? objectAskedAbout(context, site) : ValueID()) {
+                auto position = positionOfObject.add(object.index(), static_cast<uint32_t>(testsOfObjects.size()));
+                if (position.isNewEntry)
+                    testsOfObjects.append({ object, block, { } });
+                testsOfObjects[position.iterator->value].tests.append(*test);
+            }
+            if (mayEndMemberConditions(site.effectsWhenPassed))
+                shareTestsOfObjects();
+        }
     }
+    shareTestsOfObjects();
 }
+
+// The distinct tests of member conditions of a function, and where each has passed.
+class ConditionsTestsInFront {
+public:
+    explicit ConditionsTestsInFront(FunctionPassContext& context)
+        : m_context(context)
+    {
+    }
+
+    uint32_t add(const Value& test)
+    {
+        MemberConditionList conditions;
+        appendConditionsOf(test, conditions);
+        Value made = makeTestOfConditions(conditions);
+        Hasher hasher;
+        made.addPayloadTo(hasher);
+        uint32_t hash = hasher.hash();
+        if (std::optional<uint32_t> known = m_index.find(hash, [&](uint32_t position) { return m_tests[position].test.hasSamePayloadAs(made); }))
+            return *known;
+        uint32_t number = m_tests.size();
+        m_tests.append({ WTF::move(made), { }, { }, { }, false });
+        AOT::sort(conditions, { }, orderOfCondition);
+        for (const MemberConditionRecord& condition : conditions)
+            m_testsByCondition.append({ condition, number });
+        m_tests.last().sortedConditions = WTF::move(conditions);
+        m_index.add(hash, number);
+        return number;
+    }
+
+    // Every test has been added.
+    void finishAdding()
+    {
+        AOT::sort(m_testsByCondition, { }, [](const auto& entry) { return std::pair { orderOfCondition(entry.first), entry.second }; });
+    }
+
+    const Value& at(uint32_t test) const LIFETIME_BOUND { return m_tests[test].test; }
+
+    struct PassedTest {
+        uint32_t test;
+        // Its number among the tests of the sites, unless a branch of the function makes it.
+        std::optional<uint32_t> testOfSite;
+    };
+
+    // Points arrive in the order in which the blocks are walked, so a point in the block of a later one stands in front of it.
+    void didPassAt(PassedTest passed, BlockID block)
+    {
+        auto& passedIn = m_tests[passed.test].passedIn;
+        if (!passedIn.isEmpty() && passedIn.last().block == block)
+            passedIn.last() = { block, m_nextOrder++, passed.testOfSite };
+        else
+            passedIn.append({ block, m_nextOrder++, passed.testOfSite });
+    }
+
+    // The test that passed last in front of the block, among those that list the conditions of `test` and more.
+    std::optional<PassedTest> findLastThatListsMoreThan(uint32_t test, BlockID block)
+    {
+        std::optional<PassedTest> last;
+        uint32_t orderOfLast = 0;
+        for (uint32_t candidate : testsThatListMoreThan(test)) {
+            for (const PassedIn& passed : m_tests[candidate].passedIn | std::views::reverse) {
+                if (last && passed.order < orderOfLast)
+                    break;
+                if (passed.block != block && !m_context.analyses.dominators().dominates(passed.block, block))
+                    continue;
+                last = PassedTest { candidate, passed.testOfSite };
+                orderOfLast = passed.order;
+                break;
+            }
+        }
+        return last;
+    }
+
+private:
+    struct PassedIn {
+        BlockID block;
+        uint32_t order;
+        std::optional<uint32_t> testOfSite;
+    };
+    struct KnownTest {
+        Value test;
+        MemberConditionList sortedConditions;
+        Vector<PassedIn, 2> passedIn;
+        Vector<uint32_t, 2> testsThatListMore;
+        bool knowsTestsThatListMore;
+    };
+
+    bool lists(const KnownTest& test, const MemberConditionRecord& condition) const
+    {
+        return std::ranges::binary_search(test.sortedConditions, orderOfCondition(condition), { }, orderOfCondition);
+    }
+
+    std::span<const uint32_t> testsThatListMoreThan(uint32_t number) LIFETIME_BOUND
+    {
+        KnownTest& test = m_tests[number];
+        if (test.knowsTestsThatListMore)
+            return test.testsThatListMore.span();
+        test.knowsTestsThatListMore = true;
+        auto consider = [&](uint32_t candidate) {
+            const KnownTest& other = m_tests[candidate];
+            if (other.sortedConditions.size() > test.sortedConditions.size() && std::ranges::all_of(test.sortedConditions, [&](const MemberConditionRecord& condition) { return lists(other, condition); }))
+                test.testsThatListMore.append(candidate);
+        };
+        if (test.sortedConditions.isEmpty()) {
+            for (uint32_t candidate = 0; candidate < m_tests.size(); ++candidate)
+                consider(candidate);
+            return test.testsThatListMore.span();
+        }
+        auto orderOfEntry = [](const auto& entry) { return orderOfCondition(entry.first); };
+        for (const auto& [condition, candidate] : std::ranges::equal_range(m_testsByCondition, orderOfCondition(test.sortedConditions.first()), { }, orderOfEntry))
+            consider(candidate);
+        return test.testsThatListMore.span();
+    }
+
+    FunctionPassContext& m_context;
+    Vector<KnownTest, 8> m_tests;
+    HashedIndex m_index;
+    Vector<std::pair<MemberConditionRecord, uint32_t>> m_testsByCondition;
+    uint32_t m_nextOrder { 0 };
+};
 
 // A test that has passed answers for each condition that it lists, and placement knows a test by all that it lists.
 static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites& sites)
@@ -232,8 +393,9 @@ static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites
     if (std::ranges::none_of(sites.sites, [&](const TestSite& site) { return findConditionsTest(sites, site).has_value(); }))
         return;
 
-    // A test of member conditions, and the point that is reached only where it has passed.
-    Vector<std::pair<ProgramPoint, Value>, 8> testsInFront;
+    ConditionsTestsInFront testsInFront(context);
+    // A test of member conditions, and the block that is reached only where it has passed.
+    Vector<std::pair<BlockID, uint32_t>, 8> passedTests;
     const Function& function = context.function;
     const CFG& cfg = context.analyses.cfg();
     for (BlockID block : cfg.reversePostOrder()) {
@@ -244,31 +406,32 @@ static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites
         BlockID passed = terminator.taken().block;
         if (test.opcode != Opcode::AreMembersUnchanged || passed == terminator.notTaken().block || !cfg.singleIncomingEdge(passed))
             continue;
-        MemberConditionList conditions;
-        appendConditionsOf(test, conditions);
-        testsInFront.append({ ProgramPoint::atHeadOf(passed), makeTestOfConditions(conditions) });
+        passedTests.append({ passed, testsInFront.add(test) });
     }
+    Vector<uint32_t> numberOfTest(FillWith { }, sites.tests.size(), UINT32_MAX);
+    for (const TestSite& site : sites.sites) {
+        if (std::optional<uint32_t> test = findConditionsTest(sites, site))
+            numberOfTest[*test] = testsInFront.add(sites.tests[*test]);
+    }
+    testsInFront.finishAdding();
+    for (auto [passed, test] : passedTests)
+        testsInFront.didPassAt({ test, std::nullopt }, passed);
 
-    auto isInFrontOf = [&](ProgramPoint passedAt, ProgramPoint point) {
-        return passedAt.block == point.block ? passedAt.index <= point.index : context.analyses.dominators().dominates(passedAt.block, point.block);
-    };
-    auto listsConditionsOf = [](const Value& test, const Value& other) {
-        return std::ranges::all_of(other.conditions(), [&](const MemberConditionRecord& condition) { return std::ranges::contains(test.conditions(), condition); });
-    };
     for (const TestSite& site : sites.sites) {
         std::optional<uint32_t> test = findConditionsTest(sites, site);
         if (!test)
             continue;
-        if (function.at(site.point.block).frequency.predicted() == BlockFrequency::Normal && objectAskedAbout(context, site)) {
-            for (const auto& [passedAt, candidate] : testsInFront | std::views::reverse) {
-                if (candidate.conditions().size() <= sites.tests[*test].conditions().size() || !listsConditionsOf(candidate, sites.tests[*test]) || !isInFrontOf(passedAt, site.point))
-                    continue;
-                if (context.analyses.findEarlierTest(candidate, site.point.block) != EarlierTest::Failed)
-                    sites.tests[*test] = candidate;
-                break;
+        BlockID block = site.point.block;
+        if (function.at(block).frequency.predicted() == BlockFrequency::Normal && objectAskedAbout(context, site)) {
+            if (auto passed = testsInFront.findLastThatListsMoreThan(numberOfTest[*test], block)) {
+                Value candidate = passed->testOfSite ? sites.tests[*passed->testOfSite] : testsInFront.at(passed->test);
+                if (context.analyses.findEarlierTest(candidate, block) != EarlierTest::Failed) {
+                    sites.tests[*test] = WTF::move(candidate);
+                    numberOfTest[*test] = passed->test;
+                }
             }
         }
-        testsInFront.append({ site.point, sites.tests[*test] });
+        testsInFront.didPassAt({ numberOfTest[*test], *test }, block);
     }
 }
 
@@ -1756,6 +1919,8 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     });
     AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
+    // Every declaration kept is a fast path at each access of the subject, and the last one picked out of many seldom arrives.
+    size_t maxKept = maxDeclarations > 1 ? maxDeclarations - 1 : maxDeclarations;
     Vector<LayoutID, 16> kept;
     Vector<LayoutList, 8> declarersOfNames(names.size());
     Vector<LayoutID, 8> declarers(names.size());
@@ -1763,7 +1928,7 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
         bool hasRoom = true;
         for (size_t index = 0; index < names.size(); ++index) {
             declarers[index] = declarerOf(program, layout, names[index]);
-            hasRoom &= !declarers[index] || declarersOfNames[index].size() < maxDeclarations || declarersOfNames[index].contains(declarers[index]);
+            hasRoom &= !declarers[index] || declarersOfNames[index].size() < maxKept || declarersOfNames[index].contains(declarers[index]);
         }
         if (!hasRoom)
             continue;
@@ -1976,6 +2141,47 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
     return true;
 }
 
+static BuiltinClassList builtinClassesThatAnswerRead(const Program& program, PropertyKeyID key)
+{
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinClassList classes;
+    BuiltinMemberName name = builtinMemberNameOf(program, key);
+    if (!name || name.isPrivateAlias)
+        return classes;
+    for (BuiltinClassID builtinClass : builtins.classesWithInstanceMember(name.name)) {
+        BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
+        if (found.outcome == BuiltinMemberLookup::Outcome::Found && builtins.at(builtins.canonicalID(found.member)).kind != BuiltinKind::Method)
+            classes.add(builtinClass);
+    }
+    return classes;
+}
+
+// `chunk.byteOffset + chunk.byteLength`: no layout answers, and the built-in classes that answer every name are the views of a buffer. Of those it is bytes, which the host hands out.
+// One name tells too little: an object of the program that nobody could follow may well keep something under `buffer`.
+// The reads in place stand beside the reads by name, which stay for every other value: that many bytes are for code that runs often.
+static void expectBytesWhereViewsAnswerEveryRead(FunctionPassContext& context, std::span<const NamedUse> uses, ExpectedValues& expectedValues)
+{
+    if (std::ranges::none_of(uses, [&](const NamedUse& use) { return heatClassOf(context, use.block).predicted() == HeatClass::Hot; }))
+        return;
+    NameList names;
+    BuiltinClassList classes;
+    for (const NamedUse& use : uses) {
+        if (context.function.at(use.access).opcode != Opcode::PropGet)
+            return;
+        if (!names.add(use.key))
+            continue;
+        if (names.size() == 1)
+            classes = builtinClassesThatAnswerRead(context.program, use.key);
+        else
+            classes.intersect(builtinClassesThatAnswerRead(context.program, use.key));
+    }
+    bool areViews = std::ranges::all_of(classes, [](BuiltinClassID builtinClass) { return builtinClass == BuiltinClasses::TypedArray || builtinClass == BuiltinClasses::DataView; });
+    if (names.size() < 2 || !areViews || !classes.contains(BuiltinClasses::TypedArray))
+        return;
+    if (std::optional<Type> bytes = testedTypeOfInstances(context.program, BuiltinClasses::Uint8Array, Type::anything()))
+        expectOfReceivers(uses, ExpectedType(context.types.intern(*bytes)), expectedValues);
+}
+
 // `twin.index`, and nothing else is asked of the twin.
 static Expected<LayoutList> layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layoutsMet)
 {
@@ -2093,6 +2299,8 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
         if (!layouts.predicted().isEmpty())
             expectLayouts(uses, layouts);
+        else
+            expectBytesWhereViewsAnswerEveryRead(context, uses, expectedValues);
         return true;
     }
 
@@ -2446,6 +2654,8 @@ struct TestPlacer {
     std::optional<GenericCopy> copy { };
     GenericCopy::Extent extentOfCopy { GenericCopy::Extent::NotCopied };
     BitVector unclonableStretches { };
+    // Cannot be copied alone: a value defined in the stretch must reach a use after it unmerged. A copy that continues after the stretch may take that use along.
+    BitVector stretchesCopiedOnlyWithWhatFollows { };
     // Of a cold function, as it was before the placer changed it.
     std::optional<BitVector> stretchesInFrontOfLoops { };
     BitVector stretchesThatGuessLayouts { };
@@ -2855,12 +3065,19 @@ struct TestPlacer {
             }
             return *livenessInsideStretches;
         };
+        BitVector goesOnBehind(regions.size());
+        for (const StretchRange& range : plan.ranges) {
+            if (goesOnBehindStretch(range))
+                goesOnBehind.quickSet(range.stretch);
+        }
         for (unsigned stretch = 0; stretch < regions.size(); ++stretch) {
             const StretchRegion& region = regions[stretch];
             if (region.blocks.isEmpty())
                 continue;
             CloneCheck check = RegionCloner::checkCanDuplicate(analyses, region.blocks.span(), region.entries.span(), liveness);
-            if (check != CloneCheck::CanClone && check != CloneCheck::FunctionMayNotBeCloned)
+            if (check == CloneCheck::OperandMustBeDefinition && goesOnBehind.quickGet(stretch))
+                stretchesCopiedOnlyWithWhatFollows.set(stretch);
+            else if (check != CloneCheck::CanClone && check != CloneCheck::FunctionMayNotBeCloned)
                 unclonableStretches.set(stretch);
         }
         extendCopiesBehindStretches(liveness);
@@ -2900,6 +3117,15 @@ struct TestPlacer {
                 loop.copyComesBack = false;
             isOnWayBackIntoLoop.clearAll();
             extentOfCopy = planGenericCopy(blocksOfStretches.span(), liveness);
+        }
+        // The other stretches must not pay for these: without them the copy is the one that was always made.
+        if (!stretchesCopiedOnlyWithWhatFollows.isEmpty() && (extentOfCopy == GenericCopy::Extent::NotCopied || copy->wasCutShortByLimit())) {
+            unclonableStretches.merge(stretchesCopiedOnlyWithWhatFollows);
+            stretchesCopiedOnlyWithWhatFollows.clearAll();
+            isOnWayBackIntoLoop.clearAll();
+            copy.reset();
+            extendCopiesBehindStretches(liveness);
+            return;
         }
         if (copy->wasCutShortByLimit())
             context.gaveUp(LimitID::MaxBlocksCopiedBehindStretches);
@@ -3067,7 +3293,8 @@ struct TestPlacer {
         for (uint32_t index = 0; index < adoptedProofs.size(); ++index) {
             TestConditionID condition = plan.proofs[index].condition;
             ValueID definition = adoptedProofs[index];
-            if (definitions[condition.index()].contains(definition))
+            // Only a definition is in a list.
+            if (isDefinition.get(definition.index()) && definitions[condition.index()].contains(definition))
                 continue;
             if (isDefinition.get(definition.index())) {
                 builder.setOrigin(function.at(definition).origin());
@@ -3242,7 +3469,7 @@ struct TestPlacer {
     void addDefinition(TestConditionID condition, ValueID proof)
     {
         Definitions& proofs = definitions[condition.index()];
-        if (proofs.contains(proof))
+        if (isDefinition.get(proof.index()) && proofs.contains(proof))
             return;
         if (isDefinition.get(proof.index()))
             proof = builder.append(Opcode::AllGuards, { proof });
@@ -3653,6 +3880,29 @@ struct TestPlacer {
         }
         AOT::stableSort(uses, { }, &NarrowableUse::identity);
 
+        // The blocks that a block dominates have consecutive numbers, so each test visits only the uses behind it.
+        struct UseInTree {
+            ValueID identity;
+            uint32_t numberOfBlock;
+            uint32_t index;
+        };
+        const Dominators& dominators = analyses.dominators();
+        Vector<UseInTree> usesInTree(uses.size(), [&](size_t index) {
+            return UseInTree { uses[index].identity, dominators.numberOf(uses[index].use.block), static_cast<uint32_t>(index) };
+        });
+        AOT::sort(usesInTree, { }, [](const UseInTree& use) { return std::tuple { use.identity, use.numberOfBlock, use.index }; });
+        Vector<uint32_t, 16> dominatedUses;
+        auto findUsesDominatedBy = [&](BlockID block, ValueID identity) -> std::span<const uint32_t> {
+            dominatedUses.shrink(0);
+            if (!cfg.isReachable(block))
+                return { };
+            auto first = std::ranges::lower_bound(usesInTree, std::pair { identity, dominators.numberOf(block) }, { }, [](const UseInTree& use) { return std::pair { use.identity, use.numberOfBlock }; });
+            for (uint32_t last = dominators.lastNumberBelow(block); first != usesInTree.end() && first->identity == identity && first->numberOfBlock <= last; ++first)
+                dominatedUses.append(first->index);
+            AOT::sort(dominatedUses);
+            return dominatedUses.span();
+        };
+
         bool hasComparisons = false;
         auto replace = [&](const Use& use, ValueID replacement) {
             bool isCompared = context.build.validates() && use.kind != Use::Kind::HandlerArgument && use.kind != Use::Kind::BlockSubject;
@@ -3691,7 +3941,9 @@ struct TestPlacer {
             BlockID target = targetOf(function, edge).block;
             narrowings.shrink(0);
 
-            for (NarrowableUse& narrowable : std::ranges::equal_range(uses, analyses.identityOf(subject), { }, &NarrowableUse::identity)) {
+            RELEASE_ASSERT(cfg.singleIncomingEdge(target) == edge);
+            for (uint32_t index : findUsesDominatedBy(target, analyses.identityOf(subject))) {
+                NarrowableUse& narrowable = uses[index];
                 // A use that gets a cast will name none of the values that were listed.
                 if (narrowable.alias == proven || narrowable.getsCast)
                     continue;
@@ -3699,7 +3951,7 @@ struct TestPlacer {
                 if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ValidateSameValue)
                     continue;
                 ValueID current = usedValueOf(function, use);
-                if (current == proven || !analyses.dominates(edge, use.block))
+                if (current == proven)
                     continue;
                 TypeID currentTypeID = function.at(current).type;
                 if (currentTypeID == provenTypeID)
@@ -3750,7 +4002,8 @@ struct TestPlacer {
                 continue;
             TypeID joinedTypeID = function.at(joined).type;
             Type joinedType = types.at(joinedTypeID);
-            for (NarrowableUse& narrowable : std::ranges::equal_range(uses, identity, { }, &NarrowableUse::identity)) {
+            for (uint32_t index : findUsesDominatedBy(location.block, identity)) {
+                NarrowableUse& narrowable = uses[index];
                 const Use& use = narrowable.use;
                 if (narrowable.getsCast || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand && use.kind != Use::Kind::EdgeArgument))
                     continue;
@@ -3758,7 +4011,7 @@ struct TestPlacer {
                     continue;
                 ValueID current = usedValueOf(function, use);
                 TypeID currentTypeID = function.at(current).type;
-                if (current == joined || currentTypeID == joinedTypeID || !analyses.dominators().dominates(location.block, use.block))
+                if (current == joined || currentTypeID == joinedTypeID)
                     continue;
                 if (joinedType.isSubsetOf(types.at(currentTypeID), context.program))
                     replace(use, joined);

@@ -120,6 +120,8 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
             jit.move(CCallHelpers::TrustedImm64(*word), siteWordGPR);
         else
             jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), siteWordGPR);
+        if (FrameMapEmitter::savesDeadPreservedRegister(params))
+            jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
         records->stubCalls.call(jit, key, OptionalIndex { site });
     });
     calls.finishCallPatchpoint(value, patchpoint, site, request);
@@ -242,21 +244,26 @@ void SavedFrameEmitter::generateAsyncGeneratorYield(const ValueContext& value)
 }
 
 // The Structure is the one that InternalFunction::createSubclassStructure answers without reading the property `prototype`: the function remembers it, and it was made for this class in this realm.
-CellPointer SavedFrameEmitter::allocateGenerator(CellPointer closure, LBasicBlock slowPath)
+// Without a closure the generator inherits from %GeneratorPrototype% itself.
+CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath)
 {
-    constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
-    Pointer taggedRareData = loadField<Pointer>(closure, m_heaps.JSFunction_executableOrRareData);
-    branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
-    // A store to `prototype` makes the function forget the Structure, so this is a read of its named properties.
-    Word32 structureID(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
-    branchUnless(isNotZero(structureID), slowPath);
+    std::optional<Word32> structureID;
+    std::optional<Pointer> structure;
+    if (closure) {
+        constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
+        Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
+        branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
+        // A store to `prototype` makes the function forget the Structure, so this is a read of its named properties.
+        structureID = Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
+        branchUnless(isNotZero(*structureID), slowPath);
 
-    Pointer structure = decodeStructureID(structureID);
-    Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
-    Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
-    branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), slowPath);
-    Pointer realm = loadField<Pointer>(structure, m_heaps.Structure_realm);
-    branchUnless(equal(realm, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject))), slowPath);
+        structure = decodeStructureID(*structureID);
+        Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
+        Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
+        branchUnless(equal(loadField<Pointer>(*structure, m_heaps.Structure_classInfo), classInfo), slowPath);
+        Pointer realm = loadField<Pointer>(*structure, m_heaps.Structure_realm);
+        branchUnless(equal(realm, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject))), slowPath);
+    }
 
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeof(Generator));
@@ -264,8 +271,11 @@ CellPointer SavedFrameEmitter::allocateGenerator(CellPointer closure, LBasicBloc
     CellPointer result = cells.allocateHeapCell(allocator, sizeof(Generator), slowPath);
     {
         CodeGenerator::InitializationScope scope(generator());
-        m_out.store32(structureID.value(), result.value(), m_heaps.JSCell_structureID);
-        m_out.store32(m_out.load32(structure.value(), m_heaps.Structure_indexingModeIncludingHistory), result.value(), m_heaps.JSCell_usefulBytes);
+        if (closure) {
+            m_out.store32(structureID->value(), result.value(), m_heaps.JSCell_structureID);
+            m_out.store32(m_out.load32(structure->value(), m_heaps.Structure_indexingModeIncludingHistory), result.value(), m_heaps.JSCell_usefulBytes);
+        } else
+            cells.storeHeader(result, loadImmutable64(AOT_INSTANCE_OFFSET(coroutines.plainGeneratorHeader)));
         m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSNonArray_butterfly);
         m_out.store64(m_out.int64Zero, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), result.value(), Generator::offsetOfSavedFrame()));
         m_out.store32(m_out.int32Zero, stateOf(result));
@@ -278,9 +288,11 @@ CellPointer SavedFrameEmitter::allocateGenerator(CellPointer closure, LBasicBloc
 // The closure of a generator function has the full form, whoever calls it.
 void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
 {
-    CellPointer closure = in<CellPointer>(value->calleeOperand());
-    if (value.shape() != CodeShape::Fast) {
-        define(value, CellPointer(callStub(value, AOT::newGenerator(NewGeneratorKind::Sync), { closure.value() }).first));
+    std::optional<CellPointer> closure;
+    if (value->calleeOperand())
+        closure = in<CellPointer>(value->calleeOperand());
+    if (closure && value.shape() != CodeShape::Fast) {
+        define(value, CellPointer(callStub(value, AOT::newGenerator(NewGeneratorKind::Sync), { closure->value() }).first));
         return;
     }
 
@@ -289,7 +301,7 @@ void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
     join.add(allocateGenerator(closure, slowPath));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGenerator, { boxCell(closure), word32(false) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGenerator, { closure ? boxCell(*closure) : Boxed(m_out.int64Zero), word32(false) }, { .isOnRarePath = true }));
     define(value, join.finish());
 }
 

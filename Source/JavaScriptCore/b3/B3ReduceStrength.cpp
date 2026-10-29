@@ -507,6 +507,8 @@ private:
     {
         if (tryReduceWithRanges())
             return;
+        if (tryCompareSelectOfConstants())
+            return;
         if (tryCompareBeforeConstantReplacement())
             return;
         switch (m_value->opcode()) {
@@ -4479,6 +4481,37 @@ private:
             return true;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Turn this: Compare(Select(predicate, a, b), c)
+    // Into this: NotEqual(predicate, 0)
+    //     where Compare(a, c) holds and Compare(b, c) does not. Equal(predicate, 0) the other way round.
+    bool tryCompareSelectOfConstants()
+    {
+        Opcode opcode = m_value->opcode();
+        if (!m_foldsImpliedComparisons || !isIntegerComparison(opcode) || m_value->child(0)->opcode() != Select)
+            return false;
+
+        Value* select = m_value->child(0);
+        Type type = select->type();
+        std::optional<uint64_t> whenTrue = bitsOfConstant(select->child(1));
+        std::optional<uint64_t> whenFalse = bitsOfConstant(select->child(2));
+        std::optional<uint64_t> constant = bitsOfConstant(m_value->child(1));
+        if (!type.isInt() || !whenTrue || !whenFalse || !constant)
+            return false;
+
+        std::optional<bool> holdsWhenTrue = evaluateComparisonOfBits(opcode, type, *whenTrue, *constant);
+        std::optional<bool> holdsWhenFalse = evaluateComparisonOfBits(opcode, type, *whenFalse, *constant);
+        if (!holdsWhenTrue || !holdsWhenFalse)
+            return false;
+        if (*holdsWhenTrue == *holdsWhenFalse) {
+            replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), triState(*holdsWhenTrue)));
+            return true;
+        }
+        Value* predicate = select->child(0);
+        Value* zero = m_insertionSet.insertIntConstant(m_index, m_value->origin(), predicate->type(), 0);
+        replaceWithNew<Value>(*holdsWhenTrue ? NotEqual : Equal, m_value->origin(), predicate, zero);
+        return true;
     }
 
     // Turn this: Compare(Select(Equal(x, a), b, x), c)

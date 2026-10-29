@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayoutData.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyAccess.h"
 #include "AOTRepresentation.h"
 #include "AOTSharedMemo.h"
 #include "AOTSlotPlanSteps.h"
@@ -161,7 +162,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
             return;
 
         bool isCompiledObject = planned.storage == LayoutStorage::CompiledObject;
-        planned.isRecordAlone = isCompiledObject && builtinBaseClassOf(context.program, id);
+        planned.isRecordAlone = isCompiledObject && builtinBaseClassOf(context.program, id) && !context.build.isSabotaged(Sabotage::ClassesBelowBuiltinsHaveSlots);
         planned.holdsWideReferences = holdsWideReferences(context, id);
         planned.keysAreNeverEnumerated = isCompiledObject && keysAreNeverEnumerated(context.program, context.inputs.flow, id);
         planned.size = packed.sizes[index];
@@ -265,6 +266,29 @@ static BitVector findKeysDefinedByDescriptor(const Program& program, const SlotU
     return keys;
 }
 
+static Vector<FieldReference> findFieldsExpectedInTheirSlots(const Program& program, BuildContext& build)
+{
+    Vector<FieldReference> fields = collectInParallel<FieldReference>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FieldReference>& found) {
+        const Function& function = program.functions[index];
+        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+            const Terminator& terminator = function.blocks[block].terminator;
+            if (!terminator.isConditionalBranch())
+                continue;
+            ValueID id = terminator.conditionOperand();
+            const Value& test = function.at(id);
+            if (test.opcode != Opcode::IsSlotFilled || test.accessSite() || asksObjectWhereSlotIsEmpty(function, BlockID(block), id))
+                continue;
+            for (LayoutID receiver : program.at(test.receivers()).written()) {
+                if (std::optional<FieldReference> field = findField(program, receiver, test.key(), BaseChain::Proven))
+                    found.append(declarationOf(program, *field));
+            }
+        }
+    });
+    AOT::sort(fields);
+    removeRepeatedElements(fields);
+    return fields;
+}
+
 SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildContext& build)
 {
     PhaseTimes times(build, PassID::PlanSlots);
@@ -302,6 +326,8 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
         [&] { plan.m_keysWithColumn = timed("chooseKeysWithColumn"_s, [&] { return chooseKeysWithColumn(context, uses); }); },
         [&] { plan.m_keysDefinedByDescriptor = findKeysDefinedByDescriptor(program, uses); },
     });
+    if (build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime))
+        plan.m_fieldsExpectedInTheirSlots = findFieldsExpectedInTheirSlots(program, build);
     if (build.diagnostics().hasErrors())
         return { };
     return plan;
@@ -815,7 +841,7 @@ void findUncheckedVariableReads(FunctionAnalyses& analyses, const BitVector& can
 
 static PlannedVariable planFunctionVariable(const Variable& variable)
 {
-    if (variable.flow.stores != StoreCount::Never)
+    if (variable.flow.stores != StoreCount::Never || variable.flags.contains(VariableFlags::IsReplaceable))
         return { .storage = VariableStorage::Statics, .encoding = VariableEncoding::FunctionAsZero, .representation = SlotRepresentation::JSValue };
     return { .storage = VariableStorage::ClosureTable, .encoding = VariableEncoding::FunctionAsZero, .representation = SlotRepresentation::DeferredClosure };
 }
@@ -842,10 +868,11 @@ static PlannedVariable planVariable(const SlotPlanContext& context, const Variab
         break;
     }
     bool readsZeroAsUndefined = isZeroEncodingCandidate && !use.hasUncheckedRead;
+    bool holdsAnyValue = readsZeroAsUndefined || variable.flags.contains(VariableFlags::IsReplaceable);
     return {
         .storage = VariableStorage::Statics,
         .encoding = readsZeroAsUndefined ? VariableEncoding::UndefinedAsZero : VariableEncoding::Plain,
-        .representation = readsZeroAsUndefined ? SlotRepresentation::JSValue : variableRepresentationOf(context, variable),
+        .representation = holdsAnyValue ? SlotRepresentation::JSValue : variableRepresentationOf(context, variable),
         .isUsedBeforeProgramEntry = use.isUsedBeforeProgramEntry || context.program.at(variable.module).kind == ModuleKind::RuntimeSource,
     };
 }

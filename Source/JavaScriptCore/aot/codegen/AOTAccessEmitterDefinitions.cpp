@@ -332,6 +332,9 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 
     CellPointer target = in<CellPointer>(value->objectOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
+    checkClaim(target, [&] {
+        return below(add(emitter<ShapeTestEmitter>().shapeWordOf(target), static_cast<int32_t>(shapesOfLayout.end() - 1)), static_cast<int32_t>(shapesOfLayout.count));
+    });
     const B3::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     auto hasOrderedShape = [&](CellPointer cell) {
@@ -416,7 +419,7 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
 
     // A lookup that starts at the receiver is a read by name: so reads a field whose slot was found empty.
     if (value->baseOperand() == value->receiverOperand()) {
-        define(value, getById(value, receiver, key, SiteCacheID()));
+        define(value, getMemberAboveEmptySlot(value));
         return;
     }
 

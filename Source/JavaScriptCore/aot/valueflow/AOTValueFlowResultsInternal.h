@@ -829,7 +829,9 @@ void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&,
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetMakers&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>&);
 
-void computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
+// Answers the lists that something can tell apart.
+ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
+bool isNeverToldApart(const ValueFlowResultInputs&, ValueFlowObjectID list, ValueSetID listsToldApart);
 
 BitVector builtinsWithOverload(const BuiltinTable& builtins, NOESCAPE const Invocable<bool(const BuiltinOverload&)> auto& predicate)
 {
@@ -913,6 +915,7 @@ struct ValueFlowUsesOfLibraryCode {
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     Vector<BuiltinUseRecord> builtinUses;
     Vector<RuntimeFunctionID> libraryFunctionsLacked;
+    Vector<VariableID> exportsThatSpiesReplace;
 };
 ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs&);
 
@@ -954,7 +957,7 @@ void computeAccessResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTa
 void computeStoreNamingResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, FlowResultTables&);
 void computeSymbolConstantResults(const ValueFlowResultInputs&, FlowResultTables&);
 void computeTypedResultResults(const ValueFlowResultInputs&, FlowResultTables&);
-void computeDataNodeResults(const ValueFlowResultInputs&, const ValueFlowContainerResults&, TypeTable&, FlowResultTables&);
+void computeDataNodeResults(const ValueFlowResultInputs&, const ValueFlowContainerResults&, ValueSetID listsToldApart, TypeTable&, FlowResultTables&);
 BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
 Type typeBehindDictionaries(const Program&, const BitVector& layoutsOfDictionaries, std::span<const std::pair<TypeID, TypeID>> ascendingTypes, const Type&, TypeArena&);
 void computeSinkOperandResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);

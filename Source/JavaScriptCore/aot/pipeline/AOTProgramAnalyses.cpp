@@ -292,6 +292,7 @@ BorrowedParameters ProgramAnalyses::borrowedParameters() const
     if (const BodySummaries* summaries = summariesOfBodiesAsTheyAre())
         return summaries->borrowedParameters();
     BuildContext& build = m_runner.build();
+    ProgramCachesWithScratchTypes caches(m_program, build);
     if (m_summarizesNoBodies || !m_bodySummaries)
         return computeBorrowedParameters(m_program, build);
     BorrowedParameters table = m_bodySummaries->computeBorrowedParametersOfChangedBodies(m_program, build);

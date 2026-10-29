@@ -1790,9 +1790,121 @@ static void testLoadsAreNotPairedAcrossStoreThatMayLieOverThem()
 #endif
 }
 
+// entry branches to left and right, which both jump to join.
+struct DiamondForValidation {
+    DiamondForValidation()
+        : entry(proc.addBlock())
+        , left(proc.addBlock())
+        , right(proc.addBlock())
+        , join(proc.addBlock())
+    {
+        argument = entry->appendNew<B3::ArgumentRegValue>(proc, B3::Origin(), GPRInfo::argumentGPR0);
+        entry->appendNew<B3::Value>(proc, B3::Branch, B3::Origin(), argument);
+        entry->setSuccessors(B3::FrequentedBlock(left), B3::FrequentedBlock(right));
+        inLeft = left->appendNew<B3::Value>(proc, B3::Add, B3::Origin(), argument, argument);
+        left->appendNew<B3::Value>(proc, B3::Jump, B3::Origin());
+        left->setSuccessors(B3::FrequentedBlock(join));
+        right->appendNew<B3::Value>(proc, B3::Jump, B3::Origin());
+        right->setSuccessors(B3::FrequentedBlock(join));
+        proc.resetReachability();
+    }
+
+    void finish(B3::Value* result) { join->appendNew<B3::Value>(proc, B3::Return, B3::Origin(), result); }
+    bool breaksUpstreamRule() { return B3::findViolatedRule(proc) == B3::ValidationRule::Upstream; }
+
+    B3::Procedure proc;
+    B3::BasicBlock* entry;
+    B3::BasicBlock* left;
+    B3::BasicBlock* right;
+    B3::BasicBlock* join;
+    B3::Value* argument;
+    B3::Value* inLeft;
+};
+
+static void testValidationOfValuesAndEdges()
+{
+    {
+        DiamondForValidation graph;
+        graph.finish(graph.argument);
+        AOT_TEST_CHECK(!B3::findViolatedRule(graph.proc));
+    }
+    {
+        DiamondForValidation valueInTwoBlocks;
+        valueInTwoBlocks.join->append(valueInTwoBlocks.inLeft);
+        valueInTwoBlocks.finish(valueInTwoBlocks.argument);
+        AOT_TEST_CHECK(valueInTwoBlocks.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation valueInNoBlock;
+        valueInNoBlock.proc.add<B3::Const32Value>(B3::Origin(), 1);
+        valueInNoBlock.finish(valueInNoBlock.argument);
+        AOT_TEST_CHECK(valueInNoBlock.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation valueOfOtherProcedure;
+        B3::Procedure other;
+        valueOfOtherProcedure.finish(other.addBlock()->appendNew<B3::Const64Value>(other, B3::Origin(), 1));
+        AOT_TEST_CHECK(valueOfOtherProcedure.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation useInFrontOfDefinition;
+        B3::Value* later = useInFrontOfDefinition.proc.add<B3::Const64Value>(B3::Origin(), 1);
+        useInFrontOfDefinition.join->appendNew<B3::Value>(useInFrontOfDefinition.proc, B3::Add, B3::Origin(), later, later);
+        useInFrontOfDefinition.join->append(later);
+        useInFrontOfDefinition.finish(useInFrontOfDefinition.argument);
+        AOT_TEST_CHECK(useInFrontOfDefinition.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation definitionDoesNotDominate;
+        definitionDoesNotDominate.finish(definitionDoesNotDominate.inLeft);
+        AOT_TEST_CHECK(definitionDoesNotDominate.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation successorOfOtherProcedure;
+        B3::Procedure other;
+        successorOfOtherProcedure.finish(successorOfOtherProcedure.argument);
+        successorOfOtherProcedure.right->setSuccessors(B3::FrequentedBlock(other.addBlock()));
+        AOT_TEST_CHECK(successorOfOtherProcedure.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation predecessorIsMissing;
+        predecessorIsMissing.finish(predecessorIsMissing.argument);
+        AOT_TEST_CHECK(predecessorIsMissing.join->predecessors().removeFirst(predecessorIsMissing.right));
+        AOT_TEST_CHECK(predecessorIsMissing.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation predecessorDoesNotJumpThere;
+        predecessorDoesNotJumpThere.finish(predecessorDoesNotJumpThere.argument);
+        predecessorDoesNotJumpThere.join->predecessors().append(predecessorDoesNotJumpThere.entry);
+        AOT_TEST_CHECK(predecessorDoesNotJumpThere.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation otherPredecessor;
+        otherPredecessor.finish(otherPredecessor.argument);
+        AOT_TEST_CHECK(otherPredecessor.join->predecessors().removeFirst(otherPredecessor.right));
+        otherPredecessor.join->predecessors().append(otherPredecessor.entry);
+        AOT_TEST_CHECK(otherPredecessor.breaksUpstreamRule());
+    }
+    {
+        DiamondForValidation predecessorListedTwice;
+        predecessorListedTwice.finish(predecessorListedTwice.argument);
+        predecessorListedTwice.join->predecessors().append(predecessorListedTwice.right);
+        AOT_TEST_CHECK(predecessorListedTwice.breaksUpstreamRule());
+    }
+    {
+        // Both edges of the branch lead to one block, which lists the branching block once.
+        DiamondForValidation twoEdgesToOneBlock;
+        twoEdgesToOneBlock.finish(twoEdgesToOneBlock.argument);
+        twoEdgesToOneBlock.entry->setSuccessors(B3::FrequentedBlock(twoEdgesToOneBlock.left), B3::FrequentedBlock(twoEdgesToOneBlock.left));
+        twoEdgesToOneBlock.proc.resetReachability();
+        AOT_TEST_CHECK(!B3::findViolatedRule(twoEdgesToOneBlock.proc));
+    }
+}
+
 std::span<const NativeTest> backEndPhaseTests()
 {
     static constexpr NativeTest tests[] = {
+        { "validation-of-values-and-edges"_s, testValidationOfValuesAndEdges },
         { "materialize-slot-bases"_s, testMaterializeSlotBases },
         { "materialize-one-copy-per-use"_s, testMaterializeOneCopyPerUse },
         { "materialize-derived-addresses"_s, testMaterializeDerivedAddresses },

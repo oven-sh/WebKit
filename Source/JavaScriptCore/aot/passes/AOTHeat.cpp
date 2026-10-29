@@ -361,6 +361,7 @@ static constexpr HeatThresholds thresholdsOfVeryLargeProgram {
 static Vector<uint8_t> findFunctionsCalledInLoops(const ParallelLoops& loops, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody)
 {
     Vector<uint8_t> isCalledInLoop(FillWith { }, graph.numberOfFunctions(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isLongSetCalledInLoop(FillWith { }, graph.numberOfLongSets(), static_cast<uint8_t>(0));
     forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
         HeatNodeID caller = graph.nodeOf(FunctionID(functionsWithBody[k]));
         std::span<const HeatNodeID> callees = graph.successors(caller);
@@ -369,11 +370,30 @@ static Vector<uint8_t> findFunctionsCalledInLoops(const ParallelLoops& loops, co
             if (callee && graph.multiplierOf(caller, index) >= minWeightOfCallThatLoopRepeats)
                 AtomicRef(isCalledInLoop[callee.index()]).store(1, std::memory_order_relaxed);
         }
+        for (const HeatCallOfLongSet& call : graph.longSetsOf(caller)) {
+            if (call.multiplier >= minWeightOfCallThatLoopRepeats)
+                AtomicRef(isLongSetCalledInLoop[call.set]).store(1, std::memory_order_relaxed);
+        }
+        for (const HeatCallOfMember& call : graph.otherCallsOfMembers(caller)) {
+            if (call.multiplier >= minWeightOfCallThatLoopRepeats)
+                AtomicRef(isCalledInLoop[call.member.index()]).store(1, std::memory_order_relaxed);
+        }
     });
+    for (uint32_t set = 0; set < isLongSetCalledInLoop.size(); ++set) {
+        if (!isLongSetCalledInLoop[set])
+            continue;
+        for (HeatNodeID member : graph.membersOfLongSet(set))
+            isCalledInLoop[member.index()] = 1;
+    }
     return isCalledInLoop;
 }
 
-static void followCalls(const HeatGraph& graph, HeatNodeID caller, double minWeight, Vector<uint8_t>& isReached, Vector<uint32_t>& worklist)
+// The long sets whose members have all been reached.
+using ReachedLongSets = Vector<uint8_t>;
+
+static ReachedLongSets noLongSetOf(const HeatGraph& graph) { return ReachedLongSets(FillWith { }, graph.numberOfLongSets(), static_cast<uint8_t>(0)); }
+
+static void followCalls(const HeatGraph& graph, HeatNodeID caller, double minWeight, Vector<uint8_t>& isReached, ReachedLongSets& isLongSetReached, Vector<uint32_t>& worklist)
 {
     std::span<const HeatNodeID> callees = graph.successors(caller);
     for (unsigned index = 0; index < callees.size(); ++index) {
@@ -383,12 +403,24 @@ static void followCalls(const HeatGraph& graph, HeatNodeID caller, double minWei
         isReached[callee.index()] = 1;
         worklist.append(callee.index());
     }
+    for (const HeatCallOfMember& call : graph.otherCallsOfMembers(caller)) {
+        if (call.multiplier >= minWeight && !std::exchange(isReached[call.member.index()], static_cast<uint8_t>(1)))
+            worklist.append(call.member.index());
+    }
+    for (const HeatCallOfLongSet& call : graph.longSetsOf(caller)) {
+        if (call.multiplier < minWeight || std::exchange(isLongSetReached[call.set], static_cast<uint8_t>(1)))
+            continue;
+        for (HeatNodeID member : graph.membersOfLongSet(call.set)) {
+            if (!std::exchange(isReached[member.index()], static_cast<uint8_t>(1)))
+                worklist.append(member.index());
+        }
+    }
 }
 
-static void followCallsFromWorklist(const HeatGraph& graph, double minWeight, Vector<uint8_t>& isReached, Vector<uint32_t>& worklist)
+static void followCallsFromWorklist(const HeatGraph& graph, double minWeight, Vector<uint8_t>& isReached, ReachedLongSets& isLongSetReached, Vector<uint32_t>& worklist)
 {
     while (!worklist.isEmpty())
-        followCalls(graph, graph.nodeOf(FunctionID(worklist.takeLast())), minWeight, isReached, worklist);
+        followCalls(graph, graph.nodeOf(FunctionID(worklist.takeLast())), minWeight, isReached, isLongSetReached, worklist);
 }
 
 // What such a function calls nearly every time runs as often as it.
@@ -400,7 +432,8 @@ static Vector<uint8_t> followNearlyCertainCalls(const HeatGraph& graph, const Ve
         if (runsInLoop[index])
             worklist.append(index);
     }
-    followCallsFromWorklist(graph, HeatModel::minWeightOfNearlyCertainCall, runsInLoop, worklist);
+    ReachedLongSets isLongSetReached = noLongSetOf(graph);
+    followCallsFromWorklist(graph, HeatModel::minWeightOfNearlyCertainCall, runsInLoop, isLongSetReached, worklist);
     return runsInLoop;
 }
 
@@ -409,24 +442,30 @@ static Vector<uint8_t> findFunctionsCalledPerEvent(const Program& program, const
 {
     Vector<uint8_t> isCalledPerEvent(FillWith { }, graph.numberOfFunctions(), static_cast<uint8_t>(0));
     Vector<uint32_t> worklist;
-    followCalls(graph, graph.hostNode(), HeatModel::eventsPerRun, isCalledPerEvent, worklist);
+    ReachedLongSets isLongSetReached = noLongSetOf(graph);
+    followCalls(graph, graph.hostNode(), HeatModel::eventsPerRun, isCalledPerEvent, isLongSetReached, worklist);
     while (!worklist.isEmpty()) {
         FunctionID entry(worklist.takeLast());
         if (leadsToBody(program.at(entry)))
-            followCalls(graph, graph.nodeOf(entry), HeatModel::minWeightOfNearlyCertainCall, isCalledPerEvent, worklist);
+            followCalls(graph, graph.nodeOf(entry), HeatModel::minWeightOfNearlyCertainCall, isCalledPerEvent, isLongSetReached, worklist);
     }
     return isCalledPerEvent;
 }
 
 // A caller that runs once, or that waits between its steps, says nothing about how often the callee runs.
-static bool hasManyCallers(const Program& program, const FlowResults& flow, const HeatGraph& graph, FunctionID id)
+static unsigned countCallersThatTell(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const HeatNodeID> nodes)
 {
-    unsigned callers = 0;
-    for (HeatNodeID node : graph.predecessors(graph.nodeOf(id))) {
+    return std::ranges::count_if(nodes, [&](HeatNodeID node) {
         FunctionID caller = graph.functionOf(node);
-        if (caller && !flow.runsAtMostOnce(program, caller) && !program.at(caller).has(FunctionFlags::IsAsync))
-            ++callers;
-    }
+        return caller && !flow.runsAtMostOnce(program, caller) && !program.at(caller).has(FunctionFlags::IsAsync);
+    });
+}
+
+static bool hasManyCallers(const Program& program, const FlowResults& flow, const HeatGraph& graph, const Vector<unsigned>& callersOfLongSets, FunctionID id)
+{
+    unsigned callers = countCallersThatTell(program, flow, graph, graph.predecessors(graph.nodeOf(id)));
+    for (uint32_t set : graph.longSetsWith(graph.nodeOf(id)))
+        callers += callersOfLongSets[set];
     return callers >= HeatModel::callersOfFunctionThatRunsOften;
 }
 
@@ -440,16 +479,26 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
     }
     while (!worklist.isEmpty()) {
         HeatNodeID entry = graph.nodeOf(FunctionID(worklist.takeLast()));
-        std::span<const HeatNodeID> callees = graph.successors(entry);
-        for (unsigned index = 0; index < callees.size(); ++index) {
-            FunctionID callee = graph.functionOf(callees[index]);
-            if (!callee || runsOften[callee.index()] || graph.multiplierOf(entry, index) < HeatModel::minWeightOfNearlyCertainCall)
-                continue;
+        auto follow = [&](HeatNodeID node, double multiplier) {
+            FunctionID callee = graph.functionOf(node);
+            if (!callee || runsOften[callee.index()] || multiplier < HeatModel::minWeightOfNearlyCertainCall)
+                return;
             if (flow.runsAtMostOnce(program, callee))
-                continue;
+                return;
             runsOften[callee.index()] = 1;
             if (leadsToBody(program.at(callee)))
                 worklist.append(callee.index());
+        };
+        std::span<const HeatNodeID> callees = graph.successors(entry);
+        for (unsigned index = 0; index < callees.size(); ++index)
+            follow(callees[index], graph.multiplierOf(entry, index));
+        for (const HeatCallOfMember& call : graph.otherCallsOfMembers(entry))
+            follow(call.member, call.multiplier);
+        for (const HeatCallOfLongSet& call : graph.longSetsOf(entry)) {
+            if (call.multiplier < HeatModel::minWeightOfNearlyCertainCall)
+                continue;
+            for (HeatNodeID member : graph.membersOfLongSet(call.set))
+                follow(member, call.multiplier);
         }
     }
 }
@@ -460,16 +509,17 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
     auto findWhatBusyCodeReaches = [&](double minWeight) {
         Vector<uint32_t> worklist;
         Vector<uint8_t> isReached = isExpectedToRun;
+        ReachedLongSets isLongSetReached = noLongSetOf(graph);
         for (uint32_t index : functionsWithBody) {
             if (isExpectedToRun[index])
                 worklist.append(index);
         }
-        followCalls(graph, graph.hostNode(), minWeightOfCallThatLoopRepeats, isReached, worklist);
+        followCalls(graph, graph.hostNode(), minWeightOfCallThatLoopRepeats, isReached, isLongSetReached, worklist);
         for (uint32_t index : functionsWithBody) {
             if (!flow.runsAtMostOnce(program, FunctionID(index)))
-                followCalls(graph, graph.nodeOf(FunctionID(index)), HeatModel::minWeightOfCallInLoop, isReached, worklist);
+                followCalls(graph, graph.nodeOf(FunctionID(index)), HeatModel::minWeightOfCallInLoop, isReached, isLongSetReached, worklist);
         }
-        followCallsFromWorklist(graph, minWeight, isReached, worklist);
+        followCallsFromWorklist(graph, minWeight, isReached, isLongSetReached, worklist);
         return isReached;
     };
     Vector<uint8_t> isNearBusyCode;
@@ -487,13 +537,16 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
         unsigned callers = 0;
         for (HeatNodeID node : graph.predecessors(graph.nodeOf(id)))
             callers += !!graph.functionOf(node);
+        for (uint32_t set : graph.longSetsWith(graph.nodeOf(id)))
+            callers += graph.usersOfLongSet(set).size();
         bool hasHeavyLoop = graph.massOf(id) >= HeatModel::minMassPerValueWithHeavyLoop * graph.sizeOf(id);
         if (callers <= HeatModel::maxCallersOfCompactFunction && !hasHeavyLoop)
             continue;
         mayRun[index] = 1;
         worklist.append(index);
     }
-    followCallsFromWorklist(graph, HeatModel::minWeightOfNearlyCertainCall, mayRun, worklist);
+    ReachedLongSets isLongSetReached = noLongSetOf(graph);
+    followCallsFromWorklist(graph, HeatModel::minWeightOfNearlyCertainCall, mayRun, isLongSetReached, worklist);
 
     auto waitsFarFromBusyCode = [&](FunctionID id) {
         if (!program.at(id).has(FunctionFlags::IsAsync) || isNearBusyCode[id.index()])
@@ -593,6 +646,8 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     const bool estimatesTwice = graphOfClasses.numberOfFunctions();
     Vector<double> ranks;
     Vector<double> placesInOrder;
+    // Which of two layouts has more objects is asked of code that is not hot as well.
+    Vector<double> ranksOfAllocators;
 
     unsigned count = graph.numberOfFunctions();
     Heat heat;
@@ -638,9 +693,12 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
                     if (!isVeryLargeProgram)
                         return;
                     functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
+                    Vector<unsigned> callersOfLongSets(graph.numberOfLongSets(), [&](size_t set) {
+                        return countCallersThatTell(program, flow, graph, graph.usersOfLongSet(set));
+                    });
                     forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
                         FunctionID id(functionsWithBody[k]);
-                        functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
+                        functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, callersOfLongSets, id);
                     });
                     followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
                     // A function called by a loop and few others is entered no more often than cold code. It may still run.
@@ -661,6 +719,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         for (unsigned index = 0; index < count; ++index)
             activations[index] = std::max(activations[index], graphOfClasses.entriesPerEventOf(FunctionID(index)));
         placesInOrder = ranks;
+        ranksOfAllocators = ranks;
         runsWithEveryEvent = followNearlyCertainCalls(graph, isCalledPerEvent);
         // A rank says which of two functions runs more often, not that either runs often: what comes with events has one only where it is entered as often for each event as a loop in a loop would enter it.
         // The streams, emitters and sockets of the library call each other in cycles that are no loops: of the library, only what a loop calls has one.
@@ -707,7 +766,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         heat.m_allocationsOfLayouts.fill(0, program.layouts.size());
         for (const AllocationSite& site : flow.allocationSites()) {
             if (site.layout && site.function && site.layout.index() < program.layouts.size() && site.function.index() < activations.size()) {
-                heat.m_allocationsOfLayouts[site.layout.index()] += ranksOrActivations[site.function.index()];
+                heat.m_allocationsOfLayouts[site.layout.index()] += (estimatesTwice ? ranksOfAllocators : activations)[site.function.index()];
                 if (ModuleID module = program.at(site.function).module)
                     heat.m_modulesThatAllocate.append(packedKeyOf(site.layout, module));
             }

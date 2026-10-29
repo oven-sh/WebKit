@@ -644,6 +644,18 @@ bool isBundlerHelperModule(const Program&, const Module& module)
     return module.flags.contains(ModuleFlags::IsBundlerHelper);
 }
 
+BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName)
+{
+    BitVector modules(program.modules.size());
+    for (const Entry& entry : program.entries)
+        modules.quickSet(entry.module.index());
+    for (size_t index = 0; findsFilesByName && index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName))
+            modules.quickSet(index);
+    }
+    return modules;
+}
+
 bool answersToPath(const Program& program, const Module& module)
 {
     if (!isFoundByPathOf(module.kind))

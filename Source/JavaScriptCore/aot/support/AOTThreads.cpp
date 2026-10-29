@@ -119,6 +119,19 @@ BusyThreads::WaitScope::~WaitScope()
 }
 
 // A pool wakes its threads one after the other, each when the one before has found work.
+static std::atomic<void (*)()> s_giveFreeMemoryOfCurrentThreadBack { nullptr };
+static std::atomic<uint32_t> s_timesAskedForFreeMemory { 0 };
+static thread_local uint32_t t_timesGaveFreeMemoryBack { 0 };
+
+static void giveFreeMemoryOfCurrentThreadBackIfAsked()
+{
+    uint32_t timesAsked = s_timesAskedForFreeMemory.load(std::memory_order_acquire);
+    if (t_timesGaveFreeMemoryBack == timesAsked) [[likely]]
+        return;
+    t_timesGaveFreeMemoryBack = timesAsked;
+    s_giveFreeMemoryOfCurrentThreadBack.load(std::memory_order_relaxed)();
+}
+
 class ParallelLoops::RestingThreads final : public ThreadSafeRefCounted<RestingThreads> {
 public:
     struct Task {
@@ -257,6 +270,7 @@ private:
 
     static void run(Task task)
     {
+        giveFreeMemoryOfCurrentThreadBackIfAsked();
         TaskPriority previousPriority = std::exchange(t_currentPriority, task.priority);
         CurrentWorkScope workScope(task.work);
         bool isCounted = InstructionCounts::hasBegun() && !t_isCountedAsBusy;
@@ -370,6 +384,17 @@ ParallelLoops::~ParallelLoops()
 void ParallelLoops::sendRestingThreadsBack() const
 {
     m_restingThreads->close();
+}
+
+void ParallelLoops::giveFreeMemoryBack() const
+{
+    if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
+        return;
+    s_giveFreeMemoryOfCurrentThreadBack.store(m_hostPool->giveFreeMemoryOfCurrentThreadBack, std::memory_order_relaxed);
+    s_timesAskedForFreeMemory.fetch_add(1, std::memory_order_release);
+    giveFreeMemoryOfCurrentThreadBackIfAsked();
+    RestingThreads::Task task { [](void*) { }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
+    for (unsigned left = numberOfRestingThreads(); left && m_restingThreads->tryHandOver(task); --left) { }
 }
 
 unsigned ParallelLoops::numberOfRestingThreads() const

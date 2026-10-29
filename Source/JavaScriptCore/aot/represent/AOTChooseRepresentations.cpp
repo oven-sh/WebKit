@@ -851,7 +851,7 @@ static bool isMadeBoxed(FunctionPassContext& pass, const RepresentationInputs& i
 {
     const Function& function = inputs.function;
     const Value& value = function.at(id);
-    if (!picksOwnRepresentation(function, id))
+    if (!picksOwnRepresentation(inputs, id))
         return resultRepresentationOf(inputs, value) == Representation::JSValue;
     if (copiesFollowed == maxCopiesFollowed || constantsInFormOfUses.contains(value.opcode) || value.opcode == Opcode::Unspecified)
         return false;

@@ -105,6 +105,46 @@ static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character
     return found;
 }
 
+static constexpr size_t maxLengthOfStringCheckedFirst = SIMD::stride<uint8_t> - 1;
+
+static ALWAYS_INLINE bool shortStringNeedsEscapeInJSON(std::span<const Latin1Character> characters)
+{
+    const Latin1Character* from = characters.data();
+    size_t size = characters.size();
+    if (size >= 8)
+        return needsEscapeInJSON(WTF::unalignedLoad<uint64_t>(from), WTF::unalignedLoad<uint64_t>(from + size - 8));
+    if (size >= 4) {
+        uint64_t both = WTF::unalignedLoad<uint32_t>(from) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(from + size - 4)) << 32;
+        return needsEscapeInJSON(both, both);
+    }
+    bool found = false;
+    for (size_t i = 0; i < size; ++i)
+        found |= !!WTF::escapedFormsForJSON[from[i]];
+    return found;
+}
+
+static ALWAYS_INLINE void copyShortString(std::span<const Latin1Character> characters, Latin1Character* to)
+{
+    const Latin1Character* from = characters.data();
+    size_t size = characters.size();
+    if (size >= 8) {
+        uint64_t first = WTF::unalignedLoad<uint64_t>(from);
+        uint64_t last = WTF::unalignedLoad<uint64_t>(from + size - 8);
+        WTF::unalignedStore<uint64_t>(to, first);
+        WTF::unalignedStore<uint64_t>(to + size - 8, last);
+        return;
+    }
+    if (size >= 4) {
+        uint32_t first = WTF::unalignedLoad<uint32_t>(from);
+        uint32_t last = WTF::unalignedLoad<uint32_t>(from + size - 4);
+        WTF::unalignedStore<uint32_t>(to, first);
+        WTF::unalignedStore<uint32_t>(to + size - 4, last);
+        return;
+    }
+    for (size_t i = 0; i < size; ++i)
+        to[i] = from[i];
+}
+
 static ALWAYS_INLINE size_t roomForQuotedString(size_t maxLength)
 {
     return maxLength + numberOfQuotes + maxStringBuilderReservation;
@@ -384,6 +424,13 @@ static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Lat
     return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.span().data(), end } });
 }
 
+static NEVER_INLINE JSString* quoteShortStringWithEscapes(VM& vm, std::span<const Latin1Character> characters)
+{
+    std::array<Latin1Character, maxLengthOfEscapedJSONString(maxLengthOfStringCheckedFirst)> text;
+    Latin1Character* end = appendQuotedAndEscapedJSONString(text.data(), characters);
+    return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.data(), end } });
+}
+
 static NEVER_INLINE JSString* quoteWideString(VM& vm, std::span<const char16_t> characters)
 {
     Vector<char16_t, 512> text;
@@ -408,13 +455,22 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (view->is8Bit() && view->length() <= maxLengthOfStringQuotedHere) [[likely]] {
             auto characters = view->span8();
+            // A short string is checked in a few instructions, and one that has something to escape is spared an allocation that it cannot use.
+            bool isCheckedFirst = characters.size() <= maxLengthOfStringCheckedFirst;
+            if (isCheckedFirst && shortStringNeedsEscapeInJSON(characters)) [[unlikely]]
+                return quoteShortStringWithEscapes(vm, characters);
             std::span<Latin1Character> quoted;
             RefPtr impl = StringImpl::tryCreateUninitialized(characters.size() + numberOfQuotes, quoted);
             if (!impl) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
-            if (!copyAndCheckForEscapes(characters, quoted.data() + 1)) [[likely]] {
+            bool hasEscapes = false;
+            if (isCheckedFirst)
+                copyShortString(characters, quoted.data() + 1);
+            else
+                hasEscapes = copyAndCheckForEscapes(characters, quoted.data() + 1);
+            if (!hasEscapes) [[likely]] {
                 quoted.front() = '"';
                 quoted.back() = '"';
                 return jsNontrivialString(vm, String { impl.releaseNonNull() });

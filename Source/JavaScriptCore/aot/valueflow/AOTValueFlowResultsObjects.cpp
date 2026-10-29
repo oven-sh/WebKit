@@ -123,6 +123,12 @@ bool neverChangesOnceMade(const ValueFlowResultInputs& inputs, ValueFlowObjectID
         ObjectMutation::AddProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation });
 }
 
+// Of a list that never changes once made.
+bool isNeverToldApart(const ValueFlowResultInputs& inputs, ValueFlowObjectID list, ValueSetID listsToldApart)
+{
+    return !markedMutationsOf(inputs, list).containsAny({ ObjectMutation::ChangeIntegrity, ObjectMutation::BecomePrototype }) && !inputs.isLost(list) && !inputs.sets().contains(listsToldApart, list);
+}
+
 static bool mayFallBackToObjectPrototype(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, FunctionID id, const Value& read)
 {
     const Program& program = inputs.program;

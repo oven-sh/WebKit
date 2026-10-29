@@ -116,9 +116,21 @@ struct ContainerState {
         return slots.last();
     }
 
+    // To be called after a reader or an application was added to the slot.
+    void didAddListener(const SlotState& state)
+    {
+        if (!state.slot || state.readers.size() + state.applications.size() != 1)
+            return;
+        uint32_t index = static_cast<uint32_t>(&state - slots.span().data());
+        size_t position = std::ranges::lower_bound(slotsWithListeners, index) - slotsWithListeners.begin();
+        slotsWithListeners.insert(position, index);
+    }
+
     LayoutID environment;
     SlotState unknownSlot;
     Vector<SlotState, 1> slots;
+    // Indexes into `slots`, ascending: the slots that have a reader or an application.
+    Vector<uint32_t, 1> slotsWithListeners;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> indexOfSlot;
 };
 
@@ -164,6 +176,19 @@ void forEachOverlappingSlot(ContainerState& state, ObjectSlot slot, NOESCAPE con
     if (!slot) {
         for (SlotState& known : state.slots)
             functor(known);
+        return;
+    }
+    if (SlotState* known = state.find(*slot))
+        functor(*known);
+}
+
+// A literal may fill thousands of slots that have neither readers nor applications, and a store into an unknown slot has nothing to tell those.
+void forEachOverlappingSlotWithListeners(ContainerState& state, ObjectSlot slot, NOESCAPE const Invocable<void(SlotState&)> auto& functor)
+{
+    functor(state.unknownSlot);
+    if (!slot) {
+        for (uint32_t index : state.slotsWithListeners)
+            functor(state.slots[index]);
         return;
     }
     if (SlotState* known = state.find(*slot))
@@ -270,6 +295,7 @@ private:
     void addReader(ObjectID container, ValueID reader, ObjectSlot);
     ObjectSlot slotInContainer(ObjectID container, const Value& user) const;
 
+    void callObjects(const ArrivedObjects&);
     void callObject(ObjectID);
     void applyToContents(ObjectID container, ObjectSlot, OperandUses, EscapeReason);
     void applyToObject(ObjectID, OperandUses, EscapeReason);
@@ -328,7 +354,7 @@ private:
     Vector<uint32_t> m_firstSummaryOfUser;
     Vector<KeptSummary> m_summaries;
     Vector<ValueID> m_valueOfSet;
-    BitVector m_calledObjects;
+    WordsOfSet m_calledObjects;
 };
 
 static bool isRetainedInOperand(const OperandSummary& summary)
@@ -524,6 +550,12 @@ static constexpr OperandUses usesWithConsequences {
     OperandUse::BecomesPrototype,
 };
 
+static bool hasManyCallees(const Program& program, const Value& call)
+{
+    AOT_THRESHOLD(size_t, fewestCallees, 16);
+    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && program.at(call.callees()).written().functions.size() >= fewestCallees;
+}
+
 AnswerFromTypes answerFromTypes(const EscapeAnalysisInputs& inputs, AnswerFromTypes::Question question, uint32_t subject, uint32_t operandIndex)
 {
     using Question = AnswerFromTypes::Question;
@@ -556,7 +588,7 @@ AnswerFromTypes answerFromTypes(const EscapeAnalysisInputs& inputs, AnswerFromTy
     case Question::SummaryOfOperand:
         if (const Value& user = function.at(ValueID(subject)); declaredOperandFactsOf(user.opcode, operandIndex).isSameForEveryReference && mayBeReference(program.typeOf(function, user.operand(operandIndex))))
             answer.summary = declaredOperandFactsOf(user.opcode, operandIndex).summaryOfReference;
-        else if (effectRuleOf(user.opcode) == EffectRule::Call) {
+        else if (effectRuleOf(user.opcode) == EffectRule::Call && !hasManyCallees(program, user)) {
             // Read out of the summaries of the callees: to look it up by what it is computed from takes longer.
             answer.summary = summarizeOperand(inputs.effects, function, user, operandIndex);
         } else
@@ -758,12 +790,28 @@ void PointsToSolver::takeSets()
 {
     size_t numberOfSets = m_setsThatMayBeUntracked.size();
     m_results.sets.reserveInitialCapacity(numberOfSets);
+    // n reads of a field that holds any of n objects have n equal sets. A set is filled bit by bit and copied word by word.
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstSetWithHash;
     for (size_t index = 0; index < numberOfSets; ++index) {
+        std::span<const ObjectWord> words = wordsOf(ValueSetID(index));
         ValueSet set;
-        set.objects.ensureSize(m_results.objects.size());
-        forEachObjectIn(wordsOf(ValueSetID(index)), [&](ObjectID object) {
-            set.objects.quickSet(object.index());
-        });
+        const ValueSet* equalSet = nullptr;
+        if (m_wordsPerSet > 1) {
+            uint64_t hash = 0;
+            for (ObjectWord word : words)
+                hash = (hash ^ word) * 0x9e3779b97f4a7c15ull + (hash >> 29);
+            uint32_t first = firstSetWithHash.add(std::min(hash, std::numeric_limits<uint64_t>::max() - 2), static_cast<uint32_t>(index)).iterator->value;
+            if (first != index && std::ranges::equal(words, wordsOf(ValueSetID(first))))
+                equalSet = &m_results.sets[first];
+        }
+        if (equalSet)
+            set.objects = equalSet->objects;
+        else {
+            set.objects.ensureSize(m_results.objects.size());
+            forEachObjectIn(words, [&](ObjectID object) {
+                set.objects.quickSet(object.index());
+            });
+        }
         set.mayBeUntracked = m_setsThatMayBeUntracked[index];
         m_results.sets.append(WTF::move(set));
     }
@@ -889,7 +937,7 @@ void PointsToSolver::findObjects()
     m_containerOfObject.fill(noContainer, m_results.objects.size());
     m_containers.reserveInitialCapacity(m_results.objects.size());
     m_lastApplicationsToAll.fill({ }, m_results.objects.size());
-    m_calledObjects.ensureSize(m_results.objects.size());
+    m_calledObjects.fill(0, m_wordsPerSet);
     if (!m_results.objects.isEmpty())
         m_results.uses.reserveInitialCapacity(m_function.values.size());
 }
@@ -1087,8 +1135,7 @@ void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedO
     case OperandUse::Calls:
     case OperandUse::CallsPerElement:
     case OperandUse::CallsRepeatedly:
-        for (ObjectID object : arrived.objects)
-            callObject(object);
+        callObjects(arrived);
         return;
     case OperandUse::RetainsContents:
         for (ObjectID object : arrived.objects)
@@ -1227,8 +1274,7 @@ void PointsToSolver::solveOperandUse(SolvedUse& solved, const ArrivedObjects& ar
     case OperandUse::Calls:
     case OperandUse::CallsPerElement:
     case OperandUse::CallsRepeatedly:
-        for (ObjectID object : arrived.objects)
-            callObject(object);
+        callObjects(arrived);
         return;
     case OperandUse::RetainsContents:
         for (ObjectID object : arrived.objects)
@@ -1604,7 +1650,7 @@ void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<
             entry.isLeaked |= uses.containsAny(leakingUses);
         }
     };
-    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+    forEachOverlappingSlotWithListeners(state, slot, [&](SlotState& overlapping) {
         // n stores into slots that nobody tells apart, each heard by n readers, are n * n steps.
         if (!takeWork(overlapping.readers.size()))
             return;
@@ -1643,16 +1689,30 @@ void PointsToSolver::solveContentsRead(SolvedUse& solved, const ArrivedObjects& 
 void PointsToSolver::addReader(ObjectID container, ValueID reader, ObjectSlot slot)
 {
     ContainerState& state = ensureContainer(container);
-    state.ensure(slot).readers.append(reader);
+    SlotState& read = state.ensure(slot);
+    read.readers.append(reader);
+    state.didAddListener(read);
     forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
         addAll(reader, overlapping.objects.span());
     });
 }
 
+// n calls of a value that may be any of n closures: all but the first find every closure called.
+void PointsToSolver::callObjects(const ArrivedObjects& arrived)
+{
+    for (size_t index = 0; index < arrived.words.size(); ++index) {
+        for (ObjectWord word = arrived.words[index] & ~m_calledObjects[index]; word; word &= word - 1)
+            callObject(ObjectID(index * objectsPerWord + std::countr_zero(word)));
+    }
+}
+
 void PointsToSolver::callObject(ObjectID object)
 {
-    if (m_calledObjects.set(object.index()))
+    ObjectWord& calledObjects = m_calledObjects[object.index() / objectsPerWord];
+    ObjectWord bit = ObjectWord { 1 } << (object.index() % objectsPerWord);
+    if (calledObjects & bit)
         return;
+    calledObjects |= bit;
     SolvedObject& solved = at(object);
     if (solved.kind == ObjectKind::EntryParameter)
         return;
@@ -1685,10 +1745,11 @@ void PointsToSolver::applyToContents(ObjectID container, ObjectSlot slot, Operan
     }
     ContainerState& state = ensureContainer(container);
     ContentsApplication application { slot, uses, reason };
-    auto& applications = state.ensure(slot).applications;
-    if (applications.contains(application))
+    SlotState& applied = state.ensure(slot);
+    if (applied.applications.contains(application))
         return;
-    applications.append(application);
+    applied.applications.append(application);
+    state.didAddListener(applied);
     forEachOverlappingEntry(state, slot, [&](SolvedContents& entry) {
         m_applicationWorklist.append({ entry.object, uses, reason });
         entry.isLeaked |= uses.containsAny(leakingUses);

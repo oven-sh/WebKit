@@ -519,22 +519,23 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
     ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
     for (ValueSetID group : receivers.groups) {
         ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
-        context.forEachMember(context.restrict(answered, universe.closures()), [&](ValueFlowObjectID closure) {
-            if (!context.contains(closures, closure))
-                return;
+        std::span<const ValueFlowObjectID> takingReceiver = context.closuresTakingReceiverRememberedOf(context.restrict(answered, universe.closures()), [&](ValueFlowObjectID closure) {
             FunctionID function = universe.closureFunction(closure);
-            ValueFlowNodeID thisParameter = thisParameterOf(context, function);
-            if (!thisParameter || throwsInsteadOfRunning(program.at(function), false))
-                return;
-            context.add(thisParameter, group);
+            return thisParameterOf(context, function) && !throwsInsteadOfRunning(program.at(function), false);
+        });
+        for (ValueFlowObjectID closure : takingReceiver) {
+            if (!context.contains(closures, closure))
+                continue;
+            FunctionID function = universe.closureFunction(closure);
+            context.add(thisParameterOf(context, function), group);
             const auto* summary = statement.result ? context.nodes().resultSummaryOf(function) : nullptr;
             if (!summary || program.at(function).isUnsplitCoroutine())
-                return;
+                continue;
             for (const auto& passed : summary->passedParameters) {
                 if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
                     context.connect(context.masked(context.holding(ClimbingSet(group)), passed.mask, passed.maskKind), statement.result);
             }
-        });
+        }
     }
 
     // Primitives and objects nobody knows go, as a known object does, to the functions that their own lookup answers.
@@ -971,8 +972,12 @@ static void passAllocatedInstances(ValueFlowRuleContext& context, const ValueFlo
         LayoutID layout = constructor ? program.at(constructor).constructedClass : LayoutID();
         if (!constructor) {
             allocated.holdsObjectWithoutLayout = true;
-            if (context.meet(only(context, newTarget), universe.knownObjects()))
-                context.connect(context.masked(context.lookup(only(context, newTarget), prototypeProperty(context)), ValueSets::complement(universe.builtinObjects())), ValueFlowProgramNodes::escaped());
+            if (context.meet(only(context, newTarget), universe.knownObjects())) {
+                // Flow does not follow the new object, so it records no link from it to its prototype.
+                auto held = context.masked(context.lookup(only(context, newTarget), prototypeProperty(context)), ValueSets::complement(universe.builtinObjects()));
+                context.connect(held, ValueFlowProgramNodes::escaped());
+                context.mark(context.restrict(context.valueOf(held), universe.objects()), ObjectMutation::BecomePrototype);
+            }
             return;
         }
         ValueFlowObjectID instance = layout ? universe.instanceOf(layout) : universe.constructedObjectOf(constructor);

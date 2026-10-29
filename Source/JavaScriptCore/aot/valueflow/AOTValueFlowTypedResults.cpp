@@ -377,7 +377,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
 
 static constexpr OptionSet<ObjectMutation> mutationsOfArraysWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
 
-void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, TypeTable& types, FlowResultTables& tables)
+void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, ValueSetID listsToldApart, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -399,6 +399,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         TypeID elements;
         TypeID type;
         ArrayStorage arrayStorage { ArrayStorage::Other };
+        bool isNeverToldApart { false };
     };
     const ParallelLoops& loops = inputs.loops();
     Vector<uint32_t> functions = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -430,6 +431,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                 } else {
                     node.markedMutations = markedMutationsOf(inputs, object);
                     node.neverChanges = neverChangesOnceMade(inputs, object);
+                    node.isNeverToldApart = site.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, object, listsToldApart);
                     const ValueFlowContainerFacts* facts = containers.find(object);
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
@@ -443,6 +445,19 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                 }
                 nodesOfFunction[task].append(node);
             });
+        }
+    });
+
+    // One cell stands for a list only where one cell stands for each thing inside it: all the nodes of one operation, or none.
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        std::span<Node> nodes = nodesOfFunction[task].mutableSpan();
+        for (size_t first = 0; first < nodes.size();) {
+            size_t end = first;
+            bool allAreNeverToldApart = true;
+            for (; end < nodes.size() && nodes[end].operation == nodes[first].operation; ++end)
+                allAreNeverToldApart &= nodes[end].neverChanges && nodes[end].isNeverToldApart;
+            for (; first < end; ++first)
+                nodes[first].isNeverToldApart = allAreNeverToldApart;
         }
     });
 
@@ -467,8 +482,11 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                 tables.sites.allocationClasses.append(WTF::move(arrays));
             }
             tables.sites.allocationClasses[classOfArrays.index()].impossibleMutations.remove(node.markedMutations);
-            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index()))
+            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(site);
+                if (node.isNeverToldApart)
+                    tables.sites.sitesOfListsNeverToldApart.set(site);
+            }
         }
     }
     tables.sites.allocationSites.grow(numberOfSites);

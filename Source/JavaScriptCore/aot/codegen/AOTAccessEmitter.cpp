@@ -18,6 +18,7 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
@@ -126,6 +127,64 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
         return Boxed(callStub(context, stub, { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     }
     return readThroughTables();
+}
+
+static std::optional<PlacedSlot> findSlotInCellOfEveryMember(const Program& program, const Placement& placement, const Type& receiver, PropertyKeyID key)
+{
+    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts())
+        return std::nullopt;
+    std::optional<PlacedSlot> found;
+    for (LayoutID member : membersOf(program, receiver)) {
+        const PlannedLayout& planned = placement.layout(member);
+        std::optional<uint32_t> field = program.at(member).findField(key);
+        if (!planned.holdsCompiledObjects() || !field)
+            return std::nullopt;
+        const PlacedSlot& slot = planned.slots[*field];
+        if (!slot.hasStorage() || slot.isOutOfLine() || slot.mayExistWithoutStorage || !traitsOf(slot.representation).hasAbsent || (found && !found->hasLocationOf(slot)))
+            return std::nullopt;
+        found = slot;
+    }
+    return found;
+}
+
+// `Message.prototype.retries = 3`: the slot of the field was found empty, and most objects leave it so. In fast code the site is asked in line.
+// A slot that is not filled may still say that the field lies elsewhere or is undefined, so the read looks for the one pattern that says the object has no such property.
+Boxed AccessEmitter::getMemberAboveEmptySlot(const ValueContext& value)
+{
+    Boxed receiver = in<Boxed>(value->receiverOperand());
+    PropertyKeyID key = value->key();
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(key);
+    bool readsAtSite = cache && identifier && value.shape() == CodeShape::Fast && RowDisplacementTable::hasColumn(*identifier) && comesAgain(value);
+    std::optional<PlacedSlot> slot = readsAtSite ? findSlotInCellOfEveryMember(m_program, m_placement, typeOf(value->receiverOperand()), key) : std::nullopt;
+    if (!slot)
+        return getById(value, receiver, key, cache, std::nullopt, value->receiverOperand());
+
+    recordArrival(value, receiver);
+    CellPointer object = unboxCell(receiver);
+    Pointer site = siteCacheAddress(cache);
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    LBasicBlock asksStub = newBlock();
+    Join<Boxed> join(m_out);
+    branchUnless(equal(Word32(m_out.load32(partOfSlot(Slot::offsetOfStructureID()))), loadStructureID(object)), asksStub);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(Slot::Kind::FieldOrInherited)), asksStub);
+    // A getter needs a call, and where an empty slot may stand for undefined the key order decides.
+    Word32 flags(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags())));
+    constexpr uint8_t flagsOfInheritedValue = Slot::needsHandler | Slot::isOwn | Slot::dependsOnChain | Slot::inheritedIsOutOfLine;
+    branchUnless(logicalNot(hasBits(flags, static_cast<uint8_t>(~flagsOfInheritedValue))), asksStub);
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    branchUnless(slots.holdsAbsent(slots.addressOf(object, *slot, MemoryLocation::objectField(key, typeOf(value->receiverOperand()).layouts)), slot->representation), asksStub);
+    CellPointer holder = decode(NarrowReference(m_out.load32(partOfSlot(Slot::offsetOfPayload() + OBJECT_OFFSETOF(Slot::FieldAndHolderPayload, holder)))));
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, holder.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(flags, Slot::inheritedIsOutOfLine), butterfly, Pointer(holder.value()));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
+    join.add(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0))));
+
+    m_out.appendTo(asksStub);
+    join.add(Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->receiverOperand()), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
+    return join.finish();
 }
 
 // No layout of the receivers has the name, so the answer lies above the object: in fast code the site is asked in line.
@@ -486,9 +545,39 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+// The tables answer for a compiled object without asking the run time, which knows the names of the fields that were removed as unread.
+void AccessEmitter::checkAbsentFieldWasNotRemoved(const ValueContext& read, Boxed result)
+{
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(read->key());
+    if (!identifier)
+        return;
+    Boxed receiver = in<Boxed>(read->objectOperand());
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock isCellBlock = newBlock();
+    LBasicBlock isCompiledObject = newBlock();
+    LBasicBlock continuation = newBlock();
+    branch(equal(result, undefined()), { normalEdge(isAbsent), normalEdge(continuation) });
+    m_out.appendTo(isAbsent);
+    branch(isCell(receiver), { normalEdge(isCellBlock), normalEdge(continuation) });
+    m_out.appendTo(isCellBlock);
+    CellPointer cell = unboxCell(receiver);
+    branch(hasCellType(cell, CompiledObjectType), { normalEdge(isCompiledObject), normalEdge(continuation) });
+    m_out.appendTo(isCompiledObject);
+    callWithoutSite<Integer>(RuntimeOperation::ValidateLookup, { cell, word32(static_cast<int32_t>(*identifier)), cell });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
 void AccessEmitter::generatePropGet(const ValueContext& value)
 {
-    define(value, value->isFreeName() ? getFreeName(value) : getMemberAboveLayouts(value));
+    if (value->isFreeName()) {
+        define(value, getFreeName(value));
+        return;
+    }
+    Boxed result = getMemberAboveLayouts(value);
+    if (generator().validates())
+        checkAbsentFieldWasNotRemoved(value, result);
+    define(value, result);
 }
 
 void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, PutMode mode)
@@ -501,6 +590,8 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         return;
     }
     recordArrival(value, object);
+    // The stub finds the record of the field through the shape of the object.
+    checkIsCompiledObjectOf(unboxCell(object), typeOf(value->objectOperand()).layouts);
     StubKey stub = putKnownField(mode);
     if (storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()))
         stub = putKnownFieldThatTakesAnyValue(mode);

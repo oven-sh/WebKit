@@ -78,6 +78,13 @@ public:
     bool isAnyLiveAtHead(BlockID, const BitVector& values, AnswersAboutValues&) const;
     bool isLiveAtHead(ValueID, BlockID) const;
 
+    // Calls the functor for each value that `isPoint` accepts, in each block from the last to the first, with those of the values live after it, in ascending order,
+    // that are live after no other point that follows. The functor makes them held operands of the point, which keeps them live after every point before it.
+    // The work goes by the uses of the function, not by how much is live.
+    using IsLive = ScopedLambda<bool(ValueID)>;
+    using LastCrossing = void(ValueID point, std::span<const ValueID> values, const IsLive& isLiveAfterPoint);
+    void forEachLastCrossing(NOESCAPE const ScopedLambda<bool(ValueID)>& isPoint, NOESCAPE const ScopedLambda<LastCrossing>&) const;
+
     class LocalCalc {
     public:
         LocalCalc(const Liveness&, BlockID);

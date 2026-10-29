@@ -56,6 +56,8 @@ public:
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, SiteCacheID, std::optional<Origin> = std::nullopt, ValueID receiverID = { });
     StubKey stubThatReadsAtSite(uint32_t identifierNumber, ValueID receiver);
     Boxed getMemberAboveLayouts(const ValueContext&);
+    Boxed getMemberAboveEmptySlot(const ValueContext&);
+    void checkAbsentFieldWasNotRemoved(const ValueContext& read, Boxed result);
     // What the slot at the site finds for every object with its Structure, where the object has that Structure and the slot is of the kind.
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, SiteCacheID);

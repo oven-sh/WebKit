@@ -221,6 +221,29 @@ bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& he
     return leftOut.hasOnlyClassObjects() && !leftOut.classes.isEmpty();
 }
 
+// A guess that names a layout or a class already stays: it came from a declaration or from what was seen to arrive.
+static void applyExpectations(const FlowCastInsertion& insertion, std::span<const FlowValueExpectation> expectations)
+{
+    Function& function = insertion.body.function;
+    TypeArena& types = insertion.body.types;
+    const UseLists& useLists = insertion.analyses.useLists();
+    auto expect = [&](ValueID id, TypeID type) {
+        TypeID guess = function.at(id).expected().predicted();
+        if (guess && (types.at(guess).layouts || !types.at(guess).classes.isEmpty()))
+            return false;
+        function.edit(id).setExpected(ExpectedType(type));
+        return true;
+    };
+    for (const FlowValueExpectation& expectation : expectations) {
+        if (!expect(expectation.value, expectation.type))
+            continue;
+        for (const Use& use : useLists.usesOf(expectation.value)) {
+            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::Upcast)
+                expect(use.user, expectation.type);
+        }
+    }
+}
+
 static void expectWhatArrives(const FlowCastInsertion& insertion, std::span<const FlowValueProof> proofs)
 {
     const Program& program = insertion.body.program;
@@ -267,9 +290,13 @@ static void expectWhatArrives(const FlowCastInsertion& insertion, std::span<cons
 
 static void replaceDefinedValues(const FlowCastInsertion& insertion, const FlowBodyUpdate& update)
 {
+    if (update.definedValues.isEmpty())
+        return;
     Function& function = insertion.body.function;
+    // The edits below move no value, and asking for the lists after each would make them anew each time.
+    const UseLists& useLists = insertion.analyses.useLists();
     for (const FlowDefinedValue& entry : update.definedValues) {
-        ValueLocation location = insertion.analyses.useLists().locationOf(entry.definition);
+        ValueLocation location = useLists.locationOf(entry.definition);
         RELEASE_ASSERT(location.placement == ValuePlacement::InBlock && accessOf(function.at(entry.definition).opcode) == Access::Define);
 
         insertion.builder.setOrigin(function.at(entry.definition).origin());
@@ -1206,6 +1233,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     defineListedMembers(body.function, builder, listedMembers.span());
 
     FlowCastInsertion insertion { body, analyses, builder };
+    applyExpectations(insertion, update.expectations.span());
     expectWhatArrives(insertion, update.proofs.span());
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;

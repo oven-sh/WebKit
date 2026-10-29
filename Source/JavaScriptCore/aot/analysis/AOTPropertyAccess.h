@@ -127,6 +127,10 @@ enum class OptionKind : uint8_t {
     LazilyInitializedField = 1 << 1,
     FieldWithoutStorage = 1 << 2,
 };
+// For an IsSlotFilled that ends the block and has no site of its own: a test in front of a read. Its empty arm mostly reads by name, which finds a value that the slot cannot hold.
+// An arm that answers by itself, with undefined or with a member from above, and does not ask whether a field lies outside its slot relies on the field staying in its slot.
+bool asksObjectWhereSlotIsEmpty(const Function&, BlockID, ValueID test);
+
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
 
 struct MethodAboveEmptySlot {

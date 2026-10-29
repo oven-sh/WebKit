@@ -722,7 +722,13 @@ bool mayAnswerToName(const Program& program, ModuleID id)
         return isBundlerHelperNamedByProgram(program, id);
     if (module.runtimeModule && !program.builtins().at(module.runtimeModule).flags.contains(RuntimeModuleFlag::IsPublic))
         return false;
-    return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || std::ranges::contains(program.entries, id, &Entry::module);
+    return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || module.flags.contains(ModuleFlags::IsFoundByName) || std::ranges::contains(program.entries, id, &Entry::module);
+}
+
+bool answersOnlyToLoadsOfProgram(const Program& program, ModuleID id)
+{
+    const Module& module = program.at(id);
+    return module.kind == ModuleKind::Data || (module.flags.contains(ModuleFlags::IsFoundByName) && !std::ranges::contains(program.entries, id, &Entry::module));
 }
 
 bool isAskedOfHostByName(const Module& module)
@@ -739,7 +745,7 @@ static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE 
         if (!tables.mayAnswerToName(ModuleID(index)))
             continue;
         bool isOfProgram = isWrittenByProgram(program, module);
-        if (module.body ? !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
+        if (module.body ? !isOfProgram && !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
             continue;
         functor(ModuleID(index), isOfProgram);
     }
@@ -763,12 +769,12 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 }
 
 // Text has import() and process.getBuiltinModule() and no require of a file. The loader answers it with an entry point under any name,
-// and with a data file of the image only where the program itself loads files by name.
+// and with another file of the image only where the program itself loads files by name.
 static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesOfProgramAreLoadedByName)
 {
     handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
     forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
-        if (!isOfProgram || (context.program().at(module).kind == ModuleKind::Data && !filesOfProgramAreLoadedByName))
+        if (!isOfProgram || (answersOnlyToLoadsOfProgram(context.program(), module) && !filesOfProgramAreLoadedByName))
             return;
         connect(context, requiredValueOf(context, module), ValueFlowProgramNodes::escaped());
         connect(context, namespaceOf(context, module), ValueFlowProgramNodes::escaped());
@@ -1055,6 +1061,7 @@ static void callWhatLetsInUnseenCode(ValueFlowRuleContext& context, ValueFlowObj
             }
         }
         context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(returned.span())));
+        context.add(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), ClimbingSet(context.maker().of(returned.span())));
         return;
     }
     context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));

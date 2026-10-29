@@ -70,8 +70,10 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
-    Condition isContiguous = elements().hasShape(shape, contiguous);
-    branchUnless(logicalOr(isContiguous, elements().hasShape(shape, int32s)), otherwise);
+    // One comparison for the two shapes: the distance from the lower one is nothing or the one bit between them.
+    constexpr IndexingType distance = contiguous.shape - int32s.shape;
+    static_assert(contiguous.shape > int32s.shape && hasOneBitSet(distance));
+    branchUnless(Condition(m_out.testIsZero32(m_out.sub(shape.value(), int32s.shape), ~static_cast<int32_t>(distance))), otherwise);
     ArrayElements storage = elements().elementsOf(array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));

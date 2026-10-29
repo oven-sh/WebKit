@@ -983,6 +983,9 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
     // A read at an unknown number gives undefined for every number that is no position of an element.
     if (readsUndefinedWhenAbsent && program.typeOf(context.function, position).isNumber())
         return createDynamicElementAccess(position);
+    // The test in front of a read of a present element is answered for a list that is not built only where every position of the index's range holds an element.
+    if (isArray && access.opcode == Opcode::GetArrayElement && access.isPresent() && program.typeOf(context.function, position).isInteger())
+        return createDynamicElementAccess(position);
     return { };
 }
 

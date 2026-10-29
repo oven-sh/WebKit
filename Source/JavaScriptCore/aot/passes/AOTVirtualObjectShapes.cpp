@@ -709,8 +709,15 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::PropHas:
     case Opcode::ElemHas:
     case Opcode::HasArrayElement:
-    case Opcode::IsElementPresent:
         return evaluateFieldTest(context, shape, test);
+    case Opcode::IsElementPresent: {
+        KnownBoolean answer = evaluateFieldTest(context, shape, test);
+        // `arguments[k]` in a loop: an index that is known only by its range finds an element where the list has one at every index.
+        // Only a written list is as long as its shape says: a list that a built-in makes may be shorter.
+        if (answer == KnownBoolean::Unknown && description.kind == VirtualObjectKind::Array && !partsOfLiteral(context.family, shape).hasHoles && evaluateBoundsTest(context, shape, test) == KnownBoolean::True)
+            return KnownBoolean::True;
+        return answer;
+    }
     case Opcode::HasArrayStorage:
         return evaluateArrayStorageTest(context, shape, test);
     case Opcode::IsInBounds:

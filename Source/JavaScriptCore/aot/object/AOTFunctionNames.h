@@ -37,7 +37,6 @@ JSString* initialNamePropertyString(VM&, State&, FunctionID);
 
 void setComputedFunctionName(VM&, JSObject* closure, const Identifier& key, MethodKind);
 
-void recordCallee(VM&, JSObject* closure);
 
 void didDefineNameProperty(VM&, JSObject* closure, const String& name);
 void didDeleteNameProperty(VM&, JSObject* closure);

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowRecords.h"
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
@@ -414,8 +415,58 @@ static void printWhyHeld(PrintStream& out, ValueFlowSolution& solution, ValueFlo
     }
 }
 
+using WaysOfEscape = HashMap<uint32_t, Vector<ValueFlowNodeID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+// A function, its prototype object and `constructor` escape together: each has a constant edge into the escaped set once one of them is there.
+// That edge is the shortest path and says nothing. Another edge that holds the object says how it got there.
+static const Vector<ValueFlowNodeID>& explainEscape(ValueFlowSolution& solution, ValueFlowObjectID object, WaysOfEscape& known)
+{
+    auto entry = known.add(object.index(), Vector<ValueFlowNodeID> { });
+    if (!entry.isNewEntry)
+        return entry.iterator->value;
+    const ValueFlowSolver& solver = solution.solver();
+    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+    ValueFlowNodeID carriedOut = solution.bodies().nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut);
+    auto isConstantOfEscape = [&](ValueFlowNodeID node, ValueFlowNodeID into) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
+        if (!key || key->kind != ValueFlowMadeNodeKind::Constant)
+            return false;
+        ValueFlowStatementID logger = solver.statementThatLogged({ node, into });
+        return logger && solver.statementAt(logger).kind == ValueFlowStatementKind::Escape;
+    };
+    Vector<ValueFlowNodeID> way = solver.explain(escaped, object);
+    if (way.size() == 2 && isConstantOfEscape(way[1], escaped)) {
+        Vector<ValueFlowNodeID> other;
+        for (ValueFlowNodeID into : { escaped, carriedOut }) {
+            solver.graph().forEachPredecessor(into, [&](ValueFlowNodeID predecessor) {
+                if (!other.isEmpty() || predecessor == carriedOut || isConstantOfEscape(predecessor, into) || !solver.sets().contains(solver.possibleValuesOf(predecessor), object))
+                    return;
+                Vector<ValueFlowNodeID> rest = solver.explain(predecessor, object);
+                if (rest.isEmpty())
+                    return;
+                other.append(escaped);
+                if (into == carriedOut)
+                    other.append(carriedOut);
+                other.appendVector(rest);
+            });
+        }
+        if (!other.isEmpty())
+            way = WTF::move(other);
+    }
+    entry.iterator->value = WTF::move(way);
+    return entry.iterator->value;
+}
+
+static bool holdsContentsOfListedObjects(const ValueFlowNodeKey* key)
+{
+    if (!key || !key->set || ValueSets::isComplement(key->set))
+        return false;
+    return key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind;
+}
+
 static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution, bool printsLineForEachClosure = false)
 {
+    WaysOfEscape waysOfEscape;
     constexpr size_t numberOfRootsPrinted = 30;
     using ByNumber = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
     const ValueFlowSolver& solver = solution.solver();
@@ -433,8 +484,7 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution, bo
         }
     }
     auto holdsWhatIsWritten = [&](ValueFlowNodeID node) {
-        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
-        return key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind) && key->set;
+        return holdsContentsOfListedObjects(solver.keyOfMadeNode(node));
     };
     auto isStatementOfEscape = [&](ValueFlowStatementID id) {
         ValueFlowStatementKind kind = solver.statementAt(id).kind;
@@ -445,7 +495,7 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution, bo
         if (auto found = holders.find(object.index()); found != holders.end())
             return found->value;
         ValueFlowObjectID holder;
-        Vector<ValueFlowNodeID> way = solver.explain(escapedNode, object);
+        const Vector<ValueFlowNodeID>& way = explainEscape(solution, object, waysOfEscape);
         if (way.size() > 1) {
             ValueFlowStatementID logger = solver.statementThatLogged({ way[1], way[0] });
             if (!logger && !holdsWhatIsWritten(way[1]))
@@ -483,7 +533,7 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution, bo
         if (printsLineForEachClosure) {
             out.print("closure f", universe.closureFunction(object).index(), " root ");
             printObject(out, solution, root);
-            Vector<ValueFlowNodeID> way = solver.explain(escapedNode, root);
+            const Vector<ValueFlowNodeID>& way = explainEscape(solution, root, waysOfEscape);
             for (size_t index = 0; index + 1 < way.size(); ++index) {
                 out.print(" < ");
                 printNode(out, solution, way[index + 1]);
@@ -791,12 +841,13 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
         return { shape.toString(), detail.toString() };
     };
 
+    WaysOfEscape waysOfEscape;
     // What an escaped object holds escapes with it. The holder that escaped for another reason is the cause.
     auto findHolderThatCarriedOut = [&](const Vector<ValueFlowNodeID>& way) -> ValueFlowObjectID {
         if (way.size() < 3 || way[1] != bodies.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut))
             return { };
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]);
-        if (!key || !key->set || ValueSets::isComplement(key->set) || (key->kind != ValueFlowMadeNodeKind::WrittenUnderKind && key->kind != ValueFlowMadeNodeKind::Written))
+        if (!holdsContentsOfListedObjects(key))
             return { };
         ValueFlowObjectID holder;
         solution.sets().forEachMember(key->set, [&](ValueFlowObjectID member) {
@@ -808,7 +859,7 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
     auto whyEscaped = [&](ValueFlowObjectID escapedObject) -> Escape {
         constexpr unsigned mostHoldersClimbed = 16;
         ValueFlowObjectID object = escapedObject;
-        Vector<ValueFlowNodeID> way = solver.explain(escaped, object);
+        Vector<ValueFlowNodeID> way = explainEscape(solution, object, waysOfEscape);
         unsigned holdersClimbed = 0;
         Vector<ValueFlowObjectID, mostHoldersClimbed> passed { object };
         while (holdersClimbed < mostHoldersClimbed) {
@@ -817,7 +868,7 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
                 break;
             passed.append(holder);
             object = holder;
-            way = solver.explain(escaped, object);
+            way = explainEscape(solution, object, waysOfEscape);
             ++holdersClimbed;
         }
         Escape escape = whyEscapedItself(object, way);
@@ -969,12 +1020,25 @@ static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const V
 {
     out.println("  ", statement.opcode, solution.solver().isReached(statement.function) ? "" : " in a function that is not reached");
     BorrowedValueSetMaker borrowedMaker(solution.makerPool());
+    // A prediction reads what is seen at a node, a proof what is possible there.
+    auto printWhatIsSeenAt = [&](ValueFlowNodeID node) {
+        ValueSetID seen = solution.solver().seenValuesOf(node);
+        if (seen == solution.solver().possibleValuesOf(node))
+            return;
+        out.print("    seen at n", node.index(), " ");
+        if (ValueSets::isComplement(seen))
+            out.println("all but a few members");
+        else
+            printValue(out, solution, seen);
+    };
     unsigned index = 0;
     for (const ValueFlowOperand& operand : solution.bodies().operandsOf(statement)) {
         out.print("  operand ", index++, " ");
         if (operand.node)
             out.print("n", operand.node.index(), " ");
         printValue(out, solution, solution.possibleValuesOf(operand));
+        if (operand.node)
+            printWhatIsSeenAt(operand.node);
     }
     index = 0;
     for (const ValueFlowOperand& guard : solution.bodies().guardsOf(statement)) {
@@ -984,6 +1048,42 @@ static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const V
     if (statement.result) {
         out.print("  result n", statement.result.index(), " ");
         printValue(out, solution, solution.solver().possibleValuesOf(statement.result));
+        printWhatIsSeenAt(statement.result);
+    }
+}
+
+// Where unseen code cannot run an escaped object suffers what the unknown object suffers, so the marks of that one object decide the facts about all of them.
+static void printWhoMarks(PrintStream& out, ValueFlowSolution& solution, ValueFlowObjectID object)
+{
+    constexpr unsigned numberOfStatementsPrinted = 12;
+    const ValueFlowSolver& solver = solution.solver();
+    const Program& program = solution.program();
+    for (ObjectMutation mutation : allObjectMutations) {
+        std::optional<ValueFlowNodeID> marked = solver.findMadeNode(ValueFlowNodeKey::marked(mutation));
+        if (!marked || !solver.sets().contains(solver.possibleValuesOf(*marked), object))
+            continue;
+        Vector<ValueFlowStatementID> statements;
+        unsigned inProgram = 0;
+        unsigned inLibrary = 0;
+        unsigned elsewhere = 0;
+        for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+            if (logged.edge.to != *marked || !logged.statement || !solver.sets().contains(solver.possibleValuesOf(logged.edge.from), object) || statements.contains(logged.statement))
+                continue;
+            statements.append(logged.statement);
+            FunctionID function = solver.statementAt(logged.statement).function;
+            if (!function || function.index() >= program.functions.size())
+                ++elsewhere;
+            else if (program.at(function).role == FunctionRole::Library || program.at(function).role == FunctionRole::Model)
+                ++inLibrary;
+            else
+                ++inProgram;
+        }
+        out.println("  ", nameOf(mutation), ": statements ", statements.size(), ", in the program ", inProgram, ", in the library ", inLibrary, ", of no function ", elsewhere);
+        for (ValueFlowStatementID statement : statements.span().first(std::min<size_t>(statements.size(), numberOfStatementsPrinted))) {
+            out.print("    ");
+            printStatement(out, solver, statement);
+            out.println();
+        }
     }
 }
 
@@ -1336,6 +1436,19 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 return printBadArgument(out, word);
             out.println(word);
             printFirstEdgesCarrying(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word == "marks=unknown"_s) {
+            out.println(word);
+            printWhoMarks(out, solution, ValueFlowUniverse::unknownObject());
+            continue;
+        }
+        if (word.startsWith("marks=o"_s)) {
+            std::optional<uint32_t> number = numberAfter(word, 7);
+            if (!number || *number >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printWhoMarks(out, solution, ValueFlowObjectID(*number));
             continue;
         }
         if (word.startsWith("object=o"_s)) {

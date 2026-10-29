@@ -89,6 +89,12 @@ struct FlowValueProof {
     bool holdsInEveryVersion { false };
 };
 
+// A prediction, not a proof: a test guards whatever is made of it.
+struct FlowValueExpectation {
+    ValueID value;
+    TypeID type;
+};
+
 struct FlowClaimUpdate {
     ValueID claim;
     bool isRedundant { false };
@@ -139,6 +145,7 @@ struct FlowMemberKey {
 
 struct FlowBodyUpdate {
     Vector<FlowValueProof> proofs;
+    Vector<FlowValueExpectation> expectations;
     Vector<ValueID> readsAfterInitialization;
     Vector<ValueID> opensOfUndecidedStorage;
     Vector<FlowClaimUpdate> claims;

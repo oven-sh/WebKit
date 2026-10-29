@@ -1121,8 +1121,13 @@ static void moduleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm, st
     // the normal microtask queue — would otherwise re-enter fetchComplete
     // and trip its "m_status == Fetching" assertion. Match the same
     // pending-modulePromise guard used in moduleRegistryFetchSettled.
-    if (modulePromise->status() != JSPromise::Status::Pending)
+    if (modulePromise->status() != JSPromise::Status::Pending) {
+#if ENABLE(AOT)
+        if (status == JSPromise::Status::Rejected && vm.hasCompiledCode())
+            AOT::ModuleRecord::didLoseErrorOfModule(globalObject, entry->key());
+#endif
         return;
+    }
 #endif
     if (status == JSPromise::Status::Fulfilled) {
         auto* moduleRecord = downcast<AbstractModuleRecord>(arguments[1]);

@@ -777,10 +777,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
     OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), FunctionID(getter), rule)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure, void* stackPointerOfCaller))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTRecordCallee);
-    recordCallee(vm, asObject(closure));
+    FunctionTables::of(vm).recordCallee(vm, stackPointerOfCaller, asObject(closure));
     instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
 }
 

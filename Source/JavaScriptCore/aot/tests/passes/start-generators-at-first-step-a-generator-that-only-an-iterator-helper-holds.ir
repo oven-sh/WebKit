@@ -1,0 +1,103 @@
+# The program never gets hold of a generator that goes nowhere but into an iterator helper, so nothing tells which object it inherits from. It is made without its function:
+# it inherits from %GeneratorPrototype% itself, and the function makes no prototype object and no Structure for it.
+# It keeps its function where it is returned, stored or handed to a call, where a step asks for the prototype object, and where the body does more with it than suspend.
+# FORM: Prepared
+# RUN: pass StartGeneratorsAtFirstStep
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="held" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    v4 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v4
+# CHECK: v2: Generator = NewGenerator function=f6
+# CHECK-NEXT: = CallDirect v1, v0, v2 function=f7
+}
+
+function f1 name="heldAndStepped" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    v4 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    PutModuleVariable v4 variable=g0
+    v6 = Undefined
+    v7 = StepGenerator v2, v6 check=IsGenerator @90
+    v8 = ResultAt v7 index=0
+    Return v8
+# CHECK: v2: Generator = NewGenerator function=f6
+}
+
+function f2 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    v4 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v2
+# CHECK: v2: Generator = NewGenerator v1 function=f6
+}
+
+function f3 name="stored" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    PutModuleVariable v2 variable=g0
+    v5 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v5
+# CHECK: v2: Generator = NewGenerator v1 function=f6
+}
+
+function f4 name="underlyingIterator" parameters=[{type=Generator}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    v4 = CallBuiltin -, v0, v2 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v4
+# CHECK: v2: Generator = NewGenerator v1 function=f6
+}
+
+function f5 name="steppedAsUnmodified" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f7 @100
+    v4 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    PutModuleVariable v4 variable=g0
+    v6 = Undefined
+    v7 = StepGenerator v2, v6 check=IsUnmodified @90
+    v8 = ResultAt v7 index=0
+    Return v8
+# CHECK: v2: Generator = NewGenerator v1 function=f6
+}
+
+function f6 name="items" position=40 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f6 body=f7 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f6 @40
+    v3 = CallDirect v0, v1, v2 function=f7 @40
+    Return v2 @40
+}
+function f7 name="items" position=40 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{ramp=f6 body=f7 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @40
+    v5 = YieldBySavingFrame v2, v1 @41
+    Return v3
+}
+
+function f8 name="bodyTakesPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f9
+    v2 = NewGenerator v1 function=f9 @100
+    v3 = CallDirect v1, v0, v2 function=f10 @100
+    v4 = CallBuiltin -, v2, v0 overload=LinkTimeConstantIteratorHelperCreate/0
+    Return v4
+# CHECK: v2: Generator = NewGenerator v1 function=f9
+}
+function f9 name="late" position=50 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f9 body=f10 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f9 @50
+    v3 = CallDirect v0, v1, v2 function=f10 @50
+    Return v2 @50
+}
+function f10 name="late" position=50 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f9} creator=Coroutine{ramp=f9 body=f10 promiseParameter=2} {
+    TakeGeneratorPrototype v2, v0 @50
+    v4 = Undefined
+    v5 = YieldBySavingFrame v2, v4 @50
+    Return v4
+}

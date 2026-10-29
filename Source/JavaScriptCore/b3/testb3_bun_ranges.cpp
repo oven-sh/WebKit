@@ -788,6 +788,68 @@ static void testReduceStrengthKnowsNarrowLoadRange()
     }
 }
 
+static void testComparisonOfSelectFoldsByRange()
+{
+    struct Case {
+        int64_t bound;
+        bool folds;
+    };
+    for (bool reducesWithRanges : { true, false }) {
+        for (Case variant : { Case { 0, true }, Case { 11, false }, Case { 21, true } }) {
+            Procedure proc(rangeReductionPolicy(reducesWithRanges));
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+            Value* predicate = graph.make(root, Trunc, arguments[0]);
+            Value* small = graph.make(root, BitAnd, arguments[1], graph.int64(root, 15));
+            Value* selected = root->appendNew<Value>(proc, Select, Origin(), predicate, graph.int64(root, 20), small);
+            CHECK(rangeFor(proc, selected) == IntRange(0, 20));
+            graph.ret(root, graph.make(root, ZExt32, graph.make(root, GreaterEqual, selected, graph.int64(root, variant.bound))));
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, [](Value* value) {
+                return isIntegerComparison(value->opcode());
+            }), variant.folds && reducesWithRanges ? 0u : 1u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 3), 20 >= variant.bound);
+            CHECK_EQ(invoke<int64_t>(*code, 0, 3), 3 >= variant.bound);
+            CHECK_EQ(invoke<int64_t>(*code, 0, 31), 15 >= variant.bound);
+        }
+    }
+}
+
+static void testComparisonOfSelectOfConstantsTestsPredicate()
+{
+    for (bool usesPolicy : { true, false }) {
+        for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterEqual, Above }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            Value* predicate = graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]);
+            Value* selected = root->appendNew<Value>(proc, Select, Origin(), predicate, graph.int64(root, 20), graph.int64(root, 10));
+            graph.ret(root, graph.make(root, ZExt32, graph.make(root, opcode, selected, graph.int64(root, 20))));
+            reduceStrengthOnce(proc);
+            CHECK_EQ(numberOfValues(proc, Select), usesPolicy ? 0u : 1u);
+            auto code = compileProc(proc);
+            auto expected = [&](int64_t value) -> int64_t {
+                switch (opcode) {
+                case Equal:
+                    return value == 20;
+                case NotEqual:
+                    return value != 20;
+                case LessThan:
+                    return value < 20;
+                case GreaterEqual:
+                    return value >= 20;
+                default:
+                    return value > 20;
+                }
+            };
+            CHECK_EQ(invoke<int64_t>(*code, 7), expected(20));
+            CHECK_EQ(invoke<int64_t>(*code, 0), expected(10));
+        }
+    }
+}
+
 void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testRangeForReadsKnownRange());
@@ -810,6 +872,8 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testReduceStrengthKnowsNarrowLoadRange());
     RUN(testReduceStrengthFoldsSelfComparisonOfFiniteDouble());
+    RUN(testComparisonOfSelectFoldsByRange());
+    RUN(testComparisonOfSelectOfConstantsTestsPredicate());
 }
 
 #endif // ENABLE(B3_JIT)

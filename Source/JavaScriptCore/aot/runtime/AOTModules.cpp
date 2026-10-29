@@ -367,7 +367,7 @@ void Modules::throwExportNotFound(const RequiredNameData& requiredName)
         return;
     }
     Identifier name = identifier(requiredName.name);
-    String path = m_table.pathText(requiredName.exporterModule());
+    String path = m_table.pathText(m_table.fileBehindFace(requiredName.exporterModule()).value_or(requiredName.exporterModule()));
     bool isDefault = name == m_instance.vm->propertyNames->defaultKeyword;
     throwException(realm, scope, isDefault ? createMissingDefaultExportError(realm, path) : createExportNotFoundError(realm, name.string(), path));
 }
@@ -439,6 +439,79 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value)
+{
+    // A chain of re-exports ends at the module that declares the variable. A ring of them names nothing.
+    for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
+        std::optional<unsigned> index = m_table.findExport(module, name);
+        if (!index)
+            return tryReplaceCapturedExport(module, name, value);
+        const ModuleExportData& moduleExport = m_table.exports(module)[*index];
+        switch (moduleExport.kind()) {
+        case ModuleExportKind::Variable:
+            if (!moduleExport.isReplaceable)
+                return false;
+            ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
+            return true;
+        case ModuleExportKind::Namespace:
+            return false;
+        case ModuleExportKind::Indirect: {
+            const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
+            module = indirectExport.targetModule();
+            name = identifier(indirectExport.importName).impl();
+            break;
+        }
+        }
+    }
+    return false;
+}
+
+// ES modules import a CommonJS file through its face.
+ModuleID Modules::moduleWithExportsOf(ModuleID module) const
+{
+    std::optional<ModuleID> face = data(module).kind == ModuleKind::CommonJs ? m_table.faceOfFile(module) : std::nullopt;
+    return face.value_or(module);
+}
+
+bool Modules::mayBeMocked(ModuleID file) const
+{
+    ModuleID module = moduleWithExportsOf(file);
+    std::span<const ModuleExportData> exports = m_table.exports(module);
+    std::span<const SyntheticExportData> syntheticExports = m_table.syntheticExports(module);
+    if (exports.empty() && syntheticExports.empty())
+        return false;
+    return std::ranges::all_of(exports, [](const ModuleExportData& entry) { return entry.kind() != ModuleExportKind::Variable || entry.isReplaceable; })
+        && std::ranges::all_of(syntheticExports, [](const SyntheticExportData& entry) { return entry.isReplaceable; });
+}
+
+// A name that the loader fills stands in three places: the variable that importers read, the table that a later link takes it from, and the namespace object.
+bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto isNamed = [&](const SyntheticExportData& syntheticExport) {
+        return identifier(syntheticExport.name).impl() == name;
+    };
+    std::span<const SyntheticExportData> syntheticExports = m_table.syntheticExports(module);
+    auto found = std::ranges::find_if(syntheticExports, isNamed);
+    if (found == syntheticExports.end() || !found->isReplaceable)
+        return false;
+
+    Identifier key = Identifier::fromUid(vm, name);
+    JSObject* captured = capturedExports(module);
+    RETURN_IF_EXCEPTION(scope, false);
+    captured->putDirectMayBeIndex(realm, key, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation)) {
+        uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    if (found->hasVariable)
+        ProgramStatics::writeVariable(m_instance, found->variable, value);
+    return true;
 }
 
 // Whoever asks before the evaluation has come to the file gets what a link would have captured: the file runs now, and one that is running has exported what it has exported by now.
@@ -540,9 +613,9 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
         setNamespace(module, phase, loaderNamespace);
         return loaderNamespace;
     }
-    // The names of a file are taken once, for whoever imports it and for the host.
+    // The names of a file are taken once, for whoever imports it and for the host. A face that captures nothing lists only what the importers of the image bind.
     if (moduleData.kind == ModuleKind::CommonJs) {
-        if (std::optional<ModuleID> face = m_table.faceOfFile(module))
+        if (std::optional<ModuleID> face = m_table.faceOfFile(module); face && data(*face).capturesExports())
             RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase, shouldPreventExtensions));
     }
 
@@ -933,6 +1006,10 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     if (m_innermostFilesBeingRun) [[unlikely]] {
         handGraphsToLoader();
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        if (m_innermostFilesBeingRun->isAheadOfStepsOfLoader) {
+            handSynchronousLoadToLoader(*m_innermostFilesBeingRun);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        }
     }
     bool isFile = isImportedByLoader(module);
     bool isBuiltinModule = !isFile && isBuiltinModuleOfLoader(module);
@@ -2358,6 +2435,36 @@ bool isModuleNamespace(JSCell* cell)
     return cell->inherits<ModuleNamespace>();
 }
 
+bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue value)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    return modulesOf(object->realm())->tryReplaceExport(object->module(), name, value);
+}
+
+bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->mayBeMocked(module);
+}
+
+void mockExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name, JSValue value)
+{
+    Modules& modules = *modulesOf(realm);
+    modules.tryReplaceExport(modules.moduleWithExportsOf(module), name, value);
+}
+
+void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports)
+{
+    Modules& modules = *modulesOf(realm);
+    modules.willMock(module);
+    if (modules.data(module).kind != ModuleKind::CommonJs)
+        return;
+    // Compiled code calls the body of a CommonJS file itself, and asks for the status first.
+    if (ModuleStatus status = modules.status(module); status == ModuleStatus::Unlinked || status == ModuleStatus::Linked)
+        modules.markEvaluated(module);
+    modules.setCommonJSExports(module, exports);
+}
+
 bool hasESModuleMarker(JSCell* moduleNamespace)
 {
     return uncheckedDowncast<ModuleNamespace>(moduleNamespace)->hasESModuleMarker();
@@ -2480,6 +2587,12 @@ void ModuleRecord::didFailToMakeModule(JSGlobalObject* globalObject, const Ident
     Modules* modules = modulesOf(globalObject);
     if (modules && modules->hasDeferredLoads()) [[unlikely]]
         modules->didFailToMakeModule(key);
+}
+
+void ModuleRecord::didLoseErrorOfModule(JSGlobalObject* globalObject, const Identifier& key)
+{
+    if (Modules* modules = modulesOf(globalObject))
+        modules->didLoseErrorOfModule(key);
 }
 
 void ModuleRecord::didReplaceRecordInRegistry()
@@ -2620,6 +2733,12 @@ void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
     }
 }
 
+// An importer outside the image binds the names of a CommonJS file at run time, whatever the importers of the image do.
+static bool takesNamesFromValue(const ModuleData& data)
+{
+    return data.capturesExports() || data.kind == ModuleKind::CommonJs;
+}
+
 auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifier& exportName, StarExportTargets& starTargets) -> Resolution
 {
     VM& vm = globalObject->vm();
@@ -2630,7 +2749,7 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
     Resolution absent = isDefault ? Resolution::error() : Resolution::notFound();
 
     retain();
-    if (data.capturesExports()) {
+    if (takesNamesFromValue(data)) {
         bool hasExport = modules.hasCapturedExport(m_module, exportName);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         return hasExport ? Resolution { Resolution::Type::Resolved, this, exportName } : absent;
@@ -2677,7 +2796,7 @@ void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vecto
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Modules& modules = this->modules();
 
-    if (modules.data(m_module).capturesExports()) {
+    if (takesNamesFromValue(modules.data(m_module))) {
         RELEASE_AND_RETURN(scope, modules.forEachCapturedExport(m_module, [&](const Identifier& name, JSValue) {
             names.append(name);
         }));
@@ -2693,7 +2812,7 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
     if (exportIndex)
         RELEASE_AND_RETURN(scope, modules().readExport(m_module, *exportIndex));
     // The namespace object holds the same value, and to make it reads every deferred export.
-    if (modules().data(m_module).capturesExports()) {
+    if (takesNamesFromValue(modules().data(m_module))) {
         JSValue value = modules().capturedValue(m_module, exportName);
         RETURN_IF_EXCEPTION(scope, { });
         if (value)
@@ -2868,6 +2987,12 @@ bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, false);
     m_mayNeedEvaluation = false;
     return true;
+}
+
+void ModuleNamespace::replaceCapturedValue(JSGlobalObject* globalObject, const Identifier& name, JSValue value)
+{
+    if (JSObject* capturedValues = m_capturedValues.get())
+        capturedValues->putDirectMayBeIndex(globalObject, name, value);
 }
 
 bool ModuleNamespace::isDynamicExport(UniquedStringImpl* name) const

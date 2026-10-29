@@ -60,6 +60,14 @@ ALWAYS_INLINE bool canPerformFastPropertyNameEnumerationForJSONStringifyWithSide
     return true;
 }
 
+#if ENABLE(AOT)
+// Only an element in the sparse map can have attributes, and putDirectIndex() would replace them.
+ALWAYS_INLINE bool mayHaveElementsWithAttributes(VM& vm, JSObject* target)
+{
+    return vm.hasCompiledCode() && hasAnyArrayStorage(target->indexingType()) && target->butterfly()->arrayStorage()->m_sparseMap;
+}
+#endif
+
 ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObject, JSObject* target, JSObject* source)
 {
     VM& vm = globalObject->vm();
@@ -320,7 +328,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
             EnsureStillAliveScope sourceScope(source);
             JSObject* holder = AOT::PropertyWalk::objectHoldingIndexedProperties(source);
             bool hasElements = holder && holder->canHaveExistingOwnIndexedProperties();
-            if (hasElements && target->structure()->holesMustForwardToPrototype(target)) [[unlikely]]
+            if (hasElements && (target->structure()->holesMustForwardToPrototype(target) || mayHaveElementsWithAttributes(vm, target))) [[unlikely]]
                 return false;
             auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
                 if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
@@ -353,6 +361,10 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     if (source->canHaveExistingOwnIndexedProperties() && target->structure()->holesMustForwardToPrototype(target)) [[unlikely]]
         return false;
+#if ENABLE(AOT)
+    if (source->canHaveExistingOwnIndexedProperties() && mayHaveElementsWithAttributes(vm, target)) [[unlikely]]
+        return false;
+#endif
 
     EnsureStillAliveScope sourceStructureScope(sourceStructure);
     sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

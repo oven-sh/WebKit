@@ -807,6 +807,9 @@ void ClassTable::didFindMemberByName(VM& vm, const LayoutData& instanceLayout, U
     if (!instanceLayout.isClass())
         return;
     const LayoutData& layout = classOfInstances(instanceLayout);
+    // The guards of a constructor function begin with its first object, behind what the program assigns.
+    if (!isDefinedByClass(layout))
+        return;
     if (holdsFromStart(layout) || !layout.numberOfMemberGuards() || layout.evaluation() == EvaluationState::SeenTwice || !classPrototypeIfExists(layout))
         return;
     std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);

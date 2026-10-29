@@ -126,7 +126,7 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 
 # indexOf looks at the kind of storage once, integers first. A list of at most sixteen elements is searched in place; a longer one goes, by a rare edge, to a search in the run time.
 # CHECK-LABEL: name="find" role=Source
-# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
+# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
 # CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
 # CHECK: Branch(b@[[isIntegers]], Terminal)

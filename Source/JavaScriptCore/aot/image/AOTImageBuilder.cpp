@@ -255,11 +255,21 @@ static void encodeFrameRanges(Vector<uint8_t>& bytes, const CompiledCode& code)
 {
     if (!code.frame.hasFrame())
         return;
+    // A function may set its frame up in thousands of places. The offsets ascend, so one walk through the sorted ranges answers for all of them.
+    Vector<CodeRange, 1> ranges = code.frame.frameRanges;
+    AOT::sort(ranges, { }, &CodeRange::begin);
+    size_t nextRange = 0;
+    uint32_t endOfRangesPassed = 0;
+    auto hasFrameAt = [&](uint32_t offset) {
+        for (; nextRange < ranges.size() && ranges[nextRange].begin <= offset; ++nextRange)
+            endOfRangesPassed = std::max(endOfRangesPassed, ranges[nextRange].end);
+        return offset < endOfRangesPassed;
+    };
     bool hasFrame = false;
     uint32_t previousChange = 0;
     uint32_t endOfLastUnitAsked = 0;
     for (uint32_t offset : collectOffsetsAskedForFrame(code)) {
-        if (code.frame.hasFrameAt(offset) != hasFrame) {
+        if (hasFrameAt(offset) != hasFrame) {
             SideTableParts::appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
             previousChange = endOfLastUnitAsked;
             hasFrame = !hasFrame;
@@ -325,11 +335,24 @@ static Vector<uint8_t> joinPositions(std::span<const Vector<uint8_t>> positions,
 SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Vector<uint8_t>> callSites, BuildContext& context)
 {
     RELEASE_ASSERT(callSites.size() == functions.size());
+    // Most functions that wait have the frame maps of many others. Equal ones are held once.
     Vector<uint64_t> firstWordOf(functions.size());
+    BitVector hasFrameMapsOfEarlierFunction(functions.size());
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWithHashAndSize;
     uint64_t numberOfWords = 0;
     for (size_t position = 0; position < functions.size(); ++position) {
+        std::span words = functions[position].sites.frameMapWords.span();
         firstWordOf[position] = numberOfWords;
-        numberOfWords += functions[position].sites.frameMapWords.size();
+        if (words.empty())
+            continue;
+        uint64_t hashAndSize = static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(asBytes(words)))) << 32 | words.size();
+        uint32_t first = firstWithHashAndSize.add(hashAndSize, static_cast<uint32_t>(position)).iterator->value;
+        if (first != position && equalSpans(functions[first].sites.frameMapWords.span(), words)) {
+            firstWordOf[position] = firstWordOf[first];
+            hasFrameMapsOfEarlierFunction.quickSet(position);
+            continue;
+        }
+        numberOfWords += words.size();
     }
     static_assert(WTF::isValidCapacityForVector<uint32_t>(defaultLimitValue(LimitID::VectorBytes, hostArchitecture()) / sizeof(uint32_t)));
     if (!checkSectionSize(numberOfWords * sizeof(uint32_t), context))
@@ -355,7 +378,8 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
         if (!sites.frameMapWords.isEmpty()) {
             frameMapRange.emplace(static_cast<uint32_t>(firstWordOf[position]), static_cast<uint32_t>(sites.frameMapWords.size()));
-            memcpySpan(result.frameMapWords.mutableSpan().subspan(frameMapRange->first), sites.frameMapWords.span());
+            if (!hasFrameMapsOfEarlierFunction.quickGet(position))
+                memcpySpan(result.frameMapWords.mutableSpan().subspan(frameMapRange->first), sites.frameMapWords.span());
         }
         Vector<uint8_t> handlers;
         encodeHandlers(handlers, sites.handlers.span());

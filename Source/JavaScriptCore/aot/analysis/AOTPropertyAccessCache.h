@@ -119,6 +119,7 @@ public:
     using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
     using BuiltinBase = Answer<LayoutID, BuiltinClassID>;
     using FilledAtBirth = Answer<LayoutID, bool>;
+    using TakesAllocatedThis = Answer<FunctionID, bool>;
 
     struct FieldAboveKey {
         LayoutID layout;
@@ -142,6 +143,50 @@ public:
         Vector<MemberOfClasses, 4> methods;
     };
 
+    struct ParameterTypesOfSelector {
+        PropertyKeyID key;
+        uint32_t numberOfArguments { 0 };
+        Vector<TypeID, 4> types;
+    };
+
+    struct LookupOfTableCall {
+        LayoutSetID receivers;
+        PropertyKeyID key;
+        bool mayBeEntered { false };
+    };
+
+    // What a call through the method table enters. It follows from the receivers, the selector and the types of the values between the read of the method and the call.
+    struct TableCallKey {
+        ListID receivers { noList };
+        PropertyKeyID key;
+        uint32_t numberOfArguments { 0 };
+        bool passesTypedArguments { false };
+        Vector<TypeID, 2> typesOfMemberRead;
+        const FlowResults* flow { nullptr };
+
+        friend bool operator==(const TableCallKey&, const TableCallKey&) = default;
+    };
+
+    struct TableCallTargets {
+        Vector<FunctionID, 4> methods;
+        LayoutList layoutsOfTable;
+        LayoutList otherLayouts;
+        bool hasConditions { false };
+        size_t numberOfArms { 0 };
+
+        friend bool operator==(const TableCallTargets&, const TableCallTargets&) = default;
+    };
+
+    using TableCall = Answer<TableCallKey, TableCallTargets>;
+
+    // What a call in tail position asks of each function that it may enter. The list is one of the program: it neither moves nor changes.
+    struct NamesOfCallees {
+        std::span<const FunctionID> callees;
+        bool someRecordsCalleeOnlyOnceRenamed { false };
+        bool someIsCalledDirectlyWhileNamesAreUnchanged { false };
+        bool someIsCalledDirectlyOnlyWhileNamesAreUnchanged { false };
+    };
+
     PropertyAccessCache() = default;
 
     SharedLayoutLists lists;
@@ -157,7 +202,12 @@ public:
     SharedMemo<InheritedMember> inheritedMembers;
     SharedMemo<BuiltinBase> builtinBases;
     SharedMemo<FilledAtBirth> layoutsFilledAtBirth;
+    SharedMemo<TakesAllocatedThis> constructorsTakingAllocatedThis;
     SharedMemo<FieldAbove> fieldsAbove;
+    SharedMemo<ParameterTypesOfSelector> parameterTypesOfSelectors;
+    SharedMemo<LookupOfTableCall> lookupsOfTableCalls;
+    SharedMemo<TableCall> tableCalls;
+    SharedMemo<NamesOfCallees> namesOfCallees;
     RefusedContents refusedContents;
     bool checksAnswers { false };
 };

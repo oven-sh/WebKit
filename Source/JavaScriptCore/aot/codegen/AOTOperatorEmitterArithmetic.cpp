@@ -607,7 +607,7 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
     WholeRemainder remainder = is32Bit ? integers.remainderOfIntegers<Word32>(value) : integers.remainderOfIntegers<Integer>(value);
     m_wholeRemainders.set(value.id().index(), remainder);
     Word32 word = is32Bit ? remainder.whole.as<Word32>() : low32(remainder.whole.as<Integer>());
-    m_int32OfNumbers.add(value.id().index(), Vector<Int32OfNumber, 1>()).iterator->value.append({ value.block(), word });
+    m_int32OfNumbers.add(value.id().index(), Int32sOfNumber()).iterator->value.conversions.append({ value.block(), word });
     return remainder.number;
 }
 

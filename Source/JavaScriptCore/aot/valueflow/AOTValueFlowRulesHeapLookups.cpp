@@ -296,6 +296,18 @@ ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, Va
             ClimbingSet takingTheName = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(takingNoNewNames)));
             if (holdsAnything(takingTheName) && hasEscaped(takingTheName))
                 return stored;
+            // No lock refuses a store that names a member which the program may replace.
+            bool mayBeReplaced = false;
+            ClimbingSet withoutLock = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(holdersWithLockedLocationUnder(key))));
+            forEachMemberUnder(withoutLock, key, [&](BuiltinID member, ModuleID) {
+                mayBeReplaced |= m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(member))), m_context.nodes().ofHost(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders));
+            });
+            if (mayBeReplaced)
+                return stored;
+            // Start-up locks no member that a statement writes, so a store through a receiver that lists no holder reaches that member too.
+            ClimbingSet holders = m_context.restrict(withoutLock, holdersWithMemberUnder(key));
+            if (holdsAnything(holders) && isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) && hasEscaped(holders) && holdsAnything(m_context.readWhatWasWritten(holders, name)))
+                return stored;
         }
         bool findsEveryName = name.kind == ValueFlowNameKind::EveryProperty || name.kind == ValueFlowNameKind::EveryGetter || name.kind == ValueFlowNameKind::EverySetter;
         if (findsEveryName) {

@@ -735,20 +735,26 @@ static std::optional<FunctionID> findFunctionOfAccessorIn(const ValueFlowResultI
     return isKnown ? std::optional(function) : std::nullopt;
 }
 
+// A helper that defines members under its parameter has a copy for each call that writes the name out, and the caller calls the helper as written only where a test has failed.
+// So beside the closure that the copy makes stands the one of the text as written, under every name. The copy's is what is expected.
 static std::optional<FunctionID> findFunctionOfProgramIn(const ValueFlowResultInputs& inputs, ValueSetID value)
 {
     if (ValueSets::isComplement(value))
         return std::nullopt;
-    bool isOnly = true;
-    FunctionID function;
+    Vector<FunctionID, 2> functions;
     inputs.sets().forEachMember(value, [&](ValueFlowObjectID member) {
-        FunctionID defined = inputs.universe().closureFunction(member);
-        if (!defined)
-            return;
-        isOnly &= !function;
-        function = defined;
+        if (FunctionID defined = inputs.universe().closureFunction(member); defined && !functions.contains(defined))
+            functions.append(defined);
     });
-    return isOnly ? std::optional(function) : std::nullopt;
+    if (functions.size() == 2) {
+        for (unsigned index = 0; index < 2; ++index) {
+            if (inputs.program.at(functions[index]).derivation.source == functions[1 - index])
+                return functions[index];
+        }
+    }
+    if (functions.size() > 1)
+        return std::nullopt;
+    return functions.isEmpty() ? FunctionID() : functions[0];
 }
 
 enum class StoresUnderAccessors : uint8_t { MayDefineValues, RunSetters };
@@ -959,11 +965,22 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
     auto classOfPrototypeObject = [&](ValueFlowObjectID object) {
         return universe.kindOf(object) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(object) : LayoutID();
     };
+    // A write through an object that flow has lost is filed on every holder that has escaped, function objects and prototype objects alike.
+    // A helper that links the prototype objects of classes writes through no function object.
+    UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answersBySet;
+    auto goesThroughKnownHolders = [&](ValueSetID through) {
+        if (ValueSets::isComplement(through))
+            return false;
+        return answersBySet.ensure(through.index(), [&] {
+            return !inputs.sets().meet(through, universe.closures()) && !inputs.sets().meet(through, universe.placeholdersAlone());
+        }).iterator->value;
+    };
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID derived(index);
         if (!program.at(derived).has(LayoutFlags::IsConstructorFunction))
             continue;
         bool hasSeveral = false;
+        bool isNamedThroughKnownHolders = false;
         for (const Write& write : ledger.writersOfPrototypeLink(universe.prototypeOf(derived)).seen().predicted()) {
             if (ValueSets::isComplement(write.seenToArrive))
                 continue;
@@ -974,9 +991,10 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
                     return;
                 hasSeveral |= bases[index] && bases[index] != base;
                 bases[index] = base;
+                isNamedThroughKnownHolders |= goesThroughKnownHolders(write.through);
             });
         }
-        if (hasSeveral)
+        if (hasSeveral || !isNamedThroughKnownHolders)
             bases[index] = LayoutID();
     }
     return bases;

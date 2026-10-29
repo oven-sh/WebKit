@@ -614,6 +614,16 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
             }
         };
 
+        // Many bodies may name one callee set. Its functions are queued by the first body that names it and is known to be reached: what a body finds that was only started early may never be queued.
+        // A set that a pass makes has a number of its task.
+        Vector<uint8_t> isCalleeSetRead(FillWith { }, program.types.numberOfCalleeSets(), static_cast<uint8_t>(0));
+        auto shouldReadFor = [&](bool isReached, CalleeSetID set) {
+            if (!isReached || set.index() >= isCalleeSetRead.size())
+                return true;
+            AtomicRef flag(isCalleeSetRead[set.index()]);
+            return !flag.load(std::memory_order_relaxed) && !flag.exchange(1, std::memory_order_relaxed);
+        };
+
         {
             ProgramCaches caches(program, build);
             Vector<QueuedFunction> scheduled;
@@ -651,8 +661,11 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                 shrinkToFit(*copy);
                 // An All schedule has already queued every function with a body.
                 if (schedule.functions == ScheduledFunctions::Reached) {
+                    bool isReached = queue.wasConfirmed(id);
                     forEachFunctionReference(program, *copy, [&](FunctionID target, FunctionReferenceKind kind) {
                         reach(target, kind, found);
+                    }, [&](CalleeSetID set) {
+                        return shouldReadFor(isReached, set);
                     });
                 }
                 if (isProvisional)

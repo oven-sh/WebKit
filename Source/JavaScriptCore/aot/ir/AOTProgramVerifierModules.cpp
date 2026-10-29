@@ -104,6 +104,8 @@ static bool isCommonJsRule(SyntheticExportRule rule)
 
 static bool hasValidInterop(const Program& program, const Module& module)
 {
+    if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
+        return false;
     switch (module.kind) {
     case ModuleKind::SourceText:
         if (module.requireResult == RequireResult::ModuleExports)

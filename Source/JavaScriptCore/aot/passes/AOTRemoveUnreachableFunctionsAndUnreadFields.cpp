@@ -85,6 +85,14 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
             reachedBodies.append(function);
     };
 
+    // The functions of a set are reached by the first body that names it.
+    auto readOnce = [](Vector<uint8_t>& isRead, size_t index) {
+        AtomicRef flag(isRead[index]);
+        return !flag.load(std::memory_order_relaxed) && !flag.exchange(1, std::memory_order_relaxed);
+    };
+    Vector<uint8_t> isLongSetRead(FillWith { }, callGraph.numberOfLongSets(), static_cast<uint8_t>(0));
+    Vector<uint8_t> isCalleeSetRead(FillWith { }, program.types.numberOfCalleeSets(), static_cast<uint8_t>(0));
+
     Vector<FunctionID> frontier;
     // The tables take the body of a module or of a function that is registered for the host as the sign that it can run.
     BitVector isCalledByHost = functionsCalledByHost(program, loops);
@@ -100,8 +108,14 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
     while (!frontier.isEmpty()) {
         frontier = collectInParallel<FunctionID>(loops, frontier.size(), [&](unsigned position, Vector<FunctionID>& reachedBodies) {
             // An operation that may enter a function has the effects of that body, also where it enters through an entrypoint: a function without a body counts as unknown code.
-            for (FunctionID callee : callGraph.calleesOf(frontier[position]))
+            for (FunctionID callee : callGraph.ownCalleesOf(frontier[position]))
                 reach(callee, reachedBodies);
+            for (uint32_t set : callGraph.longSetsOf(frontier[position])) {
+                if (!readOnce(isLongSetRead, set))
+                    continue;
+                for (FunctionID callee : callGraph.membersOfLongSet(set))
+                    reach(callee, reachedBodies);
+            }
             forEachFunctionReference(program, frontier[position], [&](FunctionID target, FunctionReferenceKind kind) {
                 switch (kind) {
                 case FunctionReferenceKind::Call:
@@ -123,6 +137,8 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
                     return;
                 for (FunctionID entrypoint : entrypointsOf(bound->target))
                     reach(entrypoint, reachedBodies);
+            }, [&](CalleeSetID set) {
+                return readOnce(isCalleeSetRead, set.index());
             });
         });
     }
@@ -818,6 +834,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     const Type& type = program.typeOf(function, value.operand(*receiver));
                     members = membersOf(program, type);
                     mayReachAnyLayout = type.anyObject;
+                    // A read loses its stamp where a check above it becomes an expectation. Flow still says which objects it saw arrive.
+                    bool asksFlow = mayReachAnyLayout && !createsPropertyByName(opcode) && !build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
+                    if (std::optional<LayoutSetID> seen = asksFlow ? inputs.flow.receiversSeenAt(value.accessSite()) : std::nullopt) {
+                        members = *seen ? program.at(*seen).seen().predicted() : std::span<const LayoutID>();
+                        mayReachAnyLayout = false;
+                    }
                 }
 
                 PropertyKeyID key = Value::opcodesWithKey.contains(opcode) ? value.key() : PropertyKeyID();

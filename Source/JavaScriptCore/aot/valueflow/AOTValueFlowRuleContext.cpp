@@ -639,6 +639,36 @@ ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, Va
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
+std::optional<ClimbingSet> ValueFlowRuleContext::peekAtWhatWasWritten(ClimbingSet objects, ValueFlowName name)
+{
+    ASSERT(name.kind != ValueFlowNameKind::Property);
+    if (objects.m_set == ValueSets::nothing)
+        return ClimbingSet();
+    std::optional<ValueFlowNodeID> node = m_solver.findNodeMadeBeforeThisTurn(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
+    if (!node)
+        return std::nullopt;
+    return ClimbingSet(m_solver.valueForReadersOf(*node, m_maker));
+}
+
+std::optional<ClimbingSet> ValueFlowRuleContext::sourcesOfCopiesSeenFrom(ClimbingSet objects)
+{
+    if (m_turnOfSourcesOfCopiesSeen != m_solver.m_numberOfTurn)
+        return std::nullopt;
+    auto seen = m_sourcesOfCopiesSeenFrom.find(objects.m_set.index());
+    if (seen == m_sourcesOfCopiesSeenFrom.end())
+        return std::nullopt;
+    return ClimbingSet(seen->value);
+}
+
+void ValueFlowRuleContext::noteSourcesOfCopiesSeenFrom(ClimbingSet objects, ClimbingSet seen)
+{
+    if (m_turnOfSourcesOfCopiesSeen != m_solver.m_numberOfTurn) {
+        m_turnOfSourcesOfCopiesSeen = m_solver.m_numberOfTurn;
+        m_sourcesOfCopiesSeenFrom.clear();
+    }
+    m_sourcesOfCopiesSeenFrom.set(objects.m_set.index(), seen.m_set);
+}
+
 void ValueFlowRuleContext::addObjectsOfProgram(ValueFlowNodeID node, ClimbingSet objects) { add(node, restrict(objects, ValueSets::complement(universe().placeholdersAlone()))); }
 
 ValueFlowNodeID ValueFlowRuleContext::notPlain()

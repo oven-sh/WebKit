@@ -682,6 +682,12 @@ static ALWAYS_INLINE void growByDoubling(BitVector& bits, size_t size)
         bits.ensureSize(std::max(size, bits.size() * 2));
 }
 
+static Seconds cpuTimeOfAllThreads()
+{
+    std::optional<CPUTime> time = CPUTime::get();
+    return time ? time->userTime + time->systemTime : Seconds();
+}
+
 void ValueFlowSolver::StepTimes::begin()
 {
     if (!isOn)
@@ -689,6 +695,7 @@ void ValueFlowSolver::StepTimes::begin()
     startOfStep = MonotonicTime::now();
     cpuAtStartOfStep = CPUTime::forCurrentThread();
     cpuInParallelLoopsAtStartOfStep = ParallelRegionScope::cpuTimeOfCurrentThread();
+    cpuOfAllThreadsAtStartOfStep = cpuTimeOfAllThreads();
 }
 
 void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
@@ -701,15 +708,18 @@ void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
     Seconds cpu = cpuNow - std::exchange(cpuAtStartOfStep, cpuNow);
     Seconds cpuInParallelLoopsNow = ParallelRegionScope::cpuTimeOfCurrentThread();
     Seconds cpuOutsideParallelLoops = cpu - (cpuInParallelLoopsNow - std::exchange(cpuInParallelLoopsAtStartOfStep, cpuInParallelLoopsNow));
+    Seconds cpuOfAllThreadsNow = cpuTimeOfAllThreads();
+    Seconds cpuOfAllThreads = cpuOfAllThreadsNow - std::exchange(cpuOfAllThreadsAtStartOfStep, cpuOfAllThreadsNow);
     for (Step& step : steps) {
         if (step.name.characters() == name.characters()) {
             step.wall += wall;
             step.cpuOfThisThread += cpu;
             step.cpuOutsideParallelLoops += cpuOutsideParallelLoops;
+            step.cpuOfAllThreads += cpuOfAllThreads;
             return;
         }
     }
-    steps.append(Step { name, wall, cpu, cpuOutsideParallelLoops });
+    steps.append(Step { name, wall, cpu, cpuOutsideParallelLoops, cpuOfAllThreads });
 }
 
 void ValueFlowSolver::StepTimes::dump() const
@@ -717,7 +727,7 @@ void ValueFlowSolver::StepTimes::dump() const
     if (!isOn)
         return;
     for (const Step& step : steps)
-        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms | outside parallel loops ", step.cpuOutsideParallelLoops.milliseconds(), " ms");
+        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms | outside parallel loops ", step.cpuOutsideParallelLoops.milliseconds(), " ms | all threads' CPU ", step.cpuOfAllThreads.milliseconds(), " ms");
     dataLogLn("AOT flow loop over due statements | busy on all threads ", busyOnAllThreads.milliseconds(), " ms | the busiest thread of each turn ", busiestThreadOfTurn.milliseconds(), " ms | the longest share of each turn ", longestShareOfTurn.milliseconds(), " ms");
 }
 
@@ -2458,6 +2468,7 @@ void ValueFlowSolver::numberMadeNodes()
     struct Candidate {
         ValueFlowNodeKey key;
         uint64_t hashOfMembers;
+        uint32_t numberOfMembers;
         uint32_t thread;
         uint32_t position;
     };
@@ -2490,7 +2501,7 @@ void ValueFlowSolver::numberMadeNodes()
                         return false;
                     key.payload = node.index();
                 }
-                candidatesOfThread[thread].append(Candidate { key, key.set ? m_sets.hashOfMembers(key.set) : 0, thread, position });
+                candidatesOfThread[thread].append(Candidate { key, key.set ? m_sets.hashOfMembers(key.set) : 0, key.set ? m_sets.size(key.set) : 0, thread, position });
                 return true;
             });
         };
@@ -2510,8 +2521,9 @@ void ValueFlowSolver::numberMadeNodes()
         if (candidates.isEmpty())
             break;
 
+        // The smaller sets of a name first: of sets that each hold the one before, as the sources of a chain of copies, each is then made of the one before and what it adds.
         auto orderOf = [](const Candidate& candidate) {
-            return std::tuple { candidate.key.kind, candidate.key.detail, candidate.key.payload, candidate.hashOfMembers, candidate.key.set.index() };
+            return std::tuple { candidate.key.kind, candidate.key.detail, candidate.key.payload, candidate.numberOfMembers, candidate.hashOfMembers, candidate.key.set.index() };
         };
         parallelSort(m_loops, candidates.mutableSpan(), [&](const Candidate& first, const Candidate& second) {
             return orderOf(first) < orderOf(second);
@@ -5309,7 +5321,18 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         };
         m_stepTimes.didFinish("behind the rounds: covered: stores, calls and reads listed by node"_s);
         findOnAllThreadsAndDo(calls.size(), findCall, runCall);
-        // The class above a class is seen to be the one that its declaration names.
+        // The class above a class is seen to be the one that its declaration names. Where it names none, that is what the definition of the class is seen to extend.
+        HashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> definitionsOfClasses;
+        for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewClass || !isReached(statement.function))
+                return false;
+            const Value& definition = m_input.program->at(statement.function).at(statement.site);
+            return definition.heritageOperand() && !m_input.program->at(definition.layout()).base;
+        })) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            definitionsOfClasses.ensure(m_input.program->at(statement.function).at(statement.site).layout().index(), [] { return Vector<uint32_t, 1>(); }).iterator->value.append(index);
+        }
         for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
             const ValueFlowStatement& statement = m_input.statements[index];
             return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::GetSuperBase && statement.result && isReached(statement.function);
@@ -5321,6 +5344,17 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             LayoutID base = m_input.program->at(function.constructedClass).base;
             if (FunctionID constructor = base ? m_input.program->at(base).constructor : FunctionID())
                 arriveAt(statement.result, maker.intersect(maker.of(m_input.universe->closureOf(constructor)), followed));
+            auto definitions = definitionsOfClasses.find(function.constructedClass.index());
+            if (definitions == definitionsOfClasses.end())
+                continue;
+            for (uint32_t definition : definitions->value) {
+                const ValueFlowOperand& heritage = operandsOf(m_input.statements[definition])[OperandIndex::NewClass::heritage];
+                arriveAt(statement.result, seenAt(heritage));
+                if (!heritage.node || !holdsUnknownObject(heritage.node))
+                    continue;
+                callsWithResultAt.ensure(heritage.node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
+                isCallResult.quickSet(heritage.node.index());
+            }
         }
         // What stands in sight in one node and goes on to a node that holds the unknown object is covered there. It has come all the same.
         Vector<Vector<FoundStep>> arrivalsFromVisibleNodesPerShare((firstNodeOfHost + nodesPerShare - 1) / nodesPerShare);

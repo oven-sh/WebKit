@@ -231,7 +231,7 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
         if (module.body && inputs.isReached(module.body))
             order.evaluatedModules.quickSet(index);
         bool isEntryPoint = std::ranges::contains(program.entries, ModuleID(index), &Entry::module);
-        if ((isEntryPoint ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
+        if ((isEntryPoint || answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
             order.modulesLoadedByName.quickSet(index);
         if (libraryLoadsItsModulesByName && module.kind == ModuleKind::RuntimeSource)
             order.modulesLoadedByHost.quickSet(index);

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinModules.h"
@@ -43,6 +44,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRealmStartup.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeCounters.h"
@@ -317,6 +319,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
     words.smallIntStrings = vm.numericStrings.smallIntCache();
     words.intStrings = vm.numericStrings.intCache();
+    words.keysOfPairs = StringKeyCache::noKeysOfPairs();
+    words.keyOfPairMask = 0;
 }
 
 static void fillInstanceClassInfos(Instance& instance)
@@ -408,6 +412,13 @@ static void initializeRuntimeWords(Instance& instance, VM& vm)
     }
 }
 
+size_t numberOfRunningInstances(const VMState& state)
+{
+    return std::ranges::count_if(state.instances, [](const Instance* instance) {
+        return !instance->globalObject || instance->globalObject->microtaskRunnability() != QueuedTaskResult::Discard;
+    });
+}
+
 Instance* reserveInstance(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
@@ -418,7 +429,7 @@ Instance* reserveInstance(JSGlobalObject* realm)
     Instance::destroyDeadInstances(vm);
     VMState& vmState = vm.aotState();
     const Image& image = *vmState.image;
-    if (!(image.programTables().flags & ProgramTables::mayRunInMultipleInstances) && !vmState.instances.isEmpty())
+    if (!(image.programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
         return nullptr;
     vmState.runtimeTable->finishInitialization(vm);
     vmState.identifiers->createEngineSymbols();
@@ -444,9 +455,30 @@ void Instance::didCreateInstanceStructure(BuiltinClassID builtinClass, Structure
         receiverStructureID(Receiver::Buffer) = structure->id().bits();
 }
 
+void Instance::findShortArrayAllocators()
+{
+    static_assert(LocalAllocator::offsetOfFreeList() + sizeof(FreeList) <= ShortArrayWords::wordsOfExhaustedAllocator * sizeof(uint64_t));
+    bool hasHeaders = prefix().newArrayWithContiguousHeader;
+    shortArrays.hasEveryAllocator = true;
+    for (unsigned i = 0; i < ShortArrayWords::numberOfAllocators; ++i) {
+        size_t cellSize = sizeOfArrayWithStorage(2 * i + 1);
+        static_assert(sizeOfArrayWithStorage(2 * ShortArrayWords::numberOfAllocators - 1) <= MarkedSpace::preciseCutoff);
+        RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(2 * i + 1) == i && !(cellSize % MarkedSpace::sizeStep));
+        LocalAllocator* allocator = hasHeaders ? vm->cellSpace().allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists).localAllocator() : nullptr;
+        if (!allocator) {
+            shortArrays.hasEveryAllocator = false;
+            uint8_t* exhausted = reinterpret_cast<uint8_t*>(shortArrays.exhaustedAllocators[i]);
+            new (NotNull, exhausted + LocalAllocator::offsetOfFreeList()) FreeList(static_cast<unsigned>(cellSize));
+            allocator = reinterpret_cast<LocalAllocator*>(exhausted);
+        }
+        shortArrays.allocators[i] = allocator;
+    }
+}
+
 void Instance::captureCellHeaders()
 {
     fillArrayHeaders(*this, globalObject);
+    findShortArrayAllocators();
     for (auto& inlineAllocation : allocation.inlineAllocations)
         inlineAllocation = { };
     for (auto& typedArrayAllocation : allocation.typedArrayAllocations)

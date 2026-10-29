@@ -29,6 +29,8 @@ constexpr StubKey stringBuilderDiscard() { return StubKey(StubFamily::StringBuil
 // The operands: a StackStringBuilder, its cursor and a string. The result: the cursor behind the string.
 constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
+enum class ConcatenatedKeyForm : uint8_t { Key, Name };
+constexpr StubKey concatenateKeyOfPair(ConcatenatedKeyForm form) { return StubKey(StubFamily::ConcatenateKeyOfPair).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey substring() { return StubKey(StubFamily::Substring); }
 constexpr StubKey findCharacter8() { return StubKey(StubFamily::FindCharacter8); }
 

@@ -94,8 +94,8 @@ struct FlowOrderInputs {
 
     FunctionID host() const { return FunctionID(program.functions.size()); }
 
-    // Every call, by caller and site.
-    void forEachCall(NOESCAPE const Invocable<void(const FlowCall&)> auto& functor) const
+    // Every call, by caller and site, but those of a list that the second functor leaves out.
+    void forEachCall(NOESCAPE const Invocable<void(const FlowCall&)> auto& functor, NOESCAPE const Invocable<bool(const FlowCallOfList&)> auto& visitsCallees) const
     {
         size_t next = 0;
         auto visitCallsOfListsBefore = [&](const FlowCall* call) {
@@ -103,6 +103,8 @@ struct FlowOrderInputs {
                 const FlowCallOfList& callOfList = callsOfLists[next];
                 if (call && std::tuple(call->caller, call->site) <= std::tuple(callOfList.caller, callOfList.site))
                     return;
+                if (!visitsCallees(callOfList))
+                    continue;
                 for (FunctionID callee : calleeLists[callOfList.calleeList])
                     functor(FlowCall { callOfList.caller, callOfList.site, callee });
             }

@@ -22,6 +22,7 @@
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTIntegerRelations.h"
@@ -992,6 +993,8 @@ struct LiteralPlan {
     ValueID lengthOfArray { };
     // The elements are appended in their order to an empty array of the literal's type. A store without an element appends a hole.
     bool appendsElements { false };
+    // Nothing but the literal reads them.
+    Vector<ValueID> ownElements { };
 };
 
 struct DominatorChain {
@@ -1047,22 +1050,30 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
     const UseLists& useLists = analyses.useLists();
     BitVector visitedElements(function.values.size());
 
-    // Nothing where the search has gone on for too long.
+    // Nothing where the search has gone on for too long. The blocks between the elements grow with the literal and do not count.
+    // An array that is made early is made in vain where control leaves on a rarer path, as where a caller ends a generator at one of its yields.
     auto computePostDominanceBound = [&](std::span<const BlockID> chainBlocks, ValueID literal) -> std::optional<uint32_t> {
         BitVector visited(cfg.numNodes());
         visited.quickSet(chainBlocks.front().index());
+        BitVector isOnChain(cfg.numNodes());
+        for (BlockID block : chainBlocks)
+            isOnChain.quickSet(block.index());
+        Expected<BlockFrequency> frequencyOfLiteral = function.at(chainBlocks.front()).frequency;
         uint64_t numberOfBlocksSearched = 0;
         Vector<BlockID, 16> worklist;
         for (uint32_t chainIndex = 1; chainIndex < chainBlocks.size(); ++chainIndex) {
             if (!visited.quickSet(chainBlocks[chainIndex].index()))
                 worklist.append(chainBlocks[chainIndex]);
             while (!worklist.isEmpty()) {
-                const Terminator& terminator = function.at(worklist.takeLast()).terminator;
+                BlockID block = worklist.takeLast();
+                const Terminator& terminator = function.at(block).terminator;
                 if (returnsToCaller(terminator.kind))
                     return chainIndex - 1;
-                if (context.exceeds(LimitID::MaxBlocksSearchedForLiteralStores, ++numberOfBlocksSearched, literal))
+                if (!isOnChain.quickGet(block.index()) && context.exceeds(LimitID::MaxBlocksSearchedForLiteralStores, ++numberOfBlocksSearched, literal))
                     return std::nullopt;
                 for (const Target& target : terminator.targets) {
+                    if ((frequencyOfLiteral < function.at(target.block).frequency).predicted())
+                        continue;
                     if (!visited.quickSet(target.block.index()))
                         worklist.append(target.block);
                 }
@@ -1119,10 +1130,15 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
             Vector<ChainPoint, 8> ownAvailabilities;
             for (ValueID element : literal.elementsOperands()) {
                 bool isOwnElement = !visitedElements.quickSet(element.index()) && (plan.appendsElements ? isComputed(element) : isStoredWhenMade(literal, element)) && std::ranges::all_of(useLists.usesOf(element), [&](const Use& use) {
-                    return use.kind == Use::Kind::Operand && use.user == plan.literal;
+                    if (use.kind == Use::Kind::Operand && (use.user == plan.literal || isHeldOperand(function.at(use.user), use.operandIndex)))
+                        return true;
+                    // What a yield is sent is also thrown or returned, on the rare arms right behind it.
+                    return (function.at(point.block).frequency < function.at(use.block).frequency).predicted();
                 });
-                if (isOwnElement)
+                if (isOwnElement) {
                     ownAvailabilities.append(availabilityOf(element));
+                    plan.ownElements.append(element);
+                }
             }
             for (ValueID element : literal.elementsOperands())
                 visitedElements.quickClear(element.index());
@@ -1192,6 +1208,45 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
     }
     for (const LiteralPlan& plan : plans)
         insertStores(plan, false);
+
+    // A suspension behind the store of an element holds the array, which holds the element. Listed by itself, the element would stay alive across every suspension up to that one.
+    BitVector isOwnElementOfPlan(function.values.size());
+    BitVector isHeldByArray(function.values.size());
+    for (const LiteralPlan& plan : plans) {
+        for (ValueID element : plan.ownElements)
+            isOwnElementOfPlan.quickSet(element.index());
+        Vector<std::pair<ValueID, ValueID>> heldElements;
+        for (const ElementStore& store : plan.stores) {
+            if (!store.element || !isOwnElementOfPlan.quickGet(store.element.index()))
+                continue;
+            for (const Use& use : useLists.usesOf(store.element)) {
+                if (use.kind != Use::Kind::Operand || use.user == plan.literal || !isHeldOperand(function.at(use.user), use.operandIndex))
+                    continue;
+                ProgramPoint suspension = useLists.pointOf(use.user);
+                if (store.point.block == suspension.block ? store.point.index <= suspension.index : dominators.dominates(store.point.block, suspension.block))
+                    heldElements.append({ use.user, store.element });
+            }
+        }
+        for (ValueID element : plan.ownElements)
+            isOwnElementOfPlan.quickClear(element.index());
+        AOT::sort(heldElements);
+        for (std::span<const std::pair<ValueID, ValueID>> rest = heldElements.span(); !rest.empty();) {
+            ValueID suspension = rest.front().first;
+            size_t count = std::ranges::find_if(rest, [&](const auto& entry) { return entry.first != suspension; }) - rest.begin();
+            for (const auto& [ignored, element] : rest.first(count))
+                isHeldByArray.quickSet(element.index());
+            Vector<ValueID, 8> held;
+            for (ValueID listed : heldOperandsOf(function.at(suspension))) {
+                if (!isHeldByArray.quickGet(listed.index()))
+                    held.append(listed);
+            }
+            held.append(plan.array);
+            setHeldOperands(function.edit(suspension), held.span());
+            for (const auto& [ignored, element] : rest.first(count))
+                isHeldByArray.quickClear(element.index());
+            rest = rest.subspan(count);
+        }
+    }
     builder.applyInsertions();
     for (const LiteralPlan& plan : plans) {
         Value& literal = function.edit(plan.literal);

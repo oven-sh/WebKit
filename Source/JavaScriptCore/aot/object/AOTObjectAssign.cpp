@@ -34,10 +34,12 @@ static Extension* createCopyOf(VM& vm, Extension* extension)
 {
     if (!extension)
         return nullptr;
-    Extension* copy = Extension::create(vm, extension->granuleBits());
-    size_t count = std::popcount(extension->granuleBits());
-    memcpySpan(std::span { copy->granules(), count }, std::span { extension->granules(), count });
-    return copy;
+    // What lies behind the granules is zero, in the room that extensionCapacityFor() leaves. Nothing reads behind that room.
+    size_t size = extensionCellSizeFor(std::popcount(extension->granuleBits()));
+    void* copy = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocate(vm, size, nullptr, AllocationFailureMode::Assert);
+    memcpy(copy, extension, size);
+    vm.mutatorFence();
+    return static_cast<Extension*>(copy);
 }
 
 static size_t sizeOfFieldWords(const LayoutData& layout)
@@ -49,7 +51,7 @@ static size_t sizeOfFieldWords(const LayoutData& layout)
 void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
 {
     const LayoutData& layout = this->layout();
-    ASSERT(&layout == &source.layout() && !source.hasOutOfLineKeyOrder());
+    ASSERT(&layout == &source.layout() && !source.hasKeyOrderOfItsOwn());
     Extension* extension = createCopyOf(vm, source.extension());
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
     if (layout.hasExtension())
@@ -137,7 +139,7 @@ NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, con
     if (source.orderWord() & orderWordHasFieldOutsideSlot || structure.hasOtherPrototype())
         return nullptr;
     bool hasExtraProperties = source.hasExtraProperties();
-    if (hasExtraProperties ? !layout.extraPropertiesSlot() : !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+    if (hasExtraProperties ? !layout.extraPropertiesSlot() || source.hasOutOfLineKeyOrder() : !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
         return nullptr;
     DeferGC deferGC(vm);
     if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::MakesObject))
@@ -149,7 +151,11 @@ NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, con
         return nullptr;
     StructureTable& structures = source.state().objects->structures;
     Object* copy = createCopyOfWords(vm, source, structures.objectStructure(vm, layout.shape));
-    copy->setExtraProperties(vm, extraProperties, structures.withExtraProperties(vm, copy->compiledStructure(), extraProperties->structure()));
+    CompiledStructure* named = structures.withExtraProperties(vm, copy->compiledStructure(), extraProperties->structure());
+    copy->setExtraProperties(vm, extraProperties, named);
+    // The stub in front copies a source whose Structure names that of its extra properties. A source that is copied once is likely to be copied again.
+    if (!structure.extraPropertiesStructureID() && named->extraPropertiesStructureID() == source.extraProperties()->structureID())
+        const_cast<Object&>(source).JSCell::setStructure(vm, named);
     return copy;
 }
 
@@ -157,7 +163,7 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
 {
     const CompiledStructure& structure = source.compiledStructure();
     const LayoutData& layout = source.layout();
-    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || source.hasOutOfLineKeyOrder() || structure.mayBePrototype())
+    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || source.hasKeyOrderOfItsOwn() || structure.mayBePrototype())
         return nullptr;
     if (source.hasFlagsInOrderWord() || !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype)) [[unlikely]]
         return tryCreateCopyOfFieldsAndExtraProperties(vm, source);
@@ -181,21 +187,46 @@ static void validateCopyOfExtraProperties(VM& vm, const Object& target, JSObject
         validateMutation(vm, target, ObjectMutation::AddProperty);
 }
 
-ALWAYS_INLINE bool Object::tryCopyWordsOfSameStructure(VM& vm, const Object& source)
+// A Structure that holds a key order and belongs to no single object serves every object with that order.
+static ALWAYS_INLINE bool holdsKeyOrderFor(const CompiledStructure& ordered, const CompiledStructure& unordered)
 {
-    if (structureID() != source.structureID() || shapeWord() != source.shapeWord() || this == &source || orderWord() != unorderedOrderWord)
+    return ordered.hasOutOfLineKeyOrder() && !ordered.hasKeyOrderOfOneObject() && !ordered.hasExtraProperties() && !ordered.mayBePrototype()
+        && ordered.hasOtherPrototype() == unordered.hasOtherPrototype() && ordered.storedPrototype() == unordered.storedPrototype() && ordered.realm() == unordered.realm();
+}
+
+ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source)
+{
+    if (shapeWord() != source.shapeWord() || this == &source || orderWord() != unorderedOrderWord)
         return false;
     uint32_t orderWordOfSource = source.orderWord();
-    if (orderWordOfSource & ~(orderAndCountMask | orderWordIntegrityBits) || isOrderStoredOutOfLine(orderWordOfSource))
+    if (orderWordOfSource & ~(orderAndCountMask | orderWordIntegrityBits))
         return false;
     const CompiledStructure& structure = compiledStructure();
     constexpr OptionSet<CompiledStructure::Flag> flagsOfOtherStorage { CompiledStructure::Flag::HasExtraProperties, CompiledStructure::Flag::HasOutOfLineKeyOrder };
     if (!structure.hasOnlyPlainSlots() || structure.flags().containsAny(flagsOfOtherStorage) || structure.mayBePrototype())
         return false;
     const LayoutData& layout = structure.layout();
-    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || layout.hasExtension())
+    if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated)
         return false;
+    bool takesStructure = structureID() != source.structureID();
+    if (takesStructure && !holdsKeyOrderFor(source.compiledStructure(), structure))
+        return false;
+    ASSERT(takesStructure == isOrderStoredOutOfLine(orderWordOfSource));
+    // The only allocation comes first, while the target is still empty.
+    std::optional<SlotData> extensionSlot = structure.extensionSlot();
+    Extension* extension = extensionSlot ? createCopyOf(vm, reinterpret_cast<Extension*>(const_cast<uint8_t*>(extensionStorageOrNull(&source, *extensionSlot)))) : nullptr;
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
+    if (extension) {
+        if (extensionSlot->representation() == SlotRepresentation::Cell)
+            at<Extension*>(extensionSlot->offset) = extension;
+        else
+            at<uint32_t>(extensionSlot->offset) = MarkedBlockCage::encode(cageBaseOf(this), reinterpret_cast<uint8_t*>(extension) - offsetOfEmptyExtensionInCage);
+    }
+    if (takesStructure) {
+        // Both describe cells with the same header.
+        ASSERT(source.structure()->typeInfoBlob() == structure.typeInfoBlob());
+        setStructureIDDirectly(source.structureID());
+    }
     at<uint32_t>(offsetOfOrderWord) = orderWordOfSource & orderAndCountMask;
     vm.writeBarrier(this);
     return true;
@@ -205,7 +236,7 @@ static RepeatedCopy tryRepeatAssignmentBetweenLayouts(VM&, State&, Object& to, c
 
 bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
 {
-    if (tryCopyWordsOfSameStructure(vm, source)) [[likely]]
+    if (tryCopyWordsOfSameLayout(vm, source)) [[likely]]
         return true;
     if (this == &source || &source.state() != &state() || layout().kind() != LayoutKind::Record || hasFlagsInOrderWord())
         return false;
@@ -698,9 +729,21 @@ static MappedCopy::MoveKind moveKindBetweenFormsOfIntegers(SlotRepresentation fr
     return Kind::OtherForm;
 }
 
+// A slot for literal strings holds the word of one or a reference to any other string. Both kinds take the other way for a marker.
+static std::optional<MappedCopy::MoveKind> moveKindOfLiteralString(SlotRepresentation from, SlotRepresentation to)
+{
+    if (from == SlotRepresentation::LiteralString32 && (to == SlotRepresentation::Cell32 || to == SlotRepresentation::OptionalCell32))
+        return MappedCopy::MoveKind::NarrowLiteralString;
+    if (from == SlotRepresentation::LiteralString && (to == SlotRepresentation::JSValue || to == SlotRepresentation::Cell))
+        return MappedCopy::MoveKind::WideLiteralString;
+    return std::nullopt;
+}
+
 static MappedCopy::MoveKind moveKindUnlessMarker(SlotRepresentation from, SlotRepresentation to)
 {
     using Kind = MappedCopy::MoveKind;
+    if (auto kind = moveKindOfLiteralString(from, to))
+        return *kind;
     if (from != to)
         return moveKindBetweenFormsOfIntegers(from, to);
     if (from == SlotRepresentation::OptionalInt32)
@@ -733,6 +776,8 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
         static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
         if (isNarrowReference(from) && isNarrowReference(to))
             return Kind::HalfWordUnlessZero;
+        if (auto kind = moveKindOfLiteralString(from, to))
+            return *kind;
         if (isNarrowReference(from) && (to == SlotRepresentation::JSValue || to == SlotRepresentation::Cell))
             return Kind::WideNarrowReference;
         if ((from == SlotRepresentation::JSValue || from == SlotRepresentation::Cell) && isNarrowReference(to))
@@ -853,6 +898,13 @@ static bool tryDescribeForStub(MappedCopy::Move& move)
     case Kind::BoxedOptionalInt64:
     case Kind::OptionalInt64AsOptionalInt32:
     case Kind::OptionalInt64AsDouble:
+    case Kind::NarrowLiteralString:
+    case Kind::WideLiteralString:
+    case Kind::BoxedAsInt32:
+    case Kind::BoxedAsInt64:
+    case Kind::BoxedAsDouble:
+    case Kind::BoxedAsNarrowString:
+    case Kind::BoxedAsJSValue:
     case Kind::OtherForm:
     case Kind::Tested:
         return false;
@@ -1072,7 +1124,7 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
             bits = read;
         }, [&]() ALWAYS_INLINE_LAMBDA {
             return tryReadInOtherWay(state, move, fieldsOfTarget, slot, bits);
-        });
+        }, state.instance.runtime.constants.literalStrings);
         if (!didRead)
             return RepeatedCopy::IsNotDone;
     }
@@ -1107,7 +1159,8 @@ static ALWAYS_INLINE RepeatedCopy tryRunPlanAsBefore(VM& vm, State& state, Objec
     FieldStoreRun run(vm, to, state, plan, nullptr);
     if (!run.tryRunAsBefore(source))
         return RepeatedCopy::IsNotDone;
-    didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
+    if (to.structure()->mayBePrototype()) [[unlikely]]
+        didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
     return RepeatedCopy::AsThePlanDidBefore;
 }
 
@@ -1135,6 +1188,99 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentBetweenLayouts(VM& vm, State
     return tryRepeatAssignmentByRecentPlan(vm, state, to, from, excludedRunNumberPlusOne);
 }
 
+static std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable& layouts, const AssignmentPlan::FieldStore& store)
+{
+    using Kind = MappedCopy::MoveKind;
+    const FieldData& to = *store.to;
+    if (store.from || !store.isDirect || to.isOutOfLine() || to.holdsRawValueFromBirth || to.flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
+        return std::nullopt;
+    switch (to.slot.representation()) {
+    case SlotRepresentation::Int32:
+    case SlotRepresentation::OptionalInt32:
+        return store.writesInt32AsItIs ? std::optional(Kind::BoxedAsInt32) : std::nullopt;
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::OptionalInt64:
+        return store.writesInt32AsItIs ? std::optional(Kind::BoxedAsInt64) : std::nullopt;
+    case SlotRepresentation::Double:
+    case SlotRepresentation::OptionalDouble:
+        return Kind::BoxedAsDouble;
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+        return store.acceptedKinds.contains(ValueKind::String) ? std::optional(Kind::BoxedAsNarrowString) : std::nullopt;
+    case SlotRepresentation::JSValue:
+        return acceptsEveryValue(layouts.typeOf(to)) ? Kind::JSValueUnlessMarker : Kind::BoxedAsJSValue;
+    default:
+        return std::nullopt;
+    }
+}
+
+// An ordinary object without storage outside its cell has zero where a compiled object has its order and shape words, so the stub and tryCopyByFieldMapWithoutFrame() find the copy by the words of the target and tell it by the Structure of the source.
+static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const AssignmentPlan& plan, MappedCopy& copy, const Object& target, uint32_t excludedRunNumberPlusOne)
+{
+    if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
+        return false;
+    if (plan.orderWordBeforeRun != unorderedOrderWord || !plan.extraPropertyStores.isEmpty() || plan.granuleBitsFilled || plan.orderWordAfterRun & ~orderAndCountMask || isOrderStoredOutOfLine(plan.orderWordAfterRun))
+        return false;
+    for (const AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        std::optional<MappedCopy::MoveKind> kind = moveKindOutOfOrdinaryObject(state.objects->layouts, store);
+        if (!kind || !isInlineOffset(store.sourceOffset))
+            return false;
+        const FieldData& to = *store.to;
+        SlotRepresentation representation = to.slot.representation();
+        MappedCopy::Move move { static_cast<uint32_t>(JSObject::offsetOfInlineStorage() + store.sourceOffset * sizeof(EncodedJSValue)), to.slot.offset, *kind, static_cast<uint8_t>(widthOf(representation)),
+            false, false, SlotRepresentation::JSValue, representation, store.acceptedKinds.toRaw(), target.layout().indexOf(to) };
+        move.leastInt32 = store.leastInt32;
+        move.greatestInt32 = store.greatestInt32;
+        copy.moves.append(move);
+        copy.mayStoreCells |= traitsOf(representation).holdsCell;
+    }
+    copy.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
+    copy.sourceWords = 0;
+    copy.readsOrdinaryObject = true;
+    copy.granuleBitsOfSource = UINT64_MAX;
+    copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
+    copy.orderWordAfter = plan.orderWordAfterRun;
+    copy.structureOfTarget = plan.target;
+    copy.structureOfSource = plan.source;
+    copy.takesNoFrame = true;
+    copy.placeOfOwnedCopy = &placeOfCopyWithoutFrame(state, copy);
+    return true;
+}
+
+// The plan has just run as before.
+static NEVER_INLINE void offerCopyOutOfOrdinaryObject(VM& vm, State& state, AssignmentPlan& plan, const Object& target, JSObject* source, uint32_t excludedRunNumberPlusOne)
+{
+    AOT_THRESHOLD(uint8_t, maxNumberOfCopiesInVain, 8);
+    if (!plan.copyWithoutFrame) {
+        auto copy = makeUniqueWithoutFastMallocCheck<MappedCopy>();
+        plan.mayCopyWithoutFrame = !source->butterfly() && tryDescribeCopyOutOfOrdinaryObject(vm, state, plan, *copy, target, excludedRunNumberPlusOne);
+        if (!plan.mayCopyWithoutFrame)
+            return;
+        copy->state = MappedCopy::State::IsServed;
+        plan.copyWithoutFrame = WTF::move(copy);
+    }
+    MappedCopy& copy = *plan.copyWithoutFrame;
+    const MappedCopy*& place = *copy.placeOfOwnedCopy;
+    if (place != &copy) {
+        place = &copy;
+        copy.numberOfCopiesInVain = 0;
+        return;
+    }
+    // A value did not go to its slot as it is.
+    if (++copy.numberOfCopiesInVain > maxNumberOfCopiesInVain) {
+        plan.mayCopyWithoutFrame = false;
+        plan.copyWithoutFrame = nullptr;
+    }
+}
+
+static NEVER_INLINE RepeatedCopy runPlanAsBeforeAndOfferCopy(VM& vm, State& state, Object& to, AssignmentPlan& plan, JSObject* from, uint32_t excludedRunNumberPlusOne)
+{
+    RepeatedCopy way = tryRunPlanAsBefore(vm, state, to, plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
+    if (way != RepeatedCopy::IsNotDone)
+        offerCopyOutOfOrdinaryObject(vm, state, plan, to, from, excludedRunNumberPlusOne);
+    return way;
+}
+
 static NEVER_INLINE RepeatedCopy tryRepeatAssignmentFromOrdinaryObject(VM& vm, State& state, Object& to, JSValue source, uint32_t excludedRunNumberPlusOne)
 {
     if (!source.isCell() || source.asCell()->type() != FinalObjectType)
@@ -1145,6 +1291,8 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentFromOrdinaryObject(VM& vm, S
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from->structureID(), 0, excludedRunNumberPlusOne);
     if (!plan)
         return RepeatedCopy::IsNotDone;
+    if (plan->mayCopyWithoutFrame) [[unlikely]]
+        return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, from, excludedRunNumberPlusOne);
     return tryRunPlanAsBefore(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
 }
 

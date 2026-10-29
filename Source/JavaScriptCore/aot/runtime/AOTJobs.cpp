@@ -862,6 +862,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* 
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
+    if (!closure) {
+        RELEASE_ASSERT(!isAsync);
+        return Generator::create(vm, instance->state->coroutines->generatorStructure());
+    }
     JSObject* generatorFunction = objectArgument(closure, entry);
     JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
     // The prototype property of a generator function is a data property that cannot be reconfigured, so reading it runs no code.

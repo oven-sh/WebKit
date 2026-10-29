@@ -460,17 +460,16 @@ StubSignature signatureOfAllocateExtensionSlow(StubKey)
 }
 
 // Sixteen bytes are a unit. An entry is four bits wide.
-static constexpr unsigned maxGranulesOfExtensionReplacedByStub = 13;
 static constexpr uint64_t extensionUnitsByNumberOfGranules = [] {
     uint64_t units = 0;
-    for (unsigned count = 1; count <= maxGranulesOfExtensionReplacedByStub; ++count)
+    for (unsigned count = 1; count <= maxGranulesOfExtensionFromStub; ++count)
         units |= static_cast<uint64_t>(extensionCellSizeFor(count) / minExtensionSize) << (4 * count);
     return units;
 }();
-static_assert(extensionCellSizeFor(maxGranulesOfExtensionReplacedByStub) / minExtensionSize < 16 && 4 * maxGranulesOfExtensionReplacedByStub < 64);
+static_assert(extensionCellSizeFor(maxGranulesOfExtensionFromStub) / minExtensionSize < 16 && 4 * maxGranulesOfExtensionFromStub < 64);
 static_assert(minExtensionSize == MarkedSpace::sizeStep && minExtensionSize == 2 * sizeof(uint64_t) && MarkedSpace::sizeClassToIndex(minExtensionSize) == 1);
 
-static void loadUnitsOfExtensionWith(StubAssembler& jit, GPRReg granuleBits, GPRReg units, GPRReg scratch)
+void loadUnitsOfExtensionWith(StubAssembler& jit, GPRReg granuleBits, GPRReg units, GPRReg scratch)
 {
     jit.countPopulation64(granuleBits, scratch, CCallHelpers::fpTempRegister);
     jit.lshift32(TrustedImm32(2), scratch);
@@ -504,7 +503,7 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.move(held, remaining);
         jit.or64(granuleBits, remaining);
         jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
-        cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionReplacedByStub)));
+        cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionFromStub)));
 
         // One granule becomes two, which is nearly half of all growth: no counting and no loops.
         JumpList isFilled;

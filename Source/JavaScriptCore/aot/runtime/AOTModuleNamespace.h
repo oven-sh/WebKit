@@ -51,6 +51,8 @@ public:
     // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
 
+    void replaceCapturedValue(JSGlobalObject*, const Identifier& name, JSValue);
+
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }
     void setESModuleMarker(bool hasMarker) { m_hasESModuleMarker = hasMarker; }
 

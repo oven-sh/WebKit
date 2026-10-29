@@ -796,6 +796,23 @@ static void testWhatNeedsNoPointer()
         graph.finish();
         checkFindsOne(graph, NarrowReferenceViolationKind::IsDisplaced);
     }
+    for (bool readsHeap : { false, true }) {
+        Graph graph;
+        B3::Value* reference = graph.loadReference();
+        graph.safepoint();
+        B3::PatchpointValue* probe = graph.patchpoint(otherOrigin);
+        probe->effects = B3::Effects::none();
+        probe->effects.writesLocalState = true;
+        if (readsHeap)
+            probe->effects.reads = B3::HeapRange::top();
+        probe->append(graph.object, B3::ValueRep::SomeRegister);
+        probe->append(reference, B3::ValueRep::SomeRegister);
+        graph.finish();
+        if (readsHeap)
+            checkFindsOne(graph);
+        else
+            checkFindsNothing(graph);
+    }
 }
 
 enum class InsertsGuards : bool { No, Yes };

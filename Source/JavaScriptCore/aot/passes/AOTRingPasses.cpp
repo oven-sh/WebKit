@@ -481,8 +481,15 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::LessEq:
     case Opcode::Greater:
     case Opcode::GreaterEq:
-        if (!areNumbers)
-            return { };
+        if (!areNumbers) {
+            // Where the two pairs of ends that lie furthest apart compare alike, so does every pair between them.
+            const Type& leftType = program.typeOf(function, value.operand(0));
+            const Type& rightType = program.typeOf(function, value.operand(1));
+            if (!leftType.isInteger() || !rightType.isInteger())
+                return { };
+            bool answer = evaluateRelation(value.opcode, leftType.integers.minimum, rightType.integers.maximum);
+            return answer == evaluateRelation(value.opcode, leftType.integers.maximum, rightType.integers.minimum) ? KnownValue::boolean(answer) : KnownValue();
+        }
         if (left.kind() == KnownValue::Kind::Integer && right.kind() == KnownValue::Kind::Integer)
             return KnownValue::boolean(evaluateRelation(value.opcode, left.asInteger(), right.asInteger()));
         return KnownValue::boolean(evaluateRelation(value.opcode, left.asNumber(), right.asNumber()));
@@ -622,35 +629,6 @@ struct OpcodeRules {
     bool mayHaveFreshResult { true };
 };
 
-// freshnessOf() answers Fresh for a value of no other opcode.
-static bool mayHaveFreshResult(Opcode opcode)
-{
-    switch (effectRuleOf(opcode)) {
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
-        return true;
-    case EffectRule::Declared:
-    case EffectRule::Operator:
-    case EffectRule::Access:
-    case EffectRule::Call:
-        break;
-    }
-    if (Value::opcodesWithOverload.contains(opcode) && resultRuleOf(opcode) == ResultRule::Declared)
-        return true;
-    if (boundToOf(opcode) == BoundTo::Site)
-        return false;
-
-    bool retainsOperandInResult = false;
-    bool returnsOperand = false;
-    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
-    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
-        const OperandInfo& info = operandInfoOf(opcode, operandIndex);
-        retainsOperandInResult |= info.uses.contains(OperandUse::Retains) && info.retainedIn == RetainedIn::Result;
-        returnsOperand |= info.uses.contains(OperandUse::Returns);
-    }
-    return !returnsOperand && (resultRuleOf(opcode) == ResultRule::Allocation || retainsOperandInResult);
-}
-
 static UnusedValueRule unusedValueRuleOf(Opcode opcode, bool writesOnlyNamedOperands)
 {
     const OpcodeEffectFacts& facts = effectFactsOf(opcode);
@@ -677,7 +655,7 @@ static const RulesOfOpcodes& rulesOfOpcodes()
         RulesOfOpcodes result { };
         for (Opcode member : allMembersOf<Opcode>) {
             bool writesOnlyNamedOperands = confinementOf(member) == OperandConfinement::WritesOnlyNamedOperands;
-            result[static_cast<unsigned>(member)] = { unusedValueRuleOf(member, writesOnlyNamedOperands), writesOnlyNamedOperands, mayHaveFreshResult(member) };
+            result[static_cast<unsigned>(member)] = { unusedValueRuleOf(member, writesOnlyNamedOperands), writesOnlyNamedOperands, resultMayBeFresh(member) };
         }
         return result;
     }();
@@ -2603,11 +2581,29 @@ struct ControlFlowSimplifier {
         // Where several of many integers go one way, the bits of a window or the rows of a table tell them apart, and those want each of them listed.
         std::optional<uint32_t> caseThatTakesRest;
         if (!sharesWayOfRest && numberOfListedSubjects == numberOfValuesOf<Case>(subjectType)) {
+            // Of the targets that most cases share, the one that is listed last.
+            struct SharedTarget {
+                uint32_t lastIndex;
+                size_t numberOfCases;
+            };
             size_t greatestNumberOfCases = 0;
-            for (uint32_t index : remainingIndexes) {
-                size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
-                if (numberOfCases >= greatestNumberOfCases) {
-                    greatestNumberOfCases = numberOfCases;
+            Vector<uint32_t, 8> indexesByBlock = remainingIndexes;
+            AOT::sort(indexesByBlock, { }, [&](uint32_t index) { return std::pair(terminator.targets[index].block, index); });
+            Vector<SharedTarget, 2> targetsInBlock;
+            for (size_t position = 0; position < indexesByBlock.size(); ++position) {
+                uint32_t index = indexesByBlock[position];
+                if (position && terminator.targets[indexesByBlock[position - 1]].block != terminator.targets[index].block)
+                    targetsInBlock.shrink(0);
+                size_t found = targetsInBlock.findIf([&](const SharedTarget& shared) { return terminator.targets[shared.lastIndex] == terminator.targets[index]; });
+                if (found == notFound) {
+                    found = targetsInBlock.size();
+                    targetsInBlock.append(SharedTarget { index, 0 });
+                }
+                SharedTarget& shared = targetsInBlock[found];
+                shared.lastIndex = index;
+                ++shared.numberOfCases;
+                if (shared.numberOfCases > greatestNumberOfCases || (shared.numberOfCases == greatestNumberOfCases && index > *caseThatTakesRest)) {
+                    greatestNumberOfCases = shared.numberOfCases;
                     caseThatTakesRest = index;
                 }
             }
@@ -2820,6 +2816,138 @@ struct ControlFlowSimplifier {
             return { };
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // The parameter of the arm that the value is, as it is or behind casts made in the arm.
+    ValueID narrowedValueBehindCasts(const Block& arm, ValueID id) const
+    {
+        while (isCastWithoutTest(function.at(id).opcode) && arm.values.contains(id))
+            id = function.at(id).operand(0);
+        return arm.parameters.contains(id) ? id : ValueID();
+    }
+
+    using ArmOperations = Vector<ValueID, 8>;
+
+    // Casts of what the edge narrowed, and the facts that they name, say what the test found. They compute nothing.
+    ArmOperations operationsOf(const Block& arm) const
+    {
+        ArmOperations operations;
+        for (ValueID id : arm.values) {
+            Opcode opcode = function.at(id).opcode;
+            if (opcode != Opcode::Specified && !(isCastWithoutTest(opcode) && narrowedValueBehindCasts(arm, id)))
+                operations.append(id);
+        }
+        return operations;
+    }
+
+    // `const pair = { a: given }` tests `given` for the type of the field. Once the object is never allocated, both arms only store the value or pass it on:
+    // neither looks at it, so the test makes neither of them faster. The arms are copies of the same operations of the source, so they also throw at the same positions.
+    bool haveSameCode(BlockID from) const
+    {
+        AOT_THRESHOLD(size_t, maxValuesInSameArms, 12);
+        const CFG& cfg = analyses.cfg();
+        const Terminator& branch = function.at(from).terminator;
+        BlockID taken = branch.taken().block;
+        BlockID notTaken = branch.notTaken().block;
+        if (taken == notTaken || cfg.incomingEdges(taken).size() != 1 || cfg.incomingEdges(notTaken).size() != 1)
+            return false;
+        const Block& first = function.at(taken);
+        const Block& second = function.at(notTaken);
+        if (first.terminator.kind != second.terminator.kind || first.parameters.size() != second.parameters.size() || std::max(first.values.size(), second.values.size()) > maxValuesInSameArms)
+            return false;
+        if (first.isHandlerBlock() || second.isHandlerBlock() || !haveSameHandler(first, second))
+            return false;
+        Edge takenEdge { from, 0 };
+        Edge notTakenEdge { from, 1 };
+        if (!canFollowWithoutTest(function, takenEdge) || !canFollowWithoutTest(function, notTakenEdge) || argumentsWithoutTest(function, takenEdge) != argumentsWithoutTest(function, notTakenEdge))
+            return false;
+        ArmOperations firstOperations = operationsOf(first);
+        ArmOperations secondOperations = operationsOf(second);
+
+        auto isFactOf = [&](const Block& arm, ValueID id) {
+            return function.at(id).opcode == Opcode::Specified && arm.values.contains(id);
+        };
+        auto isSameValue = [&](ValueID inFirst, ValueID inSecond) {
+            if (!inFirst || !inSecond)
+                return inFirst == inSecond;
+            if (ValueID narrowed = narrowedValueBehindCasts(first, inFirst))
+                return narrowedValueBehindCasts(second, inSecond) == second.parameters[first.parameters.find(narrowed)];
+            if (size_t index = firstOperations.find(inFirst); index != notFound)
+                return secondOperations[index] == inSecond;
+            return inFirst == inSecond || (isFactOf(first, inFirst) && isFactOf(second, inSecond));
+        };
+        auto haveSameOperands = [&](const auto& inFirst, const auto& inSecond) {
+            if (inFirst.origin() != inSecond.origin() || !inFirst.hasSamePayloadAs(inSecond) || inFirst.numberOfNamedOperands() != inSecond.numberOfNamedOperands() || !std::ranges::equal(inFirst.operands(), inSecond.operands(), isSameValue))
+                return false;
+            std::span<const ValueID> operands = inFirst.operands();
+            for (uint32_t index = 0; index < operands.size(); ++index) {
+                if (operands[index] && narrowedValueBehindCasts(first, operands[index]) && !inFirst.operandUses(index).containsOnly({ OperandUse::Retains, OperandUse::Returns }))
+                    return false;
+            }
+            return true;
+        };
+        bool haveSameOperations = std::ranges::equal(firstOperations, secondOperations, [&](ValueID inFirst, ValueID inSecond) {
+            const Value& a = function.at(inFirst);
+            const Value& b = function.at(inSecond);
+            return a.opcode == b.opcode && a.type == b.type && a.expected().predicted() == b.expected().predicted() && haveSameOperands(a, b);
+        });
+        if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator))
+            return false;
+        return std::ranges::equal(first.terminator.targets, second.terminator.targets, [&](const Target& a, const Target& b) {
+            return a.block == b.block && a.proofs == b.proofs && std::ranges::equal(a.arguments, b.arguments, isSameValue);
+        });
+    }
+
+    bool hasArmsWithSameCode() const
+    {
+        return std::ranges::any_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
+            return function.at(block).terminator.kind == TerminatorKind::Branch && haveSameCode(block);
+        });
+    }
+
+    void mergeArmsWithSameCode()
+    {
+        Vector<Edge, 4> kept;
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Branch || !haveSameCode(block))
+                continue;
+            bool takenIsRarer = isRarerThan(function.at(terminator.taken().block).frequency, function.at(terminator.notTaken().block).frequency).predicted();
+            kept.append(Edge { block, takenIsRarer ? 1u : 0u });
+        }
+        if (kept.isEmpty())
+            return;
+        for (Edge edge : kept)
+            raiseFrequenciesBehind(analyses, function, edge);
+        for (Edge edge : kept) {
+            decideTerminator(builder, edge.from, edge.targetIndex);
+            // The arm now takes what either edge narrowed, so what its casts said of the value no longer holds.
+            const Target& next = function.at(edge.from).terminator.next();
+            BlockID arm = next.block;
+            for (size_t index = 0; index < next.arguments.size(); ++index) {
+                const Value& argument = function.at(next.arguments[index]);
+                Value& parameter = function.edit(function.at(arm).parameters[index], ValueEdit::Type);
+                parameter.type = argument.type;
+                parameter.setExpected(argument.expected());
+            }
+            ValueSubstitution casts(function);
+            BitVector positionsOfCasts;
+            std::span<const ValueID> values = function.at(arm).values.span();
+            for (size_t position = 0; position < values.size(); ++position) {
+                ValueID narrowed = isCastWithoutTest(function.at(values[position]).opcode) ? narrowedValueBehindCasts(function.at(arm), values[position]) : ValueID();
+                if (!narrowed)
+                    continue;
+                casts.replace(values[position], narrowed);
+                positionsOfCasts.set(position);
+            }
+            if (casts.isEmpty())
+                continue;
+            casts.apply(function, &analyses);
+            builder.eraseValues(arm, positionsOfCasts);
+        }
+        numberOfChanges += kept.size();
+        onlyJoinedBlocks = false;
+        analyses.didChangeControlFlow();
     }
 
     void collapseTestsThatDecideNothing()
@@ -3093,6 +3221,7 @@ PassOutcome simplifyControlFlow(FunctionPassContext& context)
 
     simplifier.bypassHandlers();
     simplifier.onlyJoinedBlocks &= !numberOfChanges;
+    simplifier.mergeArmsWithSameCode();
     simplifier.collapseTestsThatDecideNothing();
     numberOfChanges += simplifier.builder.emptyUnreachableBlocks();
     size_t numberOfChangesBeforeMerging = numberOfChanges;
@@ -3113,7 +3242,8 @@ PassOutcome simplifyControlFlow(FunctionPassContext& context)
         context.passesLeftIdle.add(PassID::PropagateBranchConditions);
     if (!context.foldingAskedForUses)
         context.passesLeftIdle.add(PassID::FoldConstants);
-    context.reachedFixpoint = !simplifier.mayFindMoreAtOnce;
+    // Two arms of several blocks each are compared once their blocks are joined.
+    context.reachedFixpoint = !simplifier.mayFindMoreAtOnce && !simplifier.hasArmsWithSameCode();
     return PassOutcome::Changed;
 }
 

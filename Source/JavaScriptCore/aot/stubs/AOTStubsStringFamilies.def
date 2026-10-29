@@ -15,6 +15,7 @@ v(StringBuilderDiscard, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice
 v(StackStringBuilderAppendString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StackStringBuilderAppendString)
 
 // AOTStubsStringConversions.cpp
+v(ConcatenateKeyOfPair, CalledByCode, (Key, Name), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConcatenateKeyOfPair)
 v(IntegerToString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), IntegerToString)
 
 // AOTStubsStringConcatenation.cpp

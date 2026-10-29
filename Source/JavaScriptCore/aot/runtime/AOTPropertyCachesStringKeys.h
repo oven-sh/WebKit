@@ -94,6 +94,13 @@ public:
             return true;
         }
 
+        // Two parts as they are encoded, for the table of pairs.
+        static constexpr uint32_t pairMark = 1u << 31;
+        void takePair(EncodedJSValue first, EncodedJSValue second)
+        {
+            countAndKinds = pairMark;
+            partPairs = { static_cast<uint64_t>(first), static_cast<uint64_t>(second), 0 };
+        }
         ALWAYS_INLINE bool hasSameParts(const KeyByParts& other) const { return countAndKinds == other.countAndKinds && partPairs[0] == other.partPairs[0] && partPairs[1] == other.partPairs[1] && partPairs[2] == other.partPairs[2]; }
         uint32_t part(uint32_t index) const { return static_cast<uint32_t>(partPairs[index / 2] >> (index % 2 * 32)); }
 
@@ -122,6 +129,29 @@ public:
         return nullptr;
     }
     void cacheKeyByParts(const KeyByParts&, JSString*);
+
+    // The key of two parts that were joined before. A part is compared as it is encoded: a cell by its address, any other value by its bits. The stub ConcatenateKeyOfPair looks it up.
+    struct KeyOfPair {
+        EncodedJSValue first { 0 };
+        EncodedJSValue second { 0 };
+        JSString* key { nullptr };
+        uint64_t unused { 0 };
+    };
+    static constexpr size_t waysOfKeysOfPairs = 2;
+    static constexpr unsigned keyOfPairSetShift = 6;
+    static_assert(waysOfKeysOfPairs * sizeof(KeyOfPair) == 1 << keyOfPairSetShift);
+    static constexpr uint32_t keyOfPairMultiplier = 0x9e3779b1u;
+    static constexpr unsigned keyOfPairHashShift = 13;
+    static constexpr uint64_t keyOfPairMaskFor(size_t tableSize) { return (tableSize / waysOfKeysOfPairs - 1) << keyOfPairSetShift; }
+    // Under the mask: how many bytes behind the start of the table the set of the pair lies.
+    static constexpr uint32_t hashOfPair(EncodedJSValue first, EncodedJSValue second)
+    {
+        uint32_t mixed = static_cast<uint32_t>(static_cast<uint64_t>(first) + (static_cast<uint64_t>(second) << 3));
+        return mixed * keyOfPairMultiplier >> keyOfPairHashShift;
+    }
+    // One empty set, for an instance that has joined nothing yet.
+    JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
+    void cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second, JSString* key);
     // What the last lookup by parts took and did not find, for whoever makes the key. No parts: countAndKinds is zero.
     KeyByParts& lastLookupByParts() { return m_lastLookupByParts; }
 
@@ -285,6 +315,10 @@ private:
     }
     ALWAYS_INLINE void addKeyByParts(const KeyByParts& parts, JSString* key)
     {
+        if (parts.countAndKinds == KeyByParts::pairMark) {
+            cacheKeyOfPair(parts.partPairs[0], parts.partPairs[1], key);
+            return;
+        }
         if (m_keysByParts.isEmpty() && !tryResize(m_keysByParts, minTableSize)) [[unlikely]]
             return;
         size_t tableSize = m_keysByParts.size();
@@ -312,6 +346,7 @@ private:
     JSString* findAmongEqualHashes(const uint64_t* pair, std::span<const Latin1Character>) const;
     size_t removeDeadEntries(VM&, std::span<uint64_t>);
     size_t removeDeadKeysByParts(VM&);
+    size_t removeDeadKeysOfPairs(VM&);
     size_t removeDeadCaseConversions(VM&);
     size_t removeDeadIntegerKeys(VM&);
     void resizeIntegerKeys(size_t tableSize);
@@ -327,6 +362,9 @@ private:
     }
     void growCachedKeys();
     void growKeysByParts();
+    bool addKeyOfPair(const KeyOfPair&);
+    void growKeysOfPairs();
+    void publishKeysOfPairs();
     void publishIntegerKeys();
 
     Instance& m_instance;
@@ -342,6 +380,8 @@ private:
     size_t m_integerKeysEnteredSinceSweep { 0 };
     Vector<KeyByParts> m_keysByParts;
     KeyByParts m_lastLookupByParts;
+    Vector<KeyOfPair> m_keysOfPairs;
+    size_t m_keyOfPairEvictionCount { 0 };
     size_t m_keysByPartsEvictionCount { 0 };
     std::array<uint64_t, 256> m_caseConvertedStrings { };
     std::array<uint64_t, numberOfCaseConversions> m_caseConversions { };

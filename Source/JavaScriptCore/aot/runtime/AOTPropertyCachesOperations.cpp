@@ -150,6 +150,35 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     return result;
 }
 
+void fileReadWithoutCode(Instance* instance, JSObject* base, const Identifier& ident)
+{
+    VM& vm = *instance->vm;
+    JSGlobalObject* globalObject = instance->globalObject;
+    NamedAccess access { instance, ident, std::nullopt, nullptr };
+    UniquedStringImpl* uid = ident.impl();
+    Object* compiledBase = compiledObjectOrNull(base);
+    if (!access.caches().shouldFile(base->structureID(), uid, SlotAccess::Read) || (compiledBase && hasPendingStars(*compiledBase)))
+        return;
+    Object::ensureStructureForExtraPropertiesIfNeeded(vm, base);
+    LazyPrototypeRead lazy = classifyReadThroughLazyPrototypes(globalObject, base, uid);
+    if (lazy.result == LazyPrototypeReadResult::NotApplicable && uid->isSymbol() && !isNeverCachedName(vm, uid)) {
+        for (JSObject* object = base; object; object = object->getPrototypeDirect().getObject())
+            ClassPrototype::ensureMembers(object);
+    }
+    Structure* structureBefore = base->structure();
+    if (lazy.result == LazyPrototypeReadResult::Answered) {
+        access.caches().cache({ structureBefore, access.name(), SlotAccess::Read, nullptr }, lazy.answer);
+        return;
+    }
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    (lazy.firstObjectAbove ? lazy.firstObjectAbove : base)->getPropertySlot(globalObject, ident, slot);
+    scope.assertNoException();
+    if (!slot.isTaintedByOpaqueObject())
+        fileRead(instance, base, structureBefore, access.name(), slot);
+}
+
 JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identifier& name, JSValue receiver)
 {
     NamedAccess access { instance, name, std::nullopt, nullptr };
@@ -540,6 +569,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance* inst
     OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, JSValue::decode(encodedValue), JSValue::decode(encodedPrototype)));
 }
 
+// `memo[n] ??= ..`. What such an object does not hold in its vector it does not have, and nothing above it answers for an index.
+static bool isPlainObjectBelowNoIndexedProperties(Structure* structure)
+{
+    if (structure->typeInfo().type() != FinalObjectType || hasAnyArrayStorage(structure->indexingType()) || structure->hasPolyProto())
+        return false;
+    JSValue prototype = structure->storedPrototype();
+    JSGlobalObject* realm = structure->realm();
+    return prototype.isNull() || (realm && prototype == realm->objectPrototype() && realm->objectPrototypeChainIsSane());
+}
+
 static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue property)
 {
     VM& vm = globalObject->vm();
@@ -555,6 +594,8 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
                 return result;
             Structure* structure = object->structure();
             if (structure->realm() == globalObject && globalObject->isOriginalArrayStructure(structure) && !hasAnyArrayStorage(structure->indexingType()) && globalObject->arrayPrototypeChainIsSane())
+                return jsUndefined();
+            if (isPlainObjectBelowNoIndexedProperties(structure))
                 return jsUndefined();
             // The stub finds the text of the index there the next time.
             if (object->type() == ProxyObjectType && *index < NumericStrings::cacheSize)

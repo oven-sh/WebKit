@@ -26,6 +26,7 @@ private:
 
     class TableReader;
 
+    std::optional<bool> isTakenForNumberAfter(const ValueContext& step, uint32_t result);
     void generateNext(Collection, const ValueContext&);
 };
 

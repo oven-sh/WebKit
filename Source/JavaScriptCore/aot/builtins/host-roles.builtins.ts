@@ -41,6 +41,7 @@ export default b.declarations(
     "%ModuleRequire%",
     "%ModuleRequire%.main",
     "%ModuleRequire%.resolve",
+    "%ModuleRequirePrototype%",
     "%bun:bundle%",
     "node:module",
     "node:module.createRequire",

@@ -48,6 +48,7 @@ export default b.declarations(
     "runValueInitializers",
     "setDecoratorMetadata",
   ),
+  b.frontEndFunctions("prelude/iterator-consumers", "forEach", "toArray"),
   b.frontEndFunctions(
     "prelude/written-lists",
     "arrayFromLength",

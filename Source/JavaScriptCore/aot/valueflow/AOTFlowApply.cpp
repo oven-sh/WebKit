@@ -18,6 +18,7 @@
 #include "AOTRepresentation.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTValueIdentity.h"
 #include <wtf/HashMap.h>
@@ -827,7 +828,8 @@ static bool holdsNumbersOfStrings(const Program& program, const Field& field)
 
 // A slot whose type lists only written strings holds their numbers, so that a comparison with a written string compares two integers and a store of one stores a constant.
 // Every other use needs the cell: a store of a string that is a cell, as every array element is, searches for its number, and a read loads the cell of the number.
-// So the slot holds cells where the program only uses what it reads from the field as a string, some store brings a cell, and the stores of written strings are no more than the accesses that want cells.
+// So the slot holds cells where the program only uses what it reads from the field as a string or compares it with written strings, some store brings a cell, and the stores of written strings are no more than the accesses that want cells.
+// The comparisons have to be few: each is a little dearer on cells, and each store of a cell saves a search.
 // This is settled before the bodies are typed: the type of a read follows the type of the slot.
 static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
 {
@@ -858,6 +860,7 @@ static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
         Vector<uint32_t> storedCells;
         Vector<uint32_t> storedWrittenStrings;
         Vector<uint32_t> readAsCells;
+        Vector<uint32_t> comparedWithWrittenStrings;
         Vector<uint32_t> usedOtherwise;
         Vector<std::pair<uint32_t, uint32_t>> accessedTogether;
     };
@@ -930,12 +933,12 @@ static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
             if (callees.listsEveryCallee() && callees.written().functions.empty())
                 callsOfBuiltins.quickSet(stamp.value.index());
         }
-        auto noteUse = [&](ValueID operand, bool takesCell) {
+        auto noteUse = [&](ValueID operand, Vector<uint32_t>& list) {
             while (isCast(function.at(operand).opcode))
                 operand = function.at(operand).operand(0);
             auto read = reads.find(operand.index());
             if (read != reads.end())
-                (takesCell ? uses.readAsCells : uses.usedOtherwise).append(fieldsOfReads.span().subspan(read->value.first, read->value.second - read->value.first));
+                list.append(fieldsOfReads.span().subspan(read->value.first, read->value.second - read->value.first));
         };
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
@@ -948,11 +951,12 @@ static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
                         takesCell = !operandIndex;
                     if (user.opcode == Opcode::Call)
                         takesCell = operandIndex != OperandIndex::Call::callee && callsOfBuiltins.quickGet(id.index());
-                    noteUse(operand, takesCell);
+                    bool isComparedWithWrittenString = user.opcode == Opcode::StrictEq && definitionOf(user.operand(1 - operandIndex)).opcode == Opcode::String;
+                    noteUse(operand, takesCell ? uses.readAsCells : isComparedWithWrittenString ? uses.comparedWithWrittenStrings : uses.usedOtherwise);
                 });
             }
             block.terminator.forEachOperand([&](ValueID operand, uint32_t) {
-                noteUse(operand, block.terminator.kind == TerminatorKind::Branch);
+                noteUse(operand, block.terminator.kind == TerminatorKind::Branch ? uses.readAsCells : uses.usedOtherwise);
             });
         }
     });
@@ -983,12 +987,18 @@ static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
     Vector<uint32_t> storedCells = countByRoot(&Uses::storedCells);
     Vector<uint32_t> storedWrittenStrings = countByRoot(&Uses::storedWrittenStrings);
     Vector<uint32_t> readAsCells = countByRoot(&Uses::readAsCells);
+    Vector<uint32_t> compared = countByRoot(&Uses::comparedWithWrittenStrings);
     Vector<uint32_t> usedOtherwise = countByRoot(&Uses::usedOtherwise);
 
+    // In machine instructions, about: the search for the number of a cell, and what a comparison of two cells takes more than one of two numbers.
+    AOT_THRESHOLD(uint32_t, costOfSearchForNumber, 20);
+    AOT_THRESHOLD(uint32_t, gainOfComparingNumbers, 4);
     TypeArena arena(program.types);
     for (size_t number : candidates) {
         uint32_t root = find(static_cast<uint32_t>(number));
-        if (!storedCells[root] || !readAsCells[root] || usedOtherwise[root] || storedCells[root] + readAsCells[root] < storedWrittenStrings[root])
+        if (!storedCells[root] || !(readAsCells[root] + compared[root]) || usedOtherwise[root] || storedCells[root] + readAsCells[root] < storedWrittenStrings[root])
+            continue;
+        if (storedCells[root] * costOfSearchForNumber <= compared[root] * gainOfComparingNumbers)
             continue;
         size_t layout = std::ranges::upper_bound(firstField, static_cast<uint32_t>(number)) - firstField.begin() - 1;
         Field& field = program.layouts[layout].fields[number - firstField[layout]];

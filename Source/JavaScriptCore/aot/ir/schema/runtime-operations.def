@@ -73,7 +73,7 @@ runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ReserveCollectionCapacity : void (JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
-runtime RecordCallee : void (JSCell* closure) ; reads(all) writes(ExternalState, RuntimeState)
+runtime RecordCallee : void (JSCell* closure, void* stackPointerOfCaller) ; reads(all) writes(ExternalState, RuntimeState)
 runtime ConvertToDoubleStorage : void (JSCell* array) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ArrayPutAtIndex, ArrayPutNumberAtIndex : void (JSCell* array, EncodedJSValue value, uint64_t position) ; unknownCode
 runtime ArrayPutAtNumber : void (JSCell* array, EncodedJSValue value, double position) ; unknownCode
@@ -115,6 +115,7 @@ runtime StackStringBuilderAppend : uint8_t* (uint8_t* builder, uint8_t* cursor, 
 runtime StackStringBuilderAppendStringRange : uint8_t* (uint8_t* builder, uint8_t* cursor, JSCell* string, int32_t start, int32_t end) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderFinish : JSCell* (uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StackStringBuilderDiscard : void (uint8_t* builder) ; reads(all) writes(StringBuilderContents, RuntimeState)
+runtime ConcatenatePair : JSCell* (uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t unused) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime Concatenate : JSCell* (uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime MapGetByKeyParts : EncodedJSValue (JSCell* map, uint32_t count, const EncodedJSValue* parts) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime HasByKeyParts : size_t (JSCell* collection, uint32_t count, const EncodedJSValue* parts) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects

@@ -288,7 +288,7 @@ OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)
 
 OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept)
 {
-    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode, FunctionCapabilities::NotesLooksForName, FunctionCapabilities::IsLongConstructor };
+    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode, FunctionCapabilities::NotesLooksForName, FunctionCapabilities::IsLongConstructor, FunctionCapabilities::MakesNoTailCallIfConstructed };
     return (initialCapabilitiesOf(replacement) - kept) | (ofReplaced & kept);
 }
 

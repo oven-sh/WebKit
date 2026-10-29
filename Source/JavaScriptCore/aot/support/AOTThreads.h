@@ -34,6 +34,8 @@ namespace JSC { namespace AOT {
 struct HostThreadPool {
     // Calls run(argument) once, on a thread of the pool, and does not wait for it.
     void (*schedule)(void (*run)(void* argument), void* argument);
+    // Gives what the allocator keeps for the current thread, and has no use for, back to the system.
+    void (*giveFreeMemoryOfCurrentThreadBack)();
 };
 
 // Foreground is the critical path of the build.
@@ -54,6 +56,9 @@ public:
     unsigned width() const { return m_width; }
     JS_EXPORT_PRIVATE unsigned numberOfRestingThreads() const;
     void sendRestingThreadsBack() const;
+    // Memory that one thread allocated and another freed stays with the first until that thread looks. Every thread looks before its next task, and the resting ones are woken for it.
+    // Nothing waits: what comes next runs beside it.
+    JS_EXPORT_PRIVATE void giveFreeMemoryBack() const;
 
     // Loops and tasks that a task starts have its priority unless they name another.
     JS_EXPORT_PRIVATE static TaskPriority currentPriority();

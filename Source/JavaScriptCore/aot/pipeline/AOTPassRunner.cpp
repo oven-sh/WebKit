@@ -119,7 +119,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
-    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListUserOpcodes } } },
+    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::ElemGet } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::GetStringLength } | simplifiedIntrinsics | constantListUserOpcodes } } },
     { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },

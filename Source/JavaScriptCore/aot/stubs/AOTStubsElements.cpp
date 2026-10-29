@@ -171,7 +171,7 @@ static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const Elemen
     loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, hasNone);
 }
 
-static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers)
+static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch)
 {
     const auto [base, index, storage, length, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
@@ -216,6 +216,13 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
     hasIndexedStorage.link(&jit);
     jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape)).linkTo(hasContiguousShape, &jit);
+    notHandled.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(DoubleShape)));
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
+    notHandled.append(jit.branch64(CCallHelpers::AboveOrEqual, index, length));
+    jit.loadDouble(element, number);
+    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
+
     notHandled.link(&jit);
     jit.boxInt52(index, index, storage, number);
 }
@@ -400,7 +407,7 @@ void generateGetByVal(StubAssembler& jit)
     JumpList slow;
     JumpList absent;
 
-    emitGetByValAtIndexEntry(jit, registers);
+    emitGetByValAtIndexEntry(jit, registers, numberScratch);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();

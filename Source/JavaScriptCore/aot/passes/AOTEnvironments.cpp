@@ -2051,10 +2051,11 @@ static void giveAbsentInPlaceOfUndefined(const ClosureParameterTable& closurePar
         builder.applyInsertions();
 }
 
-static void readCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
+static void readCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder, Vector<ValueID, 8>& valuesWithOtherTypeThanRead)
 {
     Function& function = builder.function();
     ValueSubstitution substitution(function);
+    Vector<ValueID, 8> replacedReads;
     auto typeInPlaceOfValue = [&](ValueID id) {
         return typeInPlaceOf(plan.closures[webs.candidateOf(id)], program.typeOf(function, id));
     };
@@ -2119,6 +2120,7 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
             uint32_t source = plan.closures[candidate].fields[value.index()];
             if (source == noField) {
                 substitution.replace(id, closure);
+                replacedReads.append(id);
                 erasedIndexes.set(index);
                 continue;
             }
@@ -2129,6 +2131,11 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
         }
         if (!erasedIndexes.isEmpty())
             builder.eraseValues(block, erasedIndexes);
+    }
+    for (ValueID read : replacedReads) {
+        ValueID value = substitution.resolve(read);
+        if (function.at(value).type != function.at(read).type)
+            valuesWithOtherTypeThanRead.appendIfNotContains(value);
     }
     substitution.apply(function, nullptr);
     if (!webs.isHeld)
@@ -2780,12 +2787,18 @@ void readCapturesFromEnvironments(ProgramEditor& editor, FlowResults& flow, cons
                 function.edit(added.block, BlockEdit::Values).values.insert(added.indexInBlock + 1, store);
             }
             giveAbsentInPlaceOfUndefined(closureParameters, webs, builder);
+            Vector<ValueID, 8> valuesWithOtherTypeThanRead;
             if (!webs.isEmpty)
-                readCaptures(program, candidates, plan, webs, builder);
+                readCaptures(program, candidates, plan, webs, builder, valuesWithOtherTypeThanRead);
             removeStores(plan, id, builder);
             if (!webs.isEmpty)
                 makeClosuresAtReads(candidates, plan, webs, builder);
             nameFactsWhereReadsStand(program, function, arenas.types);
+            // What is computed from a capture has its type, and later its form, from the type of the value that now stands for the read.
+            if (!valuesWithOtherTypeThanRead.isEmpty()) {
+                FunctionAnalyses analyses(builder.context(), function);
+                narrowValueTypes(TypePropagationInputs { program, id, function, analyses, arenas.types, build }, valuesWithOtherTypeThanRead.span());
+            }
         });
     }
     passOwnCaptures(editor, flow, build, plan);

@@ -161,6 +161,8 @@ Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const Fie
 
 CellPointer SlotAccessEmitter::baseOfSlot(CellPointer cell, const FieldAccess& access)
 {
+    // The table of distances has entries for the members with the field alone.
+    checkIsCompiledObjectOf(cell, access.findsOffsetByShape ? access.membersWithField : access.receivers);
     if (!access.findsOffsetByShape)
         return cell;
     return CellPointer(m_out.add(cell.value(), zeroExtended(distanceBehindLowestOffset(cell, access)).value()));
@@ -233,7 +235,10 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return undefinedResult(value);
         return guardProvesSlotFilled(analyses(), value.value()) ? resultBehindTestThatNeverPasses(value) : failRead(value, InternalErrorKind::SlotAccessNotPlaced);
     case FieldAccess::Coverage::SomeMembers:
-        return mayBeAbsent ? readIfMemberHasField(value, cell, access, load) : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
+        if (mayBeAbsent)
+            return readIfMemberHasField(value, cell, access, load);
+        checkIsCompiledObjectOf(cell, access.membersWithField);
+        return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
     case FieldAccess::Coverage::EveryMemberHasSlot:
     case FieldAccess::Coverage::EveryMember:
         return mayBeAbsent ? load() : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
@@ -269,6 +274,9 @@ std::optional<CellPointer> SlotAccessEmitter::loadHalfOfAccessorInSlot(const Val
     CellPointer accessor = held.is<CellPointer>() ? held.as<CellPointer>()
         : held.is<NarrowReference>() ? emitter<ConversionEmitter>().decode(held.as<NarrowReference>(), Type::object(), Representation::Cell).as<CellPointer>()
         : unboxCell(held.as<Boxed>());
+    checkClaim(accessor, [&] {
+        return hasCellType(accessor, GetterSetterType);
+    });
     return CellPointer(m_out.loadPtr(m_out.address(m_heaps.at(m_program, location), accessor.value(), offsetInGetterSetter)));
 }
 
@@ -494,6 +502,11 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
             writeSlot(value, cell, access, stored);
         else if (!newObject || newObject->mayHaveExtension)
             slots.storeIfExtensionHolds(baseOfSlot(cell, access), access.slot, location, get(stored), access.extensionWord);
+        else {
+            checkClaim(cell, [&] {
+                return slots.hasNoExtension(cell, access.extensionWord);
+            });
+        }
     };
     if (!mayCreateListedField(access)) {
         store();
@@ -960,6 +973,10 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
         if (!applyStoreBySlot(*state, m_function.at(store)))
             return std::nullopt;
     }
+    CellPointer cell = in<CellPointer>(operand);
+    checkClaim(cell, [&] {
+        return equal(emitter<ShapeTestEmitter>().orderWordOf(cell), static_cast<int32_t>(state->orderWord));
+    });
     return state;
 }
 

@@ -4,7 +4,7 @@
  */
 
 // AOTStubsOperations.cpp
-v(CallOperation, CalledByCode, (ValueWithInstance, ValueWithGlobalObject, ValueWithVM, Value, VoidWithInstance, VoidWithGlobalObject, VoidWithVM, Void, DoubleWithInstance, DoubleWithGlobalObject, DoubleWithVM, Double, PairWithInstance, ValueWithInstanceMayFailToAllocate, VoidWithInstanceMayFailToAllocate, ValueWithInstanceWithoutPoll, VoidWithInstanceWithoutPoll, DoubleWithInstanceWithoutPoll), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, CallOperation)
+v(CallOperation, CalledByCode, (ValueWithInstance, ValueWithGlobalObject, ValueWithVM, Value, VoidWithInstance, VoidWithGlobalObject, VoidWithVM, Void, DoubleWithInstance, DoubleWithGlobalObject, DoubleWithVM, Double, PairWithInstance, ValueWithInstanceMayFailToAllocate, VoidWithInstanceMayFailToAllocate, ValueWithInstanceWithoutPoll, VoidWithInstanceWithoutPoll, DoubleWithInstanceWithoutPoll, DoubleWithInstanceMayFailToAllocate, PairWithInstanceMayFailToAllocate), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, CallOperation)
 v(TailCallOperation, CalledByCode, (Instance, GlobalObject, VM, None), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, TailCallOperation)
 v(CallOperationPreservingRegisters, CalledByCode, (VoidWithInstance, VoidWithInstanceOnlyGPRs, ValueWithInstance, ValueWithInstanceOnlyGPRs, ValueWithInstanceNoExceptionCheck, ValueWithInstanceOnlyGPRsNoExceptionCheck, ValueNoExceptionCheck, DoubleNoExceptionCheck, DoubleWithInstance, ValueWithInstanceMayFailToAllocate, ValueWithInstanceOnlyGPRsMayFailToAllocate, VoidWithInstanceWithoutPoll, VoidWithInstanceOnlyGPRsWithoutPoll, ValueWithInstanceWithoutPoll, ValueWithInstanceOnlyGPRsWithoutPoll, DoubleWithInstanceWithoutPoll), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersOnlyScratch, NoEffects, CallOperationPreservingRegisters)
 v(ThrowAtSite, CalledByCode, (WordsAfterCall, WordInRegister), FormAxis | NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowAtSite)
@@ -47,6 +47,7 @@ v(InitializeClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxSlimClos
 v(MaterializeEnvironment, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(EnvironmentFields, AllocatorState) | writes(AllocatorState), MaterializeEnvironment)
 v(ValueEndsItsTailCalls, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueEndsItsTailCalls)
 v(ValueIsClosureOf, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, ValueIsClosureOf)
+v(RecordCallee, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState) | writes(RuntimeState), RecordCallee)
 
 // AOTStubsConstants.cpp
 v(CreateConstant, CalledByCode, (String, NewString, Key, FunctionName), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, CreateConstant)
@@ -115,8 +116,10 @@ v(NewMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCa
 v(NewSet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewSet)
 v(MapNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapNextFrontEnd)
 v(SetNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SetNextFrontEnd)
+v(ReserveCollectionCapacityFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReserveCollectionCapacityFrontEnd)
 AOT_STUB_FRONT_END(MapNext, MapNextFrontEnd)
 AOT_STUB_FRONT_END(SetNext, SetNextFrontEnd)
+AOT_STUB_FRONT_END(ReserveCollectionCapacity, ReserveCollectionCapacityFrontEnd)
 
 // AOTStubsRegExp.cpp, AOTStubsRegExpLiterals.cpp
 v(RegExpMatch, CalledByCode, (Array, Boolean, Found, BoxedBoolean), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RegExpMatch)

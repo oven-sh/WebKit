@@ -11,6 +11,7 @@
 #include "AOTValueFlowRuleContext.h"
 #include "AOTVector.h"
 #include <optional>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,6 +34,30 @@ ClimbingSet unknownObject(ValueFlowRuleContext&, ValueFlowUnknownSource);
 void connect(ValueFlowRuleContext&, const ValueFlowSources&, ValueFlowNodeID target);
 ClimbingSet valueOf(ValueFlowRuleContext&, const ValueFlowSources&);
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext&, ClimbingSet knownObjects);
+// What a walk from copies to their sources has found. A chain of n copies takes n steps that find one source each. The set is made at the end:
+// the sets of the steps in between would be n * n for the n copies of the chain.
+class SourcesOfCopies {
+public:
+    SourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet copies)
+        : m_context(context)
+        , m_copies(copies)
+    {
+    }
+
+    // False: all of them were found before.
+    bool add(ClimbingSet sources);
+    ClimbingSet withCopies();
+    size_t size() const { return m_sources.size(); }
+    // In the order they were found.
+    ClimbingSet sourcesBetween(size_t first, size_t end);
+
+private:
+    ValueFlowRuleContext& m_context;
+    ClimbingSet m_copies;
+    Vector<ValueFlowObjectID, 8> m_sources;
+    // Once they are many.
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_isSource;
+};
 // Beside the unknown object an object that lets in unseen code stays listed for the sake of its calls. In the heap the unknown object stands for it once it has escaped.
 ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext&, ClimbingSet);
 
@@ -85,6 +110,8 @@ void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext&, ValueFlowNodeID
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 bool mayAnswerToName(const Program&, ModuleID);
+// A file that is no entry point is found by name only where the program itself loads files by name.
+bool answersOnlyToLoadsOfProgram(const Program&, ModuleID);
 bool isAskedOfHostByName(const Module&);
 void enterLoaderOfHost(ValueFlowRuleContext&);
 

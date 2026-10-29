@@ -274,6 +274,8 @@ static void becomeForwardingCall(Value& call, ValueID thisValue, uint32_t firstA
     call.setCalleeOperand(listCall.calleeOperand());
     call.setThisValueOperand(thisValue);
     call.setFirstArgument(firstArgument);
+    call.setCalleeKey(listCall.calleeKey());
+    call.setCalleeName(listCall.calleeName());
     call.setAccessSite(listCall.accessSite());
     call.setCallees(listCall.callees());
 }

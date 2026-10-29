@@ -874,7 +874,7 @@ static void printDirectEvalRequest(const TablesContext& context, uint32_t offset
     for (const EvalBindingData& binding : unsafeMakeSpan(request.bindings, request.numberOfBindings)) {
         RecordLine(context, "  binding"_s).identifier("name"_s, binding.name).field("kind"_s, static_cast<EvalBindingKind>(binding.kind)).field("depth"_s, static_cast<uint32_t>(binding.depth))
             .field("operand"_s, optionalIDInImage<uint32_t>(binding.operand)).field("function"_s, optionalIDInImage<uint32_t>(binding.function))
-            .field("setter"_s, optionalIDInImage<uint32_t>(binding.setter)).identifier("privateKey"_s, binding.privateKey).field("slot"_s, binding.slot).field("type"_s, binding.type);
+            .field("setter"_s, optionalIDInImage<uint32_t>(binding.setter)).identifier("privateKey"_s, binding.privateKey).field("slot"_s, binding.slot);
     }
 }
 

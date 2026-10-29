@@ -128,6 +128,9 @@ const traversal = (returns: b.TableType, result: b.CallbackResultUse, ...receive
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+const compiledTraversal = (name: string, returns: b.TableType, result: b.CallbackResultUse) =>
+  ({ ...traversal(returns, result), implementation: b.compiled("TypedArrayPrototype", name) }) satisfies b.FunctionField;
+
 type SpeciesLookup = "BeforeCallbacks" | "AfterCallbacks";
 
 const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLookup): b.FunctionField[] => {
@@ -142,13 +145,13 @@ const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLoo
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
 
-const fold = [
+const fold = (name: string) => [
   {
     ...operandCodeEffects,
     args: { callback: b.callable, initialValue: b.notPassed },
     returns: b.union(element, b.callbackResult("callback")),
     uses: { this: [readsElements], callback: [foldCall("Once", element), foldCall("PerElement", b.result)] },
-    implementation: b.hostCall,
+    implementation: b.compiled("TypedArrayPrototype", name),
   },
   {
     ...operandCodeEffects,
@@ -159,7 +162,7 @@ const fold = [
       callback: [foldCall("Once", b.operand("initialValue")), foldCall("PerElement", b.result)],
       initialValue: b.inspected,
     },
-    implementation: b.hostCall,
+    implementation: b.compiled("TypedArrayPrototype", name),
   },
 ] satisfies b.FunctionField[];
 
@@ -304,8 +307,8 @@ export default b.declarations(
       entries: iteratorOver("Entries"),
       keys: iteratorOver("Keys"),
       values: iteratorOver("Values"),
-      every: traversal(b.bool, "Tested"),
-      some: traversal(b.bool, "Tested"),
+      every: compiledTraversal("every", b.bool, "Tested"),
+      some: compiledTraversal("some", b.bool, "Tested"),
       fill: {
         ...operandCodeEffects,
         args: { value: b.any, ...range },
@@ -315,11 +318,11 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       filter: copyingTraversal("Tested", "AfterCallbacks"),
-      find: traversal(elementOrUndefined, "Tested"),
-      findIndex: traversal(indexOrNotFound, "Tested"),
-      findLast: traversal(elementOrUndefined, "Tested"),
-      findLastIndex: traversal(indexOrNotFound, "Tested"),
-      forEach: traversal(b.undefined, "Ignored"),
+      find: compiledTraversal("find", elementOrUndefined, "Tested"),
+      findIndex: compiledTraversal("findIndex", indexOrNotFound, "Tested"),
+      findLast: compiledTraversal("findLast", elementOrUndefined, "Tested"),
+      findLastIndex: compiledTraversal("findLastIndex", indexOrNotFound, "Tested"),
+      forEach: compiledTraversal("forEach", b.undefined, "Ignored"),
       includes: search(b.bool),
       indexOf: search(indexOrNotFound),
       lastIndexOf: search(indexOrNotFound),
@@ -333,8 +336,8 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       map: copyingTraversal(convertedByNativeCode, "BeforeCallbacks"),
-      reduce: fold,
-      reduceRight: fold,
+      reduce: fold("reduce"),
+      reduceRight: fold("reduceRight"),
       reverse: {
         returns: self,
         capability: "heap",

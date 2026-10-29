@@ -402,6 +402,19 @@ static Type refinedTypeOf(const TypingContext& context, const Value& value, cons
         return quotientResultType(context.typeOf(value.dividendOperand()), context.typeOf(value.divisorOperand()), value.rounding(), upperBound);
     case Opcode::TypeTest:
         return typeTestResultType(context, context.typeOf(value.valueOperand()), context.types.at(value.testedType()), upperBound);
+    case Opcode::GetStringLength: {
+        // One of a few written strings is as long as one of them.
+        const Type& string = context.typeOf(value.stringOperand());
+        if (string.isNever())
+            return Type::never();
+        if (!string.hasLiteralStrings() || !string.hasOnlyPrimitives(Primitive::LiteralString))
+            return upperBound;
+        Vector<char16_t> buffer;
+        Range lengths = Range::empty();
+        for (StringID literal : string.stringLiterals)
+            lengths = lengths.unionWith(Range::one(context.program.strings.viewOf(literal, buffer).length()));
+        return lengths.isEmpty() ? upperBound : Type::integer(lengths);
+    }
     case Opcode::ToInt32:
     case Opcode::ToUint32:
     case Opcode::ToIntegerOrInfinity:

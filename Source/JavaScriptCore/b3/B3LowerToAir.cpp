@@ -1387,15 +1387,21 @@ private:
                     upsilons.append({ upsilon, block->frequency() });
             }
         }
+        // Those of one candidate follow one another, in the order of the blocks, so that no candidate goes through the Upsilons of all.
+        std::ranges::stable_sort(upsilons, { }, [&](const auto& upsilon) { return candidateOfPhi[upsilon.first->phi()]; });
         // A Phi that is kept so hands zeros on to the next.
         for (bool changed = true; changed;) {
             changed = false;
+            auto rest = upsilons.span();
             for (const Candidate& candidate : candidates) {
+                size_t count = std::ranges::find_if(rest, [&](const auto& upsilon) { return upsilon.first->phi() != candidate.phi; }) - rest.begin();
+                auto upsilonsOfCandidate = rest.first(count);
+                rest = rest.subspan(count);
                 if (m_phisKeptZeroExtended.contains(candidate.phi))
                     continue;
                 double frequencyOfMoves = 0;
-                for (auto [upsilon, frequency] : upsilons) {
-                    if (upsilon->phi() == candidate.phi && upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
+                for (auto [upsilon, frequency] : upsilonsOfCandidate) {
+                    if (upsilon->child(0) != candidate.phi && mayHaveUpperHalf(upsilon->child(0)))
                         frequencyOfMoves += frequency;
                 }
                 if (candidate.frequencyOfExtensions > 2 * frequencyOfMoves) {

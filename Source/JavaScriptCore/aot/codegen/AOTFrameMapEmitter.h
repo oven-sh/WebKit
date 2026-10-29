@@ -31,6 +31,7 @@ public:
 
     Roots appendRoots(B3::PatchpointValue*, const ValueContext& suspension);
     static std::optional<uint64_t> siteWordFor(FrameMapRecords&, const B3::StackmapGenerationParams&, const Roots&, unsigned promiseChild);
+    static bool savesDeadPreservedRegister(const B3::StackmapGenerationParams&);
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -168,12 +168,12 @@ void ArgumentsEmitter::generateCallForwardVarargs(const ValueContext& value)
     Pointer list = restList(value->firstArgument());
     CallEmitter& calls = emitter<CallEmitter>();
     if (!value.returnCall()) {
-        define(value, calls.callWithList(value, callee, thisValue, count, list));
+        define(value, calls.callWithList(value, callee, thisValue, count, list, { .throwSite = calls.siteThatNamesCallee(value) }));
         return;
     }
 
     if (!typeOf(calleeOperand).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        calls.requireCallableBeforeTailCall(value, callee);
+        calls.requireCallableBeforeTailCall(value, callee, calls.siteThatNamesCallee(value));
     emitTailCallWithList(callee, thisValue, count, list);
     calls.didEmitTailCall();
     m_records.frame.dropsArgumentListFrames = true;

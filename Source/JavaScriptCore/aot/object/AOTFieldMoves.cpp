@@ -75,7 +75,7 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-static bool acceptsEveryValue(const RuntimeType& type)
+bool acceptsEveryValue(const RuntimeType& type)
 {
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;

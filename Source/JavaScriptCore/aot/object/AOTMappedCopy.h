@@ -46,6 +46,14 @@ struct MappedCopy {
         OptionalInt64AsDouble,
         WideNarrowReference,
         NarrowWideReference,
+        NarrowLiteralString,
+        WideLiteralString,
+        // Out of a property of an ordinary object. Each takes the other way for a value that its slot does not take as it is, and for undefined and null.
+        BoxedAsInt32,
+        BoxedAsInt64,
+        BoxedAsDouble,
+        BoxedAsNarrowString,
+        BoxedAsJSValue,
         OtherForm,
         Tested,
     };
@@ -72,12 +80,24 @@ struct MappedCopy {
         // The stub leaves the copy to the operation where the bits that it has read, less the first, are below the number.
         uint64_t firstBitsRefusedByStub { 0 };
         uint64_t numberOfBitsRefusedByStub { 0 };
+        // The int32s that a move out of an ordinary object takes.
+        int32_t leastInt32 { 0 };
+        int32_t greatestInt32 { -1 };
     };
     struct Run {
         const Move* end { nullptr };
         intptr_t negativeSize { 0 };
     };
     enum class State : uint8_t { IsUnknown, IsServed, IsNotServed };
+
+    MappedCopy() = default;
+    MappedCopy(const MappedCopy&) = default;
+    MappedCopy& operator=(const MappedCopy&) = default;
+    ~MappedCopy()
+    {
+        if (placeOfOwnedCopy && *placeOfOwnedCopy == this)
+            *placeOfOwnedCopy = nullptr;
+    }
 
     bool isFor(uint64_t target, uint64_t source, uint32_t excludedRun) const { return state != State::IsUnknown && targetWords == target && sourceWords == source && excludedRunNumberPlusOne == excludedRun; }
 
@@ -96,6 +116,8 @@ struct MappedCopy {
     bool mayTakeNoFrame { false };
     bool extensionWordOfTargetIsWide { false };
     bool extensionWordOfSourceIsWide { false };
+    // The source is an ordinary object with all its properties in its cell. granuleBitsOfSource is not zero then, so that only a copy that looks at it asks.
+    bool readsOrdinaryObject { false };
     StructureID structureOfTarget;
     StructureID structureOfSource;
     // That of no cell where the stub leaves the moves to the operation. Else the moves lie in the order of the runs, so the operation begins a copy again that the stub has left.
@@ -108,6 +130,10 @@ struct MappedCopy {
     uint32_t offsetOfExtensionWordInSource { 0 };
     uint32_t sizeOfNewExtension { 0 };
     LocalAllocator* allocatorOfNewExtension { nullptr };
+    // Of a copy that a plan owns: where the instance keeps it for the stub. The plan may go at any time.
+    const MappedCopy** placeOfOwnedCopy { nullptr };
+    // Copies that took a frame though this one was kept at its place, since it was last put there.
+    uint8_t numberOfCopiesInVain { 0 };
     Vector<Move> moves;
 };
 

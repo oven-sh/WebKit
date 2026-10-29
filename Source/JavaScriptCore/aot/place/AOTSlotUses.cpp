@@ -111,13 +111,23 @@ struct SlotUseFreshObject {
     BlockID block;
 };
 
+// A construction that lists many constructors names their set: n constructions that each list the same n constructors would be n * n entries.
+struct PlaceThatMakes {
+    LayoutID layout;
+    CalleeSetID constructors;
+    SiteHeat heat { 0 };
+};
+
 // Heat has no upper limit and is added up in the order of the functions: sums of floating-point numbers depend on their order.
 struct FunctionUses {
     FunctionID function;
     Vector<SlotUseCreation> creations;
-    Vector<std::pair<LayoutID, SiteHeat>> placesThatMake;
+    Vector<PlaceThatMakes> placesThatMake;
     Vector<FunctionID> functionsCalledByName;
     Vector<FunctionID> functionsCalledByNameInLoops;
+    // A call that lists many callees names their set: n calls that each list the same n callees would be n * n entries.
+    Vector<CalleeSetID> calleeSetsCalled;
+    Vector<CalleeSetID> calleeSetsCalledInLoops;
     Vector<std::pair<SlotRow, SiteHeat>> fills;
     Vector<FillBesideCreation> fillsBesideCreation;
     Vector<CopyIntoNewObject> copiesIntoNewObjects;
@@ -569,7 +579,7 @@ private:
     {
         FunctionID callee = call.function();
         if (LayoutID constructed = m_program.at(callee).constructedClass; constructed && call.isConstruction())
-            m_uses.placesThatMake.append({ constructed, heatOf(block) });
+            m_uses.placesThatMake.append({ constructed, { }, heatOf(block) });
         bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
         if (callee == m_id && call.isConstruction() && !isClassConstructor)
             return;
@@ -702,7 +712,7 @@ private:
         LayoutID layout = allocation.layout();
         countAllocation(layout, block);
         if (allocation.opcode == Opcode::NewObject && m_function.constructedClass != layout)
-            m_uses.placesThatMake.append({ layout, heatOf(block) });
+            m_uses.placesThatMake.append({ layout, { }, heatOf(block) });
         if (allocation.opcode == Opcode::MaterializeEnvironment)
             return;
         auto fields = allocation.fields();
@@ -811,15 +821,23 @@ private:
             m_uses.functionsWithLentClosures.append(value.function());
         if (opcode == Opcode::CallDirect)
             scanCallByName(block, value);
-        if (opcode == Opcode::Construct) {
-            forEachClassConstructedBy(value, [&](LayoutID constructed) {
-                m_uses.placesThatMake.append({ constructed, heatOf(block) });
-            });
-        }
         // An indirect call runs each function observed as its callee as often as a call by name runs its callees.
         if (CalleeSetID callees = opcode == Opcode::Construct || opcode == Opcode::Call ? value.callees() : CalleeSetID()) {
-            for (FunctionID callee : m_program.at(callees).seen().predicted().functions)
-                (m_weights.isInLoop(block).predicted() ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
+            AOT_THRESHOLD(size_t, minCalleesOfNamedSet, 16);
+            std::span<const FunctionID> functions = m_program.at(callees).seen().predicted().functions;
+            bool isInLoop = m_weights.isInLoop(block).predicted();
+            bool namesSet = functions.size() >= minCalleesOfNamedSet && !TypeTable::isProvisional(callees);
+            if (opcode == Opcode::Construct && namesSet)
+                m_uses.placesThatMake.append({ { }, callees, heatOf(block) });
+            else if (opcode == Opcode::Construct) {
+                forEachClassConstructedBy(value, [&](LayoutID constructed) {
+                    m_uses.placesThatMake.append({ constructed, { }, heatOf(block) });
+                });
+            }
+            if (namesSet)
+                (isInLoop ? m_uses.calleeSetsCalledInLoops : m_uses.calleeSetsCalled).append(callees);
+            else
+                (isInLoop ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(functions);
         }
         if (Value::opcodesWithData.contains(opcode))
             scanData(block, value);
@@ -1001,18 +1019,42 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
     auto calleesOf = [&](unsigned index) {
         return usesOf[index] ? usesOf[index]->functionsCalledByName.span() : std::span<const FunctionID>();
     };
+    auto calleeSetsOf = [&](unsigned index) {
+        return usesOf[index] ? usesOf[index]->calleeSetsCalled.span() : std::span<const CalleeSetID>();
+    };
+    auto membersOf = [&](CalleeSetID set) {
+        return context.program.at(set).seen().predicted().functions;
+    };
 
     // What a call cycle reaches, including its members, is what remains after repeatedly removing functions with no remaining callers. The removal order does not matter.
+    // A set of callees stands between its callers and its members: it is removed with its last caller, and counts as one caller of each member until then.
     Vector<uint32_t> numberOfCallsLeft(FillWith { }, numberOfFunctions, 0u);
+    Vector<uint32_t> numberOfCallsOfSetLeft(FillWith { }, context.program.types.numberOfCalleeSets(), 0u);
     forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
         for (FunctionID callee : functions[position].functionsCalledByName)
+            AtomicRef(numberOfCallsLeft[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+        for (CalleeSetID set : functions[position].calleeSetsCalled)
+            AtomicRef(numberOfCallsOfSetLeft[set.index()]).fetch_add(1, std::memory_order_relaxed);
+    });
+    forEachIndexInParallel(loops, numberOfCallsOfSetLeft.size(), [&](unsigned set) {
+        if (!numberOfCallsOfSetLeft[set])
+            return;
+        for (FunctionID callee : membersOf(CalleeSetID(set)))
             AtomicRef(numberOfCallsLeft[callee.index()]).fetch_add(1, std::memory_order_relaxed);
     });
     AOT_THRESHOLD(size_t, minFunctionsForThreadPool, 512);
     auto takeAway = [&](uint32_t index, Vector<uint32_t>& uncalledFunctions) {
-        for (FunctionID callee : calleesOf(index)) {
+        auto takeAwayCallOf = [&](FunctionID callee) {
             if (AtomicRef(numberOfCallsLeft[callee.index()]).fetch_sub(1, std::memory_order_relaxed) == 1)
                 uncalledFunctions.append(callee.index());
+        };
+        for (FunctionID callee : calleesOf(index))
+            takeAwayCallOf(callee);
+        for (CalleeSetID set : calleeSetsOf(index)) {
+            if (AtomicRef(numberOfCallsOfSetLeft[set.index()]).fetch_sub(1, std::memory_order_relaxed) != 1)
+                continue;
+            for (FunctionID callee : membersOf(set))
+                takeAwayCallOf(callee);
         }
     };
     for (Vector<uint32_t> uncalledFunctions = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !numberOfCallsLeft[index]; }); !uncalledFunctions.isEmpty();) {
@@ -1026,24 +1068,36 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
     }
 
     BitVector runsInLoop(numberOfFunctions);
+    BitVector membersRunInLoop(numberOfCallsOfSetLeft.size());
     Vector<FunctionID> worklist;
     auto add = [&](FunctionID function) {
         if (!runsInLoop.quickSet(function.index()))
             worklist.append(function);
+    };
+    auto addMembersOf = [&](CalleeSetID set) {
+        if (membersRunInLoop.quickSet(set.index()))
+            return;
+        for (FunctionID callee : membersOf(set))
+            add(callee);
     };
     for (uint32_t index : findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !!numberOfCallsLeft[index]; }))
         runsInLoop.quickSet(index);
     for (const FunctionUses& uses : functions) {
         for (FunctionID callee : uses.functionsCalledByNameInLoops)
             add(callee);
+        for (CalleeSetID set : uses.calleeSetsCalledInLoops)
+            addMembersOf(set);
     }
     for (const FlowIndirectCall& call : context.inputs.flow.indirectCalls()) {
         if (call.times.predicted() == BuiltinCallbackTimes::PerElement && call.callee.index() < numberOfFunctions)
             add(call.callee);
     }
     while (!worklist.isEmpty()) {
-        for (FunctionID callee : calleesOf(worklist.takeLast().index()))
+        unsigned index = worklist.takeLast().index();
+        for (FunctionID callee : calleesOf(index))
             add(callee);
+        for (CalleeSetID set : calleeSetsOf(index))
+            addMembersOf(set);
     }
     return runsInLoop;
 }
@@ -1053,9 +1107,26 @@ static void countStoresOfFactories(const SlotPlanContext& context, std::span<con
     const Program& program = context.program;
     Vector<SiteHeat> heatOfPlacesThatMake(FillWith { }, program.layouts.size(), 0.0);
     Vector<SiteHeat> heatOfPlacesThatFill(FillWith { }, uses.rows.size(), 0.0);
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classesOfSets;
+    auto classesConstructedBy = [&](CalleeSetID constructors) -> const Vector<uint32_t>& {
+        auto result = classesOfSets.add(constructors.index(), Vector<uint32_t>());
+        if (result.isNewEntry) {
+            for (FunctionID constructor : program.at(constructors).seen().predicted().functions) {
+                if (LayoutID constructed = program.at(constructor).constructedClass)
+                    result.iterator->value.append(constructed.index());
+            }
+        }
+        return result.iterator->value;
+    };
     for (const FunctionUses& function : functions) {
-        for (auto [layout, heat] : function.placesThatMake)
-            heatOfPlacesThatMake[layout.index()] += heat;
+        for (const PlaceThatMakes& place : function.placesThatMake) {
+            if (place.layout) {
+                heatOfPlacesThatMake[place.layout.index()] += place.heat;
+                continue;
+            }
+            for (uint32_t layout : classesConstructedBy(place.constructors))
+                heatOfPlacesThatMake[layout] += place.heat;
+        }
         for (const FillBesideCreation& fill : function.fillsBesideCreation) {
             std::optional<uint32_t> field = fill.layout && !fill.storesUndefined ? program.at(fill.layout).findField(fill.key) : std::nullopt;
             if (field)

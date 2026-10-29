@@ -13,6 +13,8 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTProgramPasses.h"
+#include "AOTPropertyAccessCache.h"
+#include "AOTProvisionalFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -250,8 +252,15 @@ bool canTakeAllocatedThis(const Program& program, FunctionID constructor)
         return false;
     case ConstructorForm::Base:
         return !!findOwnAllocation(program, function);
-    case ConstructorForm::Derived:
-        return canPassThisToSuper(program, function);
+    case ConstructorForm::Derived: {
+        // The answer hangs on the constructors above. Asked anew for each class, a chain of classes takes the square of its length.
+        PropertyAccessCache* cache = program.propertyAccessCache();
+        if (!cache || ProvisionalFunctions::contains(constructor))
+            return canPassThisToSuper(program, function);
+        return findOrCompute(cache->constructorsTakingAllocatedThis, constructor, computeHash(constructor), [&] {
+            return PropertyAccessCache::TakesAllocatedThis { constructor, canPassThisToSuper(program, function) };
+        }).value;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

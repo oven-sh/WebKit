@@ -542,6 +542,21 @@ void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, boo
         ClimbingSet written = m_context.restrict(receivers, m_context.maker().unite(holders, m_universe.placeholdersAlone()));
         if (holdsAnything(written))
             m_context.lookup(written, key.keyClass == HeapKeyClass::Name ? ValueFlowName { ValueFlowNameKind::MemberWritten, key.name.index() } : ValueFlowName::of(ValueFlowNameKind::EveryMemberWritten));
+        // The library replaces no member of the realm through a receiver that it does not know: its `x.parse = f` is not meant for JSON.
+        if (key.keyClass == HeapKeyClass::Name && isInProgramCode()) {
+            ClimbingSet behindPlaceholders;
+            if (mayBeUnknownObject(receivers))
+                behindPlaceholders = escapedAmong(ClimbingSet(holders));
+            if (mayBeUntrackedObject(receivers))
+                behindPlaceholders = m_context.unite(behindPlaceholders, lostAmong(ClimbingSet(holders)));
+            forEachMemberUnder(behindPlaceholders, key, [&](BuiltinID member, ModuleID) {
+                // The members of prototype objects keep their locks: `x.toString = f` and `x.constructor = F` on an unknown receiver are common, and hardly ever meant for them.
+                // A module object that another module hands out names no holder, and only a member with a holder is locked.
+                BuiltinID holder = m_builtins.at(member).holder;
+                if (holder && m_builtins.at(holder).kind != BuiltinKind::Prototype)
+                    add(m_context.nodes().ofHost(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders), only(m_universe.objectOf(member)));
+            });
+        }
     }
     applyEventsOfStore(m_statement, m_context, receivers, key.keyClass == HeapKeyClass::Name ? key.name : PropertyKeyID());
 }

@@ -468,6 +468,43 @@ void generateValueEndsItsTailCalls(StubAssembler& jit)
     jit.returnFlagsConstant(false);
 }
 
+StubSignature signatureOfRecordCallee(StubKey)
+{
+    return StubSignature::withoutResult({ calleeGPR });
+}
+
+void generateRecordCallee(StubAssembler& jit)
+{
+    const GPRReg closure = jit.operand(0);
+    const GPRReg stackPointerOfCaller = jit.allocateScratch(StubRegister::T11);
+    const GPRReg entries = jit.allocateScratch(StubRegister::T13);
+    const GPRReg scratch = jit.scratchRegister();
+
+    constexpr ptrdiff_t offsetOfMask = OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller) - static_cast<ptrdiff_t>(sizeof(RecordedCallee));
+    jit.addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister, stackPointerOfCaller);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.recordedCallees)), entries);
+    // The call that was made from further out may not have returned.
+#if CPU(X86_64)
+    jit.move(stackPointerOfCaller, scratch);
+    jit.and64(Address(entries, offsetOfMask), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#else
+    jit.loadPtr(Address(entries, offsetOfMask), scratch);
+    jit.andPtr(stackPointerOfCaller, scratch);
+    jit.addPtr(scratch, entries);
+    jit.loadPtr(Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, scratch, stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, Address(entries, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#endif
+    jit.returnToCaller();
+
+    isTaken.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTRecordCallee, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = closure, .thirdArgumentIn = stackPointerOfCaller });
+}
+
 StubSignature signatureOfValueIsClosureOf(StubKey)
 {
     return signatureWithFlagsResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) }, MacroAssembler::Zero);

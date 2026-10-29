@@ -814,8 +814,6 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
         type.functions = SortedSet<FunctionID>(named);
         return;
     }
-    if (type.anyFunction)
-        return;
 
     Vector<FunctionID, 8> members;
     Vector<BuiltinID, 4> builtinMembers(type.builtins.span());

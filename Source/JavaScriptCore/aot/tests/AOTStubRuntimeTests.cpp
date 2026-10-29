@@ -1069,7 +1069,7 @@ static void testInstructionsOfOperationCall()
 {
     // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
-    constexpr uint32_t budget = 10;
+    constexpr uint32_t budget = 9;
     StubRunner runner;
     runner.setCountsInstructions(true);
     StubRun run = runner.run(callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance), { }, offsetInRuntimeTable(Entry::operationAOTValueAdd));

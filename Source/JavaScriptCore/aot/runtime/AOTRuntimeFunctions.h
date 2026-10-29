@@ -64,6 +64,7 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject*, JSValue object);
 EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSValue object, uint64_t position);
 
 void initializeIterationWords(Instance&);
+JS_EXPORT_PRIVATE size_t numberOfElementsSpreadFrom(JSGlobalObject*, JSString*);
 
 } } // namespace JSC::AOT
 

@@ -87,7 +87,7 @@ operation GetArgument (argumentIndex: UInt32) -> unknown ; none
 operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none
 operation CreateRest (firstArgument: UInt32, allocationSite?: AllocationSite, storage: AllocationStorage) -> allocation(Array) ; Allocates ; interpreted = Allocation ; allocatesInline = true ; runtime = NewArray
 operation GetMyArgumentByVal (property: Any/Converted, firstArgument: UInt32) [readsArgumentsObject] -> unknown ; CreatesString reads(NamedProperties) ; runtime = GetFromArguments
-operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runsBeforeCallee = true
+operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, calleeKey?: PropertyKey, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runsBeforeCallee = true
 operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
 
 family Environment Prepared..Placed
@@ -128,7 +128,7 @@ operation IsCollectionTableFull (collection: Object/inspects) -> natural(boolean
 operation ReserveCollectionCapacity (collection: Object/inspects+writesContents, remaining: Integer/inspects, finished: Integer/inspects, sizeAtEntry: Integer/inspects) -> none ; reads(CollectionStorage, CollectionEntries, AllocatorState) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects ; runtime = ReserveCollectionCapacity
 
 family SavedFrame Prepared..Placed
-operation NewGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation
+operation NewGenerator (function: Function(Dispatch), callee?: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation
 operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(AsyncGenerator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator
 operation TakeGeneratorPrototype (generator: Object/inspects+changesPrototype, callee: Callable/inspects) -> none ; reads(NamedProperties, PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, RuntimeState) collects ; runtime = TakeGeneratorPrototype ; flow = Copies
 operation IsGeneratorUnstarted (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = StepGenerator

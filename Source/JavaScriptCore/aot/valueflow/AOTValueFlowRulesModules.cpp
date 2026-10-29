@@ -10,10 +10,12 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
@@ -206,19 +208,110 @@ ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext& context, ClimbingS
     return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.valueWithin(listedForTheirCalls, ValueFlowProgramNodes::escaped()))));
 }
 
+bool SourcesOfCopies::add(ClimbingSet sources)
+{
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 8);
+    size_t numberOfSources = m_sources.size();
+    m_context.forEachMember(sources, [&](ValueFlowObjectID source) {
+        if (m_context.contains(m_copies, source))
+            return;
+        if (m_sources.size() <= mostSearchedInOrder) {
+            if (m_sources.contains(source))
+                return;
+        } else {
+            if (m_isSource.isEmpty()) {
+                for (ValueFlowObjectID earlier : m_sources)
+                    m_isSource.add(earlier.index());
+            }
+            if (!m_isSource.add(source.index()).isNewEntry)
+                return;
+        }
+        m_sources.append(source);
+    });
+    return m_sources.size() > numberOfSources;
+}
+
+ClimbingSet SourcesOfCopies::withCopies()
+{
+    return m_context.unite(m_copies, ClimbingSet(m_context.maker().of(m_sources.span())));
+}
+
+ClimbingSet SourcesOfCopies::sourcesBetween(size_t first, size_t end)
+{
+    return ClimbingSet(m_context.maker().of(m_sources.span().subspan(first, end - first)));
+}
+
+// These objects with the sources that the nodes of earlier turns list for them, and so on. It asks for no node.
+// The answer is a function of the objects and the turn: what the thread remembers saves steps and changes nothing.
+static ClimbingSet peekAtSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet start)
+{
+    AOT_THRESHOLD(unsigned, stepsBetweenAnswersRemembered, 64);
+    if (std::optional<ClimbingSet> seen = context.sourcesOfCopiesSeenFrom(start))
+        return *seen;
+
+    struct Stop {
+        ClimbingSet objects;
+        size_t firstSource;
+    };
+    Vector<Stop, 8> stops;
+    SourcesOfCopies found(context, start);
+    ClimbingSet all;
+    ClimbingSet last = start;
+    // Whether each step found only new objects. Then what was found from a step on is the answer for the objects of that step.
+    bool isChain = true;
+    for (unsigned step = 1;; ++step) {
+        std::optional<ClimbingSet> sources = context.peekAtWhatWasWritten(last, copiedFromName);
+        if (!sources)
+            break;
+        last = context.restrict(*sources, context.universe().knownObjects());
+        if (std::optional<ClimbingSet> seen = context.sourcesOfCopiesSeenFrom(last)) {
+            all = *seen;
+            break;
+        }
+        size_t size = found.size();
+        bool findsNewSource = found.add(last);
+        isChain = isChain && found.size() - size == context.numberOfMembers(last);
+        if (!findsNewSource)
+            break;
+        if (!(step % stepsBetweenAnswersRemembered))
+            stops.append({ last, size });
+    }
+    size_t end = found.size();
+    if (isChain) {
+        for (const Stop& stop : stops | std::views::reverse) {
+            all = context.unite(all, found.sourcesBetween(stop.firstSource, end));
+            context.noteSourcesOfCopiesSeenFrom(stop.objects, all);
+            end = stop.firstSource;
+        }
+    }
+    all = context.unite(context.unite(all, found.sourcesBetween(0, end)), start);
+    context.noteSourcesOfCopiesSeenFrom(start, all);
+    return all;
+}
+
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objects)
 {
-    ClimbingSet all = objects;
+    AOT_THRESHOLD(unsigned, mostStepsAskedOneByOne, 8);
+    auto askForSourcesOf = [&](ClimbingSet copies) {
+        return context.restrict(context.valueOf(context.readWhatWasWritten(copies, copiedFromName)), context.universe().knownObjects());
+    };
+    SourcesOfCopies found(context, objects);
     ClimbingSet last = objects;
+    for (unsigned step = 0; step < mostStepsAskedOneByOne; ++step) {
+        last = askForSourcesOf(last);
+        if (!found.add(last))
+            return found.withCopies();
+    }
+    // A node asked for at each step of a long chain is n * n / 2 questions for its n copies. The rest of the walk peeks, then asks for
+    // one node over all it saw: that node changes when one of them gets a source that the walk did not see.
+    ClimbingSet all = found.withCopies();
     for (;;) {
-        last = context.restrict(context.valueOf(context.readWhatWasWritten(last, copiedFromName)), context.universe().knownObjects());
-        bool findsNewSource = false;
-        context.forEachMember(last, [&](ValueFlowObjectID source) {
-            findsNewSource |= !context.contains(all, source);
-        });
-        if (!findsNewSource)
+        ClimbingSet seen = peekAtSourcesOfCopies(context, last);
+        all = context.unite(all, seen);
+        last = askForSourcesOf(seen);
+        if (context.holdsAllOf(all, last))
             return all;
-        all = context.unite(all, last);
+        last = context.restrict(last, ValueSets::complement(context.withMembersOf(ValueSets::nothing, all)));
     }
 }
 
@@ -360,8 +453,11 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
     }
     case RequireResult::DefaultExport:
         return defaultExportOf(context, id);
-    case RequireResult::Namespace: {
+    case RequireResult::Namespace:
+    case RequireResult::NamespaceIfImported: {
         ValueFlowSources sources = namespaceOf(context, id);
+        if (module.requireResult == RequireResult::NamespaceIfImported)
+            append(context, sources, defaultExportOf(context, id));
         BuiltinName name = program.builtins().nameOf(byteCast<uint8_t>("module.exports"_s.span()));
         if (const ModuleExport* entry = name ? findExport(module, program.stringOf(name)) : nullptr)
             append(context, sources, exportedValueOf(context, *entry));
@@ -395,6 +491,14 @@ static ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, Module
     return sources;
 }
 
+// The test runner stores a function of its own in the variable, and calls what the variable held.
+static void openToTestRunner(ValueFlowRuleContext& context, VariableID variable)
+{
+    ValueFlowNodeID location = context.nodes().variable(variable);
+    context.connect(location, ValueFlowProgramNodes::escaped());
+    context.add(location, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+}
+
 static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesInside)
 {
     const Program& program = context.program();
@@ -409,6 +513,8 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         switch (entry.kind) {
         case ModuleExportKind::Variable:
             connect(context, exportedValueOf(context, entry), location);
+            if (entry.variable && program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                openToTestRunner(context, entry.variable);
             break;
         case ModuleExportKind::Indirect:
             if (program.at(entry.module).kind == ModuleKind::External || program.at(entry.module).kind == ModuleKind::Runtime) {
@@ -444,6 +550,8 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             context.connect(context.nodes().variable(entry.variable), context.written(namespaceObject, writtenNameOf(program, entry.name)));
         else
             hasCapturedNames = true;
+        if (entry.variable && entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
     }
 
     auto addPrimitivesUnder = [&](BuiltinName name) {
@@ -576,6 +684,8 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         if (!entry.variable)
             continue;
         ValueFlowNodeID variable = context.nodes().variable(entry.variable);
+        if (entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
         std::optional<PropertyKeyID> key = object ? program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name }) : std::nullopt;
         BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
         BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
@@ -736,6 +846,15 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
     const Module& module = program.at(id);
 
     noteEvaluation(context, id);
+    // A mock needs no namespace object to get at the exports.
+    if (module.flags.contains(ModuleFlags::MayBeMocked)) {
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.kind == ModuleExportKind::Variable && entry.variable && program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                openToTestRunner(context, entry.variable);
+        }
+        if (module.exportsVariable)
+            openToTestRunner(context, module.exportsVariable);
+    }
     for (const ModuleRequest& request : module.requests) {
         if (request.kind == ModuleRequestKind::Require)
             continue;
@@ -759,6 +878,8 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         if (!entry.variable)
             continue;
         ValueFlowNodeID variable = context.nodes().variable(entry.variable);
+        if (entry.isReplaceable)
+            openToTestRunner(context, entry.variable);
         bool isDefaultExport = entry.name == defaultName;
         if (isDefaultExport)
             connect(context, source, variable);

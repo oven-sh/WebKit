@@ -118,8 +118,16 @@ private:
         BlockID block;
         Word32 word;
         bool hasLowestBitsAlone;
+        // Once it is listed by its block: the nearest earlier conversion in a block that dominates this one.
+        uint32_t conversionAbove { UINT32_MAX };
     };
-    UncheckedKeyHashMap<uint32_t, Vector<Int32OfNumber, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
+    struct Int32sOfNumber {
+        Vector<Int32OfNumber, 1> conversions;
+        // The positions of the first conversions, by the number of their block in the dominator tree. Empty while the conversions are few.
+        Vector<uint32_t> byBlock;
+    };
+    const Int32OfNumber* findInt32ConvertedBefore(Int32sOfNumber&, BlockID, bool needsLowestBitsAlone);
+    UncheckedKeyHashMap<uint32_t, Int32sOfNumber, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
 
     struct RemainderLeftToTest {
         ValueID dividend;

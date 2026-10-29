@@ -95,7 +95,16 @@ class HandedOnTargetLists {
 public:
     HandedOnTargetLists() = default;
 
+    struct ListOfOperand {
+        uint32_t list { 0 };
+        bool hasCalleeWithoutParameter { false };
+    };
+
     uint32_t intern(Vector<HandedOnTarget>&&);
+    // The list for one operand of a call that enters the functions of a set. Calls of the same form share the answer, so the set is walked once for each form.
+    ListOfOperand listOfOperand(const Program&, CalleeSetID, const Value& call, uint32_t operandIndex);
+    // The answers hold while the records of the callees stay as they are.
+    void forgetOperands() { m_listsOfOperands.clear(); }
     unsigned size() const { return m_lists.size(); }
     std::span<const HandedOnTarget> at(uint32_t list) const LIFETIME_BOUND { return m_lists[list]->span(); }
 
@@ -103,6 +112,7 @@ private:
     Lock m_lock;
     Vector<std::unique_ptr<Vector<HandedOnTarget>>> m_lists;
     UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    UncheckedKeyHashMap<uint64_t, ListOfOperand, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsOfOperands;
 };
 
 struct BorrowingBody {

@@ -1101,7 +1101,9 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         test.setCountsFieldsWithoutStorage(!!methodAbove);
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
-        Expected<BlockFrequency> frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
+        // The sabotage needs an arm that answers by itself: addEmptySlotCases() gives one to a test whose empty arm is rarer.
+        bool failsSeldom = testsDeclaredType || context.build.isSabotaged(Sabotage::FieldsStayInSlotsThatDeferClosures);
+        Expected<BlockFrequency> frequencyOfFailure = failsSeldom ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
         // Only an empty slot answers with the method. Where no test was asked, the name is looked up.
         BlockID byName = methodAbove ? failedUnasked : BlockID();
@@ -2934,7 +2936,7 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
     const Block& end = function().at(m_builder.currentBlock());
     Opcode opcode = function().at(result).opcode;
     // The casts of the terminator were resolved against the type of the original call.
-    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect) && !end.values.isEmpty() && end.values.last() == result
+    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect || opcode == Opcode::CallTable) && !end.values.isEmpty() && end.values.last() == result
         && !end.handler && program.typeOf(function(), result).isSubsetOf(program.at(m_original.type), program);
     // An arm marks its call before it is known whether the call can stay a tail call.
     if (endsWithTailCall) {
@@ -3765,6 +3767,7 @@ static std::optional<PlannedSplit> planSplitByKeys(FunctionPassContext& context,
         return std::nullopt;
 
     Vector<Type, 4> keys;
+    bool guessesThatEveryKeyIsAbsent = true;
     for (StringID text : keyType.stringLiterals) {
         keys.append(Type::stringLiteral(text));
         ConstantKey constantKey = constantKeyOf(context.program, keys.last());
@@ -3773,9 +3776,16 @@ static std::optional<PlannedSplit> planSplitByKeys(FunctionPassContext& context,
         Value named = value;
         becomeNamedAccess(named, internKey(context.types, constantKey));
         std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, named);
-        if (!query || !planNamedAccess(context, *query).isResolved())
+        if (!query)
             return std::nullopt;
+        PropertyAccessPlan plan = planNamedAccess(context, *query);
+        if (!plan.isResolved())
+            return std::nullopt;
+        guessesThatEveryKeyIsAbsent &= plan.member.kind == MemberKind::Absent && plan.level != KnowledgeLevel::Proven;
     }
+    // `const entry = { [key]: 1 }; entry[key]`: code reads under a key to find something, so that guess fails at every read.
+    if (guessesThatEveryKeyIsAbsent)
+        return std::nullopt;
     if (context.exceeds(LimitID::MaxDispatchCases, keys.size(), site.value))
         return std::nullopt;
     return planSplitOfKey(context, site, keys.span(), mayBeNullish);

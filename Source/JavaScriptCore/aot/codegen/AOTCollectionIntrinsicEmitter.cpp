@@ -9,10 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactTable.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTResultsJoin.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTUseLists.h"
 #include "AOTVector.h"
 #include "JSCellButterfly.h"
 #include "JSMap.h"
@@ -119,6 +121,42 @@ public:
     }
 };
 
+// The first test or expectation of a key or a value after the step.
+std::optional<bool> CollectionIntrinsicEmitter::isTakenForNumberAfter(const ValueContext& step, uint32_t result)
+{
+    const UseLists& useLists = analyses().useLists();
+    Vector<ValueID, 4> names;
+    for (const Use& use : useLists.usesOf(step.id())) {
+        if (use.kind != Use::Kind::Operand)
+            continue;
+        const Value& user = m_function.at(use.user);
+        if (user.opcode == Opcode::ResultAt && user.index() == result)
+            names.append(use.user);
+    }
+    for (size_t i = 0; i < names.size(); ++i) {
+        for (const Use& use : useLists.usesOf(names[i])) {
+            if (use.kind != Use::Kind::Operand)
+                continue;
+            const Value& user = m_function.at(use.user);
+            TypeID taken;
+            if (user.opcode == Opcode::TypeTest)
+                taken = user.testedType();
+            else if (user.opcode == Opcode::Expect)
+                taken = user.expectedType().predicted();
+            if (taken) {
+                const Type& type = types().at(taken);
+                if (type.isNumber())
+                    return true;
+                if (!(type.primitives & Primitive::Number))
+                    return false;
+            }
+            if (isCast(user.opcode))
+                names.appendIfNotContains(use.user);
+        }
+    }
+    return std::nullopt;
+}
+
 void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContext& value)
 {
     CellPointer owner = in<CellPointer>(kind == Collection::Map ? value->mapOperand() : value->setOperand());
@@ -166,7 +204,16 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.appendTo(isCompact);
     // A number never fits a short key, and a table with one wide key has wide keys only: the type of the keys says which of the two widths is read in line. The other one is the stub's.
     Type keys = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, typeOf(kind == Collection::Map ? value->mapOperand() : value->setOperand()), kind == Collection::Map ? ContentsSlot::Key : ContentsSlot::Element);
-    const CompactTable::Width keyWidth = keys.withoutPrimitives(Primitive::Undefined | Primitive::Null | Primitive::Boolean).isNumber() ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
+    // The type of a Map made from pairs lists keys and values together. What the code after the step takes the key for says more, and numbers that are not the values are the keys.
+    // Otherwise, where numbers are among the keys and strings are not, the numbers decide.
+    static_assert(static_cast<unsigned>(SetNextResult::Element) == static_cast<unsigned>(MapNextResult::Key));
+    std::optional<bool> keyIsTakenForNumber = isTakenForNumberAfter(value, static_cast<uint32_t>(MapNextResult::Key));
+    if (!keyIsTakenForNumber && kind == Collection::Map && !keys.isAnything() && keys == typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, typeOf(value->mapOperand()), ContentsSlot::Value)) {
+        if (isTakenForNumberAfter(value, static_cast<uint32_t>(MapNextResult::Value)) == false)
+            keyIsTakenForNumber = true;
+    }
+    const bool expectsNumberKeys = (keys.primitives & Primitive::Number) && keyIsTakenForNumber.value_or(!(keys.primitives & Primitive::AnyString));
+    const CompactTable::Width keyWidth = expectsNumberKeys ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
     if (keyWidth == CompactTable::Width::Wide) {
         // The bit for wide keys is the sign of the byte and the bit for the image the one below it.
         static_assert(CompactTable::keysAreWide == 0x80 && CompactTable::keysAreInImage == 0x40);

@@ -452,8 +452,6 @@ public:
         , m_function(sinking.function())
         , m_cfg(sinking.analyses().cfg())
         , m_inputs(sinking.inputs())
-        , m_heads(m_function.blocks.size())
-        , m_blocksEnteredWithNothing(m_function.blocks.size())
         , m_isPending(m_cfg.reversePostOrder().size())
     {
     }
@@ -462,24 +460,12 @@ public:
 
     AllocationSinking::Heads run()
     {
+        m_heads.grow(m_function.blocks.size());
+        m_blocksEnteredWithNothing.ensureSize(m_function.blocks.size());
         BlockID root = m_cfg.root();
         m_blocksEnteredWithNothing.quickSet(root.index());
         m_isPending.quickSet(m_cfg.reversePostOrderIndex(root));
-        return solvePendingBlocks();
-    }
-
-    AllocationSinking::Heads solvePendingBlocks()
-    {
-        std::span<const BlockID> order = m_cfg.reversePostOrder();
-        for (bool shouldRepeat = true; shouldRepeat;) {
-            shouldRepeat = false;
-            for (uint32_t blockOrder = 0; blockOrder < order.size(); ++blockOrder) {
-                if (m_isPending.quickClear(blockOrder))
-                    shouldRepeat |= visit(order[blockOrder], blockOrder);
-            }
-            shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
-        }
-        return WTF::move(m_heads);
+        return solvePendingBlocks(0, m_cfg.reversePostOrder().size());
     }
 
     // Solves the trial range again from the heads of the blocks that enter it, and keeps all heads outside it.
@@ -491,14 +477,24 @@ public:
             m_heads[block.index()] = std::nullopt;
             m_blocksEnteredWithNothing.quickClear(block.index());
         }
+        // No block outside these bounds becomes pending, so a trial costs the same in a function of any size.
+        uint32_t first = m_cfg.reversePostOrder().size();
+        uint32_t end = 0;
+        auto include = [&](BlockID block) {
+            uint32_t blockOrder = m_cfg.reversePostOrderIndex(block);
+            first = std::min(first, blockOrder);
+            end = std::max(end, blockOrder + 1);
+            return blockOrder;
+        };
         for (BlockID block : range) {
+            include(block);
             for (Edge edge : m_cfg.incomingEdges(block)) {
                 bool isReached = m_heads[edge.from.index()] || m_blocksEnteredWithNothing.quickGet(edge.from.index());
                 if (isReached && m_sinking.isOutsideTrialRange(edge.from))
-                    m_isPending.quickSet(m_cfg.reversePostOrderIndex(edge.from));
+                    m_isPending.quickSet(include(edge.from));
             }
         }
-        return solvePendingBlocks();
+        return solvePendingBlocks(first, end);
     }
 
 private:
@@ -506,6 +502,20 @@ private:
         SinkingState state;
         bool includesCurrentState { true };
     };
+
+    AllocationSinking::Heads solvePendingBlocks(uint32_t first, uint32_t end)
+    {
+        std::span<const BlockID> order = m_cfg.reversePostOrder();
+        for (bool shouldRepeat = true; shouldRepeat;) {
+            shouldRepeat = false;
+            for (uint32_t blockOrder = first; blockOrder < end; ++blockOrder) {
+                if (m_isPending.quickClear(blockOrder))
+                    shouldRepeat |= visit(order[blockOrder], blockOrder);
+            }
+            shouldRepeat = shouldRepeat && !m_sinking.hasSpentItsWork();
+        }
+        return WTF::move(m_heads);
+    }
 
     static bool holdsObjectToBuild(const SinkingState& state)
     {
@@ -771,6 +781,60 @@ bool AllocationSinking::startOverWithFewerCandidates()
     m_numberOfSweeps = 0;
     m_blocksCarrying.fill(0);
     return true;
+}
+
+// The work is looked at when a sweep has ended, and a sweep carries each object through every block between its allocation and its last use.
+// In a function of n blocks that keeps n objects alive that is n * n, many times the work allowed, only to find out how many objects fit.
+// There the distance in blocks stands for the sweep: the objects that fit are chosen by it, the most frequent first, and a short-lived one still fits behind a long-lived one that does not.
+void AllocationSinking::giveUpOnCandidatesCarriedTooFar()
+{
+    AOT_THRESHOLD(uint64_t, timesTheWorkThatOneSweepMayTake, 4);
+    if (!m_inputs.isLargeForItsWork)
+        return;
+
+    const CFG& cfg = m_analyses.cfg();
+    const UseLists& useLists = m_analyses.useLists();
+    Vector<uint32_t> mostFrequentFirst;
+    Vector<uint64_t> blocksCarrying(FillWith { }, numberOfCandidates(), uint64_t { 0 });
+    uint64_t blocksInAll = 0;
+    Vector<ValueID, 8> names;
+    for (uint32_t index = 0; index < numberOfCandidates(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (candidate.isJoin || candidate.isAbandoned || !cfg.isReachable(candidate.block))
+            continue;
+        uint32_t first = cfg.reversePostOrderIndex(candidate.block);
+        uint32_t last = first;
+        names.append(candidate.definition);
+        while (!names.isEmpty()) {
+            for (const Use& use : useLists.usesOf(names.takeLast())) {
+                if (!cfg.isReachable(use.block))
+                    continue;
+                last = std::max(last, cfg.reversePostOrderIndex(use.block));
+                if (use.kind == Use::Kind::Operand && interpretedOf(m_function.at(use.user).opcode) == Interpretation::Cast)
+                    names.append(use.user);
+            }
+        }
+        blocksCarrying[index] = last - first + 1;
+        blocksInAll += blocksCarrying[index];
+        mostFrequentFirst.append(index);
+    }
+    if (blocksInAll <= m_maxWork * timesTheWorkThatOneSweepMayTake)
+        return;
+
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t index) {
+        return frequencies.frequencyOf(m_candidates[index].block).predicted();
+    });
+    uint64_t blocksThatFit = m_maxWork / expectedNumberOfSweeps;
+    Vector<uint32_t> carriedTooFar;
+    for (uint32_t index : mostFrequentFirst) {
+        if (blocksCarrying[index] <= blocksThatFit)
+            blocksThatFit -= blocksCarrying[index];
+        else
+            carriedTooFar.append(index);
+    }
+    giveUpForLackOfWork(carriedTooFar.span());
+    m_hasStartedOverWithFewerCandidates = true;
 }
 
 void AllocationSinking::giveUpForLackOfWork(std::span<const uint32_t> candidates)

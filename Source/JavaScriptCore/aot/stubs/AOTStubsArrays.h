@@ -75,6 +75,8 @@ constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::Arra
 constexpr StubKey frameArrayLiteral(unsigned count) { return StubKey(StubFamily::FrameArrayLiteral).withCount(count); }
 constexpr size_t sizeOfFrameArray(unsigned capacity) { return sizeof(JSArray) + sizeof(IndexingHeader) + capacity * sizeof(EncodedJSValue); }
 static_assert(sizeOfArrayWithStorage(3) == sizeOfFrameArray(3) && propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
+// The operands are int32 values, not boxed.
+constexpr StubKey arrayLiteralWithInt32(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithInt32).withCount(count); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
 // A cell around the storage of an array of constants. The immediate: the request. The storage is the node in the image, but for SharedValues: there the operand is the word of the statics for it.

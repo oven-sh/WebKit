@@ -155,19 +155,6 @@ private:
             name(sum.start);
     }
 
-    // Beside a call the test of the counter costs little.
-    static bool isCall(const Value* value)
-    {
-        if (value->opcode() == CCall)
-            return true;
-        auto* patchpoint = value->as<PatchpointValue>();
-        if (!patchpoint)
-            return false;
-        RegisterSet scratch = RegisterSet::macroClobberedGPRs();
-        scratch.merge(RegisterSet::macroClobberedFPRs());
-        return !scratch.subsumes(patchpoint->earlyClobbered()) || !scratch.subsumes(patchpoint->lateClobbered());
-    }
-
     // A word of 64 bits in memory is a pointer or a value of any type. Lists of those are mostly short, and most loops that store them copy or fill one.
     static bool storesWord(const Value* value)
     {

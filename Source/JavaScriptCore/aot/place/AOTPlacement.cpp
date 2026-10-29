@@ -408,18 +408,10 @@ static BitVector computeTypesNeededAtRunTime(const PlacementContext& context, co
         for (size_t index : sites.typesTestedByCode)
             addType(TypeID(index));
     }
-    // The tables name the type of a variable in two places: a static field of a class, and a binding that a direct eval sees.
+    // The tables name the type of a variable in one place: a static field of a class.
     for (const Layout& layout : program.layouts) {
         for (const StaticField& field : layout.staticFields)
             addType(program.at(field.variable).declared.written());
-    }
-    for (const EvalScope& scope : program.evalScopes) {
-        for (const EvalBinding& binding : scope.bindings) {
-            if (binding.variable)
-                addType(program.at(binding.variable).declared.written());
-            else if (binding.layout && binding.field && binding.kind != EvalBindingKind::MappedArgument)
-                addType(fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).declared.written());
-        }
     }
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         LayoutID id(index);

@@ -956,7 +956,8 @@ auto JSONValueParser::parseNameAndColon(const uint8_t* quote) -> ParsedName
         StringImpl* impl = decoded.string->tryGetValueImpl();
         if (!impl)
             return { };
-        parsed.name = Identifier::fromString(m_vm, String { impl });
+        // The table of atoms narrows characters that it is given. A string that it is given becomes the atom as it is.
+        parsed.name = impl->is8Bit() ? Identifier::fromString(m_vm, String { impl }) : Identifier::fromString(m_vm, impl->span16());
         end = decoded.end;
     }
     Cursor colon = skipWhitespace(end);
@@ -1163,10 +1164,37 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseKey, UGPRPair, (Instance*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseValue, UGPRPair, (Instance* instance, const uint8_t* cursor))
 {
+    auto pairOf = [](JSValue value, const uint8_t* end) ALWAYS_INLINE_LAMBDA {
+        return makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(value)), std::bit_cast<UCPURegister>(end));
+    };
+    // A number, a word and a string that the cache holds are answered without allocating: they need no scope.
+    JSValue integer;
+    if (const uint8_t* end = tryParseSmallJSONInteger(cursor, integer))
+        return pairOf(integer, end);
+    bool isString = *cursor == '"';
+    if (isString) {
+        if (auto cached = findCachedJSONString(instance->json, *instance->vm, cursor)) [[likely]]
+            return pairOf(cached->string, cached->end);
+    } else if ((*cursor | 0x20) != '{') {
+        uint32_t word = WTF::unalignedLoad<uint32_t>(cursor);
+        if (word == ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
+            return pairOf(jsBoolean(true), cursor + 4);
+        if (word == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
+            return pairOf(jsNull(), cursor + 4);
+        if (WTF::unalignedLoad<uint32_t>(cursor + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *cursor == 'f')
+            return pairOf(jsBoolean(false), cursor + 5);
+        if (ParsedJSONNumber parsed = parseJSONNumber(cursor, instance->json.sourceEnd); parsed.end)
+            return pairOf(jsNumber(parsed.number), parsed.end);
+    }
+
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseValue);
     DeferTerminationForAWhile deferTermination(vm);
-    ParsedJSONValue parsed = parseJSONValueAt(*instance, vm, globalObject, cursor);
-    OPERATION_RETURN(scope, makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(parsed.value)), std::bit_cast<UCPURegister>(parsed.end)));
+    if (isString) {
+        if (ParsedJSONString string = makeUncachedJSONString(*instance, vm, cursor + 1); string.end)
+            OPERATION_RETURN(scope, pairOf(string.string, string.end));
+    }
+    ParsedJSONValue parsed = JSONValueParser(*instance, vm, globalObject).parse(cursor);
+    OPERATION_RETURN(scope, pairOf(parsed.value, parsed.end));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseNumber, UGPRPair, (Instance* instance, const uint8_t* cursor))

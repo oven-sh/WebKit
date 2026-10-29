@@ -77,7 +77,7 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
         // So is the word of a built-in that the realm lacks.
         bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin;
-        checkHasType(id, operand, mayBeEmpty ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        checkHasType(id, operand, mayBeEmpty ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType, id);
         return;
     }
     if (operand.is<CellPointer>())
@@ -97,14 +97,25 @@ void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringW
 }
 
 // A cell of a frame may have no header. In a validating build only environments live in frames (staysOnHeapForValidation()), so the header of an object or a closure is there to be read.
-void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind)
+void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const Type& type, ValidationFailureKind kind, ValueID tested)
 {
     bool mustBeThere = mayHoldPointer(operand) && !(type.primitives & Primitive::Absent);
     TypeID widest = types().intern(widestTypeOf(operand.representation));
-    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, types().intern(testableTypeOf(type)));
+    TypeID testedType = types().intern(testableTypeOf(type));
+    const TypeTestPlan& plan = typeTestPlanFor(widest, operand.representation, testedType);
     bool needsTest = plan.verdict != TypeTestVerdict::AlwaysPasses;
     if (!mustBeThere && !needsTest)
         return;
+
+    // A result is tested where it is made, where flow says something about it and at each use. Nothing has written to the heap since the value passed the same test, and the test of a union takes dozens of blocks.
+    if (!generator().checksKeptRegisters()) {
+        PassedTypeTest test { tested, testedType, mustBeThere };
+        if (m_passedTypeTests.contains(test))
+            return;
+        if (m_passedTypeTests.size() == m_passedTypeTests.capacity())
+            m_passedTypeTests.removeAt(0);
+        m_passedTypeTests.append(test);
+    }
 
     // One report for both: what was found says which of the two failed.
     LBasicBlock doesNotHold = newBlock();
@@ -151,8 +162,10 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
-    checkClassProofs(value.id(), get(source), type);
+    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType, source);
+    // The operands of this operation were validated in front of it.
+    if (value->validatedType() != m_function.at(source).type || !m_checkedClassProofs.contains(source))
+        checkClassProofs(value.id(), get(source), type);
 }
 
 // The shapes ascend, and the layouts of one family have numbers in a row.
@@ -181,6 +194,13 @@ Condition RuntimeValidationEmitter::hasShapeAmong(CellPointer cell, LayoutSetID 
     for (RunOfShapes run : runs)
         hasShape = logicalOr(hasShape, below(add(shapeWord, run.last), run.count));
     return hasShape;
+}
+
+void RuntimeValidationEmitter::checkIsCompiledObjectOf(CellPointer cell, LayoutSetID layouts)
+{
+    std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(layouts);
+    if (!shapes.empty())
+        failUnless(hasShapeAmong(cell, layouts, shapes), ValidationFailureKind::ReceiverShape, cell, generator().operationBeingGenerated());
 }
 
 // A guard may rely on a guard: whether the fields are in the order of the layout is asked of an object that an earlier test found to have the layout.

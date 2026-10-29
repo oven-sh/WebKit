@@ -173,6 +173,9 @@ static bool needsLoaderItself(const Program& program, const Module& module)
         return true;
     if (module.flags.contains(ModuleFlags::IsLoadedByLoader))
         return true;
+    // The run time knows whether a mock stands in its place.
+    if (module.flags.contains(ModuleFlags::MayBeMocked))
+        return true;
     if (std::ranges::any_of(module.requests, [](const ModuleRequest& request) { return request.phase == ImportPhase::Defer; }))
         return true;
     return hasCode(program, module) && !canBeCalledByCode(program.at(module.body));
@@ -790,12 +793,13 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         }
         isStart.quickSet(target);
     }
-    // The host asks the loader for an entry point.
-    BitVector isEntryPoint(modules.size());
-    for (const Entry& entry : program.entries) {
-        isEntryPoint.quickSet(entry.module.index());
-        isAskedOfLoader.quickSet(entry.module.index());
+    // A mock marks a CommonJS file as evaluated before anything has run it, so the file asks for its status.
+    for (size_t index = 0; index < modules.size(); ++index) {
+        if (modules[index].kind == ModuleKind::CommonJs && modules[index].flags.contains(ModuleFlags::MayBeMocked))
+            isStart.quickSet(index);
     }
+    BitVector isAskedForByHost = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName());
+    isAskedOfLoader.merge(isAskedForByHost);
     // What a required module imports is evaluated with it.
     Vector<uint32_t, 16> reachedByRequire;
     for (size_t index : isAskedOfLoader)
@@ -810,8 +814,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     auto importsCommonJSBeforeItBegins = [&](size_t index) {
         return isAskedOfLoader.quickGet(index) && modules[index].kind == ModuleKind::SourceText;
     };
-    for (const Entry& entry : program.entries)
-        isStart.quickSet(entry.module.index());
+    isStart.merge(isAskedForByHost);
     for (size_t index = 0; index < modules.size(); ++index) {
         if (importsCommonJSBeforeItBegins(index)) {
             for (uint32_t target : plan.imports[index]) {
@@ -919,7 +922,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             return !runsCommonJS || plan.hasNoState.quickGet(called);
         });
         starts.last().numberOfStepsBeforeItBegins = firstOther - steps.begin();
-        if (!isEntryPoint.quickGet(index))
+        if (!isAskedForByHost.quickGet(index))
             continue;
         for (FunctionID callee : steps.span().first(starts.last().numberOfStepsBeforeItBegins))
             starts.last().filesRunWhileLoaded.append(moduleWithBody[callee.index()]);

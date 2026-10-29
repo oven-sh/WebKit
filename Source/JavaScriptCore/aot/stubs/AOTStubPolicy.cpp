@@ -107,6 +107,39 @@ void addExpectedFieldTableEntries(StubPolicy& policy, const Typed::Program& prog
     }
 }
 
+void chooseOrderOfFieldTableForms(StubPolicy& policy, const Typed::Program& program, const Typed::SlotPlan& slots, const KeyUses& uses)
+{
+    // By key: in how many layouts the field is a JSValue in the cell, a JSValue in the Extension, anything else.
+    enum Place : uint8_t { InCell, InExtension, Elsewhere, NumberOfPlaces };
+    Vector<std::array<uint32_t, NumberOfPlaces>> layoutsByKey(FillWith { }, uses.byKey.size(), std::array<uint32_t, NumberOfPlaces> { });
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        Typed::LayoutID id(index);
+        if (!slots.holdsCompiledObjects(id))
+            continue;
+        const auto& fields = program.at(id).fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            size_t key = fields[field].key.index();
+            const Typed::PlacedSlot& slot = slots.slot(id, field);
+            if (key >= layoutsByKey.size() || !slot.hasStorage())
+                continue;
+            bool isValue = slot.representation == SlotRepresentation::JSValue || slot.representation == SlotRepresentation::Cell;
+            ++layoutsByKey[key][!isValue ? Elsewhere : slot.isOutOfLine() ? InExtension : InCell];
+        }
+    }
+    // A place that reads the name counts for each form by the share of the layouts that have it.
+    std::array<double, NumberOfPlaces> reads { };
+    for (size_t key = 0; key < layoutsByKey.size(); ++key) {
+        const auto& layouts = layoutsByKey[key];
+        double total = layouts[InCell] + layouts[InExtension] + layouts[Elsewhere];
+        if (!total)
+            continue;
+        for (unsigned place = 0; place < NumberOfPlaces; ++place)
+            reads[place] += uses.byKey[key].usesByAccess[static_cast<size_t>(Typed::Access::Read)] * (layouts[place] / total);
+    }
+    // It saves two tests on the one side and costs one on the other.
+    policy.readsTestOutOfLineValuesSecond = 2 * reads[InExtension] > reads[Elsewhere];
+}
+
 void addRegExpLiterals(StubPolicy& policy, const RegExpRequests& requests, bool legacyStaticsMayBeRead, BuildContext& context)
 {
     std::span<const RegExpRequest> allRequests = requests.all();

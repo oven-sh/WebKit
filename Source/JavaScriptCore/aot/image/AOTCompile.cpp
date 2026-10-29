@@ -12,6 +12,7 @@
 #include "AOTCodeGenerationDriver.h"
 #include "AOTCodeTemplates.h"
 #include "AOTCompileOptions.h"
+#include "AOTEffectSummaries.h"
 #include "AOTFFIStubs.h"
 #include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
@@ -131,6 +132,11 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
     }
 
     Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(pipeline, plan);
+    Typed::EffectSummaries effectsByOperandTypes;
+    if (context.validates()) {
+        effectsByOperandTypes = Typed::computeEffectSummariesByOperandTypes(*pipeline.program, *pipeline.flow, context);
+        inputs.effectsByOperandTypes = &effectsByOperandTypes;
+    }
     CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
     runTasksInParallel(context.parallelLoops(), {
@@ -144,6 +150,7 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         [&] { buildReport(); },
     });
     times.didFinish("generate code, encode program tables and text, compile regular expressions"_s);
+    context.giveFreedMemoryBack();
     return result;
 }
 
@@ -439,6 +446,7 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
                     report.unseenCode.span().data(), report.unseenCode.size(),
                     report.builtinsUsed.span().data(), report.builtinsUsed.size(),
                     report.libraryFunctionsLacked.span().data(), report.libraryFunctionsLacked.size(),
+                    report.exportsThatSpiesReplace.span().data(), report.exportsThatSpiesReplace.size(),
                 };
                 return owner.goesOnBehindFlowAnalysis(owner.owner, &findings);
             });

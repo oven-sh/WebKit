@@ -31,6 +31,7 @@ unsigned simplifyPromiseAllOfLiterals(FunctionPassContext&, const BuiltinCallSit
 unsigned simplifyPromiseResolve(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyPrimitiveCalls(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyInt32Conversions(FunctionPassContext&);
+unsigned simplifyCharacterReads(FunctionPassContext&);
 unsigned simplifyStringReads(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyConcatenatingCalls(FunctionPassContext&, const BuiltinCallSites&);
 unsigned replaceTemplateObjectsReadByPosition(FunctionPassContext&);

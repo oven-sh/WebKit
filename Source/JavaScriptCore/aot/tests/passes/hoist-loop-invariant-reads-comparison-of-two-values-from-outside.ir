@@ -1,0 +1,39 @@
+# Whether two values are strictly equal never changes, and the comparison runs no code of the program: two values from outside the loop are compared once, in front of the loop. What the loop defines is compared in the loop.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="valuesFromOutside" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b1(), notTaken b3()
+  b3():
+    Jump -> next b1()
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: v4: boolean = StrictEq v0, v1
+# CHECK: b2():
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
+}
+
+function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = StrictEq v2, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b3():
+    Return v2
+# CHECK: b1(v2
+# CHECK: = StrictEq v2, v1
+}

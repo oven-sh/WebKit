@@ -15,7 +15,7 @@
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <array>
-#include <wtf/BitVector.h>
+#include <bit>
 #include <wtf/HashMap.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
@@ -30,18 +30,34 @@ std::span<const NativeTest> valueFlowCoreTests();
 
 namespace {
 
+// Not a BitVector: with assertions on, that compares two of them bit by bit as well, which took most of six minutes in a debug build.
 class PlainSet {
 public:
     explicit PlainSet(uint32_t sizeOfUniverse)
         : m_sizeOfUniverse(sizeOfUniverse)
+        , m_words(FillWith { }, (sizeOfUniverse + 63) / 64, 0)
     {
-        m_bits.ensureSize(sizeOfUniverse);
     }
 
-    bool contains(uint32_t member) const { return m_bits.quickGet(member); }
-    bool add(uint32_t member) { return !m_bits.quickSet(member); }
-    uint32_t size() const { return m_bits.bitCount(); }
+    bool contains(uint32_t member) const { return m_words[member / 64] >> member % 64 & 1; }
+
+    bool add(uint32_t member)
+    {
+        bool isNew = !contains(member);
+        m_words[member / 64] |= 1ull << member % 64;
+        return isNew;
+    }
+
+    uint32_t size() const
+    {
+        uint32_t size = 0;
+        for (uint64_t word : m_words)
+            size += std::popcount(word);
+        return size;
+    }
+
     uint32_t sizeOfUniverse() const { return m_sizeOfUniverse; }
+    uint64_t wordAt(uint32_t index) const { return index < m_words.size() ? m_words[index] : 0; }
 
     bool unite(const PlainSet& other, const PlainSet* mask = nullptr)
     {
@@ -53,11 +69,11 @@ public:
         return hasGrown;
     }
 
-    friend bool operator==(const PlainSet& first, const PlainSet& second) { return first.m_bits == second.m_bits; }
+    friend bool operator==(const PlainSet& first, const PlainSet& second) { return first.m_words == second.m_words; }
 
 private:
     uint32_t m_sizeOfUniverse;
-    BitVector m_bits;
+    Vector<uint64_t> m_words;
 };
 
 } // anonymous namespace
@@ -316,12 +332,7 @@ static Vector<std::pair<uint32_t, uint64_t>> hashesOfBlocksOf(const PlainSet& pl
         uint64_t hash = 0;
         bool hasMember = false;
         for (uint32_t word = 0; word < ValueSets::membersPerBlock / 64; ++word) {
-            uint64_t bits = 0;
-            for (uint32_t bit = 0; bit < 64; ++bit) {
-                uint32_t member = place * ValueSets::membersPerBlock + word * 64 + bit;
-                if (member < plain.sizeOfUniverse() && plain.contains(member))
-                    bits |= 1ull << bit;
-            }
+            uint64_t bits = plain.wordAt(place * (ValueSets::membersPerBlock / 64) + word);
             if (!bits)
                 continue;
             hasMember = true;
@@ -434,7 +445,13 @@ static void valueSetsOfBothFormsAgreeWithPlainSets()
     for (auto& [set, plain] : pool)
         check(set, plain);
 
-    for (unsigned round = 0; round < 1500; ++round) {
+    // Without optimization all the rounds take minutes, and a test that prints nothing for five is killed.
+#ifdef NDEBUG
+    constexpr unsigned numberOfRounds = 1500;
+#else
+    constexpr unsigned numberOfRounds = 300;
+#endif
+    for (unsigned round = 0; round < numberOfRounds; ++round) {
         auto [first, firstPlain] = pool[random.getUint32(pool.size())];
         auto [second, secondPlain] = pool[random.getUint32(pool.size())];
         auto [third, thirdPlain] = pool[random.getUint32(pool.size())];

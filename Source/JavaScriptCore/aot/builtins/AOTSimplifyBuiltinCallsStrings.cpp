@@ -10,7 +10,9 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTRuleSupport.h"
 #include "AOTSplitUnions.h"
+#include "AOTStringBuilderAnalysis.h"
 #include "AOTStringPositions.h"
 #include "AOTStringRanges.h"
 #include "AOTVector.h"
@@ -128,6 +130,88 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
         expansion.finishArm(expansion.appendOriginal({ .operandIndex = OperandIndex::CallBuiltin::arguments, .operand = withCall.position, .isNarrowedValue = true }));
     }
     expansion.end();
+}
+
+static bool isOnlyConcatenated(FunctionPassContext& context, ValueID string)
+{
+    return std::ranges::all_of(context.analyses.useLists().usesOf(string), [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && concatenationOpcodes.contains(context.function.at(use.user).opcode);
+    });
+}
+
+static ValueID findOnlyComparison(FunctionPassContext& context, ValueID string)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    std::optional<Use> use = useLists.singleUse(string);
+    if (!use || use->kind != Use::Kind::Operand || !OpcodeSet { Opcode::StrictEq, Opcode::Eq }.contains(function.at(use->user).opcode))
+        return { };
+    // A branch hands on what the comparison proves of its operands, and they are strings there.
+    bool handsOnProofs = std::ranges::any_of(useLists.usesOf(use->user), [&](const Use& useOfComparison) {
+        return useOfComparison.kind == Use::Kind::TerminatorOperand && std::ranges::any_of(function.at(useOfComparison.block).terminator.targets, [](const Target& target) {
+            return !target.proofs.isEmpty();
+        });
+    });
+    return handsOnProofs ? ValueID() : use->user;
+}
+
+// A string keeps its length, so a position below it stays inside, and `s[i]` is a string of one unit there.
+// That makes `s[i] + n` a concatenation, and `s[i] === t[j]` a comparison of two code units. Selection compares a read by key with a literal.
+unsigned simplifyCharacterReads(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    std::optional<StringPositions> positions;
+    Vector<ValueSite, 4> joinedReads;
+    Vector<std::pair<ValueID, ValueID>, 4> comparedReads;
+    HashMap<ValueID, unsigned> numberOfReadsInside;
+    for (const ValueSite& site : context.sitesIn(SiteList::ElementReads)) {
+        const Value& read = function.at(site.value);
+        if (!context.program.typeOf(function, read.objectOperand()).isAnyString())
+            continue;
+        bool isJoined = isOnlyConcatenated(context, site.value);
+        ValueID comparison = isJoined ? ValueID() : findOnlyComparison(context, site.value);
+        if ((!isJoined && !comparison) || !stringRangeSourceOf(context.program, function, read))
+            continue;
+        if (!positions)
+            positions.emplace(context.analyses);
+        if (!positions->isInside(read.objectOperand(), read.propertyOperand(), site.block))
+            continue;
+        if (isJoined)
+            joinedReads.append(site);
+        else {
+            comparedReads.append({ comparison, site.value });
+            ++numberOfReadsInside.add(comparison, 0).iterator->value;
+        }
+    }
+    comparedReads.removeAllMatching([&](const auto& read) {
+        return numberOfReadsInside.get(read.first) != 2;
+    });
+    if (joinedReads.isEmpty() && comparedReads.isEmpty())
+        return 0;
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<ValueID, 4> ends;
+    for (const ValueSite& site : joinedReads) {
+        builder.setOrigin(function.at(site.value).origin());
+        ValueID one = builder.insertBefore(site.point(), makeInteger(1));
+        ValueID end = builder.insertBefore(site.point(), IRBuilder::make(Opcode::Add, { function.at(site.value).propertyOperand(), one }));
+        // The end is at most the length, also where the type of the position is too wide to say so.
+        if (!context.program.typeOf(function, end).isInteger())
+            end = builder.insertBefore(site.point(), IRBuilder::make(Opcode::ToInt32, { end }));
+        ends.append(end);
+    }
+    builder.applyInsertions();
+
+    for (size_t index = 0; index < joinedReads.size(); ++index) {
+        const Value& read = function.at(joinedReads[index].value);
+        replaceKeepingType(context, joinedReads[index].value, IRBuilder::make(Opcode::Substring, { read.objectOperand(), read.propertyOperand(), ends[index] }));
+    }
+    for (auto [comparison, id] : comparedReads) {
+        const Value& read = function.at(id);
+        replaceKeepingType(context, id, IRBuilder::make(Opcode::GetStringCodeUnit, { read.objectOperand(), read.propertyOperand() }));
+    }
+    context.analyses.didChangeValues();
+    return static_cast<unsigned>(joinedReads.size() + comparedReads.size());
 }
 
 unsigned simplifyStringReads(FunctionPassContext& context, const BuiltinCallSites& calls)

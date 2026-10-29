@@ -64,11 +64,15 @@ public:
         m_proc.resetValueOwners();
         findSingleDefinitions();
 
+        for (auto& version : m_versions)
+            version->returnsFromSlowPaths = canReturnFromSlowPaths(version->plan);
         for (unsigned i = m_versions.size(); i--;)
             buildFastPreHeader(*m_versions[i], i);
         storeValuesThatOnlyPreHeadersName();
         for (auto& version : m_versions)
             copyFastLoop(*version);
+        for (auto& version : m_versions)
+            returnFromSlowPaths(*version);
         splitEdgesIntoSlowPaths();
         return m_cloner.finish();
     }
@@ -86,6 +90,14 @@ private:
         }
 
         LoopVersionPlan plan;
+        // An iteration of the original loop ends in front of the guards of the fast loop.
+        bool returnsFromSlowPaths { false };
+        struct HeaderPhi {
+            Value* phi;
+            Value* valueInPreHeader;
+        };
+        Vector<HeaderPhi, 2> invariantHeaderPhis;
+        RegionCloner::ValueMap headerPhisEqualToHoistedValues;
         std::optional<FastPreHeader> front;
         RegionCloner::ValueMap hoistedMap;
         RegionCloner::ValueMap peeledMap;
@@ -203,13 +215,119 @@ private:
             patchpoint->effects.controlDependent = true;
     }
 
+    static Variable* variableOfHeaderPhi(const LoopVersionPlan& plan, Value* value)
+    {
+        Value* read = value->foldIdentity();
+        if (value->owner != plan.region.header || read == value || read->opcode() != Get)
+            return nullptr;
+        return read->as<VariableValue>()->variable();
+    }
+
+    template<typename Functor>
+    void forEachValueOfNextIteration(const LoopVersionPlan& plan, Variable* variableOfPhi, const Functor& functor) const
+    {
+        for (BasicBlock* block : plan.region.blocks) {
+            for (Value* value : *block) {
+                if (value->opcode() == Set && value->as<VariableValue>()->variable() == variableOfPhi)
+                    functor(definitionOf(value->child(0)));
+            }
+        }
+    }
+
+    // The guards in front of the fast loop read variables, so they hold for the next iteration, whichever it is.
+    // The guards of range checks start from the values that enter the loop, and hold for the first iteration only.
+    bool canReturnFromSlowPaths(const LoopVersionPlan& plan) const
+    {
+        const RangeCheckPlan& rangeChecks = plan.rangeChecks;
+        if (!plan.isEnteredFromPreHeader || plan.unswitched || rangeChecks.clampsBound() || rangeChecks.strided || !rangeChecks.entryGuards.isEmpty() || !rangeChecks.decidedComparisons.isEmpty())
+            return false;
+        // A loop that may be entered again on any turn keeps its poll, its turns are not written out, and more values live around it. Beside a call that costs little.
+        // A call that writes, such as an allocation, takes a slow path of its own every so often, so a loop around one is sure to leave its fast version.
+        bool callsAndWritesInEveryTurn = false;
+        for (BasicBlock* block : plan.region.blocks) {
+            for (Value* value : *block)
+                callsAndWritesInEveryTurn |= isCall(value) && !isLoopPoll(value) && value->effects().writes;
+        }
+        if (!callsAndWritesInEveryTurn)
+            return false;
+        bool canCompareHeaderPhis = true;
+        for (const HoistStep& step : plan.hoisted.steps) {
+            Variable* variable = step.kind == HoistStep::Kind::Value ? variableOfHeaderPhi(plan, step.value) : nullptr;
+            if (!variable)
+                continue;
+            canCompareHeaderPhis &= step.value->type().isInt();
+            forEachValueOfNextIteration(plan, variable, [&](Value* next) {
+                canCompareHeaderPhis &= next == step.value || plan.hoisted.isHoisted(next);
+            });
+        }
+        return canCompareHeaderPhis;
+    }
+
     void hoistValue(Version& version, Value* value)
     {
-        if (Value* repeated = version.plan.hoisted.repeatedValues.get(value)) {
-            m_cloner.substitute(version.hoistedMap, value, hoistedValueOrSelf(version, repeated));
+        if (Variable* variable = version.returnsFromSlowPaths ? variableOfHeaderPhi(version.plan, value) : nullptr) {
+            Value* current = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variable);
+            m_cloner.substitute(version.hoistedMap, value, current);
+            version.invariantHeaderPhis.append({ value, current });
             return;
         }
+        if (Value* repeated = version.plan.hoisted.repeatedValues.get(value)) {
+            // A slow path may have changed what was computed before the loop.
+            bool mayBeStale = version.returnsFromSlowPaths && value->opcode() != Identity && !m_cloner.contains(definitionOf(repeated)->owner);
+            if (!mayBeStale) {
+                m_cloner.substitute(version.hoistedMap, value, hoistedValueOrSelf(version, repeated));
+                return;
+            }
+        }
         cloneIntoPreHeader(version, value, IsPeeled::No);
+    }
+
+    // In the fast loop such a phi stands for what each iteration computes again. After a slow path it may still hold what the last iteration computed earlier.
+    void guardInvariantHeaderPhis(Version& version)
+    {
+        for (auto [phi, current] : version.invariantHeaderPhis) {
+            forEachValueOfNextIteration(version.plan, variableOfHeaderPhi(version.plan, phi), [&, phi = phi, current = current](Value* next) {
+                Value* computedAgain = version.hoistedMap.get(next);
+                RELEASE_ASSERT(computedAgain);
+                if (computedAgain == current)
+                    return;
+                version.front->appendGuard(phi->origin(), Equal, current, computedAgain);
+                m_cloner.substitute(version.hoistedMap, next, current);
+            });
+        }
+    }
+
+    // A phi that every iteration of the fast loop gives one hoisted value is that value from the second iteration on. Behind a guard it is that value in the first one too.
+    void guardHeaderPhisGivenHoistedValues(Version& version)
+    {
+        const LoopVersionPlan& plan = version.plan;
+        if (!version.returnsFromSlowPaths)
+            return;
+        for (Value* phi : *plan.region.header) {
+            Variable* variable = variableOfHeaderPhi(plan, phi);
+            if (!variable || plan.hoisted.isHoisted(phi) || !phi->type().isInt())
+                continue;
+            Value* given = nullptr;
+            bool isGivenOneValue = true;
+            forEachValueOfNextIteration(plan, variable, [&](Value* next) {
+                Value* hoisted = plan.hoisted.isHoisted(next) ? version.hoistedMap.get(next) : nullptr;
+                isGivenOneValue &= hoisted && (!given || given == hoisted);
+                given = hoisted;
+            });
+            // A rare path that is copied into the fast version comes back to its header with whatever it has given the phi.
+            for (BasicBlock* block : plan.excursion.blocks) {
+                for (Value* value : *block) {
+                    if (value->opcode() != Set || value->as<VariableValue>()->variable() != variable)
+                        continue;
+                    Value* next = definitionOf(value->child(0));
+                    isGivenOneValue &= plan.hoisted.valuesValidInExcursion.contains(next) && version.hoistedMap.get(next) == given;
+                }
+            }
+            if (!given || !isGivenOneValue)
+                continue;
+            version.front->appendGuard(phi->origin(), Equal, version.front->last()->appendNew<VariableValue>(m_proc, Get, phi->origin(), variable), given);
+            version.headerPhisEqualToHoistedValues.add(phi, given);
+        }
     }
 
     void buildFastPreHeader(Version& version, unsigned index)
@@ -240,6 +358,8 @@ private:
                 break;
             }
         }
+        guardInvariantHeaderPhis(version);
+        guardHeaderPhisGivenHoistedValues(version);
         appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
@@ -299,6 +419,10 @@ private:
     void copyValue(Version& version, Value* value, BasicBlock* copy, RegionCloner::ValueMap& map, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
+        if (Value* given = kind == CopyKind::FastLoop ? version.headerPhisEqualToHoistedValues.get(value) : nullptr) {
+            m_cloner.substitute(map, value, given);
+            return;
+        }
         if (isReplaced(version, value, kind)) {
             if (value->type() == Void)
                 return;
@@ -442,6 +566,23 @@ private:
             m_topTestedVersionHeaders.append(fastHeader);
         if (plan.isEnteredFromPreHeader)
             plan.region.preHeader->replaceSuccessor(header, version.front->first());
+    }
+
+    void returnFromSlowPaths(Version& version)
+    {
+        if (!version.returnsFromSlowPaths)
+            return;
+        const HotRegion& region = version.plan.region;
+        auto redirect = [&](BasicBlock* block) {
+            for (BasicBlock*& successor : block->successorBlocks()) {
+                if (successor == region.header)
+                    successor = version.front->first();
+            }
+        };
+        for (BasicBlock* block : region.blocks)
+            redirect(block);
+        for (BasicBlock* block : region.slowPathBlocks)
+            redirect(block);
     }
 
     CountedLoop fastLoopOf(Version& version)

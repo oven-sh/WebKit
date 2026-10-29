@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="goodJavaScriptValueKinds" parameters=[{type=never}, {type=anything}, {type=object}, {type=function}] results=[{type=undefined}] {
     v4 = NewArray contents=anything capacity=v0
     v5 = ArraySpeciesCreate v0, v1
-    v6 = GetStringLength v0
     SetFunctionName v3, v0
     PropDefine v0, v1 key="x"
     DefineGetter v2, v0 key="x"
@@ -29,4 +28,8 @@ function f2 name="badOpaque" parameters=[{type=never}, {type=anything}] results=
 }
 function f3 name="badOpaqueTerminatorValue" parameters=[{type=never}] results=[{type=undefined}] {
     Rethrow v0
+}
+function f4 name="goodString" parameters=[{type=never}] results=[{type=undefined}] {
+    v1 = GetStringLength v0
+    Unreachable
 }

@@ -95,6 +95,22 @@ runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f6
 webassemblymodule module=m0 bytes="\x00asm"
 )IR"_s;
 
+// A constructor function whose objects get a layout by their tag.
+inline constexpr ASCIILiteral readerFixtureWithTagsText = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=undefined|null|string} flags=[IsRequired]}]
+layout L2 name="Add" fields=[{key="kind" declared={type=undefined|null|"add"} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Num" fields=[{key="kind" declared={type=undefined|null|"num"} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    Return
+}
+)IR"_s;
+
 inline uint32_t wordAt(std::span<const uint8_t> bytes, size_t offset)
 {
     uint32_t word;

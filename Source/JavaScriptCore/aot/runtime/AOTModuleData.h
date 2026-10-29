@@ -314,7 +314,8 @@ struct LinkPlanRootData {
 
 struct ModuleExportData {
     uint32_t name : 24;
-    uint32_t kindBits : 6;
+    uint32_t kindBits : 5;
+    uint32_t isReplaceable : 1;
     uint32_t isDeferred : 1;
     uint32_t isFromStarExport : 1;
     union {
@@ -340,7 +341,8 @@ struct SyntheticExportData {
     uint32_t hasVariable : 1;
     // Of a module of the library: every module that binds the name has it among its required names. Where the host defers the export, the link of the first of them reads it.
     uint32_t isBoundByRequiredName : 1;
-    uint32_t unused : 5;
+    uint32_t isReplaceable : 1;
+    uint32_t unused : 4;
     SlotData variable;
 };
 
@@ -413,7 +415,7 @@ static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRu
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
 static_assert(sizeof(ModuleData::Flag) == sizeof(ModuleData::flags));
 static_assert(sizeof(ModuleKind) == 1 && sizeof(ExternalKind) == 1 && sizeof(SyntheticExportRule) == 1 && sizeof(RequireResult) == 1);
-static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<unsigned>(ExternalKind::HostValue) < 2 && static_cast<unsigned>(SyntheticExportRule::RuntimeModule) < 4 && static_cast<unsigned>(RequireResult::DefaultExport) < 4);
+static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<unsigned>(ExternalKind::HostValue) < 2 && static_cast<unsigned>(SyntheticExportRule::RuntimeModule) < 4 && static_cast<unsigned>(RequireResult::NamespaceIfImported) < 4);
 
 #define FOR_EACH_AOT_MODULE_PROGRAM_TABLE(v) \
     v(modules, ModuleData) \

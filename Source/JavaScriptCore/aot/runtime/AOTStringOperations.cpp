@@ -34,6 +34,7 @@
 #include "StringConstructor.h"
 #include "StringPrototype.h"
 #include "StringPrototypeInlines.h"
+#include "StringSplitCacheInlines.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -1156,8 +1157,16 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
     StringImpl* separatorImpl = separator->tryGetValueImpl();
     if (!separatorImpl || !separatorImpl->length() || !limit || !string->is8Bit() || globalObject->isHavingABadTime())
         return nullptr;
-    if (StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
-        return nullptr;
+    if (StringImpl* impl = string->tryGetValueImpl(); StringSplitCache::canBeKey(impl)) {
+        bool canBeCached = limit == std::numeric_limits<uint32_t>::max() && StringSplitCache::canBeKey(separatorImpl);
+        if (auto* cache = canBeCached ? vm.stringSplitCache() : nullptr) {
+            if (auto* butterfly = cache->getForKeys(impl, separatorImpl))
+                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous), butterfly->toButterfly());
+        }
+        // stringSplitFast() keeps the answer.
+        if (impl->isAtom() || (canBeCached && StringSplitCache::isWorthCaching(*impl)))
+            return nullptr;
+    }
 
     Vector<unsigned, 16> ends;
     unsigned separatorLength = separatorImpl->length();

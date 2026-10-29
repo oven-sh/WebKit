@@ -3562,6 +3562,14 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult memoResult = matchFlatProgramWithSurrogates(program, input, start, memoOutput.mutableSpan().data(), FlatMatchPolicy::RemembersFromStart);
     validateFlatProgramResult(program, input, start, { memoResult, memoOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
 
+    if (const FlatProgram* second = program.programThatFindsEndsOfRuns.get()) {
+        for (FlatMatchPolicy policy : { FlatMatchPolicy::HandsOverEarly, FlatMatchPolicy::RemembersFromStart }) {
+            Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+            JSRegExpResult secondResult = matchFlatProgramWithSurrogates(*second, input, start, secondOutput.mutableSpan().data(), policy);
+            validateFlatProgramResult(*second, input, start, { secondResult, secondOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+        }
+    }
+
     unsigned remainingTurns { 0 };
     Vector<unsigned, 32> countingOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
     auto countingResult = matchCountingTurns(bytecode, input, start, countingOutput.mutableSpan().data(), remainingTurns);

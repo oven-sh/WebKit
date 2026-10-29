@@ -1071,6 +1071,58 @@ static OperandSummary summarizeArgumentOf(const EffectContext& context, const Va
     return summary;
 }
 
+// All of a call that decides which parameter of a callee an operand is passed for: the operation, how many operands it has, which of them are absent and how many are only held.
+static std::optional<uint64_t> questionAboutOperandOf(const Value& call, uint32_t operandIndex)
+{
+    constexpr uint32_t mostOperands = 24;
+    uint32_t numberOfOperands = call.numberOfOperands();
+    if (numberOfOperands > mostOperands)
+        return std::nullopt;
+    uint64_t present = 0;
+    call.forEachOperand([&](ValueID, uint32_t index) {
+        present |= uint64_t { 1 } << index;
+    });
+    static_assert(sizeof(Opcode) <= 2);
+    return static_cast<uint64_t>(call.opcode) | static_cast<uint64_t>(operandIndex) << 16 | static_cast<uint64_t>(numberOfOperands) << 24 | static_cast<uint64_t>(numberOfHeldOperandsOf(call)) << 32 | present << 40;
+}
+
+static ALWAYS_INLINE OperandSummary joinSummariesOfCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, const OperandBehavior& behavior, std::span<const FunctionID> callees)
+{
+    // Nothing that is joined to a summary that allows everything changes it.
+    constexpr OperandSummary allowsEverything;
+    if (behavior.uses.containsAny(callingUses)) {
+        OperandSummary summary = summarizeDeclaredUses(behavior);
+        for (FunctionID callee : callees) {
+            if (summary == allowsEverything)
+                break;
+            for (uint32_t parameter : entryParametersOfCalledValue(context.program.at(callee), call))
+                summary = joinOf(summary, summarizeArgumentOf(context, call, callee, parameter));
+        }
+        return summary;
+    }
+
+    OperandSummary summary { OperandUse::Inspects, RetainedIn::UnknownMemory, 0 };
+    for (FunctionID callee : callees) {
+        if (summary == allowsEverything)
+            break;
+        summary = joinOf(summary, summarizeArgumentOf(context, call, callee, entryParameterOf(context.program.at(callee), call, operandIndex)));
+    }
+    return summary;
+}
+
+static NEVER_INLINE OperandSummary joinSummariesOfLongList(const EffectContext& context, const Value& call, uint32_t operandIndex, const OperandBehavior& behavior, std::span<const FunctionID> callees)
+{
+    // The first few callees often allow everything, and then the others are not looked at.
+    if (joinSummariesOfCallees(context, call, operandIndex, behavior, callees.first(AnswersForCalleeLists::fewestCallees)) == OperandSummary { })
+        return { };
+    auto compute = [&] {
+        return joinSummariesOfCallees(context, call, operandIndex, behavior, callees);
+    };
+    std::optional<uint64_t> question = questionAboutOperandOf(call, operandIndex);
+    AnswersForCalleeLists* answers = question ? context.summaries.answersForCalleeLists() : nullptr;
+    return answers ? answers->operandSummary(callees, *question, compute) : compute();
+}
+
 static OperandSummary summarizeCallOperand(const EffectContext& context, const Type& type, const Value& call, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(call.opcode, operandIndex);
@@ -1085,26 +1137,9 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
     if (!functions || maySuspend(call.opcode))
         return { };
 
-    // Nothing that is joined to a summary that allows everything changes it.
-    constexpr OperandSummary allowsEverything;
-    if (isCalledValue) {
-        OperandSummary summary = summarizeDeclaredUses(behavior);
-        for (FunctionID callee : functions->value()) {
-            if (summary == allowsEverything)
-                break;
-            for (uint32_t parameter : entryParametersOfCalledValue(context.program.at(callee), call))
-                summary = joinOf(summary, summarizeArgumentOf(context, call, callee, parameter));
-        }
-        return summary;
-    }
-
-    OperandSummary summary { OperandUse::Inspects, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID callee : functions->value()) {
-        if (summary == allowsEverything)
-            break;
-        summary = joinOf(summary, summarizeArgumentOf(context, call, callee, entryParameterOf(context.program.at(callee), call, operandIndex)));
-    }
-    return summary;
+    if (functions->value().size() < AnswersForCalleeLists::fewestCallees) [[likely]]
+        return joinSummariesOfCallees(context, call, operandIndex, behavior, functions->value());
+    return joinSummariesOfLongList(context, call, operandIndex, behavior, functions->value());
 }
 
 static bool mayRunUnnamedCode(const BuiltinOverload& overload)
@@ -1410,6 +1445,9 @@ static bool computeWhetherResultMayBeFresh(Opcode opcode)
         return true;
     if (boundToOf(opcode) == BoundTo::Site)
         return false;
+    // What the program writes out is constant. Each evaluation makes objects of its own from it, as the literal does.
+    if (opcode == Opcode::Data)
+        return true;
 
     bool retainsOperandInResult = false;
     bool returnsOperand = false;

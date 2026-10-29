@@ -55,6 +55,7 @@ CoroutineTable::CoroutineTable(State& state)
     m_savedFrameStructure = SavedFrame::createStructure(vm, globalObject);
     m_state.immortalCells->add(m_savedFrameStructure);
     m_instance.coroutines.savedFrameHeader = cellHeaderFor(m_savedFrameStructure);
+    m_instance.coroutines.plainGeneratorHeader = cellHeaderFor(m_generatorStructure);
     m_instance.coroutines.emptyGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->generatorPrototype());
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->asyncGeneratorPrototype());
     initializeCoroutineWords(vm);

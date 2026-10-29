@@ -47,6 +47,9 @@ struct BoundedCounter {
 // In the order of their parameters.
 using BoundedCounters = Vector<BoundedCounter, 2>;
 
+// What a likely iteration of the loop is better off with.
+enum class CounterForm : uint8_t { Integer, Number, Either };
+
 // What the search for bounded counters finds once for the whole function.
 struct KnownOfCounters {
     BitVector isComparisonWithTestedBound;
@@ -439,12 +442,27 @@ static void forEachValueNarrowedByBranchOn(const Function& function, const UseLi
     }
 }
 
-// Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function, or into a call: an integer stays in its register around the call and takes one instruction to become a value of any type. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
-static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
+// Integer where a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function, or into a call: an integer stays in its register around the call and takes one instruction to become a value of any type. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing. Either where nothing takes it but its step, its bound and sums that only go round the loop.
+static Expected<CounterForm> formWantedOf(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
 {
     const Function& function = reporter.function();
     const NaturalLoops& loops = reporter.analyses().naturalLoops();
     Vector<ValueID, maxNamesOfCounter> names { counter.parameter };
+    bool isTakenAsNumber = false;
+    auto isOrBecomesInteger = [&](ValueID operand) {
+        const Type& type = reporter.typeOf(operand);
+        if (type.isInteger() || !type.isNumberWithoutFraction())
+            return type.isInteger();
+        ValueLocation location = reporter.analyses().useLists().locationOf(reporter.analyses().identityOf(operand));
+        return location.placement == ValuePlacement::Parameter && loops.belongsTo(location.block, loop);
+    };
+    // What is reckoned from the counter.
+    Vector<ValueID, maxNamesOfCounter> reckoned;
+    auto follow = [](Vector<ValueID, maxNamesOfCounter>& values, ValueID value) {
+        if (!values.contains(value) && values.size() < maxNamesOfCounter)
+            values.append(value);
+        return values.contains(value);
+    };
     for (size_t index = 0; index < names.size(); ++index) {
         for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
             if (use.kind != Use::Kind::Operand || function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
@@ -461,7 +479,7 @@ static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const Operat
                 tested[use.operandIndex] = TypeTable::int32;
                 isTested[use.operandIndex] = true;
                 if (isBetterForm(user.opcode, chooseOperatorForm(site, user), chooseFormUnderTests(reporter, site, user, tested, isTested)))
-                    return true;
+                    return CounterForm::Integer;
                 // `field + counter`: the operand beside the counter gets a test of its own once that makes a better form, which it does beside an integer alone.
                 uint32_t other = 1 - use.operandIndex;
                 if (user.numberOfOperands() == 2 && (tested[other] = testedTypesOfOperands(reporter, site, use.user)[other])) {
@@ -470,7 +488,12 @@ static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const Operat
                     OperatorChoice besideNumber = chooseFormUnderTests(reporter, site, user, tested, isTested);
                     isTested[use.operandIndex] = true;
                     if (isBetterForm(user.opcode, besideNumber, chooseFormUnderTests(reporter, site, user, tested, isTested)))
-                        return true;
+                        return CounterForm::Integer;
+                }
+                // Beside a number that is held as a double an integer is converted in every iteration. A sum without a fraction that goes round the loop becomes an integer with the counter.
+                if (!relationalOperators.contains(user.opcode)) {
+                    isTakenAsNumber |= user.numberOfOperands() == 2 && !isOrBecomesInteger(user.operand(other));
+                    isTakenAsNumber |= !follow(reckoned, use.user);
                 }
                 forEachValueNarrowedByBranchOn(function, reporter.analyses().useLists(), use.user, names[index], [&](ValueID narrowed) {
                     if (!names.contains(narrowed) && names.size() < maxNamesOfCounter)
@@ -480,14 +503,23 @@ static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const Operat
             }
             OperandKind kind = user.operandKind(use.operandIndex);
             if (kind == OperandKind::Number || kind == OperandKind::Integer || user.opcode == Opcode::TypeTest || user.opcode == Opcode::CallBuiltin)
-                return true;
+                return CounterForm::Integer;
             if (user.opcode == Opcode::Call || (user.opcode == Opcode::CallDirect && staysCall(reporter, use.block, use.user)))
-                return true;
+                return CounterForm::Integer;
             if (operationsOnElements.contains(user.opcode) && use.operandIndex == positionOperandIndex)
-                return true;
+                return CounterForm::Integer;
+            isTakenAsNumber = true;
         }
     }
-    return false;
+    // It goes round the loop, where it becomes an integer with the counter. Whatever else takes it, takes it as a number.
+    for (size_t index = 0; index < reckoned.size() && !isTakenAsNumber; ++index) {
+        for (const Use& use : reporter.analyses().useLists().usesOf(reckoned[index])) {
+            if (use.kind != Use::Kind::Operand || function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
+                continue;
+            isTakenAsNumber |= !isCastWithoutTest(function.at(use.user).opcode) || !follow(reckoned, use.user);
+        }
+    }
+    return isTakenAsNumber ? CounterForm::Number : CounterForm::Either;
 }
 
 // `i < n; i++` with `n: number`. Below an int32 the counter is one.
@@ -520,7 +552,15 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
             ValueID bound = reporter.analyses().identityOf(test.bound);
             bool isLeftBound = reporter.analyses().identityOf(comparison.operand(leftOperand)) == bound;
             bool isRightBound = reporter.analyses().identityOf(comparison.operand(rightOperand)) == bound;
-            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand) || !isWantedAsInteger(reporter, site, *loop, variable).predicted())
+            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand))
+                return std::nullopt;
+            // An integer steps in one cycle, and a loop that only counts can go. But the test copies the loop: where nothing asks for an integer it waits until nothing is inlined, expanded or sunk any more.
+            CounterForm wanted = formWantedOf(reporter, site, *loop, variable).predicted();
+            if (wanted != CounterForm::Integer && !reporter.context().isBehindRounds) {
+                reporter.putOffUse();
+                return std::nullopt;
+            }
+            if (wanted == CounterForm::Number)
                 return std::nullopt;
             return isLeftBound ? leftOperand : rightOperand;
         }
@@ -546,6 +586,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, site, value)) {
             reporter.report({ makeTypeTest(value.operand(*bound), TypeTable::int32) }, chooseOperatorForm(site, value).effects.normal);
+            reporter.context().hasBoundsTestedBehindRounds |= reporter.context().isBehindRounds;
             knownOfCounters.isComparisonWithTestedBound.set(reporter.use().index());
             boundedCounters = std::nullopt;
             return;

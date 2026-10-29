@@ -54,7 +54,6 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
 set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS
     aot/builtins/models/Arrays.ts
     aot/builtins/models/Collections.ts
-    aot/builtins/models/Iterators.ts
     aot/builtins/models/Objects.ts
 )
 

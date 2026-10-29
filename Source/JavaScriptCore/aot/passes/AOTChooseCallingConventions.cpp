@@ -30,6 +30,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <compare>
 #include <functional>
 #include <limits>
@@ -87,7 +88,8 @@ struct ArgumentAllocator {
     uint32_t numberOfStackWords { 0 };
 };
 
-enum class TailCalleeKind : uint8_t { Unknown, Direct };
+// Table: the callee is the lookup of the selector. The call enters it or an entrypoint of the selector, all of which return alike.
+enum class TailCalleeKind : uint8_t { Unknown, Direct, Table };
 
 struct TailCallSite {
     FunctionID caller;
@@ -424,8 +426,8 @@ static void collectTailCallSitesOf(const Program& program, FunctionID caller, Ve
             }
             RELEASE_ASSERT_NOT_REACHED();
         });
-        bool isDirect = call.opcode == Opcode::CallDirect;
-        sites.append({ caller, block, isDirect ? TailCalleeKind::Direct : TailCalleeKind::Unknown, isDirect ? call.function() : FunctionID(), terminator.requirement(), hasCheckedCast });
+        TailCalleeKind kind = call.opcode == Opcode::CallDirect ? TailCalleeKind::Direct : call.opcode == Opcode::CallTable ? TailCalleeKind::Table : TailCalleeKind::Unknown;
+        sites.append({ caller, block, kind, kind == TailCalleeKind::Unknown ? FunctionID() : call.function(), terminator.requirement(), hasCheckedCast });
     });
 }
 
@@ -716,6 +718,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         case TailCalleeKind::Unknown:
             return haveSameRegisterRepresentation(Representation::JSValue, expected);
         case TailCalleeKind::Direct:
+        case TailCalleeKind::Table:
             return !returnsNothing(site.callee) && haveSameRegisterRepresentation(resultOf(site.callee), expected);
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1077,59 +1080,153 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
     Vector<VisitState> state(FillWith { }, count, VisitState::NotSeen);
     Vector<uint16_t> height(FillWith { }, count, static_cast<uint16_t>(0));
     static_assert(maxNestedFunctionsWithoutStackCheck < std::numeric_limits<uint16_t>::max());
-    Vector<Vector<uint32_t, 4>> callees(count);
+    // The call graph keeps a long set of callees once for all its callers. What a caller does for a callee holds for every caller, so the walk goes through such a set once, not once for each caller.
+    struct LongSet {
+        Vector<uint32_t> callees;
+        // Each callee in front of this index is done, or a caller has already found it in progress.
+        uint32_t firstToVisit { 0 };
+        // By the height that a caller counts for a callee. Callees that count for nothing are at 0.
+        std::array<uint32_t, maxNestedFunctionsWithoutStackCheck + 1> numberOfCalleesByHeight { };
+        bool everyCalleeHasCheck { false };
+    };
+    Vector<LongSet> longSets(callGraph.numberOfLongSets());
+    forEachIndexInParallel(build.parallelLoops(), longSets.size(), [&](unsigned set) {
+        for (FunctionID callee : callGraph.membersOfLongSet(set)) {
+            if (isCandidate.get(callee.index()))
+                longSets[set].callees.append(callee.index());
+        }
+        longSets[set].numberOfCalleesByHeight[0] = longSets[set].callees.size();
+    });
+    Vector<Vector<uint32_t, 4>> ownCallees(count);
     forEachIndexInParallel(build.parallelLoops(), count, [&](unsigned i) {
         if (!isCandidate.get(i))
             return;
-        for (FunctionID callee : callGraph.calleesOf(FunctionID(i))) {
+        for (FunctionID callee : callGraph.ownCalleesOf(FunctionID(i))) {
             if (isCandidate.get(callee.index()))
-                callees[i].append(callee.index());
+                ownCallees[i].append(callee.index());
         }
-        if (callees[i].isEmpty() && maxNested) {
+        bool hasCallee = !ownCallees[i].isEmpty() || std::ranges::any_of(callGraph.longSetsOf(FunctionID(i)), [&](uint32_t set) { return !longSets[set].callees.isEmpty(); });
+        if (!hasCallee && maxNested) {
             state[i] = VisitState::Done;
             height[i] = 1;
         }
     });
-    Vector<std::pair<uint32_t, uint32_t>> inProgress;
+
+    Vector<uint8_t> heightCounted(FillWith { }, longSets.isEmpty() ? 0 : count, static_cast<uint8_t>(0));
+    // Follows every change to the state, the height or the candidacy of a function.
+    auto didChange = [&](uint32_t function) {
+        if (heightCounted.isEmpty())
+            return;
+        uint8_t counted = !isCandidate.get(function) ? 0 : state[function] == VisitState::InProgress ? 1 : static_cast<uint8_t>(height[function]);
+        uint8_t before = std::exchange(heightCounted[function], counted);
+        if (before == counted)
+            return;
+        for (uint32_t set : callGraph.longSetsWith(FunctionID(function))) {
+            --longSets[set].numberOfCalleesByHeight[before];
+            ++longSets[set].numberOfCalleesByHeight[counted];
+        }
+    };
+    auto requireCheck = [&](uint32_t function) {
+        isCandidate.clear(function);
+        didChange(function);
+    };
+    for (uint32_t i = 0; i < heightCounted.size(); ++i)
+        didChange(i);
+
+    struct Visit {
+        uint32_t function;
+        uint32_t nextOwnCallee;
+        uint32_t firstPositionInLongSets;
+    };
+    Vector<Visit> inProgress;
+    Vector<uint32_t> positionsInLongSets;
+    auto beginVisit = [&](uint32_t function) {
+        state[function] = VisitState::InProgress;
+        didChange(function);
+        inProgress.append({ function, 0, static_cast<uint32_t>(positionsInLongSets.size()) });
+        positionsInLongSets.grow(positionsInLongSets.size() + callGraph.longSetsOf(FunctionID(function)).size());
+        std::ranges::fill(positionsInLongSets.mutableSpan().subspan(inProgress.last().firstPositionInLongSets), 0u);
+    };
+    // The callees of the function on top, its own and those of its long sets, in ascending order and each once.
+    constexpr uint32_t noCallee = UINT32_MAX;
+    auto takeNextCallee = [&]() -> uint32_t {
+        Visit& visit = inProgress.last();
+        std::span<const uint32_t> own = ownCallees[visit.function].span();
+        std::span<const uint32_t> sets = callGraph.longSetsOf(FunctionID(visit.function));
+        std::span<uint32_t> positions = positionsInLongSets.mutableSpan().subspan(visit.firstPositionInLongSets);
+        uint32_t least = visit.nextOwnCallee < own.size() ? own[visit.nextOwnCallee] : noCallee;
+        for (size_t index = 0; index < sets.size(); ++index) {
+            LongSet& set = longSets[sets[index]];
+            positions[index] = set.firstToVisit = std::max(positions[index], set.firstToVisit);
+            if (positions[index] < set.callees.size())
+                least = std::min(least, set.callees[positions[index]]);
+        }
+        if (least == noCallee)
+            return noCallee;
+        if (visit.nextOwnCallee < own.size() && own[visit.nextOwnCallee] == least)
+            ++visit.nextOwnCallee;
+        for (size_t index = 0; index < sets.size(); ++index) {
+            const LongSet& set = longSets[sets[index]];
+            if (positions[index] < set.callees.size() && set.callees[positions[index]] == least)
+                ++positions[index];
+        }
+        return least;
+    };
     for (unsigned root = 0; root < count; ++root) {
         if (!isCandidate.get(root) || state[root] != VisitState::NotSeen)
             continue;
-        state[root] = VisitState::InProgress;
-        inProgress.append({ root, 0 });
+        beginVisit(root);
         while (!inProgress.isEmpty()) {
-            auto [function, next] = inProgress.last();
-            if (next < callees[function].size()) {
-                ++inProgress.last().second;
-                uint32_t callee = callees[function][next];
+            uint32_t function = inProgress.last().function;
+            if (uint32_t callee = takeNextCallee(); callee != noCallee) {
                 if (state[callee] == VisitState::InProgress) {
                     if (!isEntrance.get(callee))
-                        isCandidate.clear(callee);
+                        requireCheck(callee);
                     else if (!isEntranceInCycle.quickSet(callee)) {
-                        for (uint32_t entered : callees[callee])
-                            isCandidate.clear(entered);
-                        numberOfFunctionsBelowEntrancesVisited += callees[callee].size();
+                        for (uint32_t entered : ownCallees[callee])
+                            requireCheck(entered);
+                        numberOfFunctionsBelowEntrancesVisited += ownCallees[callee].size();
+                        for (uint32_t set : callGraph.longSetsOf(FunctionID(callee))) {
+                            if (std::exchange(longSets[set].everyCalleeHasCheck, true))
+                                continue;
+                            for (uint32_t entered : longSets[set].callees)
+                                requireCheck(entered);
+                            numberOfFunctionsBelowEntrancesVisited += longSets[set].callees.size();
+                        }
                     }
-                } else if (state[callee] == VisitState::NotSeen) {
-                    state[callee] = VisitState::InProgress;
-                    inProgress.append({ callee, 0 });
-                }
+                } else if (state[callee] == VisitState::NotSeen)
+                    beginVisit(callee);
                 continue;
             }
             unsigned below = 0;
-            for (uint32_t callee : callees[function]) {
+            for (uint32_t callee : ownCallees[function]) {
                 // What is still without a check while it is being visited is an entrance in a cycle: all that it enters checks, so it is one function and nothing below it.
                 if (isCandidate.get(callee))
                     below = std::max<unsigned>(below, state[callee] == VisitState::InProgress ? 1 : height[callee]);
             }
+            for (uint32_t set : callGraph.longSetsOf(FunctionID(function))) {
+                for (unsigned counted = maxNestedFunctionsWithoutStackCheck; counted > below; --counted) {
+                    if (longSets[set].numberOfCalleesByHeight[counted])
+                        below = counted;
+                }
+            }
             if (isCandidate.get(function) && below >= maxNested && isEntrance.get(function)) {
                 below = 0;
-                for (uint32_t callee : callees[function]) {
+                auto requireCheckOfHighCallee = [&](uint32_t callee) {
                     if (!isCandidate.get(callee))
-                        continue;
+                        return;
                     if (height[callee] >= maxNested)
-                        isCandidate.clear(callee);
+                        requireCheck(callee);
                     else
                         below = std::max<unsigned>(below, height[callee]);
+                };
+                for (uint32_t callee : ownCallees[function])
+                    requireCheckOfHighCallee(callee);
+                for (uint32_t set : callGraph.longSetsOf(FunctionID(function))) {
+                    if (longSets[set].everyCalleeHasCheck)
+                        continue;
+                    for (uint32_t callee : longSets[set].callees)
+                        requireCheckOfHighCallee(callee);
                 }
             }
             if (isCandidate.get(function) && below >= maxNested) {
@@ -1138,10 +1235,13 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
             }
             height[function] = isCandidate.get(function) ? static_cast<uint16_t>(below + 1) : 0;
             state[function] = VisitState::Done;
+            didChange(function);
+            positionsInLongSets.shrink(inProgress.last().firstPositionInLongSets);
             inProgress.removeLast();
         }
     }
-    build.destroyLater(WTF::move(callees));
+    build.destroyLater(WTF::move(ownCallees));
+    build.destroyLater(WTF::move(longSets));
 
     // An entrance that lies in a cycle of calls has a check of its own.
     for (uint32_t i : findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned i) {
@@ -1169,6 +1269,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
     }
 
     EffectSummaries unknownSummaries;
+    unknownSummaries.keepAnswersForCalleeLists();
     EffectContext context { program, unknownSummaries };
     Vector<uint32_t> deferringEntrypoints = findIndicesInParallel(build.parallelLoops(), count, [&](unsigned i) {
         FunctionID id(i);

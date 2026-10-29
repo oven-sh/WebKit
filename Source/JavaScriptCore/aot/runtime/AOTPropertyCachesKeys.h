@@ -57,6 +57,8 @@ struct NamedAccess {
 // The base is neither undefined nor null. An accessor that is found gets the receiver for `this`.
 JSValue getAndCache(const NamedAccess&, JSValue base, JSValue receiver);
 inline JSValue getAndCache(const NamedAccess& access, JSValue base) { return getAndCache(access, base, base); }
+// Files what a read finds there and runs no code, so the caller may still take the generic path.
+void fileReadWithoutCode(Instance*, JSObject* base, const Identifier&);
 // For a read under a key that the stub has left: what is filed already did not answer there, so it is not filed again.
 JSValue getUnderKeyForReceiver(Instance*, JSObject* base, const Identifier&, JSValue receiver);
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);

@@ -29,6 +29,8 @@ inline constexpr size_t minWordsPerLivenessSlice = 16;
 inline constexpr size_t minWordsPerLivenessSliceWithoutTails = 64;
 inline constexpr size_t maxWordsOfLivenessAtTails = 1 << 24;
 inline constexpr unsigned minBlocksToSolveLivenessInPostOrder = 256;
+// Ordinary code has about two.
+inline constexpr size_t maxBoundaryIndicesPerInst = 32;
 
 inline constexpr unsigned maxClobberSitesPerSplit = 32;
 inline constexpr unsigned maxBlocksOnClusterPaths = 6;

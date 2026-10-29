@@ -2352,8 +2352,14 @@ static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject
             if (room < keySize + 1 + length + 1) [[unlikely]]
                 return { Status::NeedsRoom, index, next, keySize + 1 + length + 1 };
             *afterKey = '"';
-            if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]]
-                return { Status::FoundOtherValue, index, afterKey, 0, value };
+            if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]] {
+                // Asked of what the return below holds anyway: nothing more stays in a register over the copy.
+                auto characters = asString(value.asCell())->tryGetValueImpl()->span8();
+                if (static_cast<size_t>(limit - afterKey) < AOT::maxLengthOfEscapedJSONString(characters.size()))
+                    return { Status::FoundOtherValue, index, afterKey, 0, value };
+                next = AOT::appendQuotedAndEscapedJSONString(afterKey, characters);
+                continue;
+            }
             afterKey[1 + length] = '"';
             next = afterKey + 1 + length + 1;
         } else if (value.isDouble())

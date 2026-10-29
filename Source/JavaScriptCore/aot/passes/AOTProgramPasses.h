@@ -66,8 +66,8 @@ inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
     return opcodes;
 }();
 
-// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it and a test for a brand that the object has taken. A body that holds none of these gives it nothing to do.
-inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::InitializeBuiltin, Opcode::PrivateGet };
+// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it, a test for a brand that the object has taken and a comparison of two values that were compared before. A body that holds none of these gives it nothing to do.
+inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::InitializeBuiltin, Opcode::PrivateGet, Opcode::StrictEq };
 
 enum class ExpansionStep : uint8_t {
     ForInPositions = 1 << 0,
@@ -124,8 +124,9 @@ inline constexpr OpcodeSet foldableOpcodes = [] {
 
 inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField };
 inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
-// Whether a value is truthy never changes.
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean, Opcode::ForInStep, Opcode::CallBuiltin };
+// Whether a value is truthy and whether two values are strictly equal never changes, and neither test runs code of the program.
+inline constexpr OpcodeSet testsOfValuesThemselves { Opcode::ToBoolean, Opcode::StrictEq };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 

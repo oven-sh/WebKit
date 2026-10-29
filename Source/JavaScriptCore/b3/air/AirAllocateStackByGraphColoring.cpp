@@ -181,6 +181,10 @@ public:
         return m_actions.subspan(data.actionStart, data.actionEnd - data.actionStart);
     }
 
+    // Block by block, in the order of the blocks' indexes.
+    std::span<const Action> allActions() const { return m_actions.span(); }
+    uint32_t endOfActionsFor(BasicBlock* block) const { return m_blockData[block->index()].actionEnd; }
+
     std::span<const uint32_t> killCandidatesFor(BasicBlock* block) const
     {
         const BlockData& data = m_blockData[block->index()];
@@ -376,8 +380,41 @@ public:
         return !actions.actionsFor(block).empty() || !actions.killCandidatesFor(block).empty() || !actions.moveSitesFor(block).empty();
     }
 
-    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    // A suspension names every slot that is live across it, so n suspensions with n live slots have n * n actions, and each slice would read them all.
+    // The actions are listed slice by slice, in their order.
+    void willComputeInSlices(size_t wordsPerSlice)
     {
+        const size_t slotsPerSlice = wordsPerSlice * 64;
+        std::span<const StackSlotActions::Action> all = actions.allActions();
+        Vector<size_t> endOfSlice(FillWith { }, numIndices() / slotsPerSlice + 1, static_cast<size_t>(0));
+        for (const auto& action : all)
+            ++endOfSlice[action.slotIndex / slotsPerSlice];
+        size_t numberOfActions = 0;
+        for (size_t& end : endOfSlice)
+            numberOfActions += std::exchange(end, numberOfActions);
+        m_actionsBySlice.grow(all.size());
+        for (uint32_t index = 0; index < all.size(); ++index)
+            m_actionsBySlice[endOfSlice[all[index].slotIndex / slotsPerSlice]++] = index;
+        for (BasicBlock* block : actions.code()) {
+            if (!actions.actionsFor(block).empty())
+                m_blocksWithActions.append({ actions.endOfActionsFor(block), block->index() });
+        }
+        m_isListedBySlice = true;
+    }
+
+    std::optional<unsigned> nextBlockInSlice(size_t firstWord, size_t numberOfWords) const
+    {
+        if (!isNextActionIn(firstWord, numberOfWords))
+            return std::nullopt;
+        auto block = std::ranges::upper_bound(m_blocksWithActions, m_actionsBySlice[m_nextAction], { }, &BlockWithActions::endOfActions);
+        return block->blockIndex;
+    }
+
+    // In slices it is asked block by block in index order, and slice by slice in slot order, which is the order of the list.
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        if (m_isListedBySlice)
+            return fillRowsOfSlice(block, firstWord, numberOfWords, gen, kill, tail);
         auto blockActions = actions.actionsFor(block);
         unsigned blockSize = block->size();
         bool isNamedHere = false;
@@ -404,6 +441,55 @@ public:
     }
 
     const StackSlotActions& actions;
+
+private:
+    struct BlockWithActions {
+        uint32_t endOfActions;
+        unsigned blockIndex;
+    };
+
+    bool isNextActionIn(size_t firstWord, size_t numberOfWords) const
+    {
+        return m_nextAction < m_actionsBySlice.size() && actions.allActions()[m_actionsBySlice[m_nextAction]].slotIndex / 64 - firstWord < numberOfWords;
+    }
+
+    bool fillRowsOfSlice(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        std::span<const StackSlotActions::Action> all = actions.allActions();
+        const uint32_t endOfBlock = actions.endOfActionsFor(block);
+        const size_t first = m_nextAction;
+        while (isNextActionIn(firstWord, numberOfWords) && m_actionsBySlice[m_nextAction] < endOfBlock)
+            ++m_nextAction;
+        std::span<const uint32_t> listed = m_actionsBySlice.span().subspan(first, m_nextAction - first);
+        const unsigned blockSize = block->size();
+        // From the last boundary to the first, and at a boundary the uses before the definitions, as above.
+        for (size_t end = listed.size(); end;) {
+            const uint32_t boundary = all[listed[end - 1]].boundary;
+            size_t start = end;
+            while (start && all[listed[start - 1]].boundary == boundary)
+                --start;
+            uint64_t* uses = boundary == blockSize ? tail : gen;
+            for (uint32_t index : listed.subspan(start, end - start)) {
+                const auto& action = all[index];
+                if (action.kind == StackSlotActions::UseAction)
+                    uses[action.slotIndex / 64 - firstWord] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+            }
+            for (uint32_t index : listed.subspan(start, end - start)) {
+                const auto& action = all[index];
+                if (action.kind != StackSlotActions::UseAction) {
+                    gen[action.slotIndex / 64 - firstWord] &= ~(static_cast<uint64_t>(1) << (action.slotIndex % 64));
+                    kill[action.slotIndex / 64 - firstWord] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+                }
+            }
+            end = start;
+        }
+        return !listed.empty();
+    }
+
+    Vector<uint32_t> m_actionsBySlice;
+    Vector<BlockWithActions> m_blocksWithActions;
+    size_t m_nextAction { 0 };
+    bool m_isListedBySlice { false };
 };
 
 class StackSlotLivenessInWords final : public BitMatrixLiveness<StackSlotRows> {
@@ -1312,10 +1398,6 @@ private:
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::ranges"_s);
 
         StackSlotActions actions(m_code, false);
-        BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
-        liveness.compute();
-        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
-
         Vector<BasicBlock*> blocks;
         Vector<uint32_t> firstPositions;
         size_t numberOfPositions = 0;
@@ -1325,6 +1407,12 @@ private:
             numberOfPositions += block->size() + 1;
             RELEASE_ASSERT(numberOfPositions < noPosition);
         }
+
+        BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
+        // A slot that counts as live in a gap keeps its place there, and no more.
+        liveness.countGapsAsLivePast(numberOfPositions * AirLimits::maxBoundaryIndicesPerInst);
+        liveness.compute();
+        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
 
         Vector<uint32_t> endOfOpenRange(FillWith { }, m_code.stackSlots().size(), noPosition);
         auto isLive = [&](uint32_t slotIndex) {

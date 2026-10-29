@@ -327,6 +327,10 @@ void crashOnValidationFailure(VM& vm, const ValidationFailure& failure)
         dumpCalledCode(WTF::dataFile(), failure.found);
     else if (failure.kind == ValidationFailureKind::UnreachableValue && failure.found.isInt32() && static_cast<uint32_t>(failure.found.asInt32()) < numberOfEnumerators<PassID>)
         dataLog("cut by ", nameOf(static_cast<PassID>(failure.found.asInt32())));
+    else if (failure.unboxedAs == Typed::Representation::Void)
+        dataLog("no value");
+    else if (failure.unboxedAs != Typed::Representation::Unchosen)
+        dataLog("unboxed ", nameOf(failure.unboxedAs));
     else
         dumpClassOf(WTF::dataFile(), failure.found);
     dataLogLn();
@@ -725,16 +729,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance*
     return foundFunction && expectedFunction && sourceFunctionOf(*foundFunction) == sourceFunctionOf(*expectedFunction);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (Instance* instance, EncodedJSValue value, uint32_t kind, uint32_t function, uint32_t valueIndex))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (Instance* instance, EncodedJSValue value, uint32_t reported, uint32_t function, uint32_t valueIndex))
 {
-    RELEASE_ASSERT(kind < numberOfEnumerators<ValidationFailureKind>);
+    uint32_t kind = reported & ((1u << ReportedFailure::unboxedAsShift) - 1);
+    uint32_t unboxedAs = reported >> ReportedFailure::unboxedAsShift;
+    RELEASE_ASSERT(kind < numberOfEnumerators<ValidationFailureKind> && unboxedAs < numberOfEnumerators<Typed::Representation>);
     DeferGCForAWhile deferGC(*instance->vm);
     auto failureKind = static_cast<ValidationFailureKind>(kind);
     if (failureKind == ValidationFailureKind::ArrayElementsNotOrdinary && hasOrdinaryElements(*instance->vm, JSValue::decode(value)))
         return;
     if (failureKind == ValidationFailureKind::ArrayNotPristine && hasPristineNames(*instance->vm, JSValue::decode(value)))
         return;
-    crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value) });
+    crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value), static_cast<Typed::Representation>(unboxedAs) });
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instance* instance, JSCell* container, uint32_t contentsSlot, uint32_t type))
@@ -747,8 +753,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instanc
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven))
 {
-    static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s };
-    static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::ComparisonIsDecided) + 1);
+    static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s, "CounterStepsAsTold"_s };
+    static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::CounterStepsAsTold) + 1);
     uint32_t number = claimAndOffset & 0xff;
     RELEASE_ASSERT(number < std::size(names));
     auto claim = static_cast<BrokenClaim>(number);
@@ -757,7 +763,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
     dataLog("AOT claim check: ", names[number], " f", function, " v", static_cast<int32_t>(valueIndex));
     if (claim == BrokenClaim::ComparisonIsDecided)
         dataLog(" of 0x", hex(foundAndGiven[0], Lowercase), " and 0x", hex(foundAndGiven[1], Lowercase));
-    else if (claim != BrokenClaim::ValueIsInRange)
+    else if (claim != BrokenClaim::ValueIsInRange && claim != BrokenClaim::CounterStepsAsTold)
         dataLog(" at +", static_cast<int32_t>(claimAndOffset) >> 8);
     if (claim == BrokenClaim::WordNeverChanges || claim == BrokenClaim::LoadMayMove)
         dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));

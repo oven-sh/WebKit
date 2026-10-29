@@ -941,7 +941,7 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
         { declaration.flags.contains(FieldFlags::IsBrand), fieldIsBrand },
         { stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
-        { stability.contains(FieldStability::IsNeverStoredWithOtherType), fieldIsNeverStoredWithOtherType },
+        { stability.contains(FieldStability::IsNeverStoredWithOtherType) || encoder.slots.isExpectedInItsSlot(declarationOf(program, reference)), fieldIsNeverStoredWithOtherType },
         { declaration.form.contains(FieldForm::IsReadOnly), fieldIsReadOnly },
         { declaration.form.contains(FieldForm::IsNotEnumerable), fieldIsNotEnumerable },
         { declaration.form.contains(FieldForm::IsNotConfigurable), fieldIsNotConfigurable },
@@ -1722,6 +1722,22 @@ public:
         if (word >= m_words.size())
             m_words.insertFill(m_words.size(), 0, std::max(word + 1, m_words.size() * 2) - m_words.size());
         m_words[word] |= 1ull << index % 64;
+        if (!~m_words[word]) {
+            if (word / 64 >= m_fullWords.size())
+                m_fullWords.insertFill(m_fullWords.size(), 0, std::max(word / 64 + 1, m_fullWords.size() * 2) - m_fullWords.size());
+            m_fullWords[word / 64] |= 1ull << word % 64;
+        }
+    }
+
+    uint32_t firstClearBitFrom(uint32_t index) const
+    {
+        size_t word = index / 64;
+        uint64_t clearBits = ~wordAt(word) & ~0ull << index % 64;
+        while (!clearBits) {
+            word = firstWordWithClearBitFrom(word + 1);
+            clearBits = ~wordAt(word);
+        }
+        return static_cast<uint32_t>(word * 64 + WTF::ctz(clearBits));
     }
 
     uint32_t firstBitThatMayBeClear()
@@ -1734,7 +1750,18 @@ public:
 private:
     uint64_t wordAt(size_t word) const { return word < m_words.size() ? m_words[word] : 0; }
 
+    size_t firstWordWithClearBitFrom(size_t word) const
+    {
+        uint64_t mask = ~0ull << word % 64;
+        for (size_t group = word / 64; group < m_fullWords.size(); ++group, mask = ~0ull) {
+            if (uint64_t wordsWithClearBit = ~m_fullWords[group] & mask)
+                return group * 64 + WTF::ctz(wordsWithClearBit);
+        }
+        return std::max(word, m_fullWords.size() * 64);
+    }
+
     Vector<uint64_t> m_words;
+    Vector<uint64_t> m_fullWords;
     size_t m_firstWordWithClearBit { 0 };
 };
 
@@ -1878,6 +1905,12 @@ void encodeFieldTable(TableEncoder& encoder)
     uint32_t highestFirstEntry = rowWithoutFields;
 
     uint32_t entryOfFirstFieldOfLastRow = 0;
+    // A row of a new size is tried from the start of the table. Where most rows differ in size that is rows times entries,
+    // so a search that has cost this much for each field goes on from the row before.
+    constexpr uint64_t maxTestsPerField = 32;
+    constexpr uint64_t fewestTestsAllowed = 1 << 24;
+    const uint64_t maxNumberOfTests = std::max(named.fields.size() * maxTestsPerField, fewestTestsAllowed);
+    uint64_t numberOfTests = 0;
     const FieldTableRow* lastRow = nullptr;
     for (const FieldTableRow& row : named.rows) {
         auto fields = named.fieldsOf(row);
@@ -1885,18 +1918,27 @@ void encodeFieldTable(TableEncoder& encoder)
             firstEntryOf(row) = firstEntryOf(*lastRow);
             continue;
         }
-        if (!lastRow || lastRow->size() != row.size() || row.size() == 1)
+        if ((!lastRow || lastRow->size() != row.size() || row.size() == 1) && numberOfTests <= maxNumberOfTests)
             entryOfFirstFieldOfLastRow = 0;
         uint32_t lowestEntryOfFirstField = std::max(occupiedEntries.firstBitThatMayBeClear(), entryOfFirstFieldOfLastRow);
         uint32_t firstEntry = lowestEntryOfFirstField > fields[0].name ? lowestEntryOfFirstField - fields[0].name : 0;
-        for (;; firstEntry += Bitmap::bitsPerBatch) {
+        for (;;) {
             uint64_t fitting = firstEntries.clearBitsFrom(firstEntry);
-            for (size_t i = 0; i < fields.size() && fitting; ++i)
-                fitting &= occupiedEntries.clearBitsFrom(firstEntry + fields[i].name);
+            size_t numberOfFieldsTried = 0;
+            while (numberOfFieldsTried < fields.size() && fitting)
+                fitting &= occupiedEntries.clearBitsFrom(firstEntry + fields[numberOfFieldsTried++].name);
+            numberOfTests += numberOfFieldsTried + 1;
             if (fitting) {
                 firstEntry += WTF::ctz(fitting);
                 break;
             }
+            // The row fits only where the field that ruled out this batch finds its entry free.
+            firstEntry += Bitmap::bitsPerBatch;
+            if (numberOfFieldsTried) {
+                uint32_t name = fields[numberOfFieldsTried - 1].name;
+                firstEntry = occupiedEntries.firstClearBitFrom(firstEntry + name) - name;
+            } else
+                firstEntry = firstEntries.firstClearBitFrom(firstEntry);
         }
         firstEntries.set(firstEntry);
         for (const NamedField& field : fields)
@@ -2121,6 +2163,8 @@ static void appendFunctionTexts(TableEncoder& encoder)
         return;
     }
 
+    // Copies of a package hold the same functions. Their text is held once.
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> offsetsByHashAndSize;
     Vector<uint8_t> text;
     for (size_t module = 0; module < moduleRanges.size(); ++module) {
         Vector<RetainedTextRange>& ranges = moduleRanges[module];
@@ -2136,8 +2180,13 @@ static void appendFunctionTexts(TableEncoder& encoder)
         }
         ranges.shrink(count);
         for (RetainedTextRange& range : ranges) {
+            std::span bytes = program.modules[module].functionText.subspan(range.start, range.end - range.start);
+            uint64_t hashAndSize = static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes))) << 32 | bytes.size();
+            range.textOffset = offsetsByHashAndSize.add(hashAndSize, static_cast<uint32_t>(text.size())).iterator->value;
+            if (range.textOffset < text.size() && equalSpans(text.subspan(range.textOffset, bytes.size()), bytes))
+                continue;
             range.textOffset = static_cast<uint32_t>(text.size());
-            text.append(program.modules[module].functionText.subspan(range.start, range.end - range.start));
+            text.append(bytes);
         }
     }
 
@@ -2492,6 +2541,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = placedVariableSlot(encoder, moduleExport.variable);
+            entry.isReplaceable = encoder.program.at(moduleExport.variable).flags.contains(VariableFlags::IsReplaceable);
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
@@ -2529,6 +2579,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             entry.name = encoder.identifierNumberOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
             entry.absentIsUndefined = syntheticExport.isKnownMember;
             entry.hasVariable = !!syntheticExport.variable;
+            entry.isReplaceable = syntheticExport.isReplaceable;
             entry.variable = syntheticExport.variable ? placedVariableSlot(encoder, syntheticExport.variable) : SlotData { };
             lists.syntheticExports.append(entry);
         }
@@ -2540,8 +2591,8 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
-    for (const Entry& entry : program.entries)
-        lists.modules[entry.module.index()].add(ModuleData::Flag::IsEntryPoint);
+    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName()))
+        lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
     lists.modules.append(endEntry);

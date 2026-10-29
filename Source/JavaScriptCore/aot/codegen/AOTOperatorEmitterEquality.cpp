@@ -373,6 +373,21 @@ private:
         Condition areCells = leftIsString ? (rightIsString ? boolean(true) : isCell(y)) : (rightIsString ? isCell(x) : areBothCells(x, y));
         branch(areCells, { normalEdge(areStrings), normalEdge(oneIsNullish) });
         m_out.appendTo(areStrings);
+        // `a[i] === b[j]`: every code unit up to 255 has one cell, so two cells with 8-bit strings are two characters.
+        auto isCharacterOfString = [&](ValueID operand) {
+            const Value& definition = m_function.at(definitionThroughUpcasts(m_function, operand));
+            if (definition.opcode == Opcode::StringRangeCharacterOrUndefined)
+                return true;
+            return definition.opcode == Opcode::ElemGet && definition.keyIsIntegral() && typeOf(definition.objectOperand()).isString();
+        };
+        if (isCharacterOfString(value->leftOperand()) && isCharacterOfString(value->rightOperand())) {
+            LBasicBlock areOtherCharacters = newBlock();
+            LBasicBlock mayBeSameCharacter = newBlock();
+            branch(emitter<StringEmitter>().areBoth8Bit(unboxCell(x), unboxCell(y)), { normalEdge(areOtherCharacters), unlikelyEdge(mayBeSameCharacter) });
+            m_out.appendTo(areOtherCharacters);
+            join.add(boolean(false));
+            m_out.appendTo(mayBeSameCharacter);
+        }
         join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
         m_out.appendTo(oneIsNullish);
         if (isStrict)

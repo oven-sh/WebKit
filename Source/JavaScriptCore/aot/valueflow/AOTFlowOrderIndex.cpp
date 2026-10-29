@@ -131,6 +131,11 @@ static void collectAccesses(FlowScopeIndex& index)
     for (size_t function = 0; function < program.functions.size(); ++function)
         index.firstMention[function + 1] += index.firstMention[function];
 
+    for (size_t variable = 0; variable < program.variables.size(); ++variable) {
+        if (program.variables[variable].flags.contains(VariableFlags::IsReplaceable))
+            index.opaqueLocations.set(variable);
+    }
+
     for (const FlowStaticFieldAccess& access : inputs.staticFieldAccesses) {
         FlowScopeLocation location = access.variable.index();
         if (!access.function) {
@@ -246,6 +251,8 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
         const Value& call = caller.at(link.site);
         return call.opcode == Opcode::Call && sameObjectThroughCasts(caller, call.calleeOperand()) == closure.second;
     };
+    // Two calls of a list leave none of its members a sole call site or a closure to look for, and no later call brings either back.
+    Vector<uint8_t> numberOfCallsOfListVisited(FillWith { }, index.inputs.calleeLists.size(), static_cast<uint8_t>(0));
     index.inputs.forEachCall([&](const FlowCall& link) {
         FlowCallSite& site = index.calls.soleCallSites[link.callee.index()];
         if (FlowCallSite closure = std::exchange(closures[link.callee.index()], { }); closure.second && callsClosure(link, closure)) {
@@ -254,6 +261,11 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
         }
         if (site != FlowCallSite { link.caller, link.site })
             site = { };
+    }, [&](const FlowCallOfList& call) {
+        if (numberOfCallsOfListVisited[call.calleeList] == 2)
+            return false;
+        ++numberOfCallsOfListVisited[call.calleeList];
+        return true;
     });
 }
 
@@ -267,12 +279,21 @@ static void findFunctionsThatFilesOfCyclesMayEnter(FlowScopeIndex& index)
         if (FunctionID body = program.modules[module].body; body && !functions.quickSet(body.index()))
             worklist.append(body.index());
     }
+    BitVector listsEntered(index.inputs.calleeLists.size());
+    auto enter = [&](FunctionID callee) {
+        if (!functions.quickSet(callee.index()))
+            worklist.append(callee.index());
+    };
     while (!worklist.isEmpty()) {
-        index.calls.forEachCallBy(index.inputs.calleeLists, FunctionID(worklist.takeLast()), [&](const FlowScopeCall& call) {
-            if (!functions.quickSet(call.callee.index()))
-                worklist.append(call.callee.index());
-            return IterationStatus::Continue;
-        });
+        uint32_t caller = worklist.takeLast();
+        for (const FlowScopeCall& call : entriesOfGroup(index.calls.firstByCaller, index.calls.byCaller, caller))
+            enter(call.callee);
+        for (const FlowScopeCallOfList& call : entriesOfGroup(index.calls.firstCallOfListByCaller, index.calls.callsOfLists, caller)) {
+            if (listsEntered.quickSet(call.calleeList))
+                continue;
+            for (FunctionID callee : index.inputs.calleeLists[call.calleeList])
+                enter(callee);
+        }
     }
 }
 

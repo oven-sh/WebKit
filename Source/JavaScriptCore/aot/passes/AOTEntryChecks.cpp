@@ -942,6 +942,9 @@ bool hasAllocatingConstructEntrypoint(const Program& program, const Function& ta
     // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line.
     if (target.has(FunctionCapabilities::IsLongConstructor))
         return false;
+    // Only a construction whose new.target is the function itself enters such an entrypoint.
+    if (target.has(FunctionCapabilities::MakesNoTailCallIfConstructed))
+        return false;
     // The constructor functions of the runtime's own modules are constructed by name.
     if (target.role == FunctionRole::Library || target.enclosingRuntimeFunction || (target.module && program.at(target.module).kind == ModuleKind::RuntimeSource))
         return false;
@@ -952,8 +955,10 @@ bool hasAllocatingConstructEntrypoint(const Program& program, const Function& ta
 
 EntrypointVariants entrypointVariantsOf(const Program& program, const Function& target)
 {
-    if (!target.has(FunctionFlags::HasNewTarget))
-        return hasAllocatingConstructEntrypoint(program, target) ? EntrypointVariants::Both : EntrypointVariants::WithoutNewTarget;
+    if (!target.has(FunctionFlags::HasNewTarget)) {
+        bool keepsFrame = target.has(FunctionCapabilities::MakesNoTailCallIfConstructed) && !runsAsCoroutine(target);
+        return keepsFrame || hasAllocatingConstructEntrypoint(program, target) ? EntrypointVariants::Both : EntrypointVariants::WithoutNewTarget;
+    }
     switch (target.kind) {
     case FunctionKind::BaseConstructor:
     case FunctionKind::DerivedConstructor:
@@ -1100,6 +1105,8 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
             builder.append(WTF::move(record));
         }
         Vector<ValueID, 8> captures = appendCaptures(builder, request.target, closure);
+        // The copy of the body in the construct entrypoint makes no tail calls.
+        bool copiesBody = request.takesNewTarget && target.has(FunctionCapabilities::MakesNoTailCallIfConstructed) && entrypointVariantsOf(context.program, target) == EntrypointVariants::Both;
         ValueID call = appendDirectCall(builder, {
             .callee = request.target,
             .captures = captures.span(),
@@ -1110,11 +1117,14 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
             .restArray = restArray,
             .argumentCount = argumentCount,
             .hiddenRest = hiddenRest,
-            .isConstruction = !!object,
+            .isConstruction = object || copiesBody,
             .isNeverInlined = object && target.values.size() > mostValuesOfCopiedConstructor,
+            .isAlwaysInlined = copiesBody,
         });
         if (object)
             emitReturnOfConstruction(builder, call, object);
+        else if (copiesBody)
+            emitReturnOfCall(builder, call);
         else
             emitReturnOfEntrypointCall(builder, call);
     }

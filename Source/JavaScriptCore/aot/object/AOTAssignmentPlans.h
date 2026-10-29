@@ -232,6 +232,10 @@ struct AssignmentPlan {
     CompiledStructure* targetAfter { nullptr };
     Vector<FieldStore> fieldStores;
     Vector<ExtraPropertyStore> extraPropertyStores;
+    // The same copy out of an ordinary object by loads and stores alone, once the plan has run as before.
+    std::unique_ptr<MappedCopy> copyWithoutFrame;
+    // There is such a copy, or nobody has asked yet.
+    bool mayCopyWithoutFrame { true };
 };
 
 struct CopyOfTwoPlan {

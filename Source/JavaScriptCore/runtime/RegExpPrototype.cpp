@@ -819,11 +819,10 @@ static NEVER_INLINE JSArray* tryAddToRegExpSplitCache(JSGlobalObject* globalObje
 
     auto subject = inputString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!subject->impl() || !subject->impl()->isAtom())
-        return nullptr;
+    ASSERT(StringSplitCache::canBeKey(subject->impl()));
 
     constexpr unsigned atomStringsArrayLimit = 100;
-    bool makeAtomStringsArray = resultLength < atomStringsArrayLimit;
+    bool makeAtomStringsArray = subject->impl()->isAtom() && resultLength < atomStringsArrayLimit;
     Structure* cellButterflyStructure = makeAtomStringsArray ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous);
     auto* newButterfly = JSCellButterfly::tryCreate(vm, cellButterflyStructure, resultLength);
     if (!newButterfly)
@@ -932,7 +931,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
     bool cacheable = limit == 0xFFFFFFFFu && !globalObject->isHavingABadTime();
     if (cacheable) {
         StringImpl* impl = inputString->tryGetValueImpl();
-        cacheable = impl && impl->isAtom();
+        cacheable = StringSplitCache::canBeKey(impl);
     }
     if (cacheable) {
         auto subject = inputString->value(globalObject);
@@ -948,6 +947,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous);
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
+        cacheable = StringSplitCache::isWorthCaching(*subject->impl());
     }
 
     auto input = inputString->view(globalObject);

@@ -1417,6 +1417,22 @@ void keepFrameBelowTailCalls(Function& function, std::span<const BlockID> blocks
     }
 }
 
+// A wrapper enters its body in its own place.
+static void continueConstructionInBody(Function& function, std::span<const BlockID> blocks, uint32_t frame)
+{
+    for (BlockID block : blocks) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::CallDirect || value.inlineFrame != frame || !value.isTailCall)
+                continue;
+            Value& call = function.edit(id, ValueEdit::Definition);
+            call.setIsConstruction(true);
+            call.setIsAlwaysInlined(true);
+            call.setIsNeverInlined(false);
+        }
+    }
+}
+
 static ValueID argumentAt(const Value& call, size_t entryParameter)
 {
     if (entryParameter >= call.numberOfOperands())
@@ -1716,8 +1732,11 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         }
         finishTerminator(clones[index]);
     }
-    if (call.isConstruction())
+    if (call.isConstruction()) {
+        if (call.isAlwaysInlined() && !hasSourceBodyOf(callee.role))
+            continueConstructionInBody(caller, cloner.clonedBlocks(), firstFrame);
         keepFrameBelowTailCalls(caller, cloner.clonedBlocks(), firstFrame);
+    }
 
     if (fullCallBlock) {
         Origin origin = call.origin();
@@ -2546,6 +2565,12 @@ static bool takesNewObjectApart(FunctionPassContext& context, ValueID call)
     return object && interpretedOf(caller.at(sameObjectThroughCasts(caller, object).valueInFrontOfFacts()).opcode) == Interpretation::Allocation;
 }
 
+// The frames of a fused chain's links are hung below its traversal when the traversal is copied in, so a traversal that stays a call loses them.
+static bool isInlinedWhereRare(FunctionPassContext& context, ValueID call)
+{
+    return context.function.at(call).isAlwaysInlined() || handsObjectToFrequentCode(context, call) || takesNewObjectApart(context, call);
+}
+
 static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t firstFrame)
 {
     const Function& caller = context.function;
@@ -2561,7 +2586,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
             ValueID id = block.values[index];
             const Value& value = caller.at(id);
             bool isCandidate = value.opcode == Opcode::CallDirect && !value.isNeverInlined() && !value.isAfterInlinedHead();
-            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || handsObjectToFrequentCode(context, id) || takesNewObjectApart(context, id)))
+            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || isInlinedWhereRare(context, id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
@@ -2594,7 +2619,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
 
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call) && !takesNewObjectApart(context, site.call);
+        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !isInlinedWhereRare(context, site.call);
     });
     return sites;
 }

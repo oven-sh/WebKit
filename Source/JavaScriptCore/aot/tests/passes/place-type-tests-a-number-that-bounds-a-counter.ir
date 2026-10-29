@@ -1,4 +1,4 @@
-# A number that bounds a counter is tested for int32 in front of the loop where a turn takes the counter's bits, and the counter is an int32 then; where the counter is only added to a number, nothing is tested
+# A number that bounds a counter is tested for int32 in front of the loop, and the counter is an int32 then. Not where an iteration takes the counter as a number: there an integer would be converted every time
 # RUN: pipeline Select
 # OPTIONS: check=VerifyEachPass
 
@@ -18,6 +18,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v10 = Integer integer=9
     v11 = CallDirect v2, v10 function=f4
     v12 = Call v5, -, v11
+    v13 = CallDirect v2 function=f5
+    v14 = Call v5, -, v13
+    v15 = CallDirect v2, v2 function=f6
+    v16 = Call v5, -, v15
     Return
 }
 function f1 name="sumOfBits" parameters=[{type=number}] results=[{type=number}] {
@@ -56,9 +60,11 @@ function f2 name="sumOfCounters" parameters=[{type=number}] results=[{type=numbe
     Jump -> next b1(v7, v6)
   b3():
     Return v3
-# CHECK-NOT: TypeTest
-# CHECK: = Less {{*}}form=Numbers
-# CHECK-NOT: TypeTest
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: ({{*}}: int[0, 2147483647], {{*}}: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = Increment {{*}}form=Integers
 }
 
 # The copy of a failed test counts without a bound. What it has counted up comes back into the loop only as an int32, so the counter of the loop is still one.
@@ -117,6 +123,45 @@ function f4 name="sumOfSums" parameters=[{type=number}, {type=int[0, 100]}] resu
     v17 = BitOr v16, v2
     v18 = Increment v4
     Jump -> next b1(v18, v17)
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+}
+
+# A loop that only counts goes once its counter is an integer. Its copy for a bound that is no int32 stays.
+function f5 name="onlyCounts" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return v1
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK-NOT: form=Integers
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: LoopHint
+}
+
+# The sum may have a fraction, so it stays a double, and the counter beside it too.
+function f6 name="sumWithAFraction" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v4, v3
+    v8 = Increment v3
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v4
 # CHECK-NOT: TypeTest
 # CHECK: = Less {{*}}form=Numbers
 # CHECK-NOT: TypeTest

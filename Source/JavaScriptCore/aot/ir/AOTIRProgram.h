@@ -156,6 +156,7 @@ public:
 
     LayoutID layoutOf(BuiltinLayoutID id) const { return m_derivedTables.builtinLayouts[id.index()]; }
     LayoutSetID declaredMembersOf(LayoutID id) const { return m_derivedTables.declaredMembers[id.index()]; }
+    bool hasDeclaredMembers(LayoutID id) const { return id.index() < m_derivedTables.declaredMembers.size() && m_derivedTables.declaredMembers[id.index()]; }
     void setDeclaredMembers(LayoutID, LayoutSetID);
     CalleeSetID familyOf(FunctionID asRead) const { return m_derivedTables.functionFamilies[asRead.index()]; }
     void setFunctionFamilies(Vector<CalleeSetID>&& families) { m_derivedTables.functionFamilies = WTF::move(families); }
@@ -252,6 +253,8 @@ const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionI
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
+// The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName.
+BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName);
 // A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);

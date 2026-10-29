@@ -137,7 +137,7 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK: Branch(b@[[inside]], Terminal)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # The kind of storage is compared with integers first, and that arm is one load of the element.
-# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
+# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
 # CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
 # CHECK: Branch(b@[[isIntegers]], Terminal)
@@ -153,8 +153,8 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # ONCE-NOT: Reads:JSArray_butterfly
 # ONCE-COUNT-1: Reads:Butterfly_publicLength
 # ONCE-NOT: Reads:Butterfly_publicLength
-# ONCE-COUNT-1: Reads:JSCell_indexingTypeAndMisc
-# ONCE-NOT: Reads:JSCell_indexingTypeAndMisc
+# ONCE-COUNT-1: Reads:JSArray_indexingTypeAndMisc
+# ONCE-NOT: Reads:JSArray_indexingTypeAndMisc
 # ONCE-NOT: ExitsSideways
 # ONCE: ExitsSideways{{*}}:CallBuiltin)
 # ONCE-NOT: ExitsSideways

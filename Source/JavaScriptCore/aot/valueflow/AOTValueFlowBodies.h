@@ -411,10 +411,11 @@ enum class ValueFlowHostNode : uint8_t {
     SymbolsThatHostLooksForMayBeInHand,
     HoldersOfLibraryExportsThatProgramWrites,
     HoldersOfClassesThatAppliedRowsName,
+    MembersStoredByNameThroughPlaceholders,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 75;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 76;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -623,6 +624,7 @@ struct ValueFlowBody {
     struct ComparedValues {
         Operand left;
         Operand right;
+        bool mayBeFunctions;
     };
     Vector<ComparedValues> comparedValues;
     Vector<ValueID> valuesAliveForComparisonsOnly;
@@ -662,6 +664,8 @@ struct ValueFlowComparedValues {
     FunctionID function;
     ValueFlowOperand left;
     ValueFlowOperand right;
+    // By their types as read. Otherwise the comparison tells only instances of built-in classes apart.
+    bool mayBeFunctions;
 };
 
 struct ValueFlowValueOfFunction {

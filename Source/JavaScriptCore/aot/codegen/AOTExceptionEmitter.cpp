@@ -11,9 +11,11 @@
 #include "AOTBuildContext.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCodeRecords.h"
+#include "AOTFrameMapEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSavedFrame.h"
 #include "AOTVector.h"
 #include "AirStackSlot.h"
 #include "AirCode.h"
@@ -205,6 +207,9 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             notCompared.exclude(params.code().calleeSaveRegisters());
             notCompared.filter(params.code().mutableRegs());
             notCompared.merge(clobbered);
+            // A suspension clears it after the stores below.
+            if (FrameMapEmitter::savesDeadPreservedRegister(params))
+                notCompared.add(SavedFrame::preservedRegister, IgnoreVectors);
             check = KeptRegisterCheck { notCompared, params.code().addressInFrame(registerStorage->offsetFromFP()), function, ValueID().index() };
             emitStoresOfKeptRegisters(jit, *check);
         }

@@ -108,7 +108,7 @@ void emitHashOfBits(StubAssembler& jit, GPRReg key, GPRReg hash, GPRReg scratch,
 #endif
 }
 
-void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg values, JumpList* keysAreNarrow)
+void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg values, JumpList* keysAreNarrow, JumpList* keysAreWide)
 {
     const GPRReg capacity = registers.cursor;
     const GPRReg keys = registers.keys;
@@ -119,8 +119,10 @@ void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& 
     jit.load32(capacityOfTable, capacity);
     jit.getEffectiveAddress(BaseIndex(keys, capacity, CCallHelpers::TimesFour), values);
     Label isLoaded = jit.label();
+    JumpList knownToBeWide = keysAreWide ? std::exchange(*keysAreWide, { }) : JumpList();
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         isWide.link(&jit);
+        knownToBeWide.link(&jit);
         jit.load32(capacityOfTable, capacity);
         jit.getEffectiveAddress(BaseIndex(keys, capacity, CCallHelpers::TimesEight), values);
         jit.jump().linkTo(isLoaded, &jit);
@@ -215,11 +217,22 @@ static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& r
         found.append(jit.branch64(CCallHelpers::Equal, candidate, key));
         // A word that is no reference is an empty place or a value that is no cell: where it points no cell lies, so it was not taken for the key.
         next.append(jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32)));
+    } else if (!search.comparesStrings) {
+        Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(table, CompactTable::offsetOfKeysShift()), TrustedImm32(CompactTable::keysAreWide));
+        jit.load32(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesFour), candidate);
+        Jump isImmediate = jit.branch32(CCallHelpers::Below, candidate, TrustedImm32(minCell32));
+        decodeCell32(jit, candidate, candidate);
+        isImmediate.link(&jit);
+        exits.foundInCompactTable.append(jit.branch64(CCallHelpers::Equal, candidate, key));
+        next.append(jit.jump());
+
+        isWide.link(&jit);
+        jit.load64(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesEight), candidate);
+        exits.foundAmongWideKeys.append(jit.branch64(CCallHelpers::Equal, candidate, key));
+        return;
     } else {
         emitLoadCandidate(jit, registers);
         exits.foundInCompactTable.append(jit.branch64(CCallHelpers::Equal, candidate, key));
-        if (!search.comparesStrings)
-            return;
         next.append(jit.branchTest64(CCallHelpers::Zero, candidate));
         next.append(jit.branchIfNotCell(candidate));
     }
@@ -302,31 +315,45 @@ static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& register
     constexpr int32_t index = CompactTable::offsetOfIndex();
     auto [owner, key, hash, table, cursor, keys, entry, candidate] = registers;
     JumpList& absent = search.findsInsertionPoint ? exits.insertionPoints.amongTags : exits.absent;
-    jit.urshift32(hash, TrustedImm32(CompactTable::tagShiftOfTags), entry);
+    // An insertion stores the tag, so it keeps the hash.
+    const GPRReg matches = search.findsInsertionPoint ? cursor : hash;
+    jit.urshift32(hash, TrustedImm32(CompactTable::tagShiftOfTags), matches);
     jit.move(TrustedImm64(0x0101010101010101), candidate);
-    jit.mul64(entry, candidate, cursor);
-    jit.xor64(Address(table, index), cursor);
-    jit.sub64(cursor, candidate, entry);
-    jit.not64(cursor);
-    jit.and64(entry, cursor);
-    jit.and64(TrustedImm64(0x8080808080808080), cursor);
-    // Whoever inserts wants the keys where the key is absent too.
-    if (search.findsInsertionPoint)
+    jit.mul64(candidate, matches);
+    jit.xor64(Address(table, index), matches);
+    jit.sub64(matches, candidate, entry);
+    jit.not64(matches);
+    jit.and64(entry, matches);
+    jit.and64(TrustedImm64(0x8080808080808080), matches);
+    if (search.findsInsertionPoint) {
+        // An insertion wants the keys where the key is absent too.
         jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, keys);
-    absent.append(jit.branchTest64(CCallHelpers::Zero, cursor));
-    if (!search.findsInsertionPoint)
+        absent.append(jit.branchTest64(CCallHelpers::Zero, matches));
+    } else {
+#if CPU(X86_64)
+        // The conjunction has set the flags.
+        absent.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionE)));
+#else
+        absent.append(jit.branchTest64(CCallHelpers::Zero, matches));
+#endif
         jit.addPtr(TrustedImm32(index + CompactTable::maxCapacityWithTags), table, keys);
+    }
 
     Label nextMatch = jit.label();
-    jit.countTrailingZeros64(cursor, entry);
+#if CPU(X86_64)
+    // matches is not zero, so the count needs no test for that.
+    jit.m_assembler.bsfq_rr(matches, entry);
+#else
+    jit.countTrailingZeros64(matches, entry);
+#endif
     jit.urshift32(TrustedImm32(3), entry);
     absent.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, Address(table, CompactTable::offsetOfUsed())));
     JumpList next;
     emitCompareWithEntry(jit, registers, search, next, exits);
     next.link(&jit);
-    jit.sub64(cursor, TrustedImm32(1), candidate);
-    jit.and64(candidate, cursor);
-    jit.branchTest64(CCallHelpers::NonZero, cursor).linkTo(nextMatch, &jit);
+    jit.sub64(matches, TrustedImm32(1), candidate);
+    jit.and64(candidate, matches);
+    jit.branchTest64(CCallHelpers::NonZero, matches).linkTo(nextMatch, &jit);
     absent.append(jit.jump());
 }
 
@@ -395,11 +422,19 @@ static void emitSearchCompactTable(StubAssembler& jit, const HashTableRegisters&
     const GPRReg cursor = registers.cursor;
     const Address capacity(registers.table, CompactTable::offsetOfCapacity());
 
-    jit.load8(Address(registers.table, CompactTable::offsetOfIndexBits()), cursor);
+    const Address indexBits(registers.table, CompactTable::offsetOfIndexBits());
+#if CPU(X86_64)
+    Jump hasSlots = jit.branch8(CCallHelpers::NotEqual, indexBits, TrustedImm32(0));
+#else
+    jit.load8(indexBits, cursor);
     Jump hasSlots = jit.branchTest32(CCallHelpers::NonZero, cursor);
+#endif
     emitProbeTags(jit, registers, search, exits);
 
     hasSlots.link(&jit);
+#if CPU(X86_64)
+    jit.load8(indexBits, cursor);
+#endif
     Jump hasLongOrHugeSlots = jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(CompactTable::maxCapacityWithShortSlots));
     emitProbeSlots(jit, registers, search, shortSlotFormat, exits);
 

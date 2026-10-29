@@ -291,6 +291,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             throwEvaluationError(module);
         if (moduleStatus != ModuleStatus::Linked)
             return false;
+        if (isMocked(module)) [[unlikely]] {
+            setStatus(module, ModuleStatus::Evaluated);
+            return false;
+        }
 
         ModuleRecord* record = recordIfExists(module);
         if (!record && moduleData.evaluatesItself()) {
@@ -432,6 +436,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
                 bool isLinked = stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked;
+                if (isLinked && isMocked(required)) [[unlikely]] {
+                    setStoredStatus(required, StoredModuleStatus::Evaluated);
+                    continue;
+                }
                 if (isLinked && requiredData.evaluatesItself()) {
                     evaluateByCallingBody(required);
                     continue;
@@ -478,7 +486,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body)
+    if (!body || isMocked(module))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -906,6 +914,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
+    filesBeingRun.isAheadOfStepsOfLoader = jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader;
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
@@ -1179,6 +1188,45 @@ void Modules::handGraphToLoader(FilesBeingRun& files, std::optional<ModuleID> fi
         scope.assertNoException();
     }
     jobsOfFile->moveTasksBehind(0, queue);
+}
+
+// As handGraphToLoader(), for a graph that require() loads: the steps stand in the queue of that load, and evaluateSynchronously() takes the rest of them when the file has returned.
+void Modules::handSynchronousLoadToLoader(FilesBeingRun& files)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    files.isAheadOfStepsOfLoader = false;
+    if (!files.fileOrFace || !vm.synchronousModuleQueue() || !vm.synchronousModuleQueue()->tasks.isEmpty())
+        return;
+    ModuleID running = *files.fileOrFace;
+    m_rootWhoseFilesRanAhead = files.root;
+    files.fileHandedToLoader = running;
+    // A termination requested meanwhile is thrown at the caller's exception check.
+    DeferTerminationForAWhile deferTermination(vm);
+    SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(running));
+    SetForScope isAskingHost(m_isAskingHost, true);
+    takeUpWaysOfLoads();
+    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate });
+    scope.assertNoException();
+    m_synchronousLoadsHandedToLoader.append({ files.root, Strong<JSPromise>(vm, promise) });
+    runSynchronousStepsInFrontOf(fileOf(running));
+    scope.assertNoException();
+}
+
+void Modules::runSynchronousStepsInFrontOf(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& steps = vm.synchronousModuleQueue()->tasks;
+    size_t taken = 0;
+    while (taken < steps.size()) {
+        VM::SynchronousModuleTask step = steps[taken++];
+        if (step.task == InternalMicrotask::ModuleRegistryFetchSettled && hasKey(file, uncheckedDowncast<ModuleRegistryEntry>(step.arg2)->key()))
+            break;
+        runInternalMicrotask(m_instance.globalObject, vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
+        scope.assertNoException();
+    }
+    steps.removeAt(0, taken);
 }
 
 void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
@@ -1975,7 +2023,7 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleID file = m_table.fileBehindFace(module).value_or(module);
     // Where nothing but its face runs a file, the face alone has the status.
-    if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file))
+    if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_fileBeingHandedToLoader)
         return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
     if (!data(file).mayBeImportedWhileItRuns())
@@ -2021,6 +2069,9 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     // A graph that the file requires comes to the file: the loader makes its record a second time.
     if (statusAtStart == ModuleStatus::Evaluating)
         RELEASE_AND_RETURN(scope, noteLoadOfFile(module));
+    // Another load comes to the file before the loader has heard that the file threw. The file does not run again, and the record is made of what it has left.
+    if (statusAtStart == ModuleStatus::Failed && loader()->isMakingRecordInline(moduleKey(module)))
+        return;
     if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
         return;
     {
@@ -2049,12 +2100,25 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     dropErrorOfFile(module);
 }
 
+void Modules::didLoseErrorOfModule(const Identifier& key)
+{
+    std::optional<ModuleID> module = m_table.findByPath(key.string());
+    if (!module || !isCommonJSFileOrFace(*module))
+        return;
+    ModuleID file = fileOf(*module);
+    ensureLoaded(file).wasReachedBySecondLoad = true;
+    if (std::optional<ModuleID> face = m_table.faceOfFile(file))
+        dropErrorOfFile(*face);
+    dropErrorOfFile(file);
+}
+
 // The loader has the file, and nobody waits for its end. `bun run` forgets that the file was required and keeps what the loader has: every later require() of the file answers with the namespace object of that import.
 void Modules::dropErrorOfFile(ModuleID fileOrFace)
 {
     ModuleID file = m_table.fileBehindFace(fileOrFace).value_or(fileOrFace);
     if (data(file).mayBeImportedWhileItRuns())
         ensureLoaded(file).isAnsweredWithNamespace = true;
+    captureNoExports(file);
     if (status(fileOrFace) != ModuleStatus::Failed)
         return;
     recordIfExists(fileOrFace)->setEvaluationError(*m_instance.vm, JSValue());
@@ -2062,10 +2126,29 @@ void Modules::dropErrorOfFile(ModuleID fileOrFace)
     ensureLoaded(fileOrFace).didDropError = true;
 }
 
+// A file that threw has no names left. An importer that was linked while the file ran keeps what it bound, and so does the record of that link, unless another load has made an empty one since.
+void Modules::captureNoExports(ModuleID file)
+{
+    bool hasEmptyRecord = ensureLoaded(file).wasReachedBySecondLoad;
+    // The file itself has names for whoever asks for its namespace object.
+    for (ModuleID module : { m_table.faceOfFile(file).value_or(file), file }) {
+        if ((module != file && !data(module).capturesExports()) || (!hasEmptyRecord && didCaptureExports(module)))
+            continue;
+        LoadedModule& loaded = ensureLoaded(module);
+        loaded.capturedFields.set(*this, nullptr);
+        loaded.deferredExportsSource.set(*this, nullptr);
+        loaded.capturedExports.set(*this, createTableOfExports());
+        for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
+            if (syntheticExport.hasVariable && syntheticExport.absentIsUndefined)
+                ProgramStatics::writeVariable(m_instance, syntheticExport.variable, jsUndefined());
+        }
+    }
+}
+
 // Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.
 bool Modules::wasImportedWhileItRan(ModuleID file) const
 {
-    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->wasLoadedWhileItRan)
+    if (LoadedModule* loaded = loadedIfExists(file); loaded && (loaded->wasLoadedWhileItRan || loaded->wasReachedBySecondLoad))
         return true;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleID importer(index);
@@ -2401,7 +2484,12 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
 
     JSPromise* promise = nullptr;
-    if (needsLoader) {
+    if (size_t handed = m_synchronousLoadsHandedToLoader.findIf([&](const LoadHandedToLoader& load) { return load.root == module; }); handed != notFound) [[unlikely]] {
+        promise = m_synchronousLoadsHandedToLoader[handed].promise.get();
+        m_synchronousLoadsHandedToLoader.removeAt(handed);
+        SetForScope isAskingHost(m_isAskingHost, true);
+        JSModuleLoader::drainSynchronousModuleQueue(realm);
+    } else if (needsLoader) {
         takeUpWaysOfLoads();
         SetForScope isAskingHost(m_isAskingHost, true);
         promise = loader()->loadModuleSync(realm, moduleKey(module), nullptr, nullptr);
@@ -2563,6 +2651,24 @@ JSValue Modules::require(ModuleID target, ModuleID referrer)
     return required;
 }
 
+// The loader of `bun run` holds a file once an import() of it has settled, or once a module that imports it has been loaded. A data file is evaluated at load whoever asks, so its status does not tell.
+bool Modules::isHeldForImport(ModuleID target) const
+{
+    if (namespaceIfCreated(target, ModulePhase::Evaluation))
+        return true;
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        bool wasLoaded = status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
+        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.targetModule() == target)
+                return true;
+        }
+    }
+    return false;
+}
+
 JSValue Modules::answerRequire(ModuleID target)
 {
     VM& vm = *m_instance.vm;
@@ -2596,6 +2702,7 @@ JSValue Modules::answerRequire(ModuleID target)
             loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
         return loaded.exportsWhileRequired.get();
     }
+    bool answersDefaultExport = targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !isHeldForImport(target));
     if (status(target) != ModuleStatus::Evaluated) {
         // An evaluation that an import has begun shows the namespace object, with its bindings as they are.
         loaded.isBeingRequired = status(target) != ModuleStatus::Evaluating;
@@ -2607,13 +2714,13 @@ JSValue Modules::answerRequire(ModuleID target)
         return answered;
 
     JSValue result;
-    if (targetData.requireResult == RequireResult::DefaultExport) {
+    if (answersDefaultExport) {
         std::optional<unsigned> index = m_table.findExport(target, vm.propertyNames->defaultKeyword.impl());
         RELEASE_ASSERT(index);
         result = readExport(target, *index);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        RELEASE_ASSERT(targetData.requireResult == RequireResult::Namespace);
+        RELEASE_ASSERT(targetData.requireResult != RequireResult::ModuleExports);
         JSObject* namespaceObject = moduleNamespace(target, ModulePhase::Evaluation);
         RETURN_IF_EXCEPTION(scope, { });
         if (m_moduleExportsName.isNull())

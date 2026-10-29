@@ -121,6 +121,12 @@ void BuildContext::finishDeferredDestruction()
     m_deferredDestroyer->finish();
 }
 
+void BuildContext::giveFreedMemoryBack()
+{
+    m_deferredDestroyer->finish();
+    m_parallelLoops.giveFreeMemoryBack();
+}
+
 namespace {
 
 struct FunctionFilter {

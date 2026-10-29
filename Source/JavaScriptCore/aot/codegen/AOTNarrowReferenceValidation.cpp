@@ -777,6 +777,11 @@ private:
             return !child;
         case B3::Store:
             return child || user->child(0)->type() != B3::Int32;
+        case B3::Patchpoint: {
+            // Without a result and without access to the heap, the code can only compare the word.
+            B3::Effects effects = user->effects();
+            return user->type() == B3::Void && !effects.reads && !effects.writes && !effects.exitsSideways && !effects.terminal;
+        }
         default:
             return false;
         }

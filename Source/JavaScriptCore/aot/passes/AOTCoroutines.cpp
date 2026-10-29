@@ -697,28 +697,14 @@ static void replaceReturns(BodyRewrite& body)
     body.analyses.didChangeValues();
 }
 
-// In each block from the last suspension that can list what is held to the first, with what is live behind it.
-static void forEachSuspensionFromLastToFirst(const Function& function, FunctionAnalyses& analyses, NOESCAPE const Invocable<void(ValueID, const Liveness::LocalCalc&)> auto& functor)
+// For each suspension that can list what is held: what is live after it and after no later suspension. Listed there, a value is live after the earlier ones too,
+// so each value is listed about once, however many suspensions it lives across. The frame map of a suspension has all that is live after it.
+// The functor lists all that it is given: a value counts as held at the earlier suspensions because it is listed at this one.
+static void forEachSuspensionWithLastCrossings(const Function& function, FunctionAnalyses& analyses, NOESCAPE const Invocable<bool(const Value&)> auto& lists, NOESCAPE const Invocable<Liveness::LastCrossing> auto& functor)
 {
-    Vector<uint32_t, 4> suspensionIndexes;
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            if (canHoldOperands(function.at(values[index]).opcode) && analyses.maySuspend(values[index]))
-                suspensionIndexes.append(index);
-        }
-        if (suspensionIndexes.isEmpty())
-            continue;
-
-        Liveness::LocalCalc localCalc(analyses.liveness(), block);
-        uint32_t pointIndex = values.size();
-        while (!suspensionIndexes.isEmpty()) {
-            uint32_t suspensionIndex = suspensionIndexes.takeLast();
-            while (pointIndex > suspensionIndex + 1)
-                localCalc.execute(--pointIndex);
-            functor(values[suspensionIndex], localCalc);
-        }
-    }
+    analyses.liveness().forEachLastCrossing([&](ValueID id) {
+        return canHoldOperands(function.at(id).opcode) && analyses.maySuspend(id) && lists(function.at(id));
+    }, functor);
 }
 
 static PassOutcome listLiveValues(FunctionPassContext& context)
@@ -736,10 +722,10 @@ static PassOutcome listLiveValues(FunctionPassContext& context)
     }
     Vector<ValueID, 16> held;
     BitVector isListed;
-    forEachSuspensionFromLastToFirst(function, context.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
-        Opcode opcode = function.at(suspension).opcode;
-        if ((opcode == Opcode::IteratorResume || opcode == Opcode::IteratorClose) && function.at(suspension).iteratorKind() == IteratorKind::Sync)
-            return;
+    auto lists = [](const Value& suspension) {
+        return (suspension.opcode != Opcode::IteratorResume && suspension.opcode != Opcode::IteratorClose) || suspension.iteratorKind() != IteratorKind::Sync;
+    };
+    forEachSuspensionWithLastCrossings(function, context.analyses, lists, [&](ValueID suspension, std::span<const ValueID> values, const Liveness::IsLive&) {
         held.shrink(0);
         isListed.clearAll();
         for (ValueID listed : heldOperandsOf(function.at(suspension))) {
@@ -751,9 +737,7 @@ static PassOutcome listLiveValues(FunctionPassContext& context)
             if (!isHeldUntilTheEnd.get(object.index()) && !isListed.set(object.index()))
                 held.append(object);
         };
-        behind.forEachLive([&](ValueID live) {
-            if (live == suspension)
-                return;
+        for (ValueID live : values) {
             // An iteration holds what it walks, and a closure what it captures: one that is only called need not be made.
             const Value& definition = function.at(sameObjectThroughConversionsToObject(function, live));
             if (definition.opcode == Opcode::IteratorOpen)
@@ -763,7 +747,7 @@ static PassOutcome listLiveValues(FunctionPassContext& context)
                     list(capture);
             } else
                 list(live);
-        });
+        }
         if (held.size() == numberListed)
             return;
         setHeldOperands(function.edit(suspension), held.span());
@@ -826,10 +810,13 @@ static void holdLiveValuesAtSuspensions(BodyRewrite& body)
     }
 
     Vector<ValueID, 16> held;
-    forEachSuspensionFromLastToFirst(function, body.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
+    auto lists = [](const Value&) {
+        return true;
+    };
+    forEachSuspensionWithLastCrossings(function, body.analyses, lists, [&](ValueID suspension, std::span<const ValueID> values, const Liveness::IsLive& isLive) {
         held.shrink(0);
         auto holdUnlessLive = [&](ValueID id) {
-            if (!behind.isLive(id) && !held.contains(id))
+            if (!isLive(id) && !held.contains(id))
                 held.append(id);
         };
         for (ValueID parameter : parameters)
@@ -838,10 +825,10 @@ static void holdLiveValuesAtSuspensions(BodyRewrite& body)
             if (isHeld(listed))
                 holdUnlessLive(listed);
         }
-        behind.forEachLive([&](ValueID live) {
-            if (live != suspension && isHeld(live))
+        for (ValueID live : values) {
+            if (isHeld(live))
                 held.append(live);
-        });
+        }
         setHeldOperands(function.edit(suspension), held.span());
     });
     body.analyses.didChangeValues();
@@ -967,10 +954,10 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const FlowResul
                 work.append(request.target.index());
         }
     }
-    // A name computed at run time finds an entry point. A program with one entry point has begun it before any require() runs.
-    if (program.entries.size() > 1 && loadsModulesByName(flow)) {
-        for (const Entry& entry : program.entries)
-            work.append(entry.module.index());
+    // A name computed at run time finds an entry point or a file marked IsFoundByName. Where it finds one entry point and nothing else, that one has begun before any require() runs.
+    if (BitVector found = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName()); found.bitCount() > 1 && loadsModulesByName(flow)) {
+        for (size_t index : found)
+            work.append(index);
     }
     BitVector seen(program.modules.size());
     while (!work.isEmpty()) {

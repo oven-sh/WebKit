@@ -68,6 +68,8 @@ struct HashTableExits {
     JumpList foundInCompactTable;
     // The same, where the search has found out that the keys are narrow.
     JumpList foundAmongNarrowKeys;
+    // The same, where it has found out that they are wide.
+    JumpList foundAmongWideKeys;
     // Empty when findsInsertionPoint.
     JumpList absent;
     // The next two are empty unless findsInsertionPoint. hash: the hash of the key.
@@ -82,7 +84,7 @@ void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLoo
 // hash = rapidHashMix64(key). On x86-64 hash is rax and scratch is rdx.
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
 // Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test.
-void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr);
+void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr);
 
 } } // namespace JSC::AOT
 

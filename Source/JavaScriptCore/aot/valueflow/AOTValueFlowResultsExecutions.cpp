@@ -17,20 +17,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void forEachFunctionEnteredBy(const Program& program, const FlowBodyUpdate& update, const Function& function, ValueID id, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
+// n calls may name one set of n callees, so a set is handed over as it is: whoever goes through it can do so once.
+static void forEachFunctionOrSetEnteredBy(const FlowBodyUpdate& update, const Function& function, ValueID id, NOESCAPE const Invocable<void(FunctionID)> auto& enterFunction, NOESCAPE const Invocable<void(CalleeSetID)> auto& enterSet)
 {
     const Value& value = function.at(id);
     if (value.opcode == Opcode::CallDirect) {
-        functor(value.function());
+        enterFunction(value.function());
         return;
     }
     if (!PayloadWord::callees(value.opcode))
         return;
-    if (const FlowCallStamp* stamp = findByValue(update.calls.span(), id, &FlowCallStamp::value)) {
-        ProvenValue<std::span<const FunctionID>> followed = program.at(stamp->callees).followed();
-        for (FunctionID callee : followed.value())
-            functor(callee);
-    }
+    if (const FlowCallStamp* stamp = findByValue(update.calls.span(), id, &FlowCallStamp::value))
+        enterSet(stamp->callees);
 }
 
 static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, const FlowApplication& application)
@@ -41,21 +39,31 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
         const Function& function = program.functions[index];
         if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, tables, FunctionID(index)))
             return;
+        Vector<CalleeSetID, 8> setsEntered;
         if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect }))) {
             for (const FlowCallStamp& stamp : application.bodies[index].calls) {
-                if (!PayloadWord::callees(function.at(stamp.value).opcode))
-                    continue;
-                for (FunctionID callee : program.at(stamp.callees).followed().value())
-                    AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+                if (PayloadWord::callees(function.at(stamp.value).opcode))
+                    setsEntered.append(stamp.callees);
             }
-            return;
+        } else {
+            for (const Block& block : function.blocks) {
+                for (ValueID id : block.values) {
+                    forEachFunctionOrSetEnteredBy(application.bodies[index], function, id, [&](FunctionID callee) {
+                        AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+                    }, [&](CalleeSetID set) {
+                        setsEntered.append(set);
+                    });
+                }
+            }
         }
-        for (const Block& block : function.blocks) {
-            for (ValueID id : block.values) {
-                forEachFunctionEnteredBy(program, application.bodies[index], function, id, [&](FunctionID callee) {
-                    AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
-                });
-            }
+        AOT::sort(setsEntered);
+        for (size_t first = 0; first < setsEntered.size();) {
+            size_t end = first + 1;
+            while (end < setsEntered.size() && setsEntered[end] == setsEntered[first])
+                ++end;
+            for (FunctionID callee : program.at(setsEntered[first]).followed().value())
+                AtomicRef(counts[callee.index()]).fetch_add(static_cast<uint32_t>(end - first), std::memory_order_relaxed);
+            first = end;
         }
     });
     return counts;
@@ -133,19 +141,27 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             runsAtMostOnce(body);
     }
 
+    // What is asked of a callee changes only when the answer is yes, and then it is not asked again: a set that was gone through once has nothing left to find.
+    BitVector setsGoneThrough;
     while (!worklist.isEmpty()) {
         FunctionID caller = worklist.takeLast();
         const Function& function = program.at(caller);
         CFG cfg(function);
         BlockCycles cycles(cfg);
+        auto enter = [&](FunctionID callee) {
+            const FunctionFlow& flow = flows[callee.index()];
+            if (numberOfEnteringOperations[callee.index()] == 1 && !calls.functionsEnteredWithoutStamp.get(callee.index()) && flow.callers == CallerState::AllKnown && flow.executions == ExecutionCount::Unknown)
+                runsAtMostOnce(callee);
+        };
         for (BlockID block : cfg.reversePostOrder()) {
             if (cycles.isInCycle(block))
                 continue;
             for (ValueID id : function.at(block).values) {
-                forEachFunctionEnteredBy(program, application.bodies[caller.index()], function, id, [&](FunctionID callee) {
-                    const FunctionFlow& flow = flows[callee.index()];
-                    if (numberOfEnteringOperations[callee.index()] == 1 && !calls.functionsEnteredWithoutStamp.get(callee.index()) && flow.callers == CallerState::AllKnown && flow.executions == ExecutionCount::Unknown)
-                        runsAtMostOnce(callee);
+                forEachFunctionOrSetEnteredBy(application.bodies[caller.index()], function, id, enter, [&](CalleeSetID set) {
+                    if (setsGoneThrough.set(set.index()))
+                        return;
+                    for (FunctionID callee : program.at(set).followed().value())
+                        enter(callee);
                 });
             }
         }

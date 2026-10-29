@@ -234,9 +234,8 @@ struct EvalBindingData {
     // The identifier number of the private symbol that instances hold: the field's key, or the brand of a method or an accessor. 0 for a static name.
     uint32_t privateKey;
     SlotData slot;
-    uint32_t type;
 };
-static_assert(sizeof(EvalBindingData) == 32 && isImageRecord<EvalBindingData>);
+static_assert(sizeof(EvalBindingData) == 28 && isImageRecord<EvalBindingData>);
 
 struct DirectEvalRequest {
     // The bindings are followed by their indexes, sorted by the identifier number of the name. Among bindings with the same name the inner one, which has the lower index, comes first.

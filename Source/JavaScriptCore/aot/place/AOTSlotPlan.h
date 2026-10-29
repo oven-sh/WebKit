@@ -214,6 +214,8 @@ public:
     // Somewhere the text gives an object an accessor under the name, or a property by a descriptor, or a class declares an accessor: a store under it may meet a setter.
     bool isDefinedByDescriptor(PropertyKeyID key) const { return m_keysDefinedByDescriptor.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_keysWithColumn; }
+    // In a checking build: some code takes the empty slot of the declared field for absence and does not ask the object. The run time reports the store that puts such a field outside its slot.
+    bool isExpectedInItsSlot(FieldReference declaration) const { return std::ranges::binary_search(m_fieldsExpectedInTheirSlots, declaration); }
 
     unsigned numberOfLayouts() const { return m_layouts.size(); }
     unsigned numberOfVariables() const { return m_variables.size(); }
@@ -229,6 +231,7 @@ private:
     Vector<ClassCreationPlan> m_classCreation;
     BitVector m_keysWithColumn;
     BitVector m_keysDefinedByDescriptor;
+    Vector<FieldReference> m_fieldsExpectedInTheirSlots;
     PlannedLayout m_unplannedLayout;
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;

@@ -11,7 +11,9 @@
 #include "AOTFlowResults.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -53,6 +55,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
             return !order.fields.contains(reference->field);
         });
         state.admitsUndefined |= !!(program.at(program.provenTypeOf(field.declared)).primitives & Primitive::Undefined);
+        state.isWrittenAsOptional &= field.declared.site && !field.flags.contains(FieldFlags::IsRequired);
         state.hasConstructor |= !!program.at(declaredLayoutOf(program, layout)).constructor;
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
@@ -252,6 +255,42 @@ static bool isStoredLateOrNever(const FieldArmState& state)
 static bool isLazilyInitialized(const FieldArmState& state)
 {
     return state.hasConstructor && !state.isRequired && !state.isInContainer && state.admitsUndefined && !state.holdsRawNumberOrBoolean;
+}
+
+bool asksObjectWhereSlotIsEmpty(const Function& function, BlockID block, ValueID testID)
+{
+    const Value& test = function.at(testID);
+    const Terminator& branch = function.at(block).terminator;
+    if (!branch.isConditionalBranch() || branch.conditionOperand() != testID)
+        return false;
+    auto object = sameObjectThroughCasts(function, test.objectOperand());
+    AOT_THRESHOLD(unsigned, maxBlocksOfEmptyArm, 16);
+    BlockID current = branch.notTaken().block;
+    for (unsigned steps = 0; steps < maxBlocksOfEmptyArm; ++steps) {
+        // A store by name has the value that it stores made above it.
+        bool doesSomethingElse = false;
+        for (ValueID id : function.at(current).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::HasNoFieldOutsideSlot && sameObjectThroughCasts(function, value.objectOperand()) == object)
+                return true;
+            if (accessClassOf(value.opcode) == AccessClass::ByName && Value::opcodesWithKey.contains(value.opcode) && value.key() == test.key())
+                return true;
+            // The callee begins with the same test.
+            if (value.opcode == Opcode::CallDirect && value.isAfterInlinedHead())
+                return true;
+            doesSomethingElse |= provesOf(value.opcode) == Proof::None && !isCast(value.opcode) && !isRematerializable(value);
+        }
+        if (doesSomethingElse)
+            return false;
+        const Terminator& terminator = function.at(current).terminator;
+        if (terminator.isConditionalBranch())
+            current = terminator.taken().block;
+        else if (terminator.kind == TerminatorKind::Jump && terminator.targets[0].arguments.isEmpty())
+            current = terminator.targets[0].block;
+        else
+            return false;
+    }
+    return false;
 }
 
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key, OptionSet<OptionKind> kinds)
@@ -505,14 +544,24 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
             planFieldRead(context, query, arm, state, plan);
             return;
         }
+        PropertyAccessPlan unplanned = plan;
         FieldArmState whileFilled = state;
         whileFilled.isAlwaysFilled = true;
         whileFilled.isAbsentOnPrototypes = true;
         planFieldRead(context, query, arm, whileFilled, plan);
         if (plan.form != AccessForm::ByName)
             plan.requiredProofs.add(Proof::BirthFieldsFilled);
-        if (plan.form == AccessForm::Slot && plan.operation == Opcode::GetSlot)
-            plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
+        if (plan.form != AccessForm::Slot || plan.operation != Opcode::GetSlot)
+            return;
+        plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
+        // `x?: number` says that objects leave the field out, and one that does fails the test of the cell for all its fields.
+        std::optional<TestsOfEmptySlot> tests = state.isWrittenAsOptional && state.admitsUndefined && !query.isPrivate ? testsOfEmptySlotFor(context, query, arm, state, Access::Read) : std::nullopt;
+        if (!tests)
+            return;
+        plan = WTF::move(unplanned);
+        plan.requiredProofs |= tests->proofs;
+        addConditions(plan.conditions, tests->conditions.span());
+        setSlotOperation(plan, Opcode::GetSlotOrUndefined);
         return;
     }
     case Access::Has:

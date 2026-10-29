@@ -148,6 +148,11 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
 
     dumpRecords("class"_s, allocationClassLetter, sites.allocationClasses);
     dumpRecords("site"_s, allocationSiteLetter, sites.allocationSites);
+    for (size_t index : sites.sitesOfListsNeverToldApart) {
+        beginLine("never-told-apart"_s);
+        printWithLetter(allocationSiteLetter, AllocationSiteID(static_cast<uint32_t>(index)));
+        printer.endLine();
+    }
 
     for (uint32_t index = 0; index < sites.accessSites.size(); ++index) {
         const AccessSite& site = sites.accessSites[index];
@@ -222,6 +227,11 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         printOptionalWitness(use.witness);
         printer.endLine();
     }
+    for (VariableID variable : builtins.exportsThatSpiesReplace) {
+        beginLine("replaced-export"_s);
+        out.print("g"_s, variable.index());
+        printer.endLine();
+    }
     for (const FlowWorkerEntry& entry : builtins.workerEntries) {
         beginLine("worker-entry"_s);
         printer.print(entry.path);
@@ -230,6 +240,11 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         if (entry.hasOptions)
             out.print(" with-options"_s);
         printOptionalWitness(entry.witness);
+        printer.endLine();
+    }
+    if (builtins.workerStartWithoutName) {
+        beginLine("worker-start-without-name"_s);
+        printOptionalWitness(*builtins.workerStartWithoutName);
         printer.endLine();
     }
 

@@ -658,6 +658,8 @@ static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& b
 
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
+    if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
+        return PassOutcome::Unchanged;
     if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 
@@ -826,7 +828,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || isCollectionLookup(program, value))
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -864,7 +866,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
-        if (value.opcode == Opcode::ToBoolean)
+        if (testsOfValuesThemselves.contains(value.opcode))
             return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
@@ -1185,6 +1187,31 @@ static std::optional<BlockID> findExitOfDeadLoop(FunctionPassContext& context, c
     return exit;
 }
 
+// A wider cycle may leave a turn for code that comes round to the turn again and passes the loop by. The mark of the turn is then the only one on that way.
+static bool comesBackPastNoOtherMark(FunctionPassContext& context, BlockID start)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    auto hasLoopMark = [&](BlockID block) {
+        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::LoopHint;
+        });
+    };
+    BitVector seen(function.blocks.size());
+    Vector<BlockID, 16> worklist { start };
+    while (!worklist.isEmpty()) {
+        for (BlockID next : cfg.successors(worklist.takeLast())) {
+            if (next == start)
+                return true;
+            if (seen.get(next.index()) || hasLoopMark(next))
+                continue;
+            seen.set(next.index());
+            worklist.append(next);
+        }
+    }
+    return false;
+}
+
 static bool removeOutermostDeadLoops(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -1231,6 +1258,15 @@ static bool removeOutermostDeadLoops(FunctionPassContext& context)
     for (auto [entry, exit] : entriesAndExits)
         builder.redirectEdge(entry, Target { exit, { }, { } });
     builder.emptyUnreachableBlocks();
+    // A loop around the removed one may have no mark of its own: every iteration of it went through the header that is gone.
+    for (auto [entry, exit] : entriesAndExits) {
+        bool hasMark = std::ranges::any_of(function.at(exit).values, [&](ValueID id) { return function.at(id).opcode == Opcode::LoopHint; });
+        if (hasMark || !comesBackPastNoOtherMark(context, exit))
+            continue;
+        builder.setOrigin(function.at(exit).terminator.origin());
+        builder.insertBefore(ProgramPoint::atHeadOf(exit), IRBuilder::make(Opcode::LoopHint));
+        builder.applyInsertions();
+    }
     return true;
 }
 
@@ -1397,31 +1433,6 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
         return std::nullopt;
     return planTurnsInFrontOf(context, loop, *numberOfTurns);
-}
-
-// A wider cycle may leave a turn for code that comes round to the turn again and passes the loop by. The mark of the turn is then the only one on that way.
-static bool comesBackPastNoOtherMark(FunctionPassContext& context, BlockID start)
-{
-    const Function& function = context.function;
-    const CFG& cfg = context.analyses.cfg();
-    auto hasLoopMark = [&](BlockID block) {
-        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
-            return function.at(id).opcode == Opcode::LoopHint;
-        });
-    };
-    BitVector seen(function.blocks.size());
-    Vector<BlockID, 16> worklist { start };
-    while (!worklist.isEmpty()) {
-        for (BlockID next : cfg.successors(worklist.takeLast())) {
-            if (next == start)
-                return true;
-            if (seen.get(next.index()) || hasLoopMark(next))
-                continue;
-            seen.set(next.index());
-            worklist.append(next);
-        }
-    }
-    return false;
 }
 
 // The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.

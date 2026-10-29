@@ -53,6 +53,7 @@ struct ImageStringRecord;
 struct ProgramSymbols;
 struct RecordedOptions;
 struct State;
+struct VMState;
 
 enum class Receiver : uint8_t { Map, Set, RegExp, Buffer };
 static constexpr unsigned numberOfReceivers = 4;
@@ -223,6 +224,22 @@ struct AllocationWords {
 };
 static_assert(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*) <= InstanceLayout::bytesReservedForCopiesWithoutFrame);
 
+// The LocalAllocator of a cell that holds an array and storage for 1, 3 or 5 elements. Until the heap has that allocator, and in a realm
+// without headers for plain arrays, the entry points to an allocator without free cells, so the stubs test neither case.
+struct ShortArrayWords {
+    static constexpr unsigned numberOfAllocators = 3;
+    static constexpr unsigned indexOfAllocator(unsigned vectorLength) { return vectorLength / 2; }
+    static constexpr unsigned wordsOfExhaustedAllocator = 24;
+    void* allocators[numberOfAllocators];
+    uint64_t exhaustedAllocators[numberOfAllocators][wordsOfExhaustedAllocator];
+    bool hasEveryAllocator;
+};
+
+// The header and the tags of a table without entries. Code that looks into the table of a Map or Set reads these for a collection that has no table yet.
+struct EmptyTableWords {
+    uint64_t words[4];
+};
+
 // Most objects that have extra properties have one or two.
 static constexpr unsigned extraPropertiesInlineCapacity = 2;
 
@@ -247,6 +264,9 @@ struct RealmWords {
     uint64_t integerKeyMask;
     // StringKeyCache::tryFindCaseConversion().
     const uint64_t* caseConversions;
+    // StringKeyCache::KeyOfPair. Never null.
+    const void* keysOfPairs;
+    uint64_t keyOfPairMask;
     MicrotaskQueue* microtaskQueue;
     // Of the ordinary object { read, written } that an encoder answers with. Null until the first is made.
     Structure* readAndWrittenCountsStructure;
@@ -309,7 +329,9 @@ struct NumberWords {
     v(constructWords, ConstructWordCache) \
     v(lazyStrings, LazyStringWords) \
     v(callsByValue, CallByValueWords) \
-    v(closureTable, ClosureTableWords)
+    v(closureTable, ClosureTableWords) \
+    v(shortArrays, ShortArrayWords) \
+    writtenOnce(emptyTable, EmptyTableWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {
@@ -346,6 +368,12 @@ struct Instance : InstanceHeader {
     const RecordedOptions& options() const;
 
     void captureCellHeaders();
+    void findShortArrayAllocators();
+    void findMissingShortArrayAllocators()
+    {
+        if (!shortArrays.hasEveryAllocator) [[unlikely]]
+            findShortArrayAllocators();
+    }
     void didCreateInstanceStructure(BuiltinClassID, Structure*);
 
     uint8_t* statics() { return reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfStatics(tables().instanceSizes); }
@@ -468,6 +496,8 @@ static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
+// A host retires a realm by discarding its microtasks. A retired realm runs no more code, so the next realm can have an instance before the collector frees the old one.
+size_t numberOfRunningInstances(const VMState&);
 // From now on every stub that is about to jump into the code of a function object polls first.
 void makeTailCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
 void setPollsEnabled(Instance&, bool);

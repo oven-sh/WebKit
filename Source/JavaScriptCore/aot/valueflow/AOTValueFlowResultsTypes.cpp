@@ -11,9 +11,11 @@
 #include "AOTAddGenericVersion.h"
 #include "AOTPredictedValues.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
 #include "AOTClaims.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTEntryParameterIndexes.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
@@ -24,6 +26,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSharedMemo.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
@@ -136,6 +139,30 @@ private:
         uint32_t endOfWriters;
         uint32_t firstPositionRead { 0 };
         uint32_t endOfPositionsRead { 0 };
+        uint32_t firstSharedRange { 0 };
+        uint32_t endOfSharedRanges { 0 };
+    };
+
+    // What all calls of one set of many callees have in common. n calls of any of n functions are n * n pairs of a call and a callee: each round looks at the set once, and then at each call once.
+    struct ManyCallees {
+        ValueSetID set;
+        Type result { };
+        ValueFlowNumbers numbersOfResult { };
+    };
+
+    // The arguments that the calls of one set of many callees pass at one position.
+    struct SharedRange {
+        uint32_t firstPart { 0 };
+        uint32_t endOfParts { 0 };
+        ValueFlowNumbers arriving { };
+        bool hasMoved { false };
+    };
+
+    struct PartOfSharedRange {
+        uint32_t firstWriter;
+        uint32_t endOfWriters;
+        ValueFlowNumbers arriving { };
+        Vector<uint32_t> positionsRead { };
     };
 
     struct LoopingFunction {
@@ -149,14 +176,21 @@ private:
     AOT_CLASS_THRESHOLD(unsigned, maxDepth, 8);
     AOT_CLASS_THRESHOLD(unsigned, maxSteps, 256);
     AOT_CLASS_THRESHOLD(unsigned, maxTypingsOfLoops, 3);
+    AOT_CLASS_THRESHOLD(size_t, minCalleesOfSharedSet, 16);
     static constexpr unsigned positionsPerTask = 64;
+    static constexpr uint32_t writersPerPart = 64;
 
     const ValueFlowNumbers* find(uint32_t position) const { return m_isFollowed.quickGet(position) ? &m_numbers[position] : nullptr; }
     void startFromTypes();
     void collectCalls();
     void choosePositions(const FlowResultTables&);
     void collectWriters(const FlowResultTables&);
-    void addSharedWriters(NOESCAPE const ScopedLambda<bool(const CallByValue&)>& sharesWriters);
+    void addSharedWriters();
+    const ManyCallees* findManyCallees(ValueSetID) const;
+    uint32_t positionOf(const ManyCallees& callees) const { return m_numbers.size() + static_cast<uint32_t>(&callees - m_manyCallees.span().data()); }
+    void updateManyCallees(bool onlyWhereResultsHaveMoved);
+    ValueFlowNumbers numbersArrivingFrom(TypeArena&, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead) const;
+    void evaluateSharedRanges(bool isFirstRound);
     BitVector collectWritersOfMaps(ValueFlowHeapView&);
     std::optional<uint32_t> indexOfMap(ValueFlowObjectID) const;
     const ReadOfMaps* readOfMapsAt(FunctionID caller, ValueID site) const;
@@ -183,6 +217,10 @@ private:
     Vector<ValueFlowNumbers> m_numbers;
     BitVector m_isFollowed;
     Vector<CallByValue> m_calls;
+    Vector<ManyCallees> m_manyCallees;
+    Vector<SharedRange> m_sharedRanges;
+    Vector<PartOfSharedRange> m_partsOfSharedRanges;
+    Vector<uint32_t> m_sharedRangesOfPositions;
     Vector<uint8_t> m_hasOtherEntry;
     bool m_someCallEntersAnything { false };
     Vector<BitVector> m_valuesBehindChecks;
@@ -336,6 +374,7 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
     }
     m_mapsWithOtherWriter = { };
     collectWriters(tables);
+    updateManyCallees(false);
     times.didFinish("numbers: writers"_s);
     for (unsigned typing = 0; typing <= maxTypingsOfLoops; ++typing) {
         for (unsigned round = 0; round < maxRounds && runRound(); ++round) { }
@@ -345,6 +384,7 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
     if (m_inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
         dataLogLn("AOT flow: numbers: ", m_numberOfRounds, " rounds over ", m_followed.size(), " positions have looked at ", m_numberOfPositionsLookedAt, "; ", m_numberOfTypings, " typings of ", m_loopingFunctions.size(), " functions with a loop have typed ", m_numberOfFunctionsTyped);
     m_positionsReadInTask.clear();
+    m_partsOfSharedRanges.clear();
     m_loopingFunctions.clear();
     times.didFinish("numbers: rounds"_s);
 }
@@ -419,6 +459,17 @@ void NumbersOfPositions::collectCalls()
     const ValueSets& sets = m_inputs.sets();
     ValueSetID closuresAndPrimitives = BorrowedValueSetMaker(m_inputs.makerPool()).get().unite(universe.closures(), universe.primitives());
     std::atomic<bool> someCallEntersAnything { false };
+    // n calls of any of n functions ask the same of the same two sets.
+    struct SetInGroup {
+        ValueSetID set;
+        ValueSetID group;
+        bool holdsEveryClosure { false };
+    };
+    SharedMemo<SetInGroup> setsInGroups;
+    SharedMemo<ValueSetID> groupsWithOtherEntry;
+    auto hashOf = [](ValueSetID set, ValueSetID group) {
+        return static_cast<uint32_t>((static_cast<uint64_t>(set.index()) << 32 | group.index()) * 0x9e3779b97f4a7c15ull >> 32);
+    };
     m_calls = collectInParallel<CallByValue>(m_inputs.loops(), solver.numberOfStatements(), [&](unsigned index, Vector<CallByValue>& calls) {
         ValueFlowStatementID id(index);
         m_inputs.prefetchMadeNodesAskedForBy(index + 16, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false);
@@ -437,14 +488,25 @@ void NumbersOfPositions::collectCalls()
                 return sets.isSubset(set, closuresAndPrimitives);
             });
         }
-        auto holdsEveryCallee = [&](ValueSetID group) {
+        auto holdsEveryClosureOf = [&](ValueSetID group, ValueSetID set) {
             bool holdsAll = true;
-            for (ValueSetID set : calleeSets) {
-                sets.forEachMember(set, [&](ValueFlowObjectID member) {
-                    holdsAll &= !universe.closureFunction(member) || sets.contains(group, member);
-                });
-            }
+            sets.forEachMember(set, [&](ValueFlowObjectID member) {
+                holdsAll &= !universe.closureFunction(member) || sets.contains(group, member);
+            });
             return holdsAll;
+        };
+        auto holdsEveryCallee = [&](ValueSetID group) {
+            return std::ranges::all_of(calleeSets, [&](ValueSetID set) {
+                if (sets.size(set) < minCalleesOfSharedSet)
+                    return holdsEveryClosureOf(group, set);
+                auto isWanted = [&](const SetInGroup& entry) {
+                    return entry.set == set && entry.group == group;
+                };
+                const SetInGroup* known = setsInGroups.find(hashOf(set, group), isWanted);
+                if (!known)
+                    known = &setsInGroups.add(hashOf(set, group), { set, group, holdsEveryClosureOf(group, set) }, isWanted);
+                return known->holdsEveryClosure;
+            });
         };
         ValueFlowCallKind ownKind = statement.opcode == Opcode::Construct ? ValueFlowCallKind::Construct : ValueFlowCallKind::Call;
         m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
@@ -458,14 +520,80 @@ void NumbersOfPositions::collectCalls()
                 calls.append({ statement.function, statement.site, key.set });
                 return;
             }
+            auto isSameGroup = [&](ValueSetID group) {
+                return group == key.set;
+            };
+            bool isLarge = sets.size(key.set) >= minCalleesOfSharedSet;
+            if (isLarge && groupsWithOtherEntry.find(hashOf(key.set, key.set), isSameGroup))
+                return;
             sets.forEachMember(key.set, [&](ValueFlowObjectID member) {
                 if (FunctionID function = universe.closureFunction(member))
                     AtomicRef(m_hasOtherEntry[function.index()]).store(1, std::memory_order_relaxed);
             });
+            if (isLarge)
+                groupsWithOtherEntry.add(hashOf(key.set, key.set), ValueSetID(key.set), isSameGroup);
         });
     });
     m_someCallEntersAnything = someCallEntersAnything.load(std::memory_order_relaxed);
     sortAndRemoveDuplicates(m_inputs.loops(), m_calls);
+
+    Vector<ValueSetID> setsOfManyCallees;
+    for (const CallByValue& call : m_calls) {
+        if (sets.size(call.callees) >= minCalleesOfSharedSet)
+            setsOfManyCallees.append(call.callees);
+    }
+    AOT::sort(setsOfManyCallees);
+    removeRepeatedElements(setsOfManyCallees);
+    m_manyCallees = setsOfManyCallees.map<Vector<ManyCallees>>([](ValueSetID set) { return ManyCallees { set }; });
+    m_hasMovedInLastRound = BitVector(m_numbers.size() + m_manyCallees.size());
+}
+
+const NumbersOfPositions::ManyCallees* NumbersOfPositions::findManyCallees(ValueSetID set) const
+{
+    auto found = std::ranges::lower_bound(m_manyCallees, set, { }, &ManyCallees::set);
+    return found != m_manyCallees.end() && found->set == set ? &*found : nullptr;
+}
+
+// Brings what is kept for each set of many callees up to date with m_numbers.
+void NumbersOfPositions::updateManyCallees(bool onlyWhereResultsHaveMoved)
+{
+    const Program& program = m_inputs.program;
+    Vector<uint8_t> hasMoved(FillWith { }, m_manyCallees.size(), static_cast<uint8_t>(0));
+    forEachIndexInParallel(m_inputs.loops(), m_manyCallees.size(), [&](unsigned index) {
+        ManyCallees& callees = m_manyCallees[index];
+        auto forEachCallee = [&](const auto& functor) {
+            m_inputs.sets().forEachMember(callees.set, [&](ValueFlowObjectID member) {
+                functor(m_inputs.universe().closureFunction(member));
+            });
+        };
+        if (onlyWhereResultsHaveMoved) {
+            forEachCallee([&](FunctionID id) {
+                if (id && program.at(id).results.size() == 1 && m_hasMovedInLastRound.quickGet(m_firstResult[id.index()]))
+                    hasMoved[index] = 1;
+            });
+            if (!hasMoved[index])
+                return;
+        }
+        ScratchTypeArena arena(program.types);
+        callees.result = { };
+        callees.numbersOfResult = { };
+        forEachCallee([&](FunctionID id) {
+            bool isUnsplitCoroutine = id && program.at(id).isUnsplitCoroutine();
+            bool hasOneResult = id && program.at(id).results.size() == 1;
+            if (hasOneResult && !isUnsplitCoroutine)
+                callees.result = callees.result.unionWith(typeAt(m_firstResult[id.index()], Type::anything()), arena);
+            else
+                callees.result = Type::anything();
+            if (!isUnsplitCoroutine)
+                callees.numbersOfResult.unite(hasOneResult ? m_numbers[m_firstResult[id.index()]] : ValueFlowNumbers::any());
+        });
+        // Nothing in it belongs to the arena.
+        RELEASE_ASSERT(!callees.result.layouts && callees.result.classes.isEmpty());
+    });
+    for (uint32_t index = 0; index < hasMoved.size(); ++index) {
+        if (hasMoved[index])
+            m_hasMovedInLastRound.quickSet(positionOf(m_manyCallees[index]));
+    }
 }
 
 void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
@@ -551,20 +679,18 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
     });
 }
 
-// Appends, for each set of many callees and each argument position, the arguments that calls of the set pass there. A parameter with no other writer uses that range as it is.
-void NumbersOfPositions::addSharedWriters(NOESCAPE const ScopedLambda<bool(const CallByValue&)>& sharesWriters)
+// Appends, for each set of many callees and each argument position, the arguments that calls of the set pass there. Each parameter that they reach names the range.
+void NumbersOfPositions::addSharedWriters()
 {
     const Program& program = m_inputs.program;
-    struct SharedRange {
+    struct RangeKey {
         uint32_t set;
         uint32_t argument;
-        uint32_t firstWriter { 0 };
-        uint32_t endOfWriters { 0 };
     };
     using Argument = std::tuple<uint32_t, uint32_t, FunctionID, ValueID>;
     Vector<Argument> arguments;
     for (const CallByValue& call : m_calls) {
-        if (!sharesWriters(call))
+        if (!findManyCallees(call.callees))
             continue;
         std::span<const ValueID> operands = program.at(call.caller).at(call.site).variadicOperands();
         for (uint32_t argument = 0; argument < operands.size(); ++argument)
@@ -575,12 +701,19 @@ void NumbersOfPositions::addSharedWriters(NOESCAPE const ScopedLambda<bool(const
     AOT::sort(arguments);
     removeRepeatedElements(arguments);
 
-    Vector<SharedRange> ranges;
+    Vector<RangeKey> ranges;
     for (auto [set, argument, function, value] : arguments) {
-        if (ranges.isEmpty() || ranges.last().set != set || ranges.last().argument != argument)
-            ranges.append({ set, argument, static_cast<uint32_t>(m_writers.size()), static_cast<uint32_t>(m_writers.size()) });
+        bool beginsRange = ranges.isEmpty() || ranges.last().set != set || ranges.last().argument != argument;
+        if (beginsRange) {
+            ranges.append({ set, argument });
+            m_sharedRanges.append({ static_cast<uint32_t>(m_partsOfSharedRanges.size()), static_cast<uint32_t>(m_partsOfSharedRanges.size()) });
+        }
+        if (beginsRange || m_partsOfSharedRanges.last().endOfWriters - m_partsOfSharedRanges.last().firstWriter == writersPerPart) {
+            m_partsOfSharedRanges.append({ static_cast<uint32_t>(m_writers.size()), static_cast<uint32_t>(m_writers.size()) });
+            m_sharedRanges.last().endOfParts = m_partsOfSharedRanges.size();
+        }
         m_writers.append({ UINT32_MAX, function, value });
-        ranges.last().endOfWriters = m_writers.size();
+        m_partsOfSharedRanges.last().endOfWriters = m_writers.size();
     }
 
     // The ranges that reach each followed parameter.
@@ -607,29 +740,10 @@ void NumbersOfPositions::addSharedWriters(NOESCAPE const ScopedLambda<bool(const
 
     size_t next = 0;
     for (FollowedPosition& followed : m_followed) {
-        size_t first = next;
-        while (next < rangesOfPositions.size() && rangesOfPositions[next].first == followed.position)
-            ++next;
-        if (first == next)
-            continue;
-        if (next - first == 1 && followed.firstWriter == followed.endOfWriters) {
-            followed.firstWriter = ranges[rangesOfPositions[first].second].firstWriter;
-            followed.endOfWriters = ranges[rangesOfPositions[first].second].endOfWriters;
-            continue;
-        }
-        Vector<Writer> merged;
-        auto add = [&](uint32_t firstWriter, uint32_t endOfWriters) {
-            for (const Writer& writer : m_writers.subspan(firstWriter, endOfWriters - firstWriter))
-                merged.append({ followed.position, writer.function, writer.value });
-        };
-        add(followed.firstWriter, followed.endOfWriters);
-        for (size_t index = first; index < next; ++index)
-            add(ranges[rangesOfPositions[index].second].firstWriter, ranges[rangesOfPositions[index].second].endOfWriters);
-        AOT::sort(merged);
-        removeRepeatedElements(merged);
-        followed.firstWriter = m_writers.size();
-        m_writers.appendVector(merged);
-        followed.endOfWriters = m_writers.size();
+        followed.firstSharedRange = m_sharedRangesOfPositions.size();
+        for (; next < rangesOfPositions.size() && rangesOfPositions[next].first == followed.position; ++next)
+            m_sharedRangesOfPositions.append(rangesOfPositions[next].second);
+        followed.endOfSharedRanges = m_sharedRangesOfPositions.size();
     }
     RELEASE_ASSERT(next == rangesOfPositions.size());
 }
@@ -685,9 +799,8 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         }
     });
     // The same arguments reach every callee of a call. With many callees they are listed once for each set of callees, below: n calls of any of n functions would be n * n writers.
-    AOT_THRESHOLD(size_t, minCalleesOfSharedWriters, 16);
     auto sharesWriters = [&](const CallByValue& call) {
-        return m_inputs.sets().size(call.callees) >= minCalleesOfSharedWriters;
+        return m_inputs.sets().size(call.callees) >= minCalleesOfSharedSet;
     };
     m_writers.appendVector(collectInParallel<Writer>(m_inputs.loops(), m_calls.size(), [&](unsigned index, Vector<Writer>& writers) {
         const CallByValue& call = m_calls[index];
@@ -727,7 +840,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         m_followed.append({ static_cast<uint32_t>(position), first, writer });
     }
     RELEASE_ASSERT(writer == m_writers.size());
-    addSharedWriters(sharesWriters);
+    addSharedWriters();
 
     m_numbersByRules = Vector<ValueFlowNumbers>(m_writers.size(), [](size_t) { return ValueFlowNumbers::any(); });
     m_rulesHaveMoved = Vector<uint8_t>(FillWith { }, m_writers.size(), static_cast<uint8_t>(0));
@@ -1053,6 +1166,10 @@ std::optional<ValueFlowNumbers> NumbersOfPositions::ofCall(FunctionID caller, Va
         return std::nullopt;
     ValueFlowNumbers numbers;
     for (const CallByValue& call : found) {
+        if (const ManyCallees* callees = findManyCallees(call.callees)) {
+            numbers.unite(callees->numbersOfResult);
+            continue;
+        }
         m_inputs.sets().forEachMember(call.callees, [&](ValueFlowObjectID member) {
             FunctionID id = m_inputs.universe().closureFunction(member);
             if (id && program.at(id).isUnsplitCoroutine())
@@ -1099,6 +1216,12 @@ std::optional<Type> NumbersOfPositions::typeOfCall(Evaluation& evaluation, Funct
         return std::nullopt;
     Type answered;
     for (const CallByValue& call : found) {
+        if (const ManyCallees* callees = findManyCallees(call.callees)) {
+            if (evaluation.positionsRead)
+                evaluation.positionsRead->append(positionOf(*callees));
+            answered = &call == found.data() ? callees->result : answered.unionWith(callees->result, arena);
+            continue;
+        }
         m_inputs.sets().forEachMember(call.callees, [&](ValueFlowObjectID member) {
             FunctionID id = m_inputs.universe().closureFunction(member);
             if (id && program.at(id).results.size() == 1 && !program.at(id).isUnsplitCoroutine())
@@ -1277,6 +1400,47 @@ bool NumbersOfPositions::typeLoopsByRules()
     return m_someRulesHaveMoved;
 }
 
+ValueFlowNumbers NumbersOfPositions::numbersArrivingFrom(TypeArena& arena, uint32_t firstWriter, uint32_t endOfWriters, Vector<uint32_t>* positionsRead) const
+{
+    ValueFlowNumbers arriving;
+    for (uint32_t index = firstWriter; index < endOfWriters; ++index) {
+        Evaluation evaluation { arena, positionsRead };
+        ValueFlowNumbers handedOver;
+        handedOver.add(typeOf(evaluation, m_writers[index].function, m_writers[index].value, maxDepth));
+        arriving.unite(handedOver.meetWith(m_numbersByRules[index]));
+    }
+    return arriving;
+}
+
+void NumbersOfPositions::evaluateSharedRanges(bool isFirstRound)
+{
+    bool verifies = m_inputs.build.options().verifiesAfterEveryPass;
+    forEachIndexInParallel(m_inputs.loops(), m_partsOfSharedRanges.size(), [&](unsigned index) {
+        PartOfSharedRange& part = m_partsOfSharedRanges[index];
+        bool isHandedOtherNumbers = isFirstRound
+            || (m_someRulesHaveMoved && std::ranges::any_of(m_rulesHaveMoved.subspan(part.firstWriter, part.endOfWriters - part.firstWriter), [](uint8_t hasMoved) { return !!hasMoved; }))
+            || std::ranges::any_of(part.positionsRead, [&](uint32_t position) { return m_hasMovedInLastRound.quickGet(position); });
+        if (!isHandedOtherNumbers && !verifies)
+            return;
+        ScratchTypeArena arena(m_inputs.program.types);
+        ValueFlowNumbers arriving = numbersArrivingFrom(arena, part.firstWriter, part.endOfWriters, isFirstRound ? &part.positionsRead : nullptr);
+        RELEASE_ASSERT(isHandedOtherNumbers || arriving == part.arriving);
+        part.arriving = arriving;
+        if (isFirstRound) {
+            AOT::sort(part.positionsRead);
+            removeRepeatedElements(part.positionsRead);
+            part.positionsRead.shrinkToFit();
+        }
+    });
+    for (SharedRange& range : m_sharedRanges) {
+        ValueFlowNumbers arriving;
+        for (const PartOfSharedRange& part : m_partsOfSharedRanges.subspan(range.firstPart, range.endOfParts - range.firstPart))
+            arriving.unite(part.arriving);
+        range.hasMoved = isFirstRound || arriving != range.arriving;
+        range.arriving = arriving;
+    }
+}
+
 bool NumbersOfPositions::runRound()
 {
     unsigned numberOfTasks = (m_followed.size() + positionsPerTask - 1) / positionsPerTask;
@@ -1284,6 +1448,7 @@ bool NumbersOfPositions::runRound()
     if (isFirstRound)
         m_positionsReadInTask.grow(numberOfTasks);
     bool verifies = m_inputs.build.options().verifiesAfterEveryPass;
+    evaluateSharedRanges(isFirstRound);
     std::atomic<uint64_t> numberOfPositionsLookedAt { 0 };
     Vector<ValueFlowNumbers> found(m_followed.size());
     forEachIndexInParallel(m_inputs.loops(), numberOfTasks, [&](unsigned task) {
@@ -1293,9 +1458,11 @@ bool NumbersOfPositions::runRound()
         for (size_t index = task * positionsPerTask; index < std::min<size_t>((task + 1) * positionsPerTask, m_followed.size()); ++index) {
             FollowedPosition& followed = m_followed[index];
             size_t numberOfWriters = followed.endOfWriters - followed.firstWriter;
+            std::span<const uint32_t> sharedRanges = m_sharedRangesOfPositions.subspan(followed.firstSharedRange, followed.endOfSharedRanges - followed.firstSharedRange);
             bool isHandedOtherNumbers = isFirstRound
                 || (m_someRulesHaveMoved && std::ranges::any_of(m_rulesHaveMoved.subspan(followed.firstWriter, numberOfWriters), [](uint8_t hasMoved) { return !!hasMoved; }))
-                || std::ranges::any_of(positionsRead.subspan(followed.firstPositionRead, followed.endOfPositionsRead - followed.firstPositionRead), [&](uint32_t position) { return m_hasMovedInLastRound.quickGet(position); });
+                || std::ranges::any_of(positionsRead.subspan(followed.firstPositionRead, followed.endOfPositionsRead - followed.firstPositionRead), [&](uint32_t position) { return m_hasMovedInLastRound.quickGet(position); })
+                || std::ranges::any_of(sharedRanges, [&](uint32_t range) { return m_sharedRanges[range].hasMoved; });
             if (!isHandedOtherNumbers && !verifies) {
                 found[index] = m_numbers[followed.position];
                 continue;
@@ -1308,12 +1475,9 @@ bool NumbersOfPositions::runRound()
             ValueFlowNumbers arriving;
             if (followed.position >= m_firstMap)
                 arriving = m_numbersInConstantsOfMaps[followed.position - m_firstMap];
-            for (const Writer& writer : m_writers.subspan(followed.firstWriter, numberOfWriters)) {
-                Evaluation evaluation { *arena, isFirstRound ? &positionsRead : nullptr };
-                ValueFlowNumbers handedOver;
-                handedOver.add(typeOf(evaluation, writer.function, writer.value, maxDepth));
-                arriving.unite(handedOver.meetWith(m_numbersByRules[&writer - m_writers.span().data()]));
-            }
+            arriving.unite(numbersArrivingFrom(*arena, followed.firstWriter, followed.endOfWriters, isFirstRound ? &positionsRead : nullptr));
+            for (uint32_t range : sharedRanges)
+                arriving.unite(m_sharedRanges[range].arriving);
             found[index] = m_numbers[followed.position].meetWith(arriving);
             RELEASE_ASSERT(isHandedOtherNumbers || found[index] == m_numbers[followed.position]);
             if (isFirstRound) {
@@ -1342,6 +1506,8 @@ bool NumbersOfPositions::runRound()
         m_hasMovedInLastRound.quickSet(position);
         m_hasMovedSinceTyping.quickSet(position);
     }
+    if (hasFoundSomething)
+        updateManyCallees(true);
     ++m_numberOfRounds;
     m_numberOfPositionsLookedAt += numberOfPositionsLookedAt.load(std::memory_order_relaxed);
     return hasFoundSomething;
@@ -1845,6 +2011,58 @@ static bool hasCheck(const Terminator& terminator)
     return false;
 }
 
+using InstancesWrittenUnderKeys = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+// Everything that the program writes under the name, where that is instances of one built-in class beside primitives. A name that is written in many places says little.
+static ValueSetID findInstancesWrittenUnder(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueFlowPositions& positions, PropertyKeyID key)
+{
+    AOT_THRESHOLD(unsigned, mostPlacesWritten, 8);
+    const ValueFlowUniverse& universe = inputs.universe();
+    ValueSetMaker& maker = positions.maker();
+    ValueFlowName name = ValueFlowName::property(inputs.program, key);
+    unsigned places = 0;
+    heap.forEachNodeWrittenUnder(name, [&](ValueSetID, ValueSetID) {
+        ++places;
+    });
+    if (!places || places > mostPlacesWritten)
+        return ValueSets::nothing;
+    ValueSetID written = heap.writtenUnder(maker, ValueSets::anything, name);
+    if (ValueSets::isComplement(written) || maker.meet(written, universe.placeholdersAlone()))
+        return ValueSets::nothing;
+    BuiltinClassID builtinClass;
+    bool areOfOneClass = true;
+    inputs.sets().forEachMember(maker.intersect(written, universe.objects()), [&](ValueFlowObjectID object) {
+        BuiltinReceiver receiver = builtinReceiverOf(inputs.program, positions.typeOfObject(object));
+        areOfOneClass &= receiver.kind == BuiltinReceiverKind::Instance && receiver.builtinClass && (!builtinClass || builtinClass == receiver.builtinClass);
+        builtinClass = receiver.builtinClass;
+    });
+    if (!areOfOneClass || !builtinClass || builtinClass == BuiltinClasses::Object || builtinClass == BuiltinClasses::Function)
+        return ValueSets::nothing;
+    return written;
+}
+
+static void expectWhatIsWrittenUnderNamesOfReads(const ValueFlowResultInputs& inputs, FunctionID id, const ValueFlowHeapView& heap, InstancesWrittenUnderKeys& writtenUnderKeys, ValueFlowPositions& positions, TypeArena& types, FlowBodyUpdate& update)
+{
+    const Function& function = inputs.program.at(id);
+    ValueSetMaker& maker = positions.maker();
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet || !statement.site)
+            continue;
+        PropertyKeyID key = function.at(statement.site).key();
+        ValueSetID receivers = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[0]);
+        if (!key || (!ValueSets::isComplement(receivers) && !maker.meet(receivers, inputs.universe().placeholdersAlone()) && !maker.meet(receivers, inputs.universe().objectsThatMayBeAnything())))
+            continue;
+        ValueSetID written = writtenUnderKeys.ensure(key.index(), [&] {
+            return findInstancesWrittenUnder(inputs, heap, positions, key);
+        }).iterator->value;
+        if (written == ValueSets::nothing)
+            continue;
+        if (std::optional<Type> expected = positions.resultAt(Proven::byRulesBehindChecks(TypeTable::anything), written).narrowed)
+            update.expectations.append(FlowValueExpectation { statement.site, types.intern(*expected) });
+    }
+    AOT::sort(update.expectations, { }, &FlowValueExpectation::value);
+}
+
 static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, const FlowApplication& application, ValuesWithoutProof* valuesWithoutProof, ValueFlowPositionCounts& counts, FlowBodyUpdate& update)
 {
     const Program& program = inputs.program;
@@ -1853,9 +2071,10 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     BitVector isDecided(function.values.size());
     BitVector isTypedByReplacedCheck;
     std::optional<Type> anyValue;
+    EntryParameterIndexes entryParameters;
 
     auto mayComeFromUnseenCaller = [&](ValueID value) {
-        return callers != CallerState::AllKnown && function.at(entryBlock).parameters.find(value) != notFound;
+        return callers != CallerState::AllKnown && entryParameters.find(function, value);
     };
     // runConversionToObject() leaves the global object out of what the uses behind the test meet. In front of the test the value holds it.
     Vector<ValueID, 1> conversionsTestedBeforeUse;
@@ -1901,9 +2120,9 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 (result.proof == ValueFlowProof::OutsideFamily ? valuesWithoutProof->outsideFamily : valuesWithoutProof->inside).add(question);
             return;
         }
-        size_t parameter = function.at(entryBlock).parameters.find(value);
+        std::optional<uint32_t> parameter = entryParameters.find(function, value);
         const Vector<FlowPositionUpdate>& parameters = application.signatures[id.index()].entryParameters;
-        bool isSaidByPosition = parameter != notFound && parameter < parameters.size() && parameters[parameter].type && !parameters[parameter].replacesExpectation && types.at(parameters[parameter].type).isSubsetOf(*narrowed, program);
+        bool isSaidByPosition = parameter && *parameter < parameters.size() && parameters[*parameter].type && !parameters[*parameter].replacesExpectation && types.at(parameters[*parameter].type).isSubsetOf(*narrowed, program);
         if (!isSaidByPosition || inputs.build.validates())
             update.proofs.append(FlowValueProof { value, types.intern(*narrowed), result.isWhatFlowHolds });
     };
@@ -2095,6 +2314,8 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     if (answersAreTheSameForEverySubject && !inputs.build.validates() && !listenerForSetsOutsideTypes)
         valuesWithoutProof = makeUnique<ValuesWithoutProof>(inputs.loops(), inputs.solver().input().numberOfNodes / 4);
     LayoutsCreatedBelowMembers createdBelowMembers = collectLayoutsCreatedBelowMembers(program, application);
+    ValueFlowHeapView heap(inputs);
+    Vector<InstancesWrittenUnderKeys> writtenUnderKeysOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task, unsigned worker) {
         if (task >= firstFunctionTask && (!inputs.isReached(FunctionID(task - firstFunctionTask)) || !program.functions[task - firstFunctionTask].hasBody()))
             return;
@@ -2119,6 +2340,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         narrowEntryParameters(inputs, id, callers, numbers, application, createdBelowMembers[id.index()].span(), positions, arena, application.signatures[id.index()]);
         narrowResults(inputs, id, numbers, positions, application.signatures[id.index()]);
         proveValuesOfOperations(inputs, id, callers, numbers, positions, arena, application, valuesWithoutProof.get(), counts, application.bodies[id.index()]);
+        expectWhatIsWrittenUnderNamesOfReads(inputs, id, heap, writtenUnderKeysOfWorker[worker], positions, arena, application.bodies[id.index()]);
     });
     inputs.build.destroyLater(WTF::move(valuesWithoutProof));
 

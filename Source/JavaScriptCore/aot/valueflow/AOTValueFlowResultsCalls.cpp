@@ -339,6 +339,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             AOT::sort(listed.layouts);
         });
     };
+    // An empty set: no object that was seen to arrive has the name.
     auto receiversSeenToArrive = [&](const StampedOperand& receiver) -> std::optional<LayoutSet> {
         if (!PayloadWord::key(receiver.statement.opcode) || ValueSets::isComplement(receiver.seen))
             return std::nullopt;
@@ -347,7 +348,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return std::nullopt;
         const ListedReceivers& listed = listedReceiversOf(receiver);
         if (listed.layouts.isEmpty())
-            return std::nullopt;
+            return LayoutSet::open({ });
         std::optional<LayoutSet>* remembered = nullptr;
         if (listed.layouts.size() >= fewestMembersToRemember) {
             auto known = listingsOfWorker[receiver.worker].receiversSeenUnderKeys.add(static_cast<uint64_t>(receiver.seen.index()) << 32 | key.index(), std::nullopt);
@@ -386,7 +387,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     add(layout);
             }
         }
-        if (areTooMany || seen.isEmpty())
+        if (areTooMany)
             return std::nullopt;
         LayoutSet receivers = LayoutSet::open(WTF::move(seen));
         canonicalize(receivers);
@@ -400,6 +401,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
     }
+    tables.sites.receiversSeenAtSites.fill(0, tables.application->accessSites.numberOfSites());
     Vector<ProxyMadeAtSite> proxiesMade = findProxiesMadeAtSites(inputs);
     ValueSetID objectsOfProxiesMade = ValueSets::nothing;
     {
@@ -471,8 +473,12 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
             return;
         }
-        if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver))
-            receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
+        if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver)) {
+            if (receivers->written().isEmpty())
+                tables.sites.receiversSeenAtSites[application.accessSites.siteOfValue(receiver.id, site).index()] = 1;
+            else
+                receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
+        }
         auto explain = [&](FlowSiteLoss& loss) {
             loss.cause = UnprovenCause::NonLayoutObject;
             bool mayBeBuiltinObject = false;
@@ -509,6 +515,10 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         loss.seesConstructedObject = !ValueSets::isComplement(receiver.seen) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.seen), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;
     });
+    forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
+        for (const FlowAccessStamp& stamp : application.bodies[index].accesses)
+            tables.sites.receiversSeenAtSites[application.accessSites.siteOfValue(FunctionID(index), stamp.value).index()] = stamp.receivers.index() + 2;
+    });
     for (Listings& listings : listingsOfWorker)
         tables.sites.proxiesSeenAtSites.appendVector(WTF::move(listings.proxiesSeenAtSites));
     AOT::sort(tables.sites.proxiesSeenAtSites, { }, &FlowProxiesSeenAtSite::site);
@@ -523,10 +533,48 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
 {
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
+    // Where nothing is constructed the callees follow from the two sets of values. n calls of a value that may be any of n functions name the same two sets:
+    // the set of callees is made, hashed and interned for the first. An id of an arena is good in the task of the arena.
+    AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
+    struct CalleesOfValues {
+        bool isKnown { false };
+        bool listsEveryCallee { false };
+        bool isEmpty { true };
+        CalleeSetID interned;
+    };
+    struct CalleesOfTask {
+        FunctionID task;
+        UncheckedKeyHashMap<uint64_t, CalleesOfValues, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> ofValues;
+    };
+    Vector<CalleesOfTask> calleesOfWorker(inputs.loops().width());
+    auto findCallees = [&](const StampedOperand& callee, bool isConstruction) {
+        std::optional<CalleeSet> found = callee.positions.calleesAt(callee.held, callee.seen, isConstruction ? &callee.operand : nullptr);
+        if (!found)
+            return CalleesOfValues { };
+        CalleesOfValues callees { true, found->listsEveryCallee(), found->written().isEmpty(), { } };
+        if (callees.listsEveryCallee || !callees.isEmpty)
+            callees.interned = callee.types.intern(WTF::move(*found));
+        return callees;
+    };
     auto stampCall = [&](const StampedOperand& callee) {
-        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
+        bool isConstruction = !!OperandPosition::newTarget(callee.statement.opcode);
+        CalleesOfValues found;
+        if (isConstruction || ValueSets::isComplement(callee.held) || ValueSets::isComplement(callee.seen) || inputs.sets().size(callee.held) < fewestMembersToRemember)
+            found = findCallees(callee, isConstruction);
+        else {
+            CalleesOfTask& known = calleesOfWorker[callee.worker];
+            if (known.task != callee.id) {
+                known.task = callee.id;
+                known.ofValues.clear();
+            }
+            auto added = known.ofValues.add(static_cast<uint64_t>(callee.held.index()) << 32 | callee.seen.index(), CalleesOfValues { });
+            if (added.isNewEntry)
+                added.iterator->value = findCallees(callee, false);
+            found = added.iterator->value;
+        }
+        const CalleesOfValues* callees = found.isKnown ? &found : nullptr;
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);
-        if (!callees || !callees->listsEveryCallee()) {
+        if (!callees || !callees->listsEveryCallee) {
             tables.sites.accessSiteLosses[site.index()] = lossOfStampedOperand(callee, [&](FlowSiteLoss& loss) {
                 loss.cause = UnprovenCause::UnknownCallee;
                 inputs.sets().forEachMember(callee.maker.intersect(callee.held, inputs.universe().otherCallables()), [&](ValueFlowObjectID object) {
@@ -535,23 +583,26 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
                 });
             });
         }
-        if (!callees || (!callees->listsEveryCallee() && callees->written().isEmpty()))
+        if (!callees || (!callees->listsEveryCallee && callees->isEmpty))
             return;
 
         tables.sites.callsOfBoundFunctions[site.index()] = false;
-        callee.update.calls.append(FlowCallStamp { callee.statement.site, callee.types.intern(WTF::move(*callees)) });
+        callee.update.calls.append(FlowCallStamp { callee.statement.site, callees->interned });
     };
     stampOperands<callsValue, [](Opcode) { return 0u; }, &FlowBodyUpdate::calls>(inputs, types, tables, FlowResultKind::CalleeSets, StatisticID::FlowCallsOfUnknownCallees, stampCall);
 
     ValueFlowStampedCalls result;
     result.functionsInStamps = BitVector(numberOfFunctions);
     Vector<BitVector> functionsSeenBy(inputs.loops().width());
+    Vector<BitVector> setsSeenBy(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
         if (application.bodies[index].calls.isEmpty())
             return;
         BitVector& functions = functionsSeenBy[worker];
         functions.ensureSize(numberOfFunctions);
         for (const FlowCallStamp& stamp : application.bodies[index].calls) {
+            if (setsSeenBy[worker].set(stamp.callees.index()))
+                continue;
             for (FunctionID function : types.at(stamp.callees).followed().value())
                 functions.quickSet(function.index());
         }

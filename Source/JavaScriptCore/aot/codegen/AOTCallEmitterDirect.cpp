@@ -144,6 +144,7 @@ void CallEmitter::generateCallTable(const ValueContext& value)
 
     ArgumentLocations locations = inputs().conventions.locationsOf(m_program, function);
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
+    checkIsCompiledObjectOf(arguments[0].as<CellPointer>(), value->receivers());
     Word32 shapeWord = emitter<ShapeTestEmitter>().shapeWordOf(arguments[0].as<CellPointer>());
     Pointer row = offsetBy(Pointer(m_instance), signExtended(shapeWord), WTF::fastLog2(static_cast<unsigned>(sizeof(uint32_t))));
     ptrdiff_t offsetOfRow = InstanceLayout::offsetOfMethodTable(inputs().instanceSizes) + static_cast<ptrdiff_t>(*selectorOffset * sizeof(uint32_t));
@@ -152,6 +153,10 @@ void CallEmitter::generateCallTable(const ValueContext& value)
     Pointer entry = offsetBy(code, zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MustBePassed);
+    if (value.returnCall()) {
+        emitTailCall(value, CallTarget::address(entry.value()), placed);
+        return;
+    }
     B3::PatchpointValue* call = emitCall(value, CallTarget::address(entry.value()), placed, locations.results.span(), { });
     defineResultsOfCall(value, locations.results.span(), call);
 }

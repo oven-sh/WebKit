@@ -177,11 +177,15 @@ private:
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
     {
         Vector<Value*, 16> worklist;
-        IndexSet<Value*> seen;
+        // A set indexed by value would cost as much as the procedure has values, for every branch.
+        Vector<Value*, 16> seen;
         worklist.append(condition);
         while (!worklist.isEmpty() && seen.size() < m_proc.limit(Limit::MaxValuesSearchedForDominatingLoad)) {
             Value* value = worklist.takeLast();
-            if (!seen.add(value) || value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
+            if (seen.contains(value))
+                continue;
+            seen.append(value);
+            if (value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
                 continue;
             if (isLoad(value->opcode()))
                 return true;

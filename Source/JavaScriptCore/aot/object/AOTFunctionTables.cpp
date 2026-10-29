@@ -379,13 +379,19 @@ SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm,
         std::optional<FunctionID> function = functionOf(cell);
         return function && sourceFunctionOf(*function) == sourceFunction;
     };
+    auto isCellOnHeap = [&](JSCell* cell) {
+        return cell && !cell->isPreciseAllocation() && HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), cell);
+    };
     auto* kept = static_cast<JSCell* const*>(frameRecordOfCaller)[site.wordInFrame()];
     bool liesInFrame = Thread::currentSingleton().stack().contains(kept) || CheckedFrameCells::isInRange(kept);
-    if (!liesInFrame && (!kept || kept->isPreciseAllocation() || !HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), kept)))
+    if (!liesInFrame && !isCellOnHeap(kept))
         return std::nullopt;
-    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && kept->type() == CompiledEnvironmentType) {
+    // An environment in a frame has no header that says what it is. What its slot holds is asked in its place.
+    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && (liesInFrame || kept->type() == CompiledEnvironmentType)) {
         SlotData slot = SlotData::decode(*field);
         JSCell* closure = cellInSlot(slot.representation(), reinterpret_cast<const uint8_t*>(kept) + slot.offset, vm.heap.cage().base());
+        if (liesInFrame && !isCellOnHeap(closure))
+            return nullptr;
         return closure && isFunctionObjectOfFunction(closure) ? asObject(closure) : nullptr;
     }
     if (liesInFrame)

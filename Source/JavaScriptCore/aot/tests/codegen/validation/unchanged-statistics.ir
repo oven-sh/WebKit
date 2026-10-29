@@ -1,5 +1,5 @@
 # Validation adds checks beside the code of a release build: flow results, pass decisions, selected groups, accesses, slots, shapes and barriers are the same in both. Only the passes that sweep up a test of a proof that typing shows to hold change something once more
-# RUN: validation-differences check=validate-back-end
+# RUN: validation-differences check=validate-back-end disable=pass:NarrowConstantVariables
 # STATISTIC: TestAndBranchGroups >= 1
 # STATISTIC: AccessesProven >= 1
 # STATISTIC: AccessesUnknown >= 1

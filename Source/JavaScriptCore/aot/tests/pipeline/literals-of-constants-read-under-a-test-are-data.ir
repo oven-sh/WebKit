@@ -1,0 +1,35 @@
+# A literal of constants that no store reaches is read where it is made, at a place that is tested first, so the read names a guard. A read finds storage that many arrays
+# share as it finds storage of the array's own: the literal is made from a data record all the same
+# RUN: pipeline EmbedConstantCollections
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Call v0, -, v2 [isNeverInlined]
+    v4 = Call v0, -, v2 [isNeverInlined]
+    v5 = Integer integer=0
+    v6 = ElemGet v3, v5
+    v7 = ElemGet v4, v5
+    v8 = Add v6, v7
+    Return v8
+}
+
+function f1 name="readUnderATest" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=10
+    v2 = Integer integer=11
+    v3 = NewArray v1, v2
+    v4 = Integer integer=3
+    v5 = BitAnd v0, v4
+    v6 = ElemGet v3, v5
+    v7 = NewArray v6, v3
+    Return v7
+}
+# CHECK-LABEL: name="readUnderATest" {{*}}role=ResultWorker
+# CHECK-NOT: NewArray
+# CHECK: = Data data=d0
+# CHECK: ([[guard]]: guard):
+# CHECK: = GetArrayElement {{*}}, [[guard]] arrayStorage=Int32
+# CHECK: data d0 root=Array{contents=int[10, 11] elements=[Number{value=10}, Number{value=11}]}

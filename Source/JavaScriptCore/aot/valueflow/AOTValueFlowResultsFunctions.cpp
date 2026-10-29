@@ -15,12 +15,14 @@
 #include "AOTHeatGraph.h"
 #include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSharedMemo.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowResultsFieldsInternal.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <functional>
 #include <optional>
 #include <tuple>
@@ -40,6 +42,21 @@ struct EnteredGroup {
 struct GroupOfStatement {
     uint32_t statement { 0 };
     EnteredGroup group;
+};
+
+// The callees of a large group that bring a row. n calls that each enter any of n functions ask the same of the same group.
+struct CalleesThatBringRows {
+    struct Key {
+        ValueSetID callees;
+        ValueFlowCallKind kind { ValueFlowCallKind::Call };
+        const CalleeSet* stampThatListsCallees { nullptr };
+        bool namesNoEscapedClosure { false };
+
+        friend bool operator==(const Key&, const Key&) = default;
+    };
+
+    Key key;
+    Vector<ValueFlowObjectID> callees;
 };
 
 struct ListsByOwner {
@@ -485,6 +502,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
     std::optional<AccessorsUnderUnknownKeys> accessorsUnderUnknownKeys;
     if (listsWhatWasSeen)
         accessorsUnderUnknownKeys.emplace(inputs, heap.index(), heap.maker());
+    SharedMemo<CalleesThatBringRows> calleesThatBringRows;
     tables.functions.indirectCalls = collectInParallel<FlowIndirectCall>(inputs.loops(), numberOfFunctions, [&](unsigned index, Vector<FlowIndirectCall>& calls) {
         FunctionID id(index);
         if (!inputs.isReached(id))
@@ -530,15 +548,43 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                     if (!stampThatListsCallees)
                         listed = maker.get().unite(listed, namesNoEscapedClosure ? maker.get().intersect(callees, ValueSets::complement(escaped)) : callees);
                 }
-                sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                auto bringsRow = [&](ValueFlowObjectID callee) {
                     FunctionID entered = universe.closureFunction(callee);
                     if (!entered || throwsBeforeEntry(program.at(entered), group.kind))
-                        return;
+                        return false;
                     if (namesNoEscapedClosure && sets.contains(escaped, callee))
+                        return false;
+                    return !stampThatListsCallees || !std::ranges::binary_search(stampThatListsCallees->followed().value(), entered);
+                };
+                auto forEachCalleeThatBringsRow = [&](const auto& functor) {
+                    AOT_THRESHOLD(size_t, fewestCalleesAskedOnce, 16);
+                    if (sets.size(callees) < fewestCalleesAskedOnce) {
+                        sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                            if (bringsRow(callee))
+                                functor(callee);
+                        });
                         return;
-                    if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->followed().value(), entered))
-                        return;
-
+                    }
+                    CalleesThatBringRows::Key key { callees, group.kind, stampThatListsCallees, namesNoEscapedClosure };
+                    uint64_t mixed = (static_cast<uint64_t>(callees.index()) << 8 | static_cast<uint64_t>(group.kind) << 1 | static_cast<uint64_t>(namesNoEscapedClosure)) * 0x9e3779b97f4a7c15ull;
+                    uint32_t hash = static_cast<uint32_t>((mixed ^ std::bit_cast<uintptr_t>(stampThatListsCallees)) * 0x9e3779b97f4a7c15ull >> 32);
+                    auto isWanted = [&](const CalleesThatBringRows& entry) {
+                        return entry.key == key;
+                    };
+                    const CalleesThatBringRows* known = calleesThatBringRows.find(hash, isWanted);
+                    if (!known) {
+                        CalleesThatBringRows found { key, { } };
+                        sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                            if (bringsRow(callee))
+                                found.callees.append(callee);
+                        });
+                        known = &calleesThatBringRows.add(hash, WTF::move(found), isWanted);
+                    }
+                    for (ValueFlowObjectID callee : known->callees)
+                        functor(callee);
+                };
+                forEachCalleeThatBringsRow([&](ValueFlowObjectID callee) {
+                    FunctionID entered = universe.closureFunction(callee);
                     if (!std::exchange(hasPreparedSites, true)) {
                         valuesInCycles = BitVector(function.values.size());
                         CFG cfg(function);
@@ -1091,13 +1137,14 @@ void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs& inputs, ValueFlo
     }
 }
 
-void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
+ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = program.builtins();
     const ParallelLoops& loops = inputs.loops();
-    ValueSetID closures = universe.closures();
+    ValueSetID lists = universe.sureInstancesOf(BuiltinClasses::Array);
+    ValueSetID closures = heap.maker().unite(universe.closures(), lists);
     struct Teller {
         FunctionID function;
         BuiltinID builtin;
@@ -1146,6 +1193,10 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
                     if (right == ValueSets::nothing)
                         continue;
                     auto [low, high] = std::minmax({ left.index(), right.index() });
+                    if (!compared.mayBeFunctions) {
+                        keep(worker, makers.of(worker).intersect(makers.of(worker).intersect(left, right), lists), { compared.function, { }, { } });
+                        continue;
+                    }
                     if (lookers[worker].pairsMet.add(static_cast<uint64_t>(low) << 32 | high).isNewEntry)
                         keep(worker, left == right ? left : makers.of(worker).intersect(left, right), { compared.function, { }, { } });
                 }
@@ -1205,6 +1256,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         tellers.appendVector(WTF::move(looker.tellers));
     }
     ValueSetID compared = heap.maker().uniteAll(parts.span());
+    ValueSetID listsToldApart = heap.maker().intersect(compared, lists);
     BitVector& neverCompared = tables.functions.functionsWhoseClosuresAreNeverCompared;
     neverCompared = BitVector(program.functions.size());
     Vector<uint32_t> functionsNeverCompared = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -1249,6 +1301,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         }
         dataLogLn("AOT closures compared: functions whose closures are only called ", onlyCalled, " | of them told apart ", toldApart, " | sets of closures that somebody can tell apart ", parts.size());
     }
+    return listsToldApart;
 }
 
 void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)

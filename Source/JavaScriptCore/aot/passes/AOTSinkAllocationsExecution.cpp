@@ -272,6 +272,8 @@ void ObjectInterpreter::executeAllocation(ValueID id)
         VirtualObjectID held = objectOf(value);
         if (!held)
             continue;
+        if (m_sinking.at(held).isJoin && m_sinking.at(held).family == m_sinking.at(object).family)
+            m_sinking.abandonJoinsOfFamilyOf(object);
         if (canHold(object, field, held)) {
             state.hold(field, held);
             continue;
@@ -1246,6 +1248,8 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         if (!hasListedElements(object))
             return false;
         findsElement = findsElementAtEveryPosition();
+        if (!findsElement && (function().at(read).opcode == Opcode::GetArrayElement && function().at(read).isPresent()))
+            return false;
         if (!findsElement && !mayBeUndefined(program().at(type)))
             return false;
         const VirtualShape& shape = shapeOf(object, stateOf(object)->variants[0]);
@@ -1428,6 +1432,8 @@ bool ObjectInterpreter::canHold(VirtualObjectID holder, uint32_t field, VirtualO
 void ObjectInterpreter::storeField(VirtualObjectID object, uint32_t field, ValueID stored)
 {
     VirtualObjectID held = objectOf(stored);
+    if (held && m_sinking.at(held).isJoin && m_sinking.at(held).family == m_sinking.at(object).family)
+        m_sinking.abandonJoinsOfFamilyOf(object);
     if (held && !canHold(object, field, held)) {
         requireCell(stored, BuildCause { .reasons = EscapeReason::StoredInEscapingObject });
         held = { };

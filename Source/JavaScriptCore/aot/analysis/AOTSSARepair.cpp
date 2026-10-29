@@ -283,6 +283,7 @@ void SSARepair::addDefinition(Variable variable, ValueID definition)
     bool wasDefinition = m_isDefinition.set(definition.index());
     RELEASE_ASSERT(!wasDefinition);
     m_variables[variable].values.append(definition);
+    m_definitions.append({ definition, variable });
     if (m_variables[variable].values.size() > 1)
         setIsPending(true);
 }
@@ -291,11 +292,17 @@ std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) c
 {
     if (!m_isDefinition.get(definition.index()))
         return std::nullopt;
-    for (Variable variable = 0; variable < m_variables.size(); ++variable) {
-        if (m_variables[variable].values.contains(definition))
-            return variable;
+    AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+    if (m_definitions.size() <= mostSearchedInOrder) {
+        auto found = std::ranges::find(m_definitions, definition, &std::pair<ValueID, Variable>::first);
+        RELEASE_ASSERT(found != m_definitions.end());
+        return found->second;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    for (; m_numberOfIndexedDefinitions < m_definitions.size(); ++m_numberOfIndexedDefinitions)
+        m_variableOfDefinition.add(m_definitions[m_numberOfIndexedDefinitions].first.index(), m_definitions[m_numberOfIndexedDefinitions].second);
+    auto found = m_variableOfDefinition.find(definition.index());
+    RELEASE_ASSERT(found != m_variableOfDefinition.end());
+    return found->value;
 }
 
 void SSARepair::run()

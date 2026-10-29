@@ -640,6 +640,18 @@ static void testRealmAfterCollectedRealm(LoadedProgram& program)
     vm = nullptr;
 }
 
+static void testRealmAfterRetiredRealm(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(!(Image::current()->programTables().flags & ProgramTables::mayRunInMultipleInstances));
+    program.realm()->setMicrotaskRunnability(QueuedTaskResult::Discard);
+    Instance* second = Instance::of(createRealmWithHostOf(program));
+    AOT_TEST_CHECK(second);
+    AOT_TEST_CHECK(second != &program.instance());
+    AOT_TEST_CHECK(second->state);
+    AOT_TEST_CHECK(second->state != program.instance().state);
+    AOT_TEST_CHECK(!Instance::of(createRealmWithHostOf(program)));
+}
+
 static void testTwoRealmsHaveInstances(LoadedProgram& program)
 {
     // No built-in of Bun's starts a second instance in the VM of the program, so the compiler writes the flag for no program. The run time keeps the instances of one VM apart for a host that has such a built-in.
@@ -737,6 +749,7 @@ std::span<const NativeTest> programInputTests()
         { "image/programs/run-that-is-ended-leaves-program-as-read"_s, testRunThatIsEndedLeavesProgramAsRead },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
+        { "image/instances/realm-after-retired-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterRetiredRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },
 #if OS(LINUX)
         { "image/loading/loaded-image-has-no-writable-page"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testLoadedImageHasNoWritablePage> },

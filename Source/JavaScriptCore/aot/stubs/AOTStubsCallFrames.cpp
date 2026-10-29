@@ -155,6 +155,27 @@ void emitMoveStackWordsToArgumentListFrame(CCallHelpers& jit, unsigned numberOfW
 #endif
 }
 
+// Follows emitFindListFrameRecord().
+void emitFindStackPointerOfArgumentListFrame(CCallHelpers& jit, GPRReg result, GPRReg scratch, unsigned numberOfWords, unsigned bytesAboveFrameRecord)
+{
+    ASSERT(noOverlap(result, scratch, instanceGPR, fp));
+    jit.move(fp, result);
+    jit.loadPtr(Address(result, CallFrame::returnPCOffset()), scratch);
+    Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, scratch, argumentListReturnAddress());
+    Label nextFrame = jit.label();
+    jit.loadPtr(Address(result, CallFrame::callerFrameOffset()), result);
+    jit.loadPtr(Address(result, CallFrame::returnPCOffset()), scratch);
+    jit.branchPtr(CCallHelpers::Equal, scratch, argumentListReturnAddress()).linkTo(nextFrame, &jit);
+    if (bytesAboveFrameRecord) {
+        Jump reusesListFrame = jit.jump();
+        isNotOnListFrame.link(&jit);
+        jit.addPtr(TrustedImm32(bytesAboveFrameRecord), result);
+        reusesListFrame.link(&jit);
+    } else
+        isNotOnListFrame.link(&jit);
+    jit.subPtr(TrustedImm32(static_cast<int32_t>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(numberOfWords * sizeOfStackWord))), result);
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

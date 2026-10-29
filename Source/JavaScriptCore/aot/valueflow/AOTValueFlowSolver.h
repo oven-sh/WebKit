@@ -854,6 +854,7 @@ private:
             Seconds wall;
             Seconds cpuOfThisThread;
             Seconds cpuOutsideParallelLoops;
+            Seconds cpuOfAllThreads;
         };
 
         void begin();
@@ -864,6 +865,7 @@ private:
         MonotonicTime startOfStep;
         Seconds cpuAtStartOfStep;
         Seconds cpuInParallelLoopsAtStartOfStep;
+        Seconds cpuOfAllThreadsAtStartOfStep;
         Vector<Step> steps;
         Seconds busyOnAllThreads;
         Seconds busiestThreadOfTurn;

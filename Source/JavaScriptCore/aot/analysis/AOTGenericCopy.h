@@ -132,6 +132,7 @@ private:
     bool addsLoopEntry(BlockID) const;
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
+    bool mergesGeneratorWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
     bool handsOverTooMuchAtExits() const;
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);

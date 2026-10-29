@@ -570,9 +570,9 @@ struct Enclosure {
 
     // A step of a lookbehind stands behind a Choice that goes on behind the step, and always fails. So the search goes on from the frame of the Choice: at the position that the step has written there,
     // or, where the step cannot be made, not at all.
-    NEVER_INLINE void readBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, const unsigned* output, FlatFrame& frame)
+    NEVER_INLINE void readBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, const unsigned* output, uint32_t* registers, FlatFrame& frame)
     {
-        unsigned reached = positionBehindStepBackward(program, op, input, frame.position, output);
+        unsigned reached = positionBehindStepBackward(program, op, input, frame.position, output, registers);
         if (reached != cannotReadBackward) {
             frame.position = reached;
             return;
@@ -584,9 +584,77 @@ struct Enclosure {
     static constexpr unsigned cannotReadBackward = std::numeric_limits<unsigned>::max();
     static constexpr uint32_t recordsNothing = std::numeric_limits<uint32_t>::max();
 
-    unsigned positionBehindStepBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, unsigned position, const unsigned* output)
+    // The next place where the run can end. The back reference some units behind the run reads a group that is not empty, so the unit there has to be the first of the group:
+    // most places fail that test here, without a frame and without a step of the machine.
+    unsigned endOfRunBeforeReference(const FlatProgram& program, const FlatOp& op, const CharType* input, unsigned position, const unsigned* output, uint32_t* registers)
+    {
+        auto step = static_cast<FlatStepBackward>(op.registerIndex);
+        const CharacterSetBits& members = program.characterSets[op.set];
+        auto isMember = [&](CharType unit) ALWAYS_INLINE_LAMBDA {
+            return unit > 0xff ? wideRangesContain(program.wideRanges.span(), members, unit) : contains(members, program.wideRanges.span(), static_cast<Latin1Character>(unit));
+        };
+        unsigned distance = op.target & 0xffff;
+        uint32_t& leastEndOfGreedyRun = registers[op.target >> 16];
+        // Ends from here down are left to try.
+        unsigned greatest = position - 1;
+        if (step == FlatStepBackward::GreedyRunBeforeReference) {
+            unsigned begin = position;
+            while (position < length && isMember(input[position]))
+                ++position;
+            if (position - begin < op.needed)
+                return cannotReadBackward;
+            leastEndOfGreedyRun = begin + op.needed;
+            greatest = position;
+        } else if (step == FlatStepBackward::ShorterGreedyRunBeforeReference && position == leastEndOfGreedyRun)
+            return cannotReadBackward;
+
+        unsigned begin = output[op.argument];
+        bool groupIsOpen = op.laterFirstSet;
+        bool readsNothing = begin == offsetNoMatch || (!groupIsOpen && (output[op.argument + 1] == offsetNoMatch || output[op.argument + 1] == begin));
+        unsigned last = length >= op.needed ? length - op.needed : 0;
+        if (readsNothing) {
+            // The run can end anywhere.
+            if (step != FlatStepBackward::LazyRunBeforeReference)
+                return greatest;
+            return position < last && isMember(input[position]) ? position + 1 : cannotReadBackward;
+        }
+
+        // A set with every Latin-1 character stands for: not known.
+        const FirstSetBits& following = program.firstSets[op.firstSet];
+        bool anythingCanFollow = !~(following.bits[0] & following.bits[1] & following.bits[2] & following.bits[3]);
+        auto canFollow = [&](CharType unit) ALWAYS_INLINE_LAMBDA {
+            return anythingCanFollow || isInFirstSet(following, unit);
+        };
+        const CharType* atReference = input + distance;
+        CharType first = input[begin];
+        unsigned endsWithReference = length > distance ? length - distance : 0;
+        if (step == FlatStepBackward::LazyRunBeforeReference) {
+            last = std::min(last, endsWithReference ? endsWithReference - 1 : 0);
+            while (position < last && isMember(input[position])) {
+                ++position;
+                if (atReference[position] == first && canFollow(input[position]))
+                    return position;
+            }
+            return cannotReadBackward;
+        }
+        unsigned least = leastEndOfGreedyRun;
+        for (unsigned end = std::min(greatest + 1, endsWithReference); end > least;) {
+            --end;
+            if (atReference[end] == first && canFollow(input[end]))
+                return end;
+        }
+        // An open group is empty, and the reference reads nothing, if the run ends where the group began. No end is less.
+        bool canLeaveGroupEmpty = groupIsOpen && op.laterFirstSet == 1 && least == begin;
+        return canLeaveGroupEmpty ? least : cannotReadBackward;
+    }
+
+    unsigned positionBehindStepBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, unsigned position, const unsigned* output, uint32_t* registers)
     {
         switch (static_cast<FlatStepBackward>(op.registerIndex)) {
+        case FlatStepBackward::LazyRunBeforeReference:
+        case FlatStepBackward::GreedyRunBeforeReference:
+        case FlatStepBackward::ShorterGreedyRunBeforeReference:
+            return endOfRunBeforeReference(program, op, input, position, output, registers);
         case FlatStepBackward::NeedsInput:
             return position >= op.needed ? position : cannotReadBackward;
         case FlatStepBackward::Set: {
@@ -648,6 +716,7 @@ struct MemoTableParts {
 };
 
 template<typename CharType, bool isFull> static JSRegExpResult matchBehindLimit(const FlatProgram&, const CharType* input, const Enclosure<CharType>&, unsigned* output);
+template<typename CharType, bool isFull> static JSRegExpResult matchByPolicy(const FlatProgram&, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy);
 
 // remembers: keeps the table of failed searches. See FlatMatchPolicy.
 // isFull: can do what few programs need: see FlatProgram::needsFullMachine. It keeps the table where it is given one. The others are kept free of that, since whatever is added to run() costs them registers.
@@ -742,7 +811,7 @@ struct Machine {
     {
         if constexpr (isFull) {
             if (op->registerIndex) {
-                enclosure.readBackward(program, *op, input, output, top[-1]);
+                enclosure.readBackward(program, *op, input, output, registers(), top[-1]);
                 return false;
             }
         }
@@ -2281,6 +2350,8 @@ static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, 
 {
     if (enclosure.steps == matchLimit || program.jitCountsTurns)
         return JSRegExpResult::ErrorHitLimit;
+    if (program.programThatFindsEndsOfRuns)
+        return matchByPolicy<CharType, true>(*program.programThatFindsEndsOfRuns, std::span { input, enclosure.length }, enclosure.startOffset, output, FlatMatchPolicy::HandsOverEarly);
     if (isFull || program.captureKeyedMemoRows)
         return matchRemembering<CharType, true>(program, input, enclosure.length, enclosure.startOffset, output);
     return matchRemembering(program, input, enclosure.length, enclosure.startOffset, output);

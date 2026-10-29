@@ -717,23 +717,38 @@ private:
         }
         bool isGivenTypes = m_readAs == ReadAs::GenericVersionGivenTypes || m_readAs == ReadAs::OutlinedBodyGivenTypes;
         bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
-        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
+        AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
+        // More callees than are followed count as unknown code, whatever they do. n calls of one set of n callees do not go through it to find that out.
+        CalleeSetID longSet = longCalleeSetRunBy(program, value);
+        bool hasTooManyCallees = longSet && program.at(longSet).written().functions.size() > mostFunctionsFollowed;
+        auto describe = [&] {
+            return isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
+        };
+        EffectDescription description = hasTooManyCallees ? describeCodeRunBesideLongCalleeSet(program, value, longSet) : describe();
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program))
             description.callsUnknownCode = true;
-        AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
-        if (description.functions.size() > mostFunctionsFollowed) {
+        auto countAsUnknownCode = [](EffectDescription& description) {
             description.functions.clear();
             description.callsUnknownCode = true;
+            description.leavesOutOwnEffects = false;
             description.addOwn(Effects::unknownCode());
+        };
+        if (hasTooManyCallees || description.functions.size() > mostFunctionsFollowed)
+            countAsUnknownCode(description);
+        if (hasTooManyCallees && m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]] {
+            EffectDescription whole = describe();
+            RELEASE_ASSERT(whole.functions.size() > mostFunctionsFollowed);
+            countAsUnknownCode(whole);
+            RELEASE_ASSERT(whole == description);
         }
         if (isReadWithOperandTypes(block, value)) [[unlikely]] {
             summarizeCalleeWithOperandTypes(block, id, description);
             return;
         }
-        if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
+        if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode) && !hasTooManyCallees) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
             if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone(); functions && runsOnlyCallees(description, *functions)) {
                 summarizeCall(block, value, *functions, description);

@@ -81,6 +81,8 @@ struct FlowFindings {
     size_t builtinsUsedCount { 0 };
     const Wire::LackedFunctionRecord* libraryFunctionsLacked { nullptr };
     size_t libraryFunctionsLackedCount { 0 };
+    const Wire::ReplacedExportRecord* exportsThatSpiesReplace { nullptr };
+    size_t exportsThatSpiesReplaceCount { 0 };
 };
 
 // The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.

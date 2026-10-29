@@ -55,6 +55,7 @@ struct FieldArmState {
     bool isAddedLate { true };
     bool isFilledByCreator { true };
     bool admitsUndefined { false };
+    bool isWrittenAsOptional { true };
     bool isAddedLateInSomeMember { false };
     bool isLeftOutAtConstruction { false };
     bool hasConstructor { false };

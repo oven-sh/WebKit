@@ -58,6 +58,9 @@ public:
     void checkAssumedType(const ValueContext&);
 
     void checkPrecondition(const ValueContext&, Condition);
+    // For code that several operations share: the report names the operation that is being generated.
+    void checkClaim(std::optional<CellPointer> about, Condition);
+    void checkIsCompiledObjectOf(CellPointer, LayoutSetID);
     void checkBindingIsStored(const ValueContext&, Condition);
     // A short form of a test answers as the whole test does.
     void checkTypeTestsAgree(Condition, CellPointer tested);
@@ -84,11 +87,12 @@ private:
     void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
     void callReport(ValidationFailureKind, Operand found, ValueID);
+    Word32 reportedFailure(ValidationFailureKind, Operand found);
     Boxed reportedValueOf(Operand found);
 
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
-    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind);
+    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind, ValueID tested);
     void checkLiteralStringWord(ValueID, LiteralStringWord);
     Condition hasShapeAmong(CellPointer, LayoutSetID, std::span<const uint32_t> ascendingShapes);
     void checkReceiverOfSlotAccess(const OperationContext&, const Value&);
@@ -109,10 +113,20 @@ private:
     Condition isInStack(Pointer);
     Pointer stackPointer();
 
+    struct PassedTypeTest {
+        ValueID value;
+        TypeID type;
+        bool mustBeThere;
+
+        friend bool operator==(const PassedTypeTest&, const PassedTypeTest&) = default;
+    };
+
     FramePointers m_framePointers;
     BlockID m_blockOfCheckedClassProofs;
     Vector<ValueID, 4> m_checkedClassProofs;
     Vector<Vector<ValueID, 4>> m_checkedClassProofsAtEnd;
+    // In the block of m_blockOfCheckedClassProofs, since the last operation that may have written to the heap.
+    Vector<PassedTypeTest, 16> m_passedTypeTests;
 };
 
 } } } // namespace JSC::AOT::Typed

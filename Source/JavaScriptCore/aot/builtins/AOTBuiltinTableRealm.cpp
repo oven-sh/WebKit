@@ -467,6 +467,8 @@ static ObjectLookup findHiddenRoot(JSGlobalObject* realm, BuiltinID id)
         return findTableOfLoader(realm, &ModuleHost::requireCache);
     if (id == Builtins::ModuleExtensions)
         return findTableOfLoader(realm, &ModuleHost::requireExtensions);
+    if (id == Builtins::ModuleRequirePrototype)
+        return findTableOfLoader(realm, &ModuleHost::requirePrototype);
     if (std::optional<LinkTimeConstant> constant = BuiltinBindings::linkTimeConstantOf(id))
         return asObject(realm->linkTimeConstant(*constant));
     BuiltinID subclassConstructor = findSubclassConstructor(BuiltinTable::singleton(), id);

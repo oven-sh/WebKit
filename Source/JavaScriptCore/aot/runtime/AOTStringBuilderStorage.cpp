@@ -1267,6 +1267,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, 
     [[clang::musttail]] return concatenateShortKey(instance, count, parts, isLikelyKey);
 }
 
+// The stub ConcatenateKeyOfPair has looked for the pair. An operation begins in its own frame, so this one leaves by a tail call as the others do.
+JSC_DEFINE_JIT_OPERATION(operationAOTConcatenatePair, JSCell*, (Instance* instance, uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t))
+{
+    instance->state->stringKeys->lastLookupByParts().takePair(parts[0], parts[1]);
+    [[clang::musttail]] return concatenateShortKey(instance, 2, parts, isLikelyKey);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderBegin, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderBegin);

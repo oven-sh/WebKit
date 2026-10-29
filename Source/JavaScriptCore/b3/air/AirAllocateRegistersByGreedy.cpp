@@ -726,17 +726,40 @@ private:
 // Mutable until sort() is called, after which it is binary searchable.
 class Coalescables {
 public:
+    // The result of `a && b && ..` is defined by one move per operand. A list that long is not walked for each move or def.
+    static constexpr size_t maxSizeWalked = 16;
+
+    // mergeDuplicates() follows the last call.
     void add(Tmp tmp, float moveCost)
     {
         ASSERT(!m_isSorted);
         ASSERT(m_entries.isEmpty() || m_entries.last().tmp.bank() == tmp.bank());
-        for (auto& entry : m_entries) {
-            if (entry.tmp == tmp) {
-                entry.moveCost += moveCost;
-                return;
+        if (m_entries.size() <= maxSizeWalked) {
+            for (auto& entry : m_entries) {
+                if (entry.tmp == tmp) {
+                    entry.moveCost += moveCost;
+                    return;
+                }
             }
         }
         m_entries.append({ tmp, moveCost });
+    }
+
+    // The costs of one Tmp are added in the order of the calls of add().
+    void mergeDuplicates()
+    {
+        if (m_entries.size() <= maxSizeWalked)
+            return;
+        std::ranges::stable_sort(m_entries, { }, [](const Entry& entry) { return entry.tmp.internalValue(); });
+        size_t size = 0;
+        for (size_t index = 0; index < m_entries.size(); ++index) {
+            Entry entry = m_entries[index];
+            if (size && m_entries[size - 1].tmp == entry.tmp)
+                m_entries[size - 1].moveCost += entry.moveCost;
+            else
+                m_entries[size++] = entry;
+        }
+        m_entries.shrink(size);
     }
 
     void remove(Tmp target)
@@ -2683,8 +2706,11 @@ private:
             m_columnToIndex.append(index);
         }
         BitMatrixLiveness<TmpBoundaryRows> liveness(m_code, BlockFacts { m_blockEnds.span(), m_exposedUses.span(), m_defsInBlocks.span(), m_usesAtTails.span(), m_crossesBoundary.span(), indexToColumn.span(), static_cast<unsigned>(m_columnToIndex.size()) });
+        // A Tmp that counts as live in a gap costs a register there, and no more.
+        liveness.countGapsAsLivePast(m_tailPoints[m_code.size() - 1] / PointOffsets::PointsPerInst * AirLimits::maxBoundaryIndicesPerInst);
         liveness.compute();
         RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+        m_countsGapsAsLive = liveness.hasCountedGapsAsLive();
 
         Vector<Piece> pieceStore;
         unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_occupancy.numberOfClobberPoints() + 16;
@@ -2796,6 +2822,8 @@ private:
             ASSERT(inst.args()[0].isTmp() && inst.args()[1].isTmp());
             addMaybeCoalescable(inst.args()[0].tmp(), inst.args()[1].tmp(), block);
         }
+        for (Tmp tmp : m_tmpsWithCoalescables)
+            m_map[tmp].coalescables.mergeDuplicates();
 
         Point funcEndPoint = m_tailPoints[m_code.size() - 1];
         m_code.pinnedRegisters().forEachReg([&](Reg reg) {
@@ -2933,6 +2961,7 @@ private:
             m_map[tmpForLinearIndex(index)].liveRange = LiveRange(first, nextInterval - first, size);
         }
         m_intervalArena.tryResizeInPlace(allIntervals, numberOfPieces, nextInterval - allIntervals);
+        pruneCoalescablesAtDefsSetAside();
 
         m_columnToIndex.clear();
         m_crossesBoundary.clear();
@@ -2957,6 +2986,8 @@ private:
                 RELEASE_ASSERT(m_map[tmp].liveRange.contains(head));
             }
         }
+        if (m_countsGapsAsLive)
+            return;
         m_code.forEachTmp([&](Tmp tmp) {
             const LiveRange& liveRange = m_map[tmp].liveRange;
             forEachBlockInLiveRange(liveRange, [&](BasicBlock* block) {
@@ -2972,6 +3003,10 @@ private:
         if (defData.coalescables.isEmpty())
             return;
         Tmp movSrc = mayBeCoalescable(inst) ? inst.args()[0].tmp() : Tmp();
+        if (defData.coalescables.size() > Coalescables::maxSizeWalked) {
+            m_defsSetAside.append({ def, movSrc, point });
+            return;
+        }
         defData.coalescables.removeAllMatching([&](Tmp tmp) {
             ASSERT(tmp != def);
             if (tmp == movSrc)
@@ -2985,9 +3020,56 @@ private:
                     return false;
             }
             dataLogLnIf(verbose(), "Pruning affinity ", def, " ", tmp);
-            m_map[tmp].coalescables.remove(def);
+            Coalescables& coalescablesOfTmp = m_map[tmp].coalescables;
+            if (coalescablesOfTmp.size() > Coalescables::maxSizeWalked)
+                m_removalsSetAside.append({ tmp, def });
+            else
+                coalescablesOfTmp.remove(def);
             return true;
         });
+    }
+
+    // A long list is gone through once for all that leave it. It stays long until then, so its Tmp's defs are all set aside.
+    void removeCoalescablesSetAside()
+    {
+        std::ranges::sort(m_removalsSetAside, { }, [](const RemovalSetAside& removal) { return std::pair { removal.from.internalValue(), removal.partner.internalValue() }; });
+        for (std::span<const RemovalSetAside> rest = m_removalsSetAside.span(); !rest.empty();) {
+            Tmp from = rest.front().from;
+            size_t count = std::ranges::find_if(rest, [&](const RemovalSetAside& other) { return other.from != from; }) - rest.begin();
+            std::span<const RemovalSetAside> removals = rest.first(count);
+            rest = rest.subspan(count);
+            m_map[from].coalescables.removeAllMatching([&](Tmp tmp) {
+                return std::ranges::binary_search(removals, tmp.internalValue(), { }, [](const RemovalSetAside& removal) { return removal.partner.internalValue(); });
+            });
+        }
+        m_removalsSetAside.clear();
+    }
+
+    // Each partner looks for a def in its own live range, in place of each def looking at every partner.
+    void pruneCoalescablesAtDefsSetAside()
+    {
+        removeCoalescablesSetAside();
+        std::ranges::sort(m_defsSetAside, { }, [](const DefSetAside& def) { return std::pair { def.tmp.internalValue(), def.point }; });
+        for (std::span<const DefSetAside> rest = m_defsSetAside.span(); !rest.empty();) {
+            Tmp def = rest.front().tmp;
+            size_t count = std::ranges::find_if(rest, [&](const DefSetAside& other) { return other.tmp != def; }) - rest.begin();
+            std::span<const DefSetAside> defs = rest.first(count);
+            rest = rest.subspan(count);
+            m_map[def].coalescables.removeAllMatching([&](Tmp tmp) {
+                for (const Interval& interval : m_map[tmp].liveRange.intervals()) {
+                    for (auto at = std::ranges::lower_bound(defs, interval.begin(), { }, &DefSetAside::point); at != defs.end() && at->point < interval.end(); ++at) {
+                        if (at->movSrc == tmp)
+                            continue;
+                        dataLogLnIf(verbose(), "Pruning affinity ", def, " ", tmp);
+                        m_removalsSetAside.append({ tmp, def });
+                        return true;
+                    }
+                }
+                return false;
+            });
+        }
+        m_defsSetAside.clear();
+        removeCoalescablesSetAside();
     }
 
     Inst& instAtOrdinal(unsigned ordinal)
@@ -6141,6 +6223,17 @@ private:
     Mentions m_mentions;
     Vector<unsigned> m_tmpMoves;
     Vector<Tmp> m_tmpsWithCoalescables;
+    struct DefSetAside {
+        Tmp tmp;
+        Tmp movSrc;
+        Point point;
+    };
+    Vector<DefSetAside> m_defsSetAside;
+    struct RemovalSetAside {
+        Tmp from;
+        Tmp partner;
+    };
+    Vector<RemovalSetAside> m_removalsSetAside;
     Vector<unsigned> m_instsThatNameNeighbors;
     unsigned m_gpIndicesEnd { 0 };
     unsigned m_numberOfLinearIndices { 0 };
@@ -6155,6 +6248,7 @@ private:
     Vector<unsigned> m_usesAtTails;
     Vector<uint8_t> m_crossesBoundary;
     Vector<unsigned> m_columnToIndex;
+    bool m_countsGapsAsLive { false };
     IntervalArena m_intervalArena;
     TmpDataMap m_map;
     Vector<unsigned> m_firstUseDef;

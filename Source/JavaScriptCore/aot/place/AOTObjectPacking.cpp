@@ -145,8 +145,12 @@ struct Area {
     void place(uint32_t offset, unsigned logSize);
     bool canReserve(uint32_t offset, unsigned logSize) const;
     void reserve(uint32_t offset, unsigned logSize);
+    void occupy(uint32_t offset, uint32_t size);
+    // No byte before this offset is free.
+    uint32_t firstOffsetWithRoom() const { return firstWordWithRoom * 64; }
 
     OccupiedBytes occupied;
+    uint32_t firstWordWithRoom { 0 };
     uint32_t limit { 0 };
     WidthCounts unplaced { };
     WidthCounts room { };
@@ -162,6 +166,13 @@ void Area::initialize(uint32_t headerSize, uint32_t sizeLimit)
         for (unsigned logSize = 0; logSize < numberOfWidths; ++logSize)
             room[logSize] += std::popcount(roomIn(bits, logSize));
     }
+}
+
+void Area::occupy(uint32_t offset, uint32_t size)
+{
+    Typed::occupy(occupied, offset, size);
+    while (firstWordWithRoom < occupied.size() && !~occupied[firstWordWithRoom])
+        ++firstWordWithRoom;
 }
 
 void Area::growTo(uint32_t sizeLimit)
@@ -206,7 +217,7 @@ void Area::place(uint32_t offset, unsigned logSize)
     ASSERT(canPlace(offset, logSize));
     room = roomAfterPlacing(offset, logSize);
     --unplaced[logSize];
-    occupy(occupied, offset, 1u << logSize);
+    occupy(offset, 1u << logSize);
 }
 
 bool Area::canReserve(uint32_t offset, unsigned logSize) const
@@ -221,7 +232,7 @@ void Area::reserve(uint32_t offset, unsigned logSize)
 {
     ASSERT(canReserve(offset, logSize));
     room = roomAfterPlacing(offset, logSize);
-    occupy(occupied, offset, 1u << logSize);
+    occupy(offset, 1u << logSize);
 }
 
 Vector<OffsetUse, 8> countOffsetUses(Vector<uint32_t, 8>&& offsets)
@@ -977,7 +988,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
 void ObjectPacker::placeAtFirstFreeOffset(MemberRow member)
 {
     uint32_t width = slotOf(member).width();
-    uint32_t offset = 0;
+    uint32_t offset = areaOf(member).firstOffsetWithRoom();
     while (!canPlace(member, offset)) {
         offset += width;
         RELEASE_ASSERT(offset < areaOf(member).limit);
@@ -988,7 +999,7 @@ void ObjectPacker::placeAtFirstFreeOffset(MemberRow member)
 void ObjectPacker::placeInOneGranule(MemberRow first, MemberRow second)
 {
     const Area& area = areaOf(first);
-    for (uint32_t offset = 0; offset + extensionGranuleSize <= area.limit; offset += extensionGranuleSize) {
+    for (uint32_t offset = area.firstOffsetWithRoom(); offset + extensionGranuleSize <= area.limit; offset += extensionGranuleSize) {
         if (!area.isFree(offset, extensionGranuleSize) || !canPlace(first, offset))
             continue;
         place(first, offset);
@@ -1204,7 +1215,7 @@ std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const Membe
     Vector<uint32_t, 8> limitsDescending;
     for (MemberRow member : rowsByFamily) {
         const Area& area = areas[member.layout.index()];
-        first = std::min(first, findFreeOffset(area.occupied, logSize, 0, area.limit).value_or(UINT32_MAX));
+        first = std::min(first, findFreeOffset(area.occupied, logSize, area.firstOffsetWithRoom(), area.limit).value_or(UINT32_MAX));
         limitsDescending.append(area.limit);
     }
     AOT::sort(limitsDescending, std::ranges::greater { });
@@ -1230,6 +1241,8 @@ void ObjectPacker::placeFamilyInGrownAreas(std::span<const MemberRow> family)
     unsigned logSize = logSizeOf(family[0]);
     uint32_t size = 1u << logSize;
     uint32_t offset = 0;
+    for (MemberRow member : family)
+        offset = std::max(offset, areaOf(member).firstOffsetWithRoom());
     auto isFreeInEveryMember = [&] {
         return std::ranges::all_of(family, [&](MemberRow member) {
             return areaOf(member).isFree(offset, size);
@@ -1401,7 +1414,7 @@ void ObjectPacker::placeRemainingRows(LayoutID id)
             if (!slotOf(member).hasStorage() || logSizeOf(member) != logSize || m_isPlaced[row])
                 continue;
             const Area& area = areaOf(member);
-            auto offset = findFreeOffset(area.occupied, logSize, 0, area.limit);
+            auto offset = findFreeOffset(area.occupied, logSize, area.firstOffsetWithRoom(), area.limit);
             RELEASE_ASSERT(offset);
             place(member, *offset);
         }

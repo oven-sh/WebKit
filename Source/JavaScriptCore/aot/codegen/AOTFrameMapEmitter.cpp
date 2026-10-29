@@ -133,6 +133,24 @@ static std::optional<uint32_t> savedRegistersWord(const B3::Air::Code& code)
 #endif
 }
 
+// The function owns the register, and nothing reads what it holds here. Until the function's first store to it that is what the caller left in it.
+// The suspension would keep that value, and the resumption would put it back into the register.
+bool FrameMapEmitter::savesDeadPreservedRegister(const B3::StackmapGenerationParams& params)
+{
+    if constexpr (SavedFrame::preservedRegister == InvalidGPRReg)
+        return false;
+    else {
+        constexpr Reg reg { SavedFrame::preservedRegister };
+        if (!params.code().calleeSaveRegisters().contains(reg, IgnoreVectors) || params.usedRegisters().contains(reg, IgnoreVectors))
+            return false;
+        for (unsigned i = 0; i < params.size(); ++i) {
+            if (params[i].isGPR() && params[i].gpr() == SavedFrame::preservedRegister)
+                return false;
+        }
+        return true;
+    }
+}
+
 std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, const B3::StackmapGenerationParams& params, const Roots& roots, unsigned promiseChild)
 {
     SavedFrameMapBuilder builder;

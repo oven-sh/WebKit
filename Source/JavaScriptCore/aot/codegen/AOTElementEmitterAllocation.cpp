@@ -358,6 +358,15 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         }
         return newDoubleLiteral(context, numbersOrMarkers.span(), isNumberMask);
     }
+    bool areInt32 = std::ranges::all_of(elements, [&](ValueID element) {
+        return representationOf(element) == Representation::Int32;
+    });
+    if (form.kind == ArrayStorage::Int32 && length && length <= maxArrayElementsInRegisters && areInt32) {
+        Vector<LValue, maxArrayElementsInRegisters> operands;
+        for (ValueID element : elements)
+            operands.append(zeroExtended(get(element).as<Word32>()).value());
+        return CellPointer(callStub(context, arrayLiteralWithInt32(length), operands.span()).first);
+    }
 
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);

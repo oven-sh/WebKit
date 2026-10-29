@@ -25,6 +25,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyAccess.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -896,7 +897,7 @@ struct DeferralAnalysis {
         return callee;
     }
 
-    std::optional<AccessKind> classifyAccess(ValueReference reference) const
+    std::optional<AccessKind> classifyAccess(ValueReference reference, BlockID block) const
     {
         const Value& value = valueAt(reference);
         auto kindIf = [](bool condition, AccessKind kind) {
@@ -915,15 +916,14 @@ struct DeferralAnalysis {
             return kindIf(layoutsWithEnvironmentCandidates.quickGet(value.layout().index()), KeyOrderTest);
         if (value.opcode == Opcode::NewObject)
             return kindIf(layoutsWithCandidates.quickGet(value.layout().index()), Allocation);
-        bool isTestInFrontOfReads = value.opcode == Opcode::IsSlotFilled && !value.accessSite();
-        if (!Value::opcodesWithKey.contains(value.opcode) || isTestInFrontOfReads || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
+        if (!Value::opcodesWithKey.contains(value.opcode) || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
             return std::nullopt;
 
         PropertyKeyID key = value.key();
         if (!key || TypeTable::isProvisional(key) || !keysOfCandidates.quickGet(key.index()) || !reachesCandidate(reference, false))
             return std::nullopt;
         if (value.opcode == Opcode::IsSlotFilled)
-            return PresenceTest;
+            return kindIf(value.accessSite() || (!asksObjectWhereSlotIsEmpty(program.at(reference.function), block, reference.value) && !build.isSabotaged(Sabotage::FieldsStayInSlotsThatDeferClosures)), PresenceTest);
         if (!Value::opcodesWithFieldAccess.contains(value.opcode))
             return NamedAccess;
         return storedOf(value.opcode) ? SlotStore : SlotRead;
@@ -950,7 +950,7 @@ struct DeferralAnalysis {
                 RELEASE_ASSERT_NOT_REACHED();
             };
             forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID block, ValueID id, const Value& value) {
-                std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id });
+                std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id }, block);
                 if (!kind)
                     return;
                 found.append({ { FunctionID(index), id }, *kind });
@@ -2168,9 +2168,12 @@ static bool hasToStayLiteral(FunctionAnalyses& analyses, ValueID literal)
     auto isUnderGuard = [&](const Use& use) {
         switch (use.kind) {
         case Use::Kind::Operand: {
-            // A store of the array into another object may stand under a guard on that object.
+            // A store of the array into another object may stand under a guard on that object. A read finds shared storage as it finds storage of the array's own.
             const Value& user = function.at(use.user);
-            return user.operandKind(use.operandIndex) == OperandKind::Guard || (namesGuard(user) && guardedOf(user.opcode) == use.operandIndex);
+            if (user.operandKind(use.operandIndex) == OperandKind::Guard)
+                return true;
+            constexpr OperandUses usesOfReads { OperandUse::Inspects, OperandUse::ReadsContents };
+            return namesGuard(user) && guardedOf(user.opcode) == use.operandIndex && !user.operandUses(use.operandIndex).containsOnly(usesOfReads);
         }
         case Use::Kind::TerminatorOperand:
             return namesGuard(function.at(use.block).terminator);

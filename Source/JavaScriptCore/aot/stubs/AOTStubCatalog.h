@@ -85,12 +85,15 @@ struct StubPolicy {
     std::array<BitVector, numberOfEnumerators<Typed::Access>> namesWithOwnStubByAccess;
     // For a name with its own stub for reads: the entry of the field table that most layouts have for it, where that is a JSValue in the cell or in the Extension. A guess that the stub tests.
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> expectedFieldTableEntries;
+    // A lookup in the field table tests the forms one after the other. In a program with many optional fields most reads by name that miss the first form find a JSValue in the Extension.
+    bool readsTestOutOfLineValuesSecond { false };
     // [RegExpRecordID::index()], for the literal without the flag g.
     Vector<RegExpLiteralConstants> regExpLiterals;
 };
 
 StubPolicy chooseStubPolicy(const KeyUses&, const IdentifierNumbering&, BuildContext&);
 void addExpectedFieldTableEntries(StubPolicy&, const Typed::Program&, const Typed::SlotPlan&, const IdentifierNumbering&);
+void chooseOrderOfFieldTableForms(StubPolicy&, const Typed::Program&, const Typed::SlotPlan&, const KeyUses&);
 void addRegExpLiterals(StubPolicy&, const RegExpRequests&, bool legacyStaticsMayBeRead, BuildContext&);
 
 struct StubSummary {

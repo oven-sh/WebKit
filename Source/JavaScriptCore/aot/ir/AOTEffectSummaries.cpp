@@ -297,6 +297,16 @@ EffectsOnEdges FunctionSummaryView::onCall() const
     return { m_masks->expand(m_effects->normalOnCall), m_masks->expand(m_effects->handlerOnCall) };
 }
 
+void FunctionSummaryView::mergeOnCallInto(EffectsOnEdges& effects) const
+{
+    if (m_summary) {
+        effects.merge(m_summary->onCall());
+        return;
+    }
+    m_masks->mergeInto(effects.normal, m_effects->normalOnCall);
+    m_masks->mergeInto(effects.handler, m_effects->handlerOnCall);
+}
+
 FunctionSummary FunctionSummaryView::expanded() const
 {
     if (m_summary)
@@ -313,6 +323,57 @@ static StoredFunctionEffects compress(InternedLocationMasks& masks, const Functi
     StoredFunctionEffects effects { masks.compress(summary.elsewhere.normal), masks.compress(summary.elsewhere.handler), masks.compress(summary.throughParameters), { }, { } };
     effects.computeEffectsOnCall(masks);
     return effects;
+}
+
+uint64_t AnswersForCalleeLists::hashOf(std::span<const FunctionID> callees)
+{
+    constexpr size_t numberOfSamples = 16;
+    uint64_t hash = callees.size();
+    size_t step = std::max<size_t>(callees.size() / numberOfSamples, 1);
+    for (size_t index = 0; index < callees.size(); index += step)
+        hash = (std::rotl(hash, 5) ^ callees[index].index()) * 0x9e3779b97f4a7c15ull;
+    hash = (std::rotl(hash, 5) ^ callees.back().index()) * 0x9e3779b97f4a7c15ull;
+    // Neither the empty nor the deleted key of the table.
+    return (hash >> 1) | 1;
+}
+
+AnswersForCalleeLists::List* AnswersForCalleeLists::find(uint64_t hash, std::span<const FunctionID> callees)
+{
+    Vector<List*, 4> candidates;
+    {
+        Locker locker { m_lock };
+        if (auto found = m_lists.find(hash); found != m_lists.end()) {
+            for (const std::unique_ptr<List>& list : found->value)
+                candidates.append(list.get());
+        }
+    }
+    for (List* list : candidates) {
+        if (equalSpans(list->callees.span(), callees))
+            return list;
+    }
+    return nullptr;
+}
+
+AnswersForCalleeLists::List& AnswersForCalleeLists::findOrAdd(uint64_t hash, std::span<const FunctionID> callees)
+{
+    ListsWithOneHash& lists = m_lists.add(hash, ListsWithOneHash { }).iterator->value;
+    for (const std::unique_ptr<List>& list : lists) {
+        if (equalSpans(list->callees.span(), callees))
+            return *list;
+    }
+    lists.append(makeUnique<List>());
+    lists.last()->callees = Vector<FunctionID>(callees);
+    m_isEmpty.store(false, std::memory_order_relaxed);
+    return *lists.last();
+}
+
+void AnswersForCalleeLists::clear()
+{
+    if (m_isEmpty.load(std::memory_order_relaxed))
+        return;
+    Locker locker { m_lock };
+    m_lists.clear();
+    m_isEmpty.store(true, std::memory_order_relaxed);
 }
 
 EffectSummaries::EffectSummaries(Ref<InternedLocationMasks>&& masks, Contents contents)
@@ -355,6 +416,7 @@ void EffectSummaries::store(std::span<const FunctionSummary> summaries)
 
 void EffectSummaries::clear()
 {
+    forgetAnswersForCalleeLists();
     m_effects.clear();
     m_parameterRanges.clear();
     m_parameters.clear();
@@ -366,6 +428,7 @@ void EffectSummaries::grow(unsigned size, const ParallelLoops* loops)
     RELEASE_ASSERT(size >= m_parameterRanges.size());
     if (size == m_parameterRanges.size())
         return;
+    forgetAnswersForCalleeLists();
     if (loops) {
         if (m_contents == Contents::Any)
             reserveCapacityInParallel(*loops, m_effects, size);
@@ -515,6 +578,8 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
 CalleeSummary::CalleeSummary(const EffectContext& context, FunctionID id)
     : m_computed(context.summaries.of(id))
 {
+    if (context.summaries.contains(id)) [[likely]]
+        return;
     // A callee version is the body of its source with the same parameters, given fewer values.
     while (id && !context.summaries.contains(id) && context.program.at(id).role == FunctionRole::CalleeVersion) {
         id = context.program.at(id).derivation.source;
@@ -664,15 +729,25 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     return summaries;
 }
 
-EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build)
+static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies)
 {
     BodySummaries nothingKept;
     EffectSummaries summaries;
     EffectSummarizer summarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found);
     summarizer.setIsOnlyCheck();
     summarizer.readCalleesByOperandTypes();
+    if (rowsOfBodies)
+        summarizer.takeRowsOfBodiesFrom(*rowsOfBodies);
     summarizer.update(summaries);
     return summaries;
+}
+
+EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build)
+{
+    // The seed says nothing of a function that was made after flow analysis, and a call of one may stand where operations of the caller's own body stood.
+    // So a body that hands a parameter on to it seems to use the parameter in every way. The second reading knows what the first found in that function's body.
+    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr);
+    return computeEffectSummariesByOperandTypes(program, flow, build, &first);
 }
 
 void updateEffectSummaries(const Program& program, const FlowResults& flow, BuildContext& build, BodySummaries& kept, EffectSummaries& summaries, BodyReferences* references)
@@ -806,6 +881,15 @@ FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, Funct
         changed = false;
         for (const SummaryDependency& dependency : ownDependencies)
             changed |= mergeInto(body, dependency.target, valueOf(body, dependency.source));
+    }
+
+    // Only values of an environment type point to environments. A parameter that may be read back from memory is charged with every write in the body, including writes to the body's own environments.
+    const Function& function = analyses.function();
+    for (uint32_t index = 0; index < body.parameters.size(); ++index) {
+        if (context.program.typeOf(function, function.at(entryBlock).parameters[index]).environment)
+            continue;
+        body.parameters[index].memory.reads.remove(AbstractHeapSet { AbstractHeap::EnvironmentFields });
+        body.parameters[index].memory.writes.remove(AbstractHeapSet { AbstractHeap::EnvironmentFields });
     }
 
     return createFunctionSummary(body.onReturn, body.onThrow, WTF::move(body.parameters), body.unknownCodeWitness);

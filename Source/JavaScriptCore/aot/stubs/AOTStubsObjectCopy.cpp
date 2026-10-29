@@ -17,6 +17,8 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsField.h"
+#include "AOTStubsPropertyExtraProperties.h"
 #include "CompleteSubspace.h"
 #include "JSCell.h"
 #include "JSObject.h"
@@ -246,12 +248,47 @@ struct ChunkCopy {
     GPRReg orderWord;
 };
 
-// Between records of one Structure that hold their fields in plain slots of the cell. It falls through where the copy is made.
-static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation)
+// copy.structure holds the layout and copy.orderWord the order word of the source.
+static void copyFieldWords(StubAssembler& jit, const ChunkCopy& copy)
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
     const GPRReg layout = structure;
     const GPRReg fieldBytes = structure;
+    constexpr int32_t wordSize = sizeof(uint64_t);
+    constexpr int32_t chunkSize = 2 * wordSize;
+    static_assert(offsetOfFirstField == chunkSize);
+    const GPRReg secondWord = excludedRun;
+    jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, size)), fieldBytes);
+    jit.add32(TrustedImm32(wordSize - 1 - offsetOfFirstField), fieldBytes);
+    jit.and32(TrustedImm32(~(wordSize - 1)), fieldBytes);
+    Jump hasWholeChunks = jit.branchTest32(CCallHelpers::Zero, fieldBytes, TrustedImm32(wordSize));
+    jit.load64(BaseIndex(source, fieldBytes, CCallHelpers::TimesOne, offsetOfFirstField - wordSize), word);
+    jit.store64(word, BaseIndex(target, fieldBytes, CCallHelpers::TimesOne, offsetOfFirstField - wordSize));
+    jit.sub32(TrustedImm32(wordSize), fieldBytes);
+    hasWholeChunks.link(&jit);
+    Jump isCopied = jit.branchTest32(CCallHelpers::Zero, fieldBytes);
+    Label copyNextChunk = jit.label();
+    copyChunk(jit, source, target, fieldBytes, word, secondWord);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(chunkSize), fieldBytes).linkTo(copyNextChunk, &jit);
+    isCopied.link(&jit);
+    jit.and32(TrustedImm32(orderAndCountMask), orderWord);
+    jit.store32(orderWord, Address(target, offsetOfOrderWord));
+}
+
+static uint32_t firstWordOfLayoutWith(bool hasExtensionData)
+{
+    LayoutData bits { };
+    bits.kindBits = static_cast<uint32_t>(LayoutKind::Record);
+    bits.hasExtensionData = hasExtensionData;
+    return bits.firstWord();
+}
+
+// Between records of one Structure that hold their fields in plain slots. It falls through where the copy is made.
+// It leaves by hasOtherLayout with the tested bits of the layout in copy.word and the layout in copy.structure: copyByChunksWithExtension() goes on from there.
+static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation, JumpList& hasOtherLayout)
+{
+    const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
+    const GPRReg layout = structure;
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(target, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType)));
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
@@ -275,33 +312,70 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
     testedBits.kindBits = (1 << 4) - 1;
     testedBits.keysAreNeverEnumerated = true;
     testedBits.hasExtensionData = true;
-    LayoutData expectedBits { };
-    expectedBits.kindBits = static_cast<uint32_t>(LayoutKind::Record);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), layout);
     jit.load32(Address(layout), word);
     jit.and32(TrustedImm32(static_cast<int32_t>(testedBits.firstWord())), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord()))));
+    hasOtherLayout.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(firstWordOfLayoutWith(false)))));
+    callsOperation.append(branchIfBarrierIsNeeded(jit, target, word));
+    copyFieldWords(jit, copy);
+}
+
+// The same where fields lie in an Extension: the copy gets one of its own. It writes copy.excludedRun and copy.count, which are zero. Where it leaves, they are zero again and nothing is allocated.
+static void copyByChunksWithExtension(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation)
+{
+    const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
+    const GPRReg from = word;
+    const GPRReg units = excludedRun;
+    const GPRReg made = count;
+    const GPRReg allocator = orderWord;
+    const GPRReg scratch = structure;
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(firstWordOfLayoutWith(true)))));
+    if (!traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference) {
+        callsOperation.append(jit.jump());
+        return;
+    }
     callsOperation.append(branchIfBarrierIsNeeded(jit, target, word));
 
-    constexpr int32_t wordSize = sizeof(uint64_t);
-    constexpr int32_t chunkSize = 2 * wordSize;
-    static_assert(offsetOfFirstField == chunkSize);
-    const GPRReg secondWord = excludedRun;
-    jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, size)), fieldBytes);
-    jit.add32(TrustedImm32(wordSize - 1 - offsetOfFirstField), fieldBytes);
-    jit.and32(TrustedImm32(~(wordSize - 1)), fieldBytes);
-    Jump hasWholeChunks = jit.branchTest32(CCallHelpers::Zero, fieldBytes, TrustedImm32(wordSize));
-    jit.load64(BaseIndex(source, fieldBytes, CCallHelpers::TimesOne, offsetOfFirstField - wordSize), word);
-    jit.store64(word, BaseIndex(target, fieldBytes, CCallHelpers::TimesOne, offsetOfFirstField - wordSize));
-    jit.sub32(TrustedImm32(wordSize), fieldBytes);
-    hasWholeChunks.link(&jit);
-    Jump isCopied = jit.branchTest32(CCallHelpers::Zero, fieldBytes);
+    // The Extension is made first: behind it nothing is left to the operation.
+    loadExtensionWordOffset(jit, source, from);
+    jit.load32(BaseIndex(source, from, CCallHelpers::TimesOne), from);
+    Jump hasNone = jit.branchTest32(CCallHelpers::Zero, from);
+    decodeCell32(jit, from, from);
+    jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), from);
+    JumpList givesUp;
+    jit.load64(Address(from, offsetOfExtensionGranuleBits), allocator);
+    jit.countPopulation64(allocator, scratch, CCallHelpers::fpTempRegister);
+    givesUp.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionFromStub)));
+    loadUnitsOfExtensionWith(jit, allocator, units, scratch);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, units, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    givesUp.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, made, allocator, scratch, givesUp);
+    // What lies behind the granules of the source is zero.
+    static_assert(minExtensionSize == 2 * sizeof(uint64_t));
+    jit.lshift32(TrustedImm32(4), units);
     Label copyNextChunk = jit.label();
-    copyChunk(jit, source, target, fieldBytes, word, secondWord);
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(chunkSize), fieldBytes).linkTo(copyNextChunk, &jit);
+    jit.sub32(TrustedImm32(minExtensionSize), units);
+    copyChunk(jit, from, made, units, allocator, scratch);
+    jit.branchTest32(CCallHelpers::NonZero, units).linkTo(copyNextChunk, &jit);
+    fenceAfterAllocation(jit);
+    encodeCell32(jit, made, made);
+    jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), made);
+    hasNone.link(&jit);
+
+    loadStructure(jit, target, structure);
+    jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), structure);
+    jit.load32(Address(source, offsetOfOrderWord), orderWord);
+    copyFieldWords(jit, copy);
+    loadExtensionWordOffset(jit, target, word);
+    jit.store32(made, BaseIndex(target, word, CCallHelpers::TimesOne));
+    Jump isCopied = jit.jump();
+
+    givesUp.link(&jit);
+    jit.move(TrustedImm32(0), units);
+    jit.move(TrustedImm32(0), made);
+    callsOperation.append(jit.jump());
     isCopied.link(&jit);
-    jit.and32(TrustedImm32(orderAndCountMask), orderWord);
-    jit.store32(orderWord, Address(target, offsetOfOrderWord));
 }
 
 PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
@@ -344,10 +418,24 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
         jit.preserving(saved.span(), [&] {
             allocateScratches();
             JumpList isLeftToOperation;
+            JumpList hasOtherLayout;
+            JumpList isCopied;
+            const ChunkCopy copy { target, source, excludedRun, count, structure, word, orderWord };
             jit.move(immediate, structure);
-            copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, isLeftToOperation);
+            copyByChunks(jit, copy, isLeftToOperation, hasOtherLayout);
             jit.move(TrustedImm32(0), immediate);
-            Jump isCopied = jit.jump();
+            isCopied.append(jit.jump());
+            hasOtherLayout.link(&jit);
+            jit.preserving({ excludedRun, count }, [&] {
+                JumpList isNotCopied;
+                copyByChunksWithExtension(jit, copy, isNotCopied);
+                jit.move(TrustedImm32(0), immediate);
+                Jump isDecided = jit.jump();
+                isNotCopied.link(&jit);
+                jit.move(TrustedImm32(1), immediate);
+                isDecided.link(&jit);
+            });
+            isCopied.append(jit.jump());
             isLeftToOperation.link(&jit);
             jit.move(TrustedImm32(1), immediate);
             isCopied.link(&jit);
@@ -400,7 +488,13 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
     jit.load32(Address(target, JSCell::structureIDOffset()), structure);
     Jump structuresDiffer = jit.branch32(CCallHelpers::NotEqual, structure, Address(source, JSCell::structureIDOffset()));
     JumpList isNotCopiedByChunks;
-    copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, isNotCopiedByChunks);
+    JumpList hasOtherLayout;
+    const ChunkCopy copy { target, source, excludedRun, count, structure, word, orderWord };
+    copyByChunks(jit, copy, isNotCopiedByChunks, hasOtherLayout);
+    jit.returnToCaller();
+
+    hasOtherLayout.link(&jit);
+    copyByChunksWithExtension(jit, copy, isNotCopiedByChunks);
     jit.returnToCaller();
 
     isNotCopiedByChunks.link(&jit);
@@ -440,7 +534,7 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     constexpr int32_t chunkSize = 2 * wordSize;
     static_assert(offsetOfFirstField == chunkSize && JSFinalObject::offsetOfInlineStorage() == chunkSize && MarkedSpace::sizeStep == chunkSize);
     static_assert(JSCell::cellStateOffset() == wordSize - 1 && !JSCell::structureIDOffset() && std::endian::native == std::endian::little);
-    auto allocateAndCopy = [&](bool isRecord) {
+    auto allocateAndCopy = [&](bool isRecord, const Invocable<void()> auto& finish) {
         callsOperationWithoutExclusions.append(jit.branch32(CCallHelpers::Above, size, TrustedImm32(MarkedSpace::largeCutoff)));
         jit.add32(TrustedImm32(chunkSize - 1), size);
         jit.urshift32(size, TrustedImm32(4), word);
@@ -461,9 +555,68 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
         if (isRecord)
             jit.store32(shapeWord, Address(copy, offsetOfShapeWord));
         jit.store64(header, Address(copy));
+        finish();
         fenceAfterAllocation(jit);
         jit.move(TrustedImm32(0), jit.secondResult());
         jit.returnToCaller();
+    };
+    auto finishNothing = [] { };
+    const GPRReg kept = jit.clobberOperand(3);
+    const GPRReg secondScratchOfChunk = isARM64() ? jit.allocateScratch(StubRegister::T10) : InvalidGPRReg;
+    RELEASE_ASSERT(noOverlap(kept, source, excludedRun, count, copy, word, size, structure, instanceGPR) && (secondScratchOfChunk == InvalidGPRReg || noOverlap(secondScratchOfChunk, kept, source, excludedRun, count, copy, word, size, structure)));
+    // Leaves in kept the butterfly of a copy of the storage that the object has outside its cell, or zero. word holds the Structure of the object, which has no elements. It writes count, size, structure and copy.
+    auto copyStorageOutsideCell = [&](GPRReg object) {
+        const GPRReg named = word;
+        const GPRReg storage = count;
+        const GPRReg scratch = structure;
+        JumpList& cannot = callsOperationWithoutExclusions;
+        // The storage is as long as Structure::outOfLineCapacity() says. A butterfly without elements points one word behind it.
+        constexpr int32_t maxCapacityCopied = 4 * initialOutOfLineCapacity;
+        static_assert(outOfLineGrowthFactor == 2 && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*) && sizeof(IndexingHeader) == sizeof(EncodedJSValue));
+        // A Structure without properties, or with more than the half word counts, holds one of the two greatest numbers there.
+        static_assert(Structure::greatestMaxOffsetOutsideRareData >= firstOutOfLineOffset + maxCapacityCopied && !(initialOutOfLineCapacity % 2));
+        jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
+        jit.load16(Address(named, Structure::maxOffsetOffset()), size);
+        jit.move(TrustedImm32(0), kept);
+        Jump hasStorage = jit.branch32(CCallHelpers::AboveOrEqual, size, TrustedImm32(firstOutOfLineOffset));
+        cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, storage));
+        Jump hasNoStorage = jit.jump();
+        hasStorage.link(&jit);
+        cannot.append(jit.branch32(CCallHelpers::AboveOrEqual, size, TrustedImm32(firstOutOfLineOffset + maxCapacityCopied)));
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, storage));
+        jit.sub32(TrustedImm32(firstOutOfLineOffset), size);
+        jit.move(TrustedImm32(initialOutOfLineCapacity * sizeof(EncodedJSValue)), kept);
+        JumpList hasBytes;
+        hasBytes.append(jit.branch32(CCallHelpers::Below, size, TrustedImm32(initialOutOfLineCapacity)));
+        jit.lshift32(TrustedImm32(1), kept);
+        hasBytes.append(jit.branch32(CCallHelpers::Below, size, TrustedImm32(2 * initialOutOfLineCapacity)));
+        jit.lshift32(TrustedImm32(1), kept);
+        hasBytes.link(&jit);
+        jit.move(kept, size);
+        jit.urshift32(TrustedImm32(1), kept);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), scratch);
+        jit.loadPtr(BaseIndex(scratch, kept, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), scratch);
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+        allocateCell(jit, copy, scratch, kept, cannot);
+        jit.subPtr(size, storage);
+        jit.subPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+        jit.getEffectiveAddress(BaseIndex(copy, size, CCallHelpers::TimesOne, sizeof(IndexingHeader)), kept);
+        Label copyNextChunk = jit.label();
+        jit.sub32(TrustedImm32(chunkSize), size);
+        copyChunk(jit, storage, copy, size, scratch, secondScratchOfChunk);
+        jit.branchTest32(CCallHelpers::NonZero, size).linkTo(copyNextChunk, &jit);
+        hasNoStorage.link(&jit);
+    };
+    // size holds the layout.
+    auto loadWordsOfRecord = [&] {
+        jit.load32(Address(size, OBJECT_OFFSETOF(LayoutData, shape)), shapeWord);
+        jit.neg32(shapeWord);
+        jit.load32(Address(size, OBJECT_OFFSETOF(LayoutData, size)), size);
+        jit.load64(Address(source), header);
+        jit.lshift64(TrustedImm32(8), header);
+        jit.urshift64(TrustedImm32(8), header);
+        jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(CellState::DefinitelyWhite) << 56)), word);
+        jit.or64(word, header);
     };
 
     callsOperation.append(jit.branchIfNotCell(source));
@@ -472,7 +625,7 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
 
     jit.load32(Address(source, offsetOfOrderWord), word);
-    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, word, TrustedImm32(~orderAndCountMask)));
+    Jump hasOtherBits = jit.branchTest32(CCallHelpers::NonZero, word, TrustedImm32(~orderAndCountMask));
     jit.and32(TrustedImm32(orderWordOrderMask), word);
     callsOperation.append(jit.branch32(CCallHelpers::Equal, word, TrustedImm32(orderStoredOutOfLine)));
     loadStructure(jit, source, structure);
@@ -481,57 +634,211 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     jit.load8(Address(structure, CompiledStructure::offsetOfFlags()), word);
     jit.and32(TrustedImm32(expectedFlags | flagsOfOtherStorage), word);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(expectedFlags)));
-    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-    jit.loadPtr(Address(structure, Structure::realmOffset()), word);
-    callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
 
+    // An instance of a class leaves here.
     LayoutData testedBits { };
     testedBits.kindBits = (1 << 4) - 1;
     testedBits.keysAreNeverEnumerated = true;
     testedBits.hasExtensionData = true;
     LayoutData expectedBits { };
     expectedBits.kindBits = static_cast<uint32_t>(LayoutKind::Record);
-    jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), layout);
-    jit.load32(Address(layout), word);
+    jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), size);
+    jit.load32(Address(size), word);
     jit.and32(TrustedImm32(static_cast<int32_t>(testedBits.firstWord())), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord()))));
+    Jump hasOtherLayout = jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord())));
+    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    jit.loadPtr(Address(structure, Structure::realmOffset()), word);
+    callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
 
-    jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, shape)), shapeWord);
-    jit.neg32(shapeWord);
-    jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, size)), size);
-    jit.load64(Address(source), header);
-    jit.lshift64(TrustedImm32(8), header);
-    jit.urshift64(TrustedImm32(8), header);
-    jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(CellState::DefinitelyWhite) << 56)), word);
-    jit.or64(word, header);
-    allocateAndCopy(true);
+    loadWordsOfRecord();
+    allocateAndCopy(true, finishNothing);
 
     isNotCompiledObject.link(&jit);
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
-    callsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset())));
+    Jump hasButterfly = jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset()));
     // What tryCreateObjectViaCloning() asks of a Structure before it gives the copy the same one.
     constexpr uint32_t bitsThatForbid = Structure::s_dictionaryKindBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits
         | Structure::s_hasNonEnumerablePropertiesBits | Structure::s_anyImmutablePropertiesBits | Structure::s_mayBePrototypeBits | Structure::s_didPreventExtensionsBits | Structure::s_hasBeenFlattenedBeforeBits
         | Structure::s_hasBeenDictionaryBits | Structure::s_hasUnderscoreProtoPropertyExcludingOriginalProtoBits | Structure::s_hasNonConfigurablePropertiesBits;
     constexpr uint32_t bitsThatAreNeeded = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_didTransitionBits;
     static_assert(!TypeInfoBlob::indexingModeIncludingHistoryOffset() && sizeof(TypeInfoBlob) == sizeof(uint32_t) && JSCell::indexingTypeAndMiscOffset() == sizeof(uint32_t));
+    auto testStructureOfOrdinaryObject = [&] {
+        loadStructure(jit, source, structure);
+        jit.load32(Address(structure, Structure::bitFieldOffset()), word);
+        jit.and32(TrustedImm32(static_cast<int32_t>(bitsThatForbid | bitsThatAreNeeded)), word);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
+        callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(structure, Structure::variantOffset()), TrustedImm32(static_cast<int32_t>(Structure::StructureVariant::Normal))));
+        jit.loadPtr(Address(structure, Structure::realmOffset()), word);
+        callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+        jit.load64(Address(structure, Structure::prototypeOffset()), word);
+        callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
+    };
+    auto loadWordsOfOrdinaryObject = [&] {
+        jit.load8(Address(structure, Structure::inlineCapacityOffset()), size);
+        jit.lshift32(TrustedImm32(3), size);
+        jit.add32(TrustedImm32(static_cast<int32_t>(JSFinalObject::allocationSize(0))), size);
+        jit.load32(Address(structure, Structure::indexingModeIncludingHistoryOffset()), header);
+        jit.lshift64(TrustedImm32(32), header);
+        jit.load32(Address(source, JSCell::structureIDOffset()), word);
+        jit.or64(word, header);
+    };
+    testStructureOfOrdinaryObject();
+    loadWordsOfOrdinaryObject();
+    allocateAndCopy(false, finishNothing);
+
+    // An ordinary object with more properties than its cell holds.
+    hasButterfly.link(&jit);
+    testStructureOfOrdinaryObject();
+    callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(source, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    jit.move(structure, word);
+    copyStorageOutsideCell(source);
     loadStructure(jit, source, structure);
-    jit.load32(Address(structure, Structure::bitFieldOffset()), word);
-    jit.and32(TrustedImm32(static_cast<int32_t>(bitsThatForbid | bitsThatAreNeeded)), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
-    callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(structure, Structure::variantOffset()), TrustedImm32(static_cast<int32_t>(Structure::StructureVariant::Normal))));
-    jit.loadPtr(Address(structure, Structure::realmOffset()), word);
-    callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
-    jit.load64(Address(structure, Structure::prototypeOffset()), word);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
-    jit.load8(Address(structure, Structure::inlineCapacityOffset()), size);
-    jit.lshift32(TrustedImm32(3), size);
-    jit.add32(TrustedImm32(static_cast<int32_t>(JSFinalObject::allocationSize(0))), size);
-    jit.load32(Address(structure, Structure::indexingModeIncludingHistoryOffset()), header);
-    jit.lshift64(TrustedImm32(32), header);
-    jit.load32(Address(source, JSCell::structureIDOffset()), word);
-    jit.or64(word, header);
-    allocateAndCopy(false);
+    loadWordsOfOrdinaryObject();
+    allocateAndCopy(false, [&] {
+        jit.storePtr(kept, Address(copy, JSObject::butterflyOffset()));
+    });
+
+    // A record that holds fields in an Extension, or extra properties in an object of their own. The copy has the Structure and the words of the source and a copy of each of the two.
+    // A cell is whole before the next allocation can fail: the collector may find what is left behind.
+    hasOtherLayout.link(&jit);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(firstWordOfLayoutWith(true)))));
+    hasOtherBits.link(&jit);
+    {
+        const bool isNarrow = !jit.options().useWideReferences;
+        const GPRReg extraProperties = excludedRun;
+        const GPRReg storage = count;
+        const GPRReg named = word;
+        // kept holds the butterfly of the copy, then the two hidden words of the copy: that of the extra properties in the low half, that of the Extension in the high half.
+        const GPRReg scratch = structure;
+        JumpList& cannot = callsOperationWithoutExclusions;
+        jit.load32(Address(source, offsetOfOrderWord), word);
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, word, TrustedImm32(~(orderAndCountMask | orderWordHasExtraProperties))));
+        jit.and32(TrustedImm32(orderWordOrderMask), word);
+        callsOperation.append(jit.branch32(CCallHelpers::Equal, word, TrustedImm32(orderStoredOutOfLine)));
+        loadStructure(jit, source, structure);
+        constexpr uint8_t isCopiedByWords = static_cast<uint8_t>(CompiledStructure::Flag::IsCopiedByWords);
+        constexpr uint8_t hasExtraProperties = static_cast<uint8_t>(CompiledStructure::Flag::HasExtraProperties);
+        constexpr uint8_t hasOnlyFieldsBelowObjectPrototype = static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype);
+        constexpr uint8_t otherFlags = static_cast<uint8_t>(CompiledStructure::Flag::HasOutOfLineKeyOrder) | static_cast<uint8_t>(CompiledStructure::Flag::HasOtherPrototype);
+        jit.load8(Address(structure, CompiledStructure::offsetOfFlags()), word);
+        callsOperation.append(jit.branchTest32(CCallHelpers::Zero, word, TrustedImm32(hasExtraProperties | hasOnlyFieldsBelowObjectPrototype)));
+        jit.and32(TrustedImm32(isCopiedByWords | otherFlags), word);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(isCopiedByWords)));
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+        jit.loadPtr(Address(structure, Structure::realmOffset()), word);
+        callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+        LayoutData bitsOfAnyRecord = testedBits;
+        bitsOfAnyRecord.hasExtensionData = false;
+        jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), word);
+        jit.load32(Address(word), word);
+        jit.and32(TrustedImm32(static_cast<int32_t>(bitsOfAnyRecord.firstWord())), word);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord()))));
+        jit.move(TrustedImm32(0), kept);
+        Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, Address(source, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties));
+        jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), word);
+        jit.and32(TrustedImm32(SlotData::maxOffset), word);
+        callsOperation.append(jit.branchTest32(CCallHelpers::Zero, word));
+
+        // From here on excludedRun and count, which are zero, hold other things.
+        loadExtraProperties(jit, source, word, extraProperties, cannot);
+        jit.load32(Address(extraProperties, JSCell::structureIDOffset()), named);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, named, Address(structure, CompiledStructure::offsetOfExtraPropertiesStructureID())));
+        decodeStructureID(jit, named);
+        jit.load32(Address(named, Structure::bitFieldOffset()), scratch);
+        jit.and32(TrustedImm32(static_cast<int32_t>(bitsThatForbid | bitsThatAreNeeded)), scratch);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
+        cannot.append(jit.branch8(CCallHelpers::NotEqual, Address(named, Structure::variantOffset()), TrustedImm32(static_cast<int32_t>(Structure::StructureVariant::Normal))));
+        cannot.append(jit.branchTest8(CCallHelpers::NonZero, Address(extraProperties, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+
+        copyStorageOutsideCell(extraProperties);
+
+        loadStructure(jit, source, scratch);
+        jit.load16(Address(scratch, CompiledStructure::offsetOfExtraPropertiesCellSize()), size);
+        jit.urshift32(size, TrustedImm32(1), storage);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), scratch);
+        jit.loadPtr(BaseIndex(scratch, storage, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), scratch);
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+        allocateCell(jit, copy, scratch, storage, cannot);
+        Jump hasNoInlineStorage = jit.branch32(CCallHelpers::BelowOrEqual, size, TrustedImm32(chunkSize));
+        Label copyNextChunkOfCell = jit.label();
+        jit.sub32(TrustedImm32(chunkSize), size);
+        copyChunk(jit, extraProperties, copy, size, scratch, storage);
+        jit.branch32(CCallHelpers::Above, size, TrustedImm32(chunkSize)).linkTo(copyNextChunkOfCell, &jit);
+        hasNoInlineStorage.link(&jit);
+        jit.load32(Address(named, Structure::indexingModeIncludingHistoryOffset()), scratch);
+        jit.lshift64(TrustedImm32(32), scratch);
+        jit.load32(Address(extraProperties, JSCell::structureIDOffset()), storage);
+        jit.or64(storage, scratch);
+        jit.storePtr(kept, Address(copy, JSObject::butterflyOffset()));
+        jit.store64(scratch, Address(copy));
+        if (isNarrow) {
+            encodeCell32(jit, copy, kept);
+            jit.zeroExtend32ToWord(kept, kept);
+        } else
+            jit.move(copy, kept);
+        hasNoExtraProperties.link(&jit);
+
+        {
+            const GPRReg from = word;
+            const GPRReg units = size;
+            const GPRReg allocator = excludedRun;
+            loadExtensionWordOffset(jit, source, from);
+            Jump hasNoSlot = jit.branchTest32(CCallHelpers::Zero, from);
+            if (!isNarrow)
+                cannot.append(jit.branchTest64(CCallHelpers::NonZero, BaseIndex(source, from, CCallHelpers::TimesOne)));
+            else {
+                jit.load32(BaseIndex(source, from, CCallHelpers::TimesOne), from);
+                Jump hasNone = jit.branchTest32(CCallHelpers::Zero, from);
+                decodeCell32(jit, from, from);
+                jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), from);
+                jit.load64(Address(from, offsetOfExtensionGranuleBits), allocator);
+                jit.countPopulation64(allocator, scratch, CCallHelpers::fpTempRegister);
+                cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionFromStub)));
+                loadUnitsOfExtensionWith(jit, allocator, units, scratch);
+                jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
+                jit.loadPtr(BaseIndex(allocator, units, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+                cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+                allocateCell(jit, copy, allocator, scratch, cannot);
+                // What lies behind the granules of the source is zero.
+                static_assert(minExtensionSize == chunkSize);
+                jit.lshift32(TrustedImm32(4), units);
+                Label copyNextChunkOfExtension = jit.label();
+                jit.sub32(TrustedImm32(chunkSize), units);
+                copyChunk(jit, from, copy, units, allocator, scratch);
+                jit.branchTest32(CCallHelpers::NonZero, units).linkTo(copyNextChunkOfExtension, &jit);
+                encodeCell32(jit, copy, copy);
+                jit.sub32(TrustedImm32(offsetOfEmptyExtensionInCage >> cell32Shift), copy);
+                jit.lshift64(TrustedImm32(32), copy);
+                jit.or64(copy, kept);
+                hasNone.link(&jit);
+            }
+            hasNoSlot.link(&jit);
+        }
+
+        loadStructure(jit, source, structure);
+        jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), size);
+        loadWordsOfRecord();
+        allocateAndCopy(true, [&] {
+            loadStructure(jit, source, word);
+            jit.load32(Address(word, CompiledStructure::offsetOfExtraPropertiesSlot()), size);
+            jit.and32(TrustedImm32(SlotData::maxOffset), size);
+            if (!isNarrow) {
+                Jump hasNone = jit.branchTest64(CCallHelpers::Zero, kept);
+                jit.store64(kept, BaseIndex(copy, size, CCallHelpers::TimesOne));
+                hasNone.link(&jit);
+                return;
+            }
+            Jump hasNone = jit.branchTest32(CCallHelpers::Zero, kept);
+            jit.store32(kept, BaseIndex(copy, size, CCallHelpers::TimesOne));
+            hasNone.link(&jit);
+            jit.urshift64(TrustedImm32(32), kept);
+            Jump hasNoExtension = jit.branchTest32(CCallHelpers::Zero, kept);
+            jit.load32(Address(word, CompiledStructure::offsetOfExtensionSlot()), size);
+            jit.and32(TrustedImm32(SlotData::maxOffset), size);
+            jit.store32(kept, BaseIndex(copy, size, CCallHelpers::TimesOne));
+            hasNoExtension.link(&jit);
+        });
+    }
 
     callsOperationWithoutExclusions.link(&jit);
     jit.move(TrustedImm32(0), excludedRun);

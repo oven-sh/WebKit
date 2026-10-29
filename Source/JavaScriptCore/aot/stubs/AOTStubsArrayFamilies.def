@@ -6,6 +6,7 @@
 // AOTStubsArrayLiterals.cpp
 v(ArrayLiteral, CalledByCode, (), CountAxis, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteral)
 v(FrameArrayLiteral, CalledByCode, (), CountAxis, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), FrameArrayLiteral)
+v(ArrayLiteralWithInt32, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithInt32)
 v(ArrayLiteralWithDouble, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDouble)
 v(ArrayLiteralWithDoubleSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDoubleSlow)
 v(ArrayOfData, CalledByCode, (Int32, Double, Values, SharedValues), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayOfData)

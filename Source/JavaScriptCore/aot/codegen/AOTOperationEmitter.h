@@ -136,6 +136,11 @@ protected:
 
     void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 
+    // The code that follows acts on something about the cell that it does not test. A validating build tests it first.
+    void checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds);
+    void reportUnlessClaimHolds(std::optional<CellPointer> about, Condition holds);
+    void checkIsCompiledObjectOf(CellPointer, LayoutSetID);
+
     CodeGenerator& m_generator;
     const Program& m_program;
     const Placement& m_placement;
@@ -157,6 +162,12 @@ void OperationEmitter::defineTestByBranching(const ValueContext& value, NOESCAPE
         return;
     }
     branchOnTest(value.branchTargets());
+}
+
+void OperationEmitter::checkClaim(std::optional<CellPointer> about, NOESCAPE const Invocable<Condition()> auto& holds)
+{
+    if (m_generator.validatesOrChecksProofs())
+        reportUnlessClaimHolds(about, holds());
 }
 
 template<typename T>

@@ -166,6 +166,10 @@ void GuardEmitter::defineTestOfCompiledObject(const ValueContext& value, NOESCAP
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
     const Type& type = typeOf(value->objectOperand());
     if (!shapes.mayBeCellWithBrand(type)) {
+        CellPointer cell = in<CellPointer>(value->objectOperand());
+        checkClaim(cell, [&] {
+            return shapes.isCompiledObject(cell);
+        });
         defineTest(value, test());
         return;
     }

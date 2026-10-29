@@ -94,6 +94,11 @@ struct ArrayMadeByBuiltin {
     ValueSetID arraysWhoseElementsAreCopied { ValueSets::nothing };
 };
 
+struct SpreadIntoArray {
+    ValueSetID targets;
+    ValueSetID sources;
+};
+
 struct ElementStoredAgain {
     uint32_t array;
     FunctionID function;
@@ -125,6 +130,7 @@ struct ContainerWalker {
     ValueSetID objectsWithReplacedContents { ValueSets::nothing };
     Vector<ArrayMadeByBuiltin> arraysMadeByBuiltins;
     Vector<ElementStoredAgain> elementsStoredAgain;
+    Vector<SpreadIntoArray> spreadsIntoArrays;
     Vector<ElementRead> elementReads;
     HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsOfArraysSeen;
     FunctionID analyzedFunction;
@@ -538,6 +544,7 @@ private:
             return;
         case Opcode::AppendSpread:
             addToEachArray(walker.maker, arrays, ArrayWrites::HasOtherWriter);
+            walker.spreadsIntoArrays.append({ arrays, walker.maker.intersect(m_heap.possibleValuesOf(walker.maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::AppendSpread::iterable]), m_arrays) });
             return;
         case Opcode::ElemSet:
             if (operandIndex != OperandIndex::ElemSet::object)
@@ -770,6 +777,7 @@ private:
         });
         Vector<ArrayMadeByBuiltin> arraysMadeByBuiltins;
         Vector<ElementStoredAgain> elementsStoredAgain;
+        Vector<SpreadIntoArray> spreadsIntoArrays;
         HashMap<uint64_t, ValueSetID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversOfRead;
         auto keyOf = [](FunctionID function, ValueID read) {
             return static_cast<uint64_t>(function.index()) << 32 | read.index();
@@ -782,6 +790,7 @@ private:
             m_objectsWithReplacedContents = maker().unite(m_objectsWithReplacedContents, walker->objectsWithReplacedContents);
             arraysMadeByBuiltins.appendVector(std::exchange(walker->arraysMadeByBuiltins, { }));
             elementsStoredAgain.appendVector(std::exchange(walker->elementsStoredAgain, { }));
+            spreadsIntoArrays.appendVector(std::exchange(walker->spreadsIntoArrays, { }));
             for (const ElementRead& read : std::exchange(walker->elementReads, { }))
                 receiversOfRead.add(keyOf(read.function, read.read), read.receivers);
         }
@@ -806,6 +815,15 @@ private:
                     didChange = true;
                 }
             }
+        }
+        // A spread reads a hole as undefined.
+        for (const SpreadIntoArray& spread : spreadsIntoArrays) {
+            bool readsHole = false;
+            forEachContainerIn(maker(), spread.sources, m_arrays, [&](uint32_t source) {
+                readsHole |= !m_arrayWrites[source].isDense();
+            });
+            if (readsHole)
+                addToEachArray(maker(), spread.targets, ArrayWrites::IsGivenMoreThanNumbers);
         }
         settleNumbersOfCopies(arraysMadeByBuiltins.span(), elementsStoredAgain.span());
     }

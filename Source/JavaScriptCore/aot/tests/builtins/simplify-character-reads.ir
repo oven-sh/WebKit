@@ -1,0 +1,179 @@
+# `s[i]` is a string of one unit where `i` is below the length of `s`. So `s[i] + n` joins strings: the read becomes a piece. And `s[i] === t[j]` compares two code units.
+# A comparison with anything else keeps the read by key: selection has forms for a literal.
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="insideAndJoined" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+    v3 = GetStringLength v0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = ElemGet v0, v1
+    v6 = Add v5, v2
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+# CHECK: b1():
+# CHECK-NEXT: [[one0]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[end0]]: int[1, 101] = Add v1, [[one0]]
+# CHECK-NEXT: v5: string = Substring v0, v1, [[end0]]
+# CHECK-NOT: ElemGet
+}
+
+function f1 name="neverCompared" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = Add v3, v2
+    Return v4
+# CHECK-NOT: Substring
+# CHECK: v3: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f2 name="comparedWithAnotherLength" parameters=[{type=string}, {type=int[0, 100]}, {type=string}] results=[{type=anything}] {
+    v3 = GetStringLength v2
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = ElemGet v0, v1
+    v6 = Add v5, v1
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+# CHECK-NOT: Substring
+# CHECK: v5: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f3 name="mayBeNegative" parameters=[{type=string}, {type=int[-1, 100]}] results=[{type=anything}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ElemGet v0, v1
+    v5 = Add v4, v1
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+# CHECK-NOT: Substring
+# CHECK: v4: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f4 name="atMostTheLength" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = GetStringLength v0
+    v3 = LessEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ElemGet v0, v1
+    v5 = Add v4, v1
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+# CHECK-NOT: Substring
+# CHECK: v4: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f5 name="insideAndCompared" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ElemGet v0, v1
+    v5 = String string="a"
+    v6 = StrictEq v4, v5
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+# CHECK-NOT: Substring
+# CHECK: v4: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f6 name="onTheOtherSide" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Undefined
+    Return v4
+  b2():
+    v5 = ElemGet v0, v1
+    v6 = Add v5, v1
+    Return v6
+# CHECK-NOT: Substring
+# CHECK: v5: undefined|string = ElemGet v0, v1
+# CHECK-NOT: Substring
+}
+
+function f7 name="twoInsideCompared" parameters=[{type=string}, {type=int[0, 100]}, {type=string}, {type=int[1, 100]}] results=[{type=anything}] {
+    v4 = GetStringLength v0
+    v5 = Less v1, v4
+    Branch v5 -> taken b1(), notTaken b3()
+  b1():
+    v6 = GetStringLength v2
+    v7 = LessEq v3, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v1
+    v9 = Integer integer=1
+    v10 = Sub v3, v9
+    v11 = ElemGet v2, v10
+    v12 = StrictEq v8, v11
+    Return v12
+  b3():
+    v13 = Undefined
+    Return v13
+# CHECK: v8: int[0, 65535] = GetStringCodeUnit v0, v1
+# CHECK: v11: int[0, 65535] = GetStringCodeUnit v2, v10
+# CHECK-NEXT: v12: boolean = StrictEq v8, v11
+# CHECK-NOT: ElemGet
+}
+
+function f8 name="oneOfTwoInside" parameters=[{type=string}, {type=int[0, 100]}, {type=string}] results=[{type=anything}] {
+    v3 = GetStringLength v0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = ElemGet v0, v1
+    v6 = ElemGet v2, v1
+    v7 = StrictEq v5, v6
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: v5: undefined|string = ElemGet v0, v1
+# CHECK-NEXT: v6: undefined|string = ElemGet v2, v1
+# CHECK-NOT: GetStringCodeUnit
+}
+
+function f9 name="comparedAndKept" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+    v3 = GetStringLength v0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b3()
+  b1():
+    v5 = Less v2, v3
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = ElemGet v0, v1
+    v7 = ElemGet v0, v2
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b4(), notTaken b3()
+  b3():
+    v9 = Undefined
+    Return v9
+  b4():
+    Return v6
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: v6: undefined|string = ElemGet v0, v1
+# CHECK-NEXT: v7: undefined|string = ElemGet v0, v2
+# CHECK-NOT: GetStringCodeUnit
+}

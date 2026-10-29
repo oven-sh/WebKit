@@ -206,26 +206,20 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
     data.function = operandOf(binding.function);
     data.setter = operandOf(binding.setter);
     data.slot = SlotData::create(0, SlotRepresentation::JSValue);
-    TypeID type;
-    if (binding.variable) {
+    if (binding.variable)
         data.slot = placedVariableSlot(encoder, binding.variable);
-        type = program.at(binding.variable).declared.written();
-    } else {
+    else {
         RELEASE_ASSERT(binding.operand);
         data.operand = operandOf(binding.operand);
         RELEASE_ASSERT(binding.field || (binding.kind != EvalBindingKind::MappedArgument && !binding.layout));
         if (binding.kind == EvalBindingKind::MappedArgument)
             data.slot = SlotData::create(*binding.field, SlotRepresentation::JSValue);
         else if (binding.layout) {
-            FieldReference field { binding.layout, *binding.field };
-            const Field& declaration = fieldAt(program, declarationOf(program, field));
-            const PlacedSlot& slot = encoder.slots.slot(field);
+            const PlacedSlot& slot = encoder.slots.slot({ binding.layout, *binding.field });
             RELEASE_ASSERT(!program.at(binding.layout).isEnvironment() || slot.hasStorage());
             data.slot = slot.data();
-            type = declaration.declared.written();
         }
     }
-    data.type = encoder.typeOffset(type);
 }
 
 static void encodeRequest(TableEncoder& encoder, const DirectEvalRecord& record, std::span<uint8_t>& bytes)

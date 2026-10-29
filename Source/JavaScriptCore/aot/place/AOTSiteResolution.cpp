@@ -466,6 +466,9 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
         if (isFieldOfReceiver)
             return 0;
     }
+    // The slot of the field was found empty, so the table of fields has nothing to say: `Message.prototype.retries = 3` answers for most objects.
+    if (value.opcode == Opcode::SuperGet && value.key() && value.baseOperand() == value.receiverOperand())
+        return 1;
     return siteCachesOf(value.opcode);
 }
 

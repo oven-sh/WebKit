@@ -21,6 +21,12 @@
 #if OS(WINDOWS)
 #include <windows.h>
 #endif
+#if OS(LINUX)
+#include <array>
+#include <poll.h>
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -199,6 +205,47 @@ static void testCrashesOnRequest()
         CRASH();
 }
 
+#if OS(LINUX)
+
+static constexpr const char* endParentRequestVariable = "TESTAOT_END_PARENT_ON_REQUEST";
+
+static ChildProcessResult runAlone(ASCIILiteral test)
+{
+    return runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
+}
+
+static void testEndsParentOnRequest()
+{
+    if (!getenv(endParentRequestVariable))
+        return;
+    kill(getppid(), SIGKILL);
+    sleep(30);
+}
+
+static void testStartsChildOnRequest()
+{
+    if (getenv(endParentRequestVariable))
+        runAlone("end-parent-on-request/child"_s);
+}
+
+static void testChildEndsWithParent()
+{
+    // Every process below this one inherits the write end, so the read end reports the end once the last of them is gone.
+    std::array<int, 2> ends;
+    AOT_TEST_CHECK(!pipe(ends.data()));
+    setenv(endParentRequestVariable, "1", 1);
+    ChildProcessResult parent = runAlone("end-parent-on-request/parent"_s);
+    unsetenv(endParentRequestVariable);
+    close(ends[1]);
+    AOT_TEST_CHECK(parent.outcome == ChildProcessOutcome::Crashed && parent.code == SIGKILL);
+
+    struct pollfd poller { ends[0], POLLIN, 0 };
+    AOT_TEST_CHECK(poll(&poller, 1, 10'000) == 1);
+    close(ends[0]);
+}
+
+#endif // OS(LINUX)
+
 static void testNativeTestsAfterCrashStillRun()
 {
     ChildProcessLauncher launcher = createLauncher();
@@ -279,6 +326,11 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/crash"_s, testCrash },
         { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
+#if OS(LINUX)
+        { "child-process/ends-with-parent"_s, testChildEndsWithParent },
+        { "end-parent-on-request/parent"_s, testStartsChildOnRequest },
+        { "end-parent-on-request/child"_s, testEndsParentOnRequest },
+#endif
         { "runner/files-after-crash"_s, testFilesAfterCrashStillRun },
         { "runner/shows-output-of-children"_s, testOutputOfPassingFileIsShown },
         { "runner/todo-lines"_s, testTodoLines },

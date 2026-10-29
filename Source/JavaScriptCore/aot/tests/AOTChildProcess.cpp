@@ -30,6 +30,9 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if OS(LINUX)
+#include <sys/prctl.h>
+#endif
 
 extern char** environ;
 #endif
@@ -108,6 +111,19 @@ static void disableCrashReports()
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 }
 
+// Windows ends the processes of a job when the last handle to it closes: when this process ends, however it ends.
+static HANDLE jobOfChildren()
+{
+    static HANDLE job = [] {
+        HANDLE created = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits { };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(created, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+        return created;
+    }();
+    return job;
+}
+
 static ChildProcessResult runProcess(const Vector<StringView>& commandLine)
 {
     StringBuilder quotedCommandLine;
@@ -136,6 +152,7 @@ static ChildProcessResult runProcess(const Vector<StringView>& commandLine)
             CloseHandle(readEnd);
             return { };
         }
+        AssignProcessToJobObject(jobOfChildren(), process.hProcess);
     }
 
     Vector<uint8_t> output;
@@ -214,6 +231,64 @@ struct StartedProcess {
     int output;
 };
 
+// A test that never ends must not outlive the process that would have ended it.
+#if OS(LINUX)
+
+static constexpr int exitCodeWithoutProgram = 127;
+
+// posix_spawn() cannot ask for the signal, which the kernel sends when the thread that started the child ends, however it ends.
+static int spawn(pid_t& process, char* const* arguments, int output)
+{
+    pid_t parent = getpid();
+    process = vfork();
+    if (process)
+        return process < 0 ? errno : 0;
+
+    // This is the parent's memory until exec: system calls only.
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    close(STDIN_FILENO);
+    if (getppid() == parent && open("/dev/null", O_RDONLY) == STDIN_FILENO && dup2(output, STDOUT_FILENO) >= 0 && dup2(output, STDERR_FILENO) >= 0)
+        execvp(arguments[0], arguments);
+    _exit(exitCodeWithoutProgram);
+}
+
+static void killHung(pid_t process)
+{
+    kill(process, SIGKILL);
+}
+
+#else
+
+// There is no such signal here. A child leads a group, what it starts stays in the group, and a child that hangs ends with its group.
+static bool startsGroups()
+{
+    return getpgrp() != getpid();
+}
+
+static int spawn(pid_t& process, char* const* arguments, int output)
+{
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_adddup2(&actions, output, STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, output, STDERR_FILENO);
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    if (startsGroups())
+        posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    int error = posix_spawnp(&process, arguments[0], &actions, &attributes, arguments, environ);
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    return error;
+}
+
+static void killHung(pid_t process)
+{
+    kill(startsGroups() ? -process : process, SIGKILL);
+}
+
+#endif
+
 static std::optional<StartedProcess> startProcess(const Vector<StringView>& commandLine)
 {
     Vector<UTF8CString> arguments = commandLine.map([](StringView argument) {
@@ -232,14 +307,8 @@ static std::optional<StartedProcess> startProcess(const Vector<StringView>& comm
     fcntl(readEnd, F_SETFD, FD_CLOEXEC);
     fcntl(writeEnd, F_SETFD, FD_CLOEXEC);
 
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&actions, writeEnd, STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, writeEnd, STDERR_FILENO);
     pid_t process = 0;
-    int error = posix_spawnp(&process, argumentPointers[0], &actions, nullptr, argumentPointers.mutableSpan().data(), environ);
-    posix_spawn_file_actions_destroy(&actions);
+    int error = spawn(process, argumentPointers.mutableSpan().data(), writeEnd);
     close(writeEnd);
     if (error) {
         close(readEnd);
@@ -258,10 +327,14 @@ static ChildProcessResult runProcess(const Vector<StringView>& commandLine)
     bool hasHung = !readOutput(started->output, output);
     close(started->output);
     if (hasHung)
-        kill(started->process, SIGKILL);
+        killHung(started->process);
 
     int status = 0;
     while (waitpid(started->process, &status, 0) < 0 && errno == EINTR) { }
+#if OS(LINUX)
+    if (WIFEXITED(status) && WEXITSTATUS(status) == exitCodeWithoutProgram && output.isEmpty())
+        return { };
+#endif
 
     String text = String::fromUTF8ReplacingInvalidSequences(output.span());
     if (hasHung)

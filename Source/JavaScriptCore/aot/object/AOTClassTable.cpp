@@ -784,6 +784,8 @@ static bool hasOwnIndexedProperty(JSGlobalObject* globalObject, JSObject* object
 
 void ClassDefinition::EarlyStores::restoreTo(JSGlobalObject* globalObject, JSObject* object, StoreTime storeTime)
 {
+    if (keysAndAttributes.isEmpty())
+        return;
     VM& vm = globalObject->vm();
     DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1081,11 +1083,12 @@ void ClassDefinition::armGuards()
     bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
     HolderState stateOfClassObject = holdersHaveWhatRecordSays && m_classLayout.staticFields().empty() ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
-    if (const LayoutData* base = m_classes.assumedBaseOf(m_classLayout); base && hasAssumedBase())
+    bool hasAssumedBase = this->hasAssumedBase();
+    if (const LayoutData* base = m_classes.assumedBaseOf(m_classLayout); base && hasAssumedBase)
         m_classes.classPrototypeOfBase(m_vm, *base);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Prototype, m_prototype, createsPrototypeMembers() ? stateOfPrototype : HolderState::NotTouched);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Static, m_classObject, createsClassObject() ? stateOfClassObject : HolderState::NotTouched);
-    if (m_requestedPart != ClassPart::Everything || hasAssumedBase())
+    if (m_requestedPart != ClassPart::Everything || hasAssumedBase)
         return;
     m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Static);
     m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Prototype);

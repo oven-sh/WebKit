@@ -1623,7 +1623,7 @@ private:
             return ValueFlowValueOfFunction { body.function, value, nodeNamed(index, node) };
         });
         std::ranges::transform(body.comparedValues, m_result.m_comparedValues.mutableSpan().subspan(first.comparedValues).begin(), [&](const Body::ComparedValues& compared) {
-            return ValueFlowComparedValues { body.function, link(compared.left), link(compared.right) };
+            return ValueFlowComparedValues { body.function, link(compared.left), link(compared.right), compared.mayBeFunctions };
         });
     }
 

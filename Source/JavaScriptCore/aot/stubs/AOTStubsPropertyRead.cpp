@@ -949,7 +949,8 @@ void generateGetById(StubAssembler& jit)
     const GPRReg cell = T12;
     loadStructureIDOfReceiver(jit, R0, T11, *miss, [&] {
         JumpList isNotInFieldTable;
-        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
+        // The probe shifts by its index, which x86-64 does by this register alone.
+        returnFieldByTable(jit, { R0, name, T14, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
         isNotInFieldTable.link(&jit);
         behindFieldTable = jit.label();
         jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(callerFrame));

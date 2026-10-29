@@ -21,6 +21,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTInterningPhases.h"
 #include "AOTMethodTableEntrypoints.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRepresentation.h"
 #include "AOTResolveCallsCallees.h"
@@ -31,6 +32,7 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include "AOTWrittenFunction.h"
 #include <algorithm>
@@ -38,6 +40,7 @@
 #include <atomic>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -227,11 +230,118 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
     }
 }
 
+// By written function, each as often as a call in tail position may enter it.
+static Vector<FunctionID, 4> findTailCallees(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    Vector<FunctionID, 4> callees;
+    auto add = [&](FunctionID callee) { callees.append(writtenFunctionOf(program, callee)); };
+    // A wrapper enters its body by a tail call that the program did not write.
+    if (!hasSourceBodyOf(function.role))
+        return callees;
+    for (const Block& block : function.blocks) {
+        if (block.terminator.kind != TerminatorKind::ReturnCall)
+            continue;
+        const Value& call = function.at(block.terminator.callOperand());
+        if (call.opcode == Opcode::CallDirect) {
+            add(call.function());
+            continue;
+        }
+        if (call.opcode != Opcode::Call && call.opcode != Opcode::CallList)
+            continue;
+        // The name of a function expression is its own function object.
+        if (std::optional<unsigned> index = function.calleeParameterIndex(); index && CastChain(function, call.calleeOperand()).last() == function.at(entryBlock).parameters[*index])
+            add(id);
+        // The call that stands for f.call(..) was made after flow ran.
+        for (FunctionID callee : program.typeOf(function, call.calleeOperand()).functions)
+            add(callee);
+        if (call.callees()) {
+            for (FunctionID callee : program.at(call.callees()).seen().predicted().functions)
+                add(callee);
+        }
+    }
+    return callees;
+}
+
+static bool hasSeveralTailCalls(const Function& function)
+{
+    return hasSourceBodyOf(function.role) && std::ranges::count_if(function.blocks, [](const Block& block) { return block.terminator.kind == TerminatorKind::ReturnCall; }) > 1;
+}
+
+static bool returnsToItselfByTailCalls(const Program& program, FunctionID id)
+{
+    static constexpr size_t mostFunctionsVisited = 64;
+    FunctionID written = writtenFunctionOf(program, id);
+    Vector<FunctionID, 8> visited;
+    Vector<FunctionID, 8> left { id };
+    while (!left.isEmpty() && visited.size() < mostFunctionsVisited) {
+        for (FunctionID callee : findTailCallees(program, left.takeLast())) {
+            if (callee == written)
+                return true;
+            if (!visited.contains(callee)) {
+                visited.append(callee);
+                left.append(callee);
+            }
+        }
+    }
+    return false;
+}
+
+// By written function.
+static BitVector findConstructedFunctions(const Program& program, const FlowResults& flow, const ParallelLoops& loops)
+{
+    Vector<FunctionID> callees = collectInParallel<FunctionID>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionID>& seen) {
+        const Function& function = program.functions[index];
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                if (value.opcode != Opcode::Construct && value.opcode != Opcode::ConstructList)
+                    continue;
+                for (FunctionID callee : program.typeOf(function, value.calleeOperand()).functions)
+                    seen.append(callee);
+                if (!value.callees())
+                    continue;
+                for (FunctionID callee : program.at(value.callees()).seen().predicted().functions)
+                    seen.append(callee);
+            }
+        }
+    });
+    BitVector constructed(program.functions.size());
+    for (FunctionID callee : callees)
+        constructed.quickSet(writtenFunctionOf(program, callee).index());
+    for (const FlowIndirectCall& call : flow.indirectCalls()) {
+        if (call.isAlwaysConstruction)
+            constructed.quickSet(writtenFunctionOf(program, call.callee).index());
+    }
+    return constructed;
+}
+
+// Construction makes no tail calls, so the frame of the constructed function stays below its calls. Code that also runs for calls cannot keep it.
+// The stack says where a function with one tail call has left, unless its own code runs again above. Any other gets a copy for construction.
+// A function that only unseen code constructs gets none: its frame is listed at the call that the function above it fits.
+static void markConstructionsWithoutTailCalls(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
+{
+    const Program& program = editor.program();
+    std::optional<BitVector> constructed;
+    if (flow.hasResults())
+        constructed = findConstructedFunctions(program, flow, loops);
+    for (uint32_t index : findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
+        const Function& function = program.functions[index];
+        if (function.kind != FunctionKind::Plain || !function.hasBody())
+            return false;
+        if (constructed && !constructed->quickGet(writtenFunctionOf(program, FunctionID(index)).index()))
+            return false;
+        return hasSeveralTailCalls(function) || returnsToItselfByTailCalls(program, FunctionID(index));
+    }))
+        editor.at(writtenFunctionOf(program, FunctionID(index))).capabilities.add(FunctionCapabilities::MakesNoTailCallIfConstructed);
+}
+
 void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build)
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     markFunctionsThatRecordTheirCallee(editor, inputs.flow, loops, build.statistics());
+    markConstructionsWithoutTailCalls(editor, inputs.flow, loops);
     AnalysisContext context { build, program, &inputs.flow, nullptr };
     size_t numberOfFunctionsBefore = program.functions.size();
 
@@ -473,12 +583,9 @@ LayoutList receiversOfTableEntrypoint(const Program& program, PropertyKeyID key,
     return receivers;
 }
 
-Vector<TypeID, 4> parameterTypesOf(const Program& program, TypeArena& types, MethodSelector selector)
+static Vector<TypeID, 4> joinParameterTypesOfMethods(const Program& program, TypeArena& types, MethodSelector selector)
 {
     Vector<TypeID, 4> result(FillWith { }, selector.numberOfArguments, TypeTable::anything);
-    if (selector.form == ArgumentForm::Boxed)
-        return result;
-
     Vector<Type, 4> declared(selector.numberOfArguments);
     LayoutID last;
     for (LayoutID declarer : program.declarersOfName(selector.key)) {
@@ -501,6 +608,32 @@ Vector<TypeID, 4> parameterTypesOf(const Program& program, TypeArena& types, Met
         if (!declared[index].isNever())
             result[index] = types.intern(declared[index]);
     }
+    return result;
+}
+
+// The join walks every method of the name. Each call site of the name asks, and so does each entrypoint: a thousand classes with one method name were a million methods walked.
+Vector<TypeID, 4> parameterTypesOf(const Program& program, TypeArena& types, MethodSelector selector)
+{
+    if (selector.form == ArgumentForm::Boxed)
+        return Vector<TypeID, 4>(FillWith { }, selector.numberOfArguments, TypeTable::anything);
+
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(selector.key))
+        return joinParameterTypesOfMethods(program, types, selector);
+
+    using Entry = PropertyAccessCache::ParameterTypesOfSelector;
+    uint32_t hash = computeHash(selector.key.index(), selector.numberOfArguments);
+    auto isWanted = [&](const Entry& entry) {
+        return entry.key == selector.key && entry.numberOfArguments == selector.numberOfArguments;
+    };
+    if (const Entry* known = cache->parameterTypesOfSelectors.find(hash, isWanted)) {
+        RELEASE_ASSERT(!cache->checksAnswers || known->types == joinParameterTypesOfMethods(program, types, selector));
+        return known->types;
+    }
+    Vector<TypeID, 4> result = joinParameterTypesOfMethods(program, types, selector);
+    // A provisional id means nothing once its phase has ended.
+    if (!std::ranges::any_of(result, [](TypeID type) { return TypeTable::isProvisional(type); }))
+        cache->parameterTypesOfSelectors.add(hash, Entry { selector.key, selector.numberOfArguments, result }, isWanted);
     return result;
 }
 
@@ -536,13 +669,34 @@ struct TableParameters {
 
 // What the calls by value that one worker has scanned may find. Bits, not a list: n calls that each list n callees would be n * n entries.
 struct FoundCallees {
+    // A long list of the program is read once, however many calls name it.
+    void add(std::span<const FunctionID> list, bool isListOfProgram)
+    {
+        AOT_THRESHOLD(size_t, minCalleesOfListReadOnce, 16);
+        if (isListOfProgram && list.size() >= minCalleesOfListReadOnce && !longListsRead.add(list.data()).isNewEntry)
+            return;
+        for (FunctionID listed : list)
+            functions.set(listed.index());
+    }
+
     BitVector functions;
     BitVector calleeSets;
     BitVector typedCalleeLists;
+    HashSet<const FunctionID*> longListsRead;
 };
 
 class InternedCalleeLists {
 public:
+    // The list neither moves nor changes while lists are interned here. It is read once, however many calls name it.
+    uint32_t internLastingList(std::span<const FunctionID> list)
+    {
+        auto known = m_listsByAddress.add(list.data(), 0);
+        if (known.isNewEntry)
+            known.iterator->value = intern(list);
+        RELEASE_ASSERT(lists[known.iterator->value].size() == list.size());
+        return known.iterator->value;
+    }
+
     uint32_t intern(std::span<const FunctionID> list)
     {
         Hasher hasher;
@@ -562,6 +716,7 @@ public:
 
 private:
     UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    HashMap<const FunctionID*, uint32_t> m_listsByAddress;
 };
 
 } // anonymous namespace
@@ -692,16 +847,16 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
             if (!callee)
                 return;
             CalleeCandidates candidates = calleeCandidates(program, function, callee);
-            auto add = [&](std::span<const FunctionID> callees) {
+            auto add = [&](std::span<const FunctionID> callees, bool isListOfProgram) {
                 if (callees.size() >= minCalleesOfSharedList) {
-                    found[0].typedCalleeLists.append({ site, found[0].lists.intern(callees) });
+                    found[0].typedCalleeLists.append({ site, isListOfProgram ? found[0].lists.internLastingList(callees) : found[0].lists.intern(callees) });
                     return;
                 }
                 for (FunctionID listed : callees)
                     found[0].typedCallees.append({ site, listed });
             };
-            add(program.typeOf(function, candidates.value).functions.span());
-            add(candidates.expected().predicted());
+            add(program.typeOf(function, candidates.value).functions.span(), true);
+            add(candidates.expected().predicted(), candidates.expectsListOfProgram());
         });
     });
     Vector<Chunk*> filled;
@@ -754,7 +909,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
             InternedCalleeLists lists;
             for (Chunk* chunk : filled) {
                 for (const CalleeListOfSite& entry : chunk->typedCalleeLists)
-                    result.typedCalleeLists.append({ entry.site, lists.intern(chunk->lists.lists[entry.list].span()) });
+                    result.typedCalleeLists.append({ entry.site, lists.internLastingList(chunk->lists.lists[entry.list].span()) });
             }
             AOT::sort(result.typedCalleeLists);
             removeRepeatedElements(result.typedCalleeLists);
@@ -784,12 +939,10 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
             if (ValueID callee = calledOperandOf(call)) {
                 CalleeCandidates candidates = calleeCandidates(program, function, callee);
                 const Type& type = program.typeOf(function, candidates.value);
-                for (FunctionID listed : type.functions)
-                    found.functions.set(listed.index());
+                found.add(type.functions.span(), true);
                 if (!admitsUnlistedFunctions(type) && type.classes.isEmpty())
                     return;
-                for (FunctionID listed : candidates.expected().predicted())
-                    found.functions.set(listed.index());
+                found.add(candidates.expected().predicted(), candidates.expectsListOfProgram());
             }
             if (CalleeSetID stamp = call.callees())
                 found.calleeSets.set(stamp.index());
@@ -822,8 +975,8 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
     for (uint32_t index : findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
         bool isFollowedByFlow = index < flow.functionCountAsRead() && flow.function(FunctionID(index)).callers == CallerState::AllKnown;
-        // The second entrypoint of a constructor function that reads no new.target is entered by the constructions that would enter the first.
-        bool readsNewTarget = entrypointVariantsOf(program, function) != EntrypointVariants::WithoutNewTarget && !hasAllocatingConstructEntrypoint(program, function);
+        // The second entrypoint of a function that reads no new.target is entered by the constructions that would enter the first.
+        bool readsNewTarget = function.has(FunctionFlags::HasNewTarget) && entrypointVariantsOf(program, function) != EntrypointVariants::WithoutNewTarget;
         return !isFollowedByFlow || function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor || readsNewTarget;
     }))
         mayBeEntered.quickSet(index);

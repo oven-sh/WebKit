@@ -87,6 +87,7 @@ public:
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
+    Pointer implOfFlatString(CellPointer flat);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
     CharacterView subview(const CharacterView&, CodeUnitRange);
 
@@ -101,6 +102,8 @@ public:
 
     enum class StringIdentity : bool { Unknown, Distinct };
     Condition areEqual(const OperationContext&, CellPointer, CellPointer, StringIdentity = StringIdentity::Unknown);
+    // Neither string is a rope.
+    Condition areBoth8Bit(CellPointer, CellPointer);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
     Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false);
@@ -125,7 +128,6 @@ public:
 private:
     Word32 flagsInImpl(Pointer impl, bool isImmutable);
     CharacterSource sourceInImpl(Pointer impl, bool isImmutable);
-    Pointer implOfFlatString(CellPointer flat);
     CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, Pointer fiber);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);
     CellPointer substringBaseOf(CellPointer rope);

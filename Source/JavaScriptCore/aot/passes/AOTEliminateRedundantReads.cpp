@@ -171,9 +171,20 @@ struct RedundantReadElimination {
         Vector<std::pair<Edge, ValueID>, 4> incoming;
     };
 
-    // Of the group that is being solved, but for the accesses.
+    // A value that may clear bits of classes that it does not access, or throw under a handler. A walk visits these and the accesses of its group.
+    struct ValueThatMatters {
+        uint32_t index;
+        // Of the heaps with accesses: those that it may write, and for a store the one that it writes.
+        AbstractHeapSet writes;
+        bool maySuspend;
+        bool mayThrowToHandler;
+    };
+
+    // Of the group that is being solved, but for the accesses and the values that matter.
     struct StateOfBlock {
         IndexRange accesses;
+        IndexRange valuesThatMatter;
+        bool hasListedValuesThatMatter { false };
         IndexRange actions;
         uint32_t endOfActionsOfValues { 0 };
         // The rows at the head, at the end and on the way to the handler.
@@ -201,6 +212,10 @@ struct RedundantReadElimination {
     // By position in the reverse postorder: a position that no block that the block may reach stands in front of. Empty where nothing leads back.
     Vector<uint32_t> m_firstPositionReachedFrom { };
     IndexRange m_group { };
+    // Positions in m_accesses, ascending: the accesses that define or look in the group.
+    Vector<uint32_t> m_accessesOfGroup { };
+    AbstractHeapSet m_heapsOfGroup { };
+    Vector<ValueThatMatters> m_valuesThatMatter { };
     // A class with more bits than a group may hold is solved in parts, from its first bits on: the group is one part, and these are all the bits of the class. Empty otherwise.
     IndexRange m_bitsOfClassInParts { };
     // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
@@ -763,16 +778,51 @@ struct RedundantReadElimination {
         });
     }
 
+    std::span<const ValueThatMatters> valuesThatMatterIn(BlockID blockID)
+    {
+        StateOfBlock& state = m_states[blockID.index()];
+        if (!std::exchange(state.hasListedValuesThatMatter, true)) {
+            const Block& block = m_function.at(blockID);
+            std::span<const Access> accesses = m_accesses.span().subspan(state.accesses.first, state.accesses.size());
+            state.valuesThatMatter.first = m_valuesThatMatter.size();
+            for (uint32_t index = 0; index < block.values.size(); ++index) {
+                ValueID id = block.values[index];
+                Opcode opcode = m_function.at(id).opcode;
+                ValueThatMatters value { index, { }, false, block.handler && m_analyses.effectsOf(id).mayThrow() };
+                if (accesses.empty() || accesses.front().id != id) {
+                    value.maySuspend = maySuspend(opcode);
+                    if (m_opcodesThatMayWrite.contains(opcode)) {
+                        const EffectsOnEdges& effects = m_analyses.effectsOf(id);
+                        value.writes = (effects.normal.writes.heaps() | effects.handler.writes.heaps()) & accessedHeapSet;
+                    }
+                } else {
+                    if (accesses.front().stored && accesses.front().isOperationOnMemory())
+                        value.writes = accesses.front().location.heap();
+                    while (!accesses.empty() && accesses.front().id == id)
+                        accesses = accesses.subspan(1);
+                }
+                if (value.writes || value.maySuspend || value.mayThrowToHandler || m_checksScreens)
+                    m_valuesThatMatter.append(value);
+            }
+            state.valuesThatMatter.end = m_valuesThatMatter.size();
+        }
+        return m_valuesThatMatter.span().subspan(state.valuesThatMatter.first, state.valuesThatMatter.size());
+    }
+
     // Goes through the block with the rows and hands each action to the functor in front of carrying it out on all of them.
+    // A function may have one block of a million values and hundreds of groups, so a walk passes over what does nothing to its group.
     void walk(BlockID blockID, std::span<Row* const> rows, bool watchesThrows, NOESCAPE const Invocable<void(const Action&)> auto& functor)
     {
         const Block& block = m_function.at(blockID);
         IndexRange accessesOfBlock = m_states[blockID.index()].accesses;
-        std::span<const Access> accesses = m_accesses.span().subspan(accessesOfBlock.first, accessesOfBlock.size());
+        std::span<const uint32_t> accesses = std::ranges::subrange(std::ranges::lower_bound(m_accessesOfGroup, accessesOfBlock.first), std::ranges::lower_bound(m_accessesOfGroup, accessesOfBlock.end));
+        std::span<const ValueThatMatters> others = valuesThatMatterIn(blockID);
+        auto doesNothing = [&](const ValueThatMatters& value) {
+            return !value.writes.containsAny(m_heapsOfGroup) && !value.maySuspend && !(watchesThrows && value.mayThrowToHandler);
+        };
         Row unionOfRows(FillWith { }, m_numberOfWords, Word { 0 });
         ActionList actions;
-        uint32_t numberOfValues = block.values.size();
-        for (uint32_t index = 0; index < numberOfValues; ++index) {
+        while (true) {
             std::span<const Word> live = rows[0]->span();
             if (rows.size() > 1) {
                 std::ranges::fill(unionOfRows, 0);
@@ -782,17 +832,39 @@ struct RedundantReadElimination {
                 }
                 live = unionOfRows.span();
             }
-            if (isEmpty(live) && !watchesThrows) {
-                if (accesses.empty())
+            uint32_t indexOfAccess = accesses.empty() ? std::numeric_limits<uint32_t>::max() : m_accesses[accesses.front()].point.index;
+            if (isEmpty(live) && !watchesThrows)
+                others = others.subspan(std::ranges::lower_bound(others, indexOfAccess, { }, &ValueThatMatters::index) - others.begin());
+            bool isPassedOver = false;
+            while (!others.empty() && others.front().index < indexOfAccess && doesNothing(others.front())) {
+                if (m_checksScreens) [[unlikely]] {
+                    isPassedOver = true;
                     break;
-                index = accesses.front().point.index;
+                }
+                others = others.subspan(1);
             }
+            uint32_t index = others.empty() ? indexOfAccess : std::min(indexOfAccess, others.front().index);
+            if (index == std::numeric_limits<uint32_t>::max())
+                break;
+            if (!others.empty() && others.front().index == index)
+                others = others.subspan(1);
+
             ValueID id = block.values[index];
-            size_t numberOfAccesses = 0;
-            while (numberOfAccesses < accesses.size() && accesses[numberOfAccesses].id == id)
-                ++numberOfAccesses;
-            std::span<const Access> accessesOfValue = accesses.first(numberOfAccesses);
-            accesses = accesses.subspan(numberOfAccesses);
+            std::span<const Access> accessesOfValue;
+            if (index == indexOfAccess) {
+                uint32_t first = accesses.front();
+                while (first > accessesOfBlock.first && m_accesses[first - 1].id == id)
+                    --first;
+                uint32_t end = accesses.front() + 1;
+                while (end < accessesOfBlock.end && m_accesses[end].id == id)
+                    ++end;
+                accessesOfValue = m_accesses.span().subspan(first, end - first);
+                while (!accesses.empty() && accesses.front() < end)
+                    accesses = accesses.subspan(1);
+            } else {
+                auto found = std::ranges::equal_range(m_accesses.span().subspan(accessesOfBlock.first, accessesOfBlock.size()), index, { }, [](const Access& access) { return access.point.index; });
+                accessesOfValue = { found.begin(), found.end() };
+            }
 
             if (accessesOfValue.empty())
                 appendClearsOfEffects({ blockID, index }, live, actions);
@@ -806,6 +878,7 @@ struct RedundantReadElimination {
                 else if (m_bitsOfClassInParts.contains(*access.bit) && access.isRead())
                     actions.append(Action { Action::Kind::Looks, { *access.bit, *access.bit + 1 } });
             }
+            RELEASE_ASSERT(!isPassedOver || actions.isEmpty());
             if (watchesThrows && m_analyses.effectsOf(id).mayThrow())
                 functor(Action { Action::Kind::MayThrow, { 0, static_cast<uint32_t>(std::ranges::count(actions, Action::Kind::Clears, &Action::kind)) } });
             for (const Action& action : actions) {
@@ -1009,6 +1082,22 @@ struct RedundantReadElimination {
         m_group = group;
         m_bitsOfClassInParts = bitsOfClassInParts;
         m_numberOfWords = (group.size() + 63) / 64;
+
+        m_accessesOfGroup.shrink(0);
+        m_heapsOfGroup = { };
+        auto addAccessOf = [&](uint32_t bit) {
+            if (!m_isReplacedByValue.quickGet(bit))
+                m_accessesOfGroup.append(m_bits[bit].access);
+        };
+        for (uint32_t bit = group.first; bit < group.end; ++bit) {
+            addAccessOf(bit);
+            m_heapsOfGroup.add(accessOf(bit).location.heap());
+        }
+        for (uint32_t bit = bitsOfClassInParts.first; bit < bitsOfClassInParts.end; ++bit) {
+            if (!group.contains(bit) && accessOf(bit).isRead())
+                addAccessOf(bit);
+        }
+        AOT::sort(m_accessesOfGroup);
 
         m_lastPositionsInWord.fill(PositionRange { }, m_numberOfWords);
         for (uint32_t bit = group.first; bit < group.end; ++bit) {
@@ -1422,6 +1511,101 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// Two values compare the same however often they are asked, and a string keeps its length, whatever runs in between: neither question runs code of the program.
+static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
+{
+    static constexpr OpcodeSet questions { Opcode::StrictEq, Opcode::GetStringLength };
+    if (!context.analyses.opcodesOfValues().intersects(questions))
+        return PassOutcome::Unchanged;
+
+    struct Comparison {
+        uint64_t operands;
+        ValueID result;
+        BlockID block;
+        // The comparison of the same operands above this one in the dominator tree.
+        std::optional<uint32_t> outer;
+    };
+    struct Repeated {
+        ProgramPoint point;
+        ValueID first;
+    };
+    Function& function = context.function;
+    size_t numberOfComparisons = 0;
+    for (const Block& block : function.blocks) {
+        numberOfComparisons += std::ranges::count_if(block.values, [&](ValueID id) {
+            return questions.contains(function.at(id).opcode);
+        });
+    }
+    if (numberOfComparisons < 2)
+        return PassOutcome::Unchanged;
+
+    BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Comparison, 16> made;
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> innermost;
+    Vector<size_t, 16> numberMadeAtEntry;
+    Vector<Repeated, 8> repeated;
+    ValueSubstitution substitution(function);
+    dominators.walkTree([&](BlockID block) {
+        numberMadeAtEntry.append(made.size());
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (!questions.contains(value.opcode) || keptReads.get(values[index].index()))
+                continue;
+            // No value has the last index, so a length is no comparison.
+            uint64_t left = sameObjectThroughCasts(function, value.operand(0)).valueInFrontOfFacts().index();
+            uint64_t right = value.opcode == Opcode::StrictEq ? sameObjectThroughCasts(function, value.rightOperand()).valueInFrontOfFacts().index() : std::numeric_limits<uint32_t>::max();
+            uint64_t operands = std::min(left, right) << 32 | std::max(left, right);
+            auto found = innermost.find(operands);
+            std::optional<uint32_t> outer = found == innermost.end() ? std::nullopt : std::optional(found->value);
+            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
+            std::optional<uint32_t> earlier = outer;
+            while (earlier && made[*earlier].block != block && !dominators.terminatorDominates(made[*earlier].block, block))
+                earlier = made[*earlier].outer;
+            if (earlier) {
+                substitution.replace(values[index], made[*earlier].result);
+                repeated.append({ { block, index }, made[*earlier].result });
+                continue;
+            }
+            innermost.set(operands, static_cast<uint32_t>(made.size()));
+            made.append({ operands, values[index], block, outer });
+        }
+    }, [&](BlockID) {
+        for (size_t numberAtEntry = numberMadeAtEntry.takeLast(); made.size() > numberAtEntry; made.removeLast()) {
+            if (made.last().outer)
+                innermost.set(made.last().operands, *made.last().outer);
+            else
+                innermost.remove(made.last().operands);
+        }
+    });
+    if (repeated.isEmpty())
+        return PassOutcome::Unchanged;
+    substitution.apply(function, &context.analyses);
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    if (context.build.validates()) {
+        // The repeated comparison stays, and its answer is held against the first one's.
+        for (const Repeated& comparison : repeated) {
+            auto [block, index] = comparison.point;
+            ValueID kept = function.at(block).values[index];
+            builder.setOrigin(function.at(kept).origin());
+            builder.insertBefore({ block, index + 1 }, IRBuilder::make(Opcode::ValidateSameValue, { kept, comparison.first }));
+        }
+        builder.applyInsertions();
+    } else {
+        // The walk enters a block once, so the comparisons of one block lie side by side.
+        for (size_t next = 0; next < repeated.size();) {
+            BlockID block = repeated[next].point.block;
+            BitVector erased;
+            for (; next < repeated.size() && repeated[next].point.block == block; ++next)
+                erased.set(repeated[next].point.index);
+            builder.eraseValues(block, erased);
+        }
+    }
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
@@ -1492,6 +1676,7 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
         outcome = RedundantReadElimination { context }.run();
     outcome |= dropRepeatedMapSets(context);
     outcome |= dropRepeatedBrandTests(context);
+    outcome |= dropRepeatedStrictComparisons(context);
     outcome |= dropRepeatedInitializations(context);
     return outcome;
 }

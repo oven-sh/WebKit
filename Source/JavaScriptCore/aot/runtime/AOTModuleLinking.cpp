@@ -97,6 +97,9 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent)
                     continue;
+                // A CommonJS file has `default` from the start, and loses it with its other names.
+                if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError)
+                    continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
         }

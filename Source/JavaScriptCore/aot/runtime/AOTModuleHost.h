@@ -92,6 +92,8 @@ struct ModuleHost {
     void (*runMainModule)(JSGlobalObject*, ModuleID entryPoint);
     // The error of the host's resolver for a specifier that it does not find. Null in a host whose resolver has no error of its own.
     JSValue (*createModuleNotFoundError)(JSGlobalObject*, const String& specifier, const String& importer, bool isForRequire);
+    // The object between every `require` and Function.prototype. Null in a host that has none.
+    JSObject* (*requirePrototype)(JSGlobalObject*);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -146,6 +148,15 @@ JS_EXPORT_PRIVATE void willChangeRequireOverride(JSGlobalObject*, RequireOverrid
 JS_EXPORT_PRIVATE bool hasFileWithExtension(StringView);
 
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
+// For the test runner: stores the value in the variable behind the export, where the module itself and every importer read it.
+// False where the build saw no call that replaces the export: code that uses it may not read the variable.
+JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
+// The build saw a call that mocks the module: every export of it can be replaced.
+JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
+// Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
+JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
+// Stores one export of the mock. A name that the module does not export is passed over.
+JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);
 JS_EXPORT_PRIVATE bool hasESModuleMarker(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE void setESModuleMarker(JSCell* moduleNamespace, bool);
 

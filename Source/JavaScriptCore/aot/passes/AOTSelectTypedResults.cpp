@@ -79,16 +79,21 @@ static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, Buil
 
 static bool isCompiledContainer(const NodeDecisionInputs& inputs, ResultNodeRef ref, const ResultNode& node)
 {
-    return node.isContainer() && decideNodeCode(inputs, ref).code == NodeCode::Compiled;
+    if (!node.isContainer() || decideNodeCode(inputs, ref).code != NodeCode::Compiled)
+        return false;
+    // A parser reads an object with more members as a plain value. That is none of the type, so the source would be parsed a second time.
+    return node.shape != ResultShape::Object || node.members.size() <= inputs.build.limit(LimitID::MaxParsedObjectMembers);
 }
 
-static bool hasTypedPart(const NodeDecisionInputs& inputs, ResultNodeRef root)
+static bool hasTypedPart(const NodeDecisionInputs& inputs, ResultNodeRef ref)
 {
-    ResultNode node = describeNode(inputs.program, root);
-    if (!isCompiledContainer(inputs, root, node))
+    ResultNode node = describeNode(inputs.program, ref);
+    if (!isCompiledContainer(inputs, ref, node))
         return false;
+    if (node.shape == ResultShape::Array)
+        return !describeNode(inputs.program, node.children[0]).isContainer() || hasTypedPart(inputs, node.children[0]);
     return node.shape != ResultShape::Union || node.children.containsIf([&](ResultNodeRef arm) {
-        return isCompiledContainer(inputs, arm, describeNode(inputs.program, arm));
+        return hasTypedPart(inputs, arm);
     });
 }
 

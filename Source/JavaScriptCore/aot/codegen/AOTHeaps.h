@@ -75,6 +75,8 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(JSArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
     v(JSNonArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
+    v(JSArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), ShapeWords) \
+    v(JSNonArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), TypedArrayStorage) \
     v(AOTStringBuilderStorage_fields, 0, StringBuilderContents) \

@@ -91,6 +91,9 @@ void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
 void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 // Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
+// How many units of sixteen bytes an Extension with these granules takes. There are at most maxGranulesOfExtensionFromStub.
+constexpr unsigned maxGranulesOfExtensionFromStub = 13;
+void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
 // The caller has proven that the word is a literal string word.
 void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);

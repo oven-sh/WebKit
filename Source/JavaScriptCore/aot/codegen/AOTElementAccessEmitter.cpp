@@ -130,7 +130,7 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
     if (isWritable)
         return hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), arrayStorageFormOf(kind));
     if (IndexingType otherShapes = bitsThatOtherShapesHave(kind))
-        return hasNoBits(loadByte(array, m_heaps.JSCell_indexingTypeAndMisc), otherShapes);
+        return hasNoBits(loadByte(array, m_heaps.JSArray_indexingTypeAndMisc), otherShapes);
     return hasShape(indexingMode(array, arrayStorageTestMask), arrayStorageFormOf(kind));
 }
 
@@ -138,7 +138,7 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
 // So only the yes of that test is a fact. A checking build, which has no slow way, asks hasWritableShapeIgnoringLock().
 Word32 ElementAccessEmitter::indexingMode(CellPointer array, IndexingType mask)
 {
-    Word32 byte = loadByte(array, m_heaps.JSCell_indexingTypeAndMisc);
+    Word32 byte = loadByte(array, m_heaps.JSArray_indexingTypeAndMisc);
     return mask == IndexingShapeAndWritabilityMask ? byte : bitAnd(byte, word32(mask));
 }
 

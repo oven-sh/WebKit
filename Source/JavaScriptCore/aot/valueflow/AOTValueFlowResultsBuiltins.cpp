@@ -729,6 +729,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
     tables.constantMembers = BitVector(builtins.builtinCount());
     tables.intactHolders = BitVector(builtins.builtinCount());
     tables.membersLockedAtStartUp = BitVector(builtins.builtinCount());
+    ValueSetID storedByName = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders));
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         BuiltinID member(index);
         bool isEnabled = inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, index);
@@ -739,11 +740,15 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         if (!entry.holder || !entry.name)
             continue;
         OptionSet<BuiltinUse> uses = inputs.solver().usesOf(member);
+        // A store that names the member may reach its holder through a receiver that flow does not list. The ledger has no writer for it.
+        bool isStoredThroughUnknownReceiver = canLockAtStartUp(builtins, member) && inputs.sets().contains(storedByName, inputs.universe().objectOf(canonical));
         // First the choice, which the image carries out. Then the claim, which rests on the record of the choice.
         Writers withoutLocks = holders.writersOfMemberWithoutLocks(member);
-        if (isEnabled && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
+        if (isEnabled && !isStoredThroughUnknownReceiver && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
         BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
+        if (isStoredThroughUnknownReceiver)
+            claim = unknownLocation(UnprovenCause::UnknownWriter);
         tables.constantMembers.quickSet(index, claim.state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member));
         if (!uses.isEmpty())
             tables.locations.append(BuiltinLocationFlow { entry.holder, program.keyOf(entry.name), claim.state, noWitness });
@@ -1045,6 +1050,7 @@ ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs& in
     }
     for (size_t function : inputs.solver().libraryFunctionsLacked())
         found.libraryFunctionsLacked.append(RuntimeFunctionID(static_cast<uint32_t>(function)));
+    found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputs);
     return found;
 }
 
@@ -1074,6 +1080,8 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     tables.builtins.builtinsThatMayBeTrimmed = findBuiltinsThatMayBeTrimmed(inputs.program.builtins(), tables.builtins.featureUses.span(), inputs.build.options());
     tables.builtins.localeUses = collectLocaleUses(inputs, heap, builtinsWhoseCodeRuns, tables.wholeProgram.unseenCode.span());
     tables.builtins.workerEntries = collectWorkerEntries(inputs, heap);
+    tables.builtins.workerStartWithoutName = findWorkerStartWithoutName(inputs);
+    tables.builtins.exportsThatSpiesReplace = WTF::move(usesOfLibraryCode.exportsThatSpiesReplace);
     times.didFinish("built-ins: statics, features, locales"_s);
     if (hasFlag(inputs.build.options().reports, ReportSet::Flow)) {
         recordPlaces(inputs, tables);

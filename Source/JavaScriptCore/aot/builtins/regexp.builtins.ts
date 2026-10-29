@@ -28,6 +28,8 @@ const escapesToOperandCode = [b.retained, b.runs("ToPrimitive")];
 const storesLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.length);
 const restoresLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.any);
 const runsMembers = (...protocols: readonly b.ProtocolSpec[]) => b.runsTransitively("ToPrimitive", ...protocols);
+// The member that is called has the pattern for `this`. A built-in function there, such as Object.prototype.valueOf, may hand it back as the result.
+const isCalledAsPattern = (...protocols: readonly b.ProtocolSpec[]) => [b.retained, runsMembers(...protocols)];
 
 const flagNames = ["hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode", "unicodeSets", "sticky"];
 const namesReadByConstruct = ["@@match", "source", "flags"];
@@ -166,7 +168,7 @@ const invokeSymbolMethod = (...membersOfRegExp: readonly b.ProtocolSpec[]) =>
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
-    uses: { this: escapesToOperandCode, regexp: [runsMembers(...membersOfRegExp)] },
+    uses: { this: escapesToOperandCode, regexp: isCalledAsPattern(...membersOfRegExp) },
     reads: [state],
     writes: [state],
     overloadUsesFeature: ["RegExpFromString", "RegExp", "RegExpUnicodeProperties"],
@@ -235,7 +237,7 @@ const replace = (inlineBuiltin: string, times: b.CallbackTimes, ...membersOfSear
       runsOnlyOperandCode: true,
       uses: {
         this: escapesToOperandCode,
-        searchValue: [runsMembers(...membersOfSearchValue)],
+        searchValue: isCalledAsPattern(...membersOfSearchValue),
         replaceValue: [
           ...escapesToOperandCode,
           b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Escapes" }),
@@ -591,7 +593,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { this: escapesToOperandCode, separator: [runsMembers(b.calls("@@split"))], limit: escapesToOperandCode },
+      uses: { this: escapesToOperandCode, separator: isCalledAsPattern(b.calls("@@split")), limit: escapesToOperandCode },
       reads: [state],
       writes: [state],
       overloadUsesFeature: ["RegExp", "RegExpFromString", "RegExpUnicodeProperties"],

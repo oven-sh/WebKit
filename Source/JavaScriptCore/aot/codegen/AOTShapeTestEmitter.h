@@ -22,6 +22,8 @@ public:
 
     Word32 shapeWordOf(CellPointer);
     Word32 orderWordOf(CellPointer);
+    // Other cells have other things there. The caller masks the word, or compares it with one that only a compiled object has.
+    Word32 orderWordOfAnyCell(CellPointer);
 
     // Passes for compiled objects alone: what stands behind it may read and write the words and the slots of one.
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);

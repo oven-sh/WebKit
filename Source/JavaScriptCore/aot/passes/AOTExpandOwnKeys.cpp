@@ -283,14 +283,16 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
 
 bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) const
 {
-    size_t index = m_uses.findIf([&](const AllocationAtPoint& use) {
-        return use.allocation == allocation && use.point.block == point.block && use.point.index == point.index;
+    const CFG& cfg = m_context.analyses.cfg();
+    auto usesAtPoint = std::ranges::equal_range(m_uses, std::pair { cfg.reversePostOrderIndex(point.block), point.index }, { }, [&](const AllocationAtPoint& use) {
+        return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
-    if (index == notFound)
+    auto use = std::ranges::find(usesAtPoint, allocation, &AllocationAtPoint::allocation);
+    if (use == usesAtPoint.end())
         return false;
     if (!m_unchanged)
         m_unchanged = findUnchangedAllocations(m_context, m_uses.span());
-    return m_unchanged->get(index);
+    return m_unchanged->get(use - m_uses.begin());
 }
 
 static BuiltinID calledBuiltinOf(const BuiltinTable& builtins, const Value& call)
@@ -335,7 +337,30 @@ static std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Valu
     return std::nullopt;
 }
 
-static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Function& function, ProgramPoint point)
+// The type of the first AssumeType of the value in its own block.
+static TypeID provenTypeBehind(const Function& function, const UseLists& useLists, ProgramPoint point, ValueID id)
+{
+    auto assumesTypeOf = [&](ValueID user) {
+        return function.at(user).opcode == Opcode::AssumeType && function.at(user).operand(0) == id;
+    };
+    ValueID found;
+    for (const Use& use : useLists.usesOf(id)) {
+        if (use.kind != Use::Kind::Operand || use.block != point.block || !assumesTypeOf(use.user) || use.user == found)
+            continue;
+        if (!found) {
+            found = use.user;
+            continue;
+        }
+        for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
+            if (assumesTypeOf(later))
+                return function.at(later).type;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    return found ? function.at(found).type : TypeID();
+}
+
+static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Function& function, const UseLists& useLists, ProgramPoint point)
 {
     ValueID id = function.at(point.block).values[point.index];
     const Value& value = function.at(id);
@@ -344,12 +369,7 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         return std::nullopt;
 
     OwnKeyWalkSite site { .walk = *walk, .block = point.block, .index = point.index, .value = id };
-    for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
-        if (function.at(later).opcode == Opcode::AssumeType && function.at(later).operand(0) == id) {
-            site.provenTypeOfList = function.at(later).type;
-            break;
-        }
-    }
+    site.provenTypeOfList = provenTypeBehind(function, useLists, point, id);
     if (*walk == OwnKeyWalk::Spread) {
         site.source = value.sourceOperand();
         site.target = value.targetOperand();
@@ -786,7 +806,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std:
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
-            std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
+            std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, context.analyses.useLists(), { block, index });
             if (!site || (onlyWalk && site->walk != *onlyWalk))
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);

@@ -6,11 +6,11 @@
 # CHECK: kinds
 # CHECK: 3{{*}}parameter of an escaped function
 # CHECK: shapes
-# CHECK: 3{{*}}parameter of an escaped function{{*}}an argument of Source, escaped by
+# CHECK: 3{{*}}parameter of an escaped function{{*}}an argument of Source, escaped through host node {{*}}, out of group, by CallGroup
 # CHECK: 1{{*}}member of a known object, UndescribedNativeResult{{*}}a built-in, has not escaped
 # RUN(NAMES): valueflow-why unknown-callees=names
 # NAMES: roots
-# NAMES: 3{{*}}parameter of an escaped function{{*}}f1 handler Source main.js escaped by
+# NAMES: 3{{*}}parameter of an escaped function{{*}}f1 handler Source main.js escaped through host node {{*}}, out of group, by CallGroup
 # NAMES: 1{{*}}member of a known object, UndescribedNativeResult{{*}}GlobalThis
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -1,0 +1,35 @@
+# A validating build tests an object against its type at each use, because a write may have changed the object. Between two uses with no write the second test would repeat the first, so it is left out.
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: lower-to-b3 f1
+# A report is handed what was found, the kind of failure, the function and the value. The parameter is tested where the function is entered and once behind the call.
+# CHECK-COUNT-2: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, resultConstraints
+# CHECK-NOT: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, resultConstraints
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 module=m0 declared={type=undefined|L0} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = CallDirect v2 function=f1 [isNeverInlined]
+    Return v3
+}
+function f1 name="reads" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = CallDirect function=f2 [isNeverInlined]
+    v4 = PropGet v0 key="x"
+    v5 = Add v1, v2
+    v6 = Add v5, v4
+    Return v6
+}
+function f2 name="mayWrite" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hook" [isFreeName]
+    v2 = Call v1, -
+    Return v2
+}

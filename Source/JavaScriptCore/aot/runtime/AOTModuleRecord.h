@@ -83,6 +83,8 @@ public:
     static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
     static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
+    // Another load has settled the entry of the module while its record was made, and the loader drops what making the record threw.
+    static void didLoseErrorOfModule(JSGlobalObject*, const Identifier& key);
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();

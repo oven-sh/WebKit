@@ -337,6 +337,13 @@ Condition SlotEmitter::holdsGranules(Pointer extension, uint64_t granuleBits)
 TypedPointer SlotEmitter::addressInExtension(const B3::AbstractHeap& heap, Pointer extension, uint32_t offset)
 {
     static_assert(extensionGranuleSize == 8 && offsetOfFirstExtensionSlot == extensionGranuleSize);
+    checkClaim(std::nullopt, [&] {
+        return selectByBranch<Condition>(Condition(m_out.notNull(extension.value())), [&] {
+            return holdsGranules(extension, granuleBitOf(offset));
+        }, [&] {
+            return boolean(false);
+        });
+    });
     uint32_t granule = granuleOf(offset);
     if (!granule)
         return m_out.address(heap, extension.value(), offsetOfFirstExtensionSlot + offsetInGranule(offset));

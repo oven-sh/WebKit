@@ -30,8 +30,9 @@ RuntimeValidationEmitter::RuntimeValidationEmitter(CodeGenerator& generator)
 {
 }
 
-void RuntimeValidationEmitter::validateParameters(BlockID, const Block& block)
+void RuntimeValidationEmitter::validateParameters(BlockID id, const Block& block)
 {
+    inheritCheckedClassProofs(id);
     for (ValueID parameter : block.parameters) {
         if (hasRegister(representationOf(parameter)))
             checkValue(parameter, get(parameter));
@@ -50,6 +51,7 @@ void RuntimeValidationEmitter::inheritCheckedClassProofs(BlockID block)
 {
     if (block == m_blockOfCheckedClassProofs)
         return;
+    m_passedTypeTests.shrink(0);
     if (m_checkedClassProofsAtEnd.isEmpty())
         m_checkedClassProofsAtEnd.grow(analyses().cfg().numNodes());
     if (m_blockOfCheckedClassProofs)
@@ -90,8 +92,10 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         checkIsNoFrameArray(context, user, operand, operandIndex);
     });
     Effects effects = context.effects().onAnyEdge();
-    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs))
+    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs)) {
         m_checkedClassProofs.clear();
+        m_passedTypeTests.shrink(0);
+    }
 }
 
 void RuntimeValidationEmitter::validateOperands(const OperationContext& context)
@@ -125,7 +129,7 @@ void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
     const Type& type = m_program.at(value->provenType());
     if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
+    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType, source);
 }
 
 // The shape comes first: the slot of an object that is no receiver holds anything.
@@ -141,11 +145,17 @@ void RuntimeValidationEmitter::validateSlotAccess(const OperationContext& contex
 
 void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& context, ValueID guard, uint32_t operandIndex)
 {
-    Use::Kind kind = context.valueID() ? Use::Kind::Operand : Use::Kind::TerminatorOperand;
-    if (analyses().guardStateAt(guard, Use { kind, context.block(), context.valueID(), operandIndex, 0 }) != GuardState::Unavailable || analyses().escape().gaveUp())
+    Use use { context.valueID() ? Use::Kind::Operand : Use::Kind::TerminatorOperand, context.block(), context.valueID(), operandIndex, 0 };
+    if (analyses().guardStateAt(guard, use) != GuardState::Unavailable || analyses().escape().gaveUp())
         return;
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;
+    // The passes removed a test based on the summaries of the time. Since then a call may have replaced operations in a callee's own body, and its summary may cover more than they did.
+    if (inputs().effectsByOperandTypes) {
+        FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, inputs().effectsByOperandTypes, m_id }, m_function);
+        if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
+            return;
+    }
     fail(context, InternalErrorKind::GuardNotAvailable);
 }
 
@@ -414,7 +424,7 @@ void RuntimeValidationEmitter::askOperationUnless(Condition condition, Validatio
     LBasicBlock continuation = newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), rareEdge(isUndecided));
     m_out.appendTo(isUndecided);
-    Operand arguments[] { reportedValueOf(found), word32(static_cast<int32_t>(kind)), word32(m_id.index()), word32(id.index()) };
+    Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
     callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true, .reportMayReturn = true });
     m_out.jump(continuation);
     m_out.appendTo(continuation);
@@ -423,6 +433,11 @@ void RuntimeValidationEmitter::askOperationUnless(Condition condition, Validatio
 void RuntimeValidationEmitter::checkPrecondition(const ValueContext& value, Condition holds)
 {
     failUnless(holds, ValidationFailureKind::OperationPreconditionBroken, { }, value.id());
+}
+
+void RuntimeValidationEmitter::checkClaim(std::optional<CellPointer> about, Condition holds)
+{
+    failUnless(holds, ValidationFailureKind::OperationPreconditionBroken, about ? Operand(*about) : Operand(), generator().operationBeingGenerated());
 }
 
 void RuntimeValidationEmitter::checkBindingIsStored(const ValueContext& value, Condition isStored)
@@ -443,7 +458,7 @@ void RuntimeValidationEmitter::reportFailure(ValidationFailureKind kind, Operand
 
 void RuntimeValidationEmitter::callReport(ValidationFailureKind kind, Operand found, ValueID id)
 {
-    Operand arguments[] { reportedValueOf(found), word32(static_cast<int32_t>(kind)), word32(m_id.index()), word32(id.index()) };
+    Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
     callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true });
 }
 
@@ -453,7 +468,13 @@ void RuntimeValidationEmitter::reportUnreachable(ValueID id, PassID cutBy)
     callReport(ValidationFailureKind::UnreachableValue, cutBy == PassID::None ? Operand() : Operand(boxedConstant(jsNumber(static_cast<int32_t>(cutBy)))), id);
 }
 
-// The report prints only the class of what was found, which the IR already gives for everything but a cell.
+// The report prints only the class of what was found. It reads the class from a boxed value or a cell, and is told the representation of anything else.
+Word32 RuntimeValidationEmitter::reportedFailure(ValidationFailureKind kind, Operand found)
+{
+    bool isRead = found.representation == Representation::JSValue || found.representation == Representation::Cell || found.representation == Representation::Cell32;
+    return word32(static_cast<int32_t>(ReportedFailure::encode(kind, isRead ? Representation::Unchosen : found.representation)));
+}
+
 Boxed RuntimeValidationEmitter::reportedValueOf(Operand found)
 {
     switch (found.representation) {

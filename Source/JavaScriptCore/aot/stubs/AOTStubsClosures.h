@@ -27,6 +27,8 @@ constexpr StubKey materializeEnvironment() { return StubKey(StubFamily::Material
 constexpr StubKey valueIsClosureOf() { return StubKey(StubFamily::ValueIsClosureOf); }
 // Takes any value but the empty one. True of a closure whose word says so: ClosureWord::endsItsTailCallsBit.
 constexpr StubKey valueEndsItsTailCalls() { return StubKey(StubFamily::ValueEndsItsTailCalls); }
+// Takes the function object that the caller was entered with. The frame record of the caller lies right below the stack pointer of its own caller.
+constexpr StubKey recordCallee() { return StubKey(StubFamily::RecordCallee); }
 
 // closure is a slim closure, with or without properties.
 void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word, JumpList* isRenamed = nullptr);

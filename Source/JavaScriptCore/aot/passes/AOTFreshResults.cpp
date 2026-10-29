@@ -169,7 +169,11 @@ static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
             return variant.kind == kind;
         });
     };
+    const uint64_t maxVariants = sinking.limit(LimitID::MaxVirtualObjectVariants);
     for (const VirtualReturn& returned : returns) {
+        // More returns cannot bring the number down again.
+        if (shape.variants.size() > maxVariants && hasVariantOfKind(VirtualShapeKind::Fields))
+            return shape;
         if (!returned.object) {
             if (std::optional<VirtualConstant> constant = virtualConstantOf(sinking.program(), function, returned.value))
                 addVariant({ .kind = VirtualShapeKind::Constant, .constant = *constant });
@@ -202,7 +206,7 @@ static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
 
     if (!hasVariantOfKind(VirtualShapeKind::Fields))
         return { .state = FreshResultsState::NotFresh };
-    if (shape.variants.size() > sinking.limit(LimitID::MaxVirtualObjectVariants))
+    if (shape.variants.size() > maxVariants)
         return shape;
 
     auto addPart = [&](const VirtualField& field, TypeID type) {
@@ -1054,8 +1058,10 @@ struct FreshResultSplitter {
     Vector<SplitCandidate> findForwarders()
     {
         Vector<FunctionID> callers;
-        for (size_t callee : wrappersOfLastRound)
-            callers.append(inputs.callGraph.callersOf(FunctionID(callee)));
+        for (size_t callee : wrappersOfLastRound) {
+            for (FunctionID caller : inputs.callGraph.callersOf(FunctionID(callee)))
+                callers.append(caller);
+        }
         AOT::sort(callers);
         removeRepeatedElements(callers);
         if (callers.isEmpty())

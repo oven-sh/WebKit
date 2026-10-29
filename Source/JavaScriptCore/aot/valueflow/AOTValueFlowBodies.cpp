@@ -24,6 +24,7 @@
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -727,6 +728,89 @@ private:
         return maskInside(m_program.types.find(Type::stringLiteral(terminator.strings()[caseIndex])).value_or(TypeTable::string), ValueFlowMaskKind::Checked);
     }
 
+    // Whether a value is a primitive of some kind, an object or a function never changes. Whether an object has a layout does.
+    static bool answersTheSameForever(const Type& tested)
+    {
+        return tested.isJavaScriptValue() && !tested.layouts && tested.classes.isEmpty() && tested.functions.isEmpty() && tested.builtins.isEmpty() && tested.regExpLiteralSet.isEmpty();
+    }
+
+    std::optional<uint32_t> findBlockParameter(ValueID value)
+    {
+        if (m_function.at(value).opcode != Opcode::Parameter)
+            return std::nullopt;
+        if (m_positionOfBlockParameter.isEmpty()) {
+            m_positionOfBlockParameter.fill(UINT32_MAX, m_function.values.size());
+            for (uint32_t position = 0; position < m_blockParameters.size(); ++position)
+                m_positionOfBlockParameter[m_blockParameters[position].parameter.index()] = position;
+        }
+        uint32_t position = m_positionOfBlockParameter[value.index()];
+        return position == UINT32_MAX ? std::nullopt : std::optional(position);
+    }
+
+    // The side that the value took out of the same test on its way here, where one way leads here.
+    std::optional<EdgeSide> sideTakenEarlier(ValueID value, TypeID tested)
+    {
+        AOT_THRESHOLD(unsigned, mostEdgesWalkedBack, 8);
+        for (unsigned steps = 0; steps < mostEdgesWalkedBack; ++steps) {
+            std::optional<uint32_t> position = findBlockParameter(value);
+            if (!position)
+                return std::nullopt;
+            std::span<const Edge> incoming = m_cfg.incomingEdges(m_blockParameters[*position].block);
+            if (incoming.size() != 1)
+                return std::nullopt;
+            IncomingValue brought = incomingValueOf(m_function, incoming[0], m_blockParameters[*position].index);
+            if (brought.kind == IncomingValue::Kind::Argument) {
+                value = brought.argument;
+                continue;
+            }
+            EdgeResult result = edgeResultAt(m_function, brought.result);
+            if (result.kind != EdgeResultKind::NarrowedOperand)
+                return std::nullopt;
+            if (result.test) {
+                const Value& test = m_function.at(result.test);
+                if (test.opcode == Opcode::TypeTest && test.testedType() == tested)
+                    return result.side;
+            }
+            value = result.subject;
+        }
+        return std::nullopt;
+    }
+
+    // The tested value comes together from several blocks. What comes from behind the other side of the same test does not take this edge.
+    bool addSourcesThatCanTakeEdge(ValueID parameter, const EdgeResult& result, uint32_t mask)
+    {
+        if (!result.test || m_function.at(result.test).opcode != Opcode::TypeTest)
+            return false;
+        TypeID tested = m_function.at(result.test).testedType();
+        std::optional<uint32_t> position = findBlockParameter(result.subject);
+        if (!position || !answersTheSameForever(m_program.at(tested)))
+            return false;
+        Vector<ValueID, 4> sources;
+        std::span<const Edge> incoming = m_cfg.incomingEdges(m_blockParameters[*position].block);
+        if (incoming.size() == 1) {
+            std::optional<EdgeSide> earlier = sideTakenEarlier(result.subject, tested);
+            if (!earlier || *earlier == result.side)
+                return false;
+        } else {
+            for (Edge edge : incoming) {
+                IncomingValue brought = incomingValueOf(m_function, edge, m_blockParameters[*position].index);
+                if (brought.kind != IncomingValue::Kind::Argument)
+                    return false;
+                std::optional<EdgeSide> earlier = sideTakenEarlier(brought.argument, tested);
+                if (!earlier || *earlier == result.side)
+                    sources.append(brought.argument);
+            }
+            if (sources.size() == incoming.size())
+                return false;
+        }
+        // Where nothing takes the edge, a source that lets nothing by gives the parameter a node, which the statements behind the edge wait for.
+        if (sources.isEmpty())
+            addSource(parameter, result.subject, maskInside(TypeTable::never, ValueFlowMaskKind::Checked));
+        for (ValueID source : sources)
+            addSource(parameter, source, mask);
+        return true;
+    }
+
     void addEdgeResult(ValueID parameter, const EdgeResult& result, const Terminator& terminator)
     {
         TypeID type = m_function.at(parameter).type;
@@ -762,6 +846,8 @@ private:
                 } else if (parameterIsBehindCheck && test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }
+            if (addSourcesThatCanTakeEdge(parameter, result, mask))
+                return;
             return addSource(parameter, result.subject, mask);
         }
         case EdgeResultKind::DeclaredResult:
@@ -1014,7 +1100,12 @@ private:
 
     void describeResult(ValueID id, const Value& value)
     {
-        if (provesOf(value.opcode) == Proof::Equality && m_program.typeOf(m_function, value.operand(0)).mayBeFunction() && m_program.typeOf(m_function, value.operand(1)).mayBeFunction())
+        // A comparison tells two closures apart, and two instances of a built-in class.
+        auto mayBeToldApart = [&](ValueID operand) {
+            const Type& type = m_program.typeOf(m_function, operand);
+            return type.mayBeFunction() || !type.classes.isEmpty();
+        };
+        if (provesOf(value.opcode) == Proof::Equality && mayBeToldApart(value.operand(0)) && mayBeToldApart(value.operand(1)))
             m_comparedValues.append({ value.operand(0), value.operand(1) });
         if (value.opcode == Opcode::IteratorResume || value.opcode == Opcode::AppendSpread)
             addSite({ ValueFlowSiteOrigin::Operation, id, 0, { }, BuiltinClasses::Array });
@@ -1620,14 +1711,36 @@ private:
         (leavesBody ? m_body.edgesOnceReached : m_body.edges).append({ from, target });
     }
 
+    Vector<uint32_t, 1>& filterNodesWithHashOf(const OperandForm& form)
+    {
+        unsigned hash = computeHash(form.node.kind, form.node.owner, form.node.index, form.constant, form.mask) >> 1;
+        return m_filterNodesByHash.add(hash, Vector<uint32_t, 1> { }).iterator->value;
+    }
+
     NodeName filterNodeOf(const OperandForm& form)
     {
-        for (auto& [known, node] : m_filterNodes) {
-            if (known == form)
-                return node;
+        AOT_THRESHOLD(size_t, mostSearchedInOrder, 16);
+        Vector<uint32_t, 1>* withSameHash = nullptr;
+        if (m_filterNodes.size() <= mostSearchedInOrder) {
+            for (auto& [known, node] : m_filterNodes) {
+                if (known == form)
+                    return node;
+            }
+        } else {
+            if (m_filterNodesByHash.isEmpty()) {
+                for (uint32_t position = 0; position < m_filterNodes.size(); ++position)
+                    filterNodesWithHashOf(m_filterNodes[position].first).append(position);
+            }
+            withSameHash = &filterNodesWithHashOf(form);
+            for (uint32_t position : *withSameHash) {
+                if (m_filterNodes[position].first == form)
+                    return m_filterNodes[position].second;
+            }
         }
         NodeName node = addNode(ValueFlowBodyNodeKind::Filter, ValueID(), form.mask);
         m_body.edges.append({ form.node, node });
+        if (withSameHash)
+            withSameHash->append(m_filterNodes.size());
         m_filterNodes.append({ form, node });
         return node;
     }
@@ -1654,12 +1767,11 @@ private:
     OperandForm throughSharedFilters(OperandForm form)
     {
         while (form.node && !form.constant) {
-            size_t index = m_sharedFilters.findIf([&](const auto& filter) {
-                return filter.first == form.node;
-            });
-            if (index == notFound)
+            // makeNode() appends a node that is newer than all the others.
+            auto filter = std::ranges::lower_bound(m_sharedFilters, form.node, { }, &std::pair<NodeName, OperandForm>::first);
+            if (filter == m_sharedFilters.end() || filter->first != form.node)
                 break;
-            form = throughMask(m_sharedFilters[index].second, form.mask);
+            form = throughMask(filter->second, form.mask);
         }
         return form;
     }
@@ -2055,7 +2167,7 @@ private:
         for (auto [test, value] : m_observedValues)
             m_body.observedValues.append({ test, operandFormOf(value) });
         for (auto [left, right] : m_comparedValues)
-            m_body.comparedValues.append({ operandFormOf(left), operandFormOf(right) });
+            m_body.comparedValues.append({ operandFormOf(left), operandFormOf(right), m_program.typeOf(m_function, left).mayBeFunction() && m_program.typeOf(m_function, right).mayBeFunction() });
         for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
             if (m_descriptions[index].isLiveForComparisonsOnly)
                 m_body.valuesAliveForComparisonsOnly.append(ValueID(index));
@@ -2098,6 +2210,7 @@ private:
     ValueID m_valueWithHashedSources;
     UncheckedKeyHashSet<uint64_t> m_hashedSources;
     Vector<BlockParameter, 16> m_blockParameters;
+    Vector<uint32_t> m_positionOfBlockParameter;
     Vector<GuardsOfBlock> m_guardsOfBlock;
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };
@@ -2114,6 +2227,7 @@ private:
     BitVector m_isBehindCheck;
     Vector<Forms, 48> m_forms;
     Vector<std::pair<OperandForm, NodeName>, 4> m_filterNodes;
+    HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_filterNodesByHash;
     Vector<std::pair<NodeName, OperandForm>, 4> m_sharedFilters;
     std::array<std::optional<std::optional<TypeID>>, 2> m_typeOfBoolean;
 };

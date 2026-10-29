@@ -391,7 +391,7 @@ static void reportModules(const ValueFlowResultInputs& inputs, std::span<const M
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
         bool isFilledByLoader = !fillsItsExportsItself(program, module);
-        bool isEveryExportRead = hasExportsReadByName.quickGet(index) || module.kind == ModuleKind::RuntimeSource || module.requireResult == RequireResult::DefaultExport || modules[index].namespaceUse == NamespaceUse::Unknown;
+        bool isEveryExportRead = hasExportsReadByName.quickGet(index) || module.kind == ModuleKind::RuntimeSource || module.requireResult == RequireResult::DefaultExport || module.requireResult == RequireResult::NamespaceIfImported || modules[index].namespaceUse == NamespaceUse::Unknown;
         for (const ModuleExport& entry : module.exports) {
             if (entry.kind != ModuleExportKind::Variable || !entry.variable)
                 continue;
@@ -399,17 +399,21 @@ static void reportModules(const ValueFlowResultInputs& inputs, std::span<const M
                 locations.note(locations.of(entry.variable), ReadNoted::ByLoader);
             if (isFilledByLoader)
                 locations.leaveOpenToWriter(locations.of(entry.variable), Actor::Loader);
+            if (program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                locations.leaveOpen(locations.of(entry.variable), Actor::NativeCode);
         }
         for (const SyntheticExport& entry : module.syntheticExports) {
             if (entry.variable)
-                locations.leaveOpen(locations.of(entry.variable), Actor::Loader);
+                locations.leaveOpen(locations.of(entry.variable), entry.isReplaceable ? OptionSet<Actor> { Actor::Loader, Actor::NativeCode } : OptionSet<Actor> { Actor::Loader });
         }
+        if (module.exportsVariable && module.flags.contains(ModuleFlags::MayBeMocked))
+            locations.leaveOpen(locations.of(module.exportsVariable), Actor::NativeCode);
         if (ModuleID captured = commonJsModuleCapturedBy(program, module))
             locations.note(locations.of(program.at(captured).exportsVariable), ReadNoted::ByLoader);
     }
 
-    for (const Entry& entry : program.entries) {
-        if (VariableID exports = program.at(entry.module).exportsVariable)
+    for (size_t index : modulesThatHostAsksFor(program, filesOfProgramAreLoadedByName(inputs.solution))) {
+        if (VariableID exports = program.modules[index].exportsVariable)
             locations.note(locations.of(exports), ReadNoted::ByLoader);
     }
     // Whoever holds a module object reads and stores its `exports`, and nobody follows that to the variable.
@@ -823,6 +827,7 @@ struct AccessesThroughHolders {
     {
         const Program& program = inputs.program;
         bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
+        bool filesOfProgramAreNamedAtRunTime = filesOfProgramAreLoadedByName(inputs.solution);
         ValueSetID created = solver.possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CreatedNamespaces));
         if (sets.meet(created, inputs.universe().placeholdersAlone()))
             return;
@@ -830,7 +835,7 @@ struct AccessesThroughHolders {
             const Module& module = program.modules[index];
             if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::External || !inputs.build.isEnabled(FlowResultKind::ObjectUses, index))
                 continue;
-            if (modulesAreNamedAtRunTime && mayAnswerToName(program, ModuleID(index)))
+            if ((answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
                 continue;
             LedgerOfVariables::NamespaceObject& entry = locations.namespaceOf(ModuleID(index));
             ValueFlowObjectID namespaceObject = inputs.universe().namespaceOf(ModuleID(index));

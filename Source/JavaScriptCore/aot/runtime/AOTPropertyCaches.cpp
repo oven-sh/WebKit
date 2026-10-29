@@ -933,7 +933,7 @@ static bool listsEveryNameInItsTable(Structure* structure)
 void VMPropertyCaches::didCreateInstance(Instance& instance)
 {
     if (m_hasInstance && !m_isSharedByInstances) {
-        m_isSharedByInstances = m_vm.aotState().instances.size() > 1;
+        m_isSharedByInstances = numberOfRunningInstances(m_vm.aotState()) > 1;
         m_front.clear();
         m_hashedTable.clear();
         for (Instance* earlier : m_vm.aotState().instances)
@@ -2615,6 +2615,58 @@ JSString* StringKeyCache::makeIntegerKey(VM& vm, uint32_t integer, std::span<con
     return key;
 }
 
+const StringKeyCache::KeyOfPair* StringKeyCache::noKeysOfPairs()
+{
+    static constinit const std::array<KeyOfPair, waysOfKeysOfPairs> empty { };
+    return empty.data();
+}
+
+void StringKeyCache::publishKeysOfPairs()
+{
+    m_instance.realm.keysOfPairs = m_keysOfPairs.span().data();
+    m_instance.realm.keyOfPairMask = keyOfPairMaskFor(m_keysOfPairs.size());
+}
+
+// Whether it took the place of another.
+bool StringKeyCache::addKeyOfPair(const KeyOfPair& added)
+{
+    KeyOfPair* set = m_keysOfPairs.mutableSpan().data() + (hashOfPair(added.first, added.second) & keyOfPairMaskFor(m_keysOfPairs.size())) / sizeof(KeyOfPair);
+    bool evicts = set[0].key && set[1].key;
+    // The one that came last stands in front.
+    if (set[0].key)
+        set[1] = set[0];
+    set[0] = added;
+    return evicts;
+}
+
+void StringKeyCache::cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second, JSString* key)
+{
+    if (m_keysOfPairs.isEmpty()) [[unlikely]] {
+        if (!tryResize(m_keysOfPairs, minTableSize))
+            return;
+        publishKeysOfPairs();
+    }
+    if (addKeyOfPair({ first, second, key, 0 }) && ++m_keyOfPairEvictionCount > m_keysOfPairs.size() / 4) [[unlikely]]
+        growKeysOfPairs();
+    m_writtenSinceCollection.recordAll();
+}
+
+void StringKeyCache::growKeysOfPairs()
+{
+    m_keyOfPairEvictionCount = 0;
+    if (m_keysOfPairs.size() >= maxKeysByPartsTableSize)
+        return;
+    std::optional former = tryResize(m_keysOfPairs, m_keysOfPairs.size() * 2);
+    if (!former)
+        return;
+    publishKeysOfPairs();
+    // From the back of each set, so that the one that came last stands in front again.
+    for (const KeyOfPair& entry : *former | std::views::reverse) {
+        if (entry.key)
+            m_keyOfPairEvictionCount += addKeyOfPair(entry);
+    }
+}
+
 void StringKeyCache::growKeysByParts()
 {
     m_keysByPartsEvictionCount = 0;
@@ -2657,6 +2709,22 @@ size_t StringKeyCache::removeDeadKeysByParts(VM& vm)
             entry = { };
             ++removedCount;
         }
+    }
+    return removedCount;
+}
+
+size_t StringKeyCache::removeDeadKeysOfPairs(VM& vm)
+{
+    size_t removedCount = 0;
+    auto isAlive = [&](EncodedJSValue part) {
+        JSValue value = JSValue::decode(part);
+        return !value.isCell() || vm.heap.isMarked(value.asCell());
+    };
+    for (KeyOfPair& entry : m_keysOfPairs) {
+        if (!entry.key || (vm.heap.isMarked(entry.key) && isAlive(entry.first) && isAlive(entry.second)))
+            continue;
+        entry = { };
+        ++removedCount;
     }
     return removedCount;
 }
@@ -2728,6 +2796,7 @@ size_t StringKeyCache::removeDeadEntries(VM& vm, CollectionScope scope)
         removedCount += removeDeadCaseConversions(vm);
         removedCount += removeDeadIntegerKeys(vm);
         removedCount += removeDeadKeysByParts(vm);
+        removedCount += removeDeadKeysOfPairs(vm);
     });
     return removedCount;
 }

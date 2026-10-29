@@ -629,14 +629,6 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
     return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
 }
 
-void recordCallee(VM& vm, JSObject* closure)
-{
-    CallFrame* operationRecord = vm.topCallFrame;
-    RunWalk walk(vm.aotState(), { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false });
-    RELEASE_ASSERT(!walk.isAtEnd());
-    FunctionTables::of(vm).recordCallee(vm, walk.callerStackPointer(), closure);
-}
-
 // A built-in function that makes an error stands in one frame on top of the code that called it.
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm)
 {
@@ -700,7 +692,7 @@ static ALWAYS_INLINE void appendFramesBelow(VM& vm, JSCell* owner, WTF::Vector<S
 // `otherFrames` gets the frames on top of the run, then those below it. `allocate` gives the memory of the trace.
 static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate)
 {
-    if (!vm.hasCompiledCode() || !vm.topCallFrame || !maxStackSize)
+    if (!vm.hasCompiledCode() || !vm.topCallFrame || !maxStackSize || vm.aotState().stackPointerOfImport)
         return nullptr;
 
     FramesAboveRun framesAbove;

@@ -337,10 +337,10 @@ struct CapacityPlanner {
 
         result.forEachTerm([&](ValueID term) {
             std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, function.at(term));
-            if (!measured || analyses.dominates(term, point))
+            if ((!measured && function.at(term).opcode != Opcode::GetStringLength) || analyses.dominates(term, point))
                 return;
             result.repeatedLengthReads.append(term);
-            if (!analyses.dominates(measured->owner, point))
+            if (measured && !analyses.dominates(measured->owner, point))
                 result.repeatedChecks.append(term);
         });
         return result;
@@ -735,6 +735,10 @@ struct CapacityPlanner {
             if (!outermost || !mayChangeLengthIn(*outermost, *measured, literal.value).predicted())
                 return { CapacityTermKind::Integer, definition };
         }
+        // The length of a string never changes, so it can be read again where the literal is made.
+        const Value& read = function.at(definition);
+        if (read.opcode == Opcode::GetStringLength && analyses.dominates(read.stringOperand(), literal.point))
+            return { CapacityTermKind::Integer, definition };
         return isAvailable && type.isNumber() ? CapacityTerm { CapacityTermKind::Number, definition } : CapacityTerm { };
     }
 

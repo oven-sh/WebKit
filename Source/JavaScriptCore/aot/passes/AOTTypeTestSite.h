@@ -245,6 +245,8 @@ public:
     bool mayHaveFailedTestOf(ValueID) const;
     // Whether a rule has reported tests for the use in this round.
     bool isClaimed(ValueID use) const { return m_isClaimed.get(use.index()); }
+    // No rule after this one reports tests for the use in this round.
+    void claimUse() { m_isClaimed.set(m_use.index()); }
     // The use is looked at again in the next round, or behind the rounds if this one is the last.
     void putOffUse() { m_context.hasUsesAwaitingExpansion = true; }
     // Whatever the rule reports here is taken away again: collectTestSites() says why.

@@ -160,10 +160,10 @@ static void emitClearInColumn(StubAssembler& jit, Jump isWide, GPRReg column, GP
     isCleared.link(&jit);
 }
 
-static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, JumpList& keysAreNarrow)
+static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, JumpList& keysAreNarrow, JumpList& keysAreWide)
 {
     const GPRReg result = jit.result();
-    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &keysAreNarrow);
+    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &keysAreNarrow, &keysAreWide);
     Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(registers.table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Wide)));
     jit.load32(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesFour), result);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, result, TrustedImm32(minCell32));
@@ -250,6 +250,7 @@ static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
         value = jit.operand(2);
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
+    exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     if (!value)
         exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
@@ -285,6 +286,7 @@ static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, Entry
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = searchesTablesInImage }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
+    exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
         emitAtEntry(registers);
         returnConstant(jit, jsBoolean(true));
@@ -365,7 +367,7 @@ void generateMapGet(StubAssembler& jit)
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitLoadValueOfCompactTable(jit, registers, exits.foundAmongNarrowKeys);
+        emitLoadValueOfCompactTable(jit, registers, exits.foundAmongNarrowKeys, exits.foundAmongWideKeys);
     });
     emitAtExit(jit, exits.absent, [&] {
         returnConstant(jit, jsUndefined());
@@ -923,6 +925,30 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
 
 void generateMapNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Map, Entry::RawMapNext); }
 void generateSetNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Set, Entry::RawSetNext); }
+
+StubSignature signatureOfReserveCollectionCapacityFrontEnd(StubKey) { return operationFrontEndSignature(4); }
+
+// The operands are those of the operation: the owner, the additions left, the additions the loop has come by, and the size in front of the loop.
+// A loop that has only replaced values so far is not expected to add entries. Its table stays full, so it comes here in every iteration.
+void generateReserveCollectionCapacityFrontEnd(StubAssembler& jit)
+{
+    const GPRReg owner = jit.operand(0);
+    const GPRReg sizeAtEntry = jit.operand(3);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T9);
+
+    jit.loadPtr(Address(owner, offsetOfHashTableStorage()), storage);
+    Jump hasNoStorage = jit.branchTestPtr(CCallHelpers::Zero, storage);
+    Jump isOrdinary = jit.branch8(CCallHelpers::Equal, Address(storage, JSCell::typeInfoTypeOffset()), TrustedImm32(JSCellButterflyType));
+    jit.load32(Address(storage, CompactTable::offsetOfAliveCount()), storage);
+    Jump hasAdded = jit.branch64(CCallHelpers::Above, storage, sizeAtEntry);
+    hasNoStorage.link(&jit);
+    isOrdinary.link(&jit);
+    jit.returnToCaller();
+
+    hasAdded.link(&jit);
+    jit.tailCallOperation(Entry::RawReserveCollectionCapacity, OperationCall::FirstArgument::Instance);
+}
+
 void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
 void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }
 void generateWeakSetHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::SetHas); }

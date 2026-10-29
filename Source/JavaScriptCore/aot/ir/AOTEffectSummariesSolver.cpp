@@ -227,6 +227,7 @@ void EffectSummarizer::bringSeedUpToDate(EffectSummaries& summaries)
     if (!summaries.m_masks)
         summaries = EffectSummaries(Ref { m_kept.m_masks }, EffectSummaries::Contents::Any);
     RELEASE_ASSERT(summaries.m_masks == m_kept.m_masks.ptr());
+    summaries.forgetAnswersForCalleeLists();
     m_kept.countLoweredBodiesWithNewStorageAsChanged();
     findRecordsThatLookDifferent();
     BorrowedParameters borrowed = m_kept.computeBorrowedParametersFromLatestTable(m_program, m_build, m_kept.m_stampsOfRecords.span(), m_recordLooksDifferent.span());
@@ -252,6 +253,7 @@ void EffectSummarizer::finishUpdate(EffectSummaries& summaries)
         times.didFinish("solveAgain"_s);
     else
         solveAll(summaries, times);
+    summaries.forgetAnswersForCalleeLists();
     if (m_build.options().logging.logsPhaseTimes && !m_isOnlyCheck) [[unlikely]]
         dataLogLn("AOT effect summaries: ", m_program.functions.size(), " functions | ", m_kept.m_numberOfNodes, " nodes | ", m_kept.m_masks->size(), " distinct location masks");
     if (!m_build.options().verifiesAfterEveryPass || m_isOnlyCheck || !m_numberOfFunctionsBefore)
@@ -422,6 +424,7 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
     m_kept.m_parametersWhoseContentsAreCalled = WTF::move(contentsAreCalled);
 
     EffectSummaries& seed = m_kept.m_seed.write();
+    seed.forgetAnswersForCalleeLists();
     seed.grow(numberOfFunctions, &loops);
     Vector<uint32_t> functionsToSeed = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return index >= m_numberOfFunctionsBefore || m_recordLooksDifferent[index] || (!m_hasNewSeed.isEmpty() && m_hasNewSeed[index]);
@@ -442,6 +445,24 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
             RELEASE_ASSERT(seed.of(FunctionID(index)) == createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, FunctionID(index)));
         });
     }
+    seed.forgetAnswersForCalleeLists();
+    if (!m_rowsOfBodies)
+        return;
+    RELEASE_ASSERT(!m_numberOfFunctionsBefore && m_rowsOfBodies->size() == numberOfFunctions);
+    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        std::span<StoredParameterSummary> seeded = seed.parametersOf(index);
+        StoredParameterRange range = m_rowsOfBodies->m_parameterRanges[index];
+        std::span<const StoredParameterSummary> read = m_rowsOfBodies->m_parameters.subspan(range.first, range.size);
+        RELEASE_ASSERT(seeded.size() == read.size());
+        for (uint32_t parameter = 0; parameter < seeded.size(); ++parameter) {
+            bool saysLess = read[parameter].uses != seeded[parameter].uses && !(read[parameter].uses & ~seeded[parameter].uses);
+            if (!saysLess)
+                continue;
+            seeded[parameter].uses = read[parameter].uses;
+            seeded[parameter].retainedIn = read[parameter].retainedIn;
+        }
+    });
+    seed.forgetAnswersForCalleeLists();
 }
 
 Vector<ReasonToSummarize> EffectSummarizer::findReasonsToSummarize() const
@@ -648,6 +669,8 @@ void EffectSummarizer::summarizeBodies()
                 row.retainedIn = read[parameter].retainedIn;
             }
         }
+        if (seedWithRowsOfBodies)
+            seedWithRowsOfBodies->forgetAnswersForCalleeLists();
     };
     for (Turn turn : { Turn::GenericVersions, Turn::ResultWorkers }) {
         uint32_t firstPosition = summarizeBodiesOf(turn);

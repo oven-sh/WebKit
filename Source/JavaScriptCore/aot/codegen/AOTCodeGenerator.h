@@ -66,6 +66,8 @@ struct CodeGenerationInputs {
     const BranchCounterNumbers& branchCounters;
     const ArrivalSiteNumbers& arrivalSites;
     const PromisedResults& promisedResults;
+    // computeEffectSummariesByOperandTypes(), in a validating build.
+    const EffectSummaries* effectsByOperandTypes { nullptr };
 };
 
 struct FunctionInputs {
@@ -140,6 +142,7 @@ public:
     // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
     bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
+    ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
     // Of an operand: the form in which the operation that is being generated takes it.
@@ -198,6 +201,8 @@ public:
     bool hasFailed() const { return m_hasFailed; }
     bool isValidatedWhereLookedAt(ValueID);
     bool hasTypeOnlyBehindTest(ValueID parameter);
+    // B3 may compute the lowered value ahead of every test: whether the type holds there too.
+    bool holdsTypeWhereverComputed(ValueID);
 
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);

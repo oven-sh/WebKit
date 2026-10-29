@@ -70,12 +70,30 @@ struct ArrayLiteralShape {
     unsigned count { 0 };
     std::optional<unsigned> emptyCapacity { };
     bool areDoubles { false };
+    bool areInt32 { false };
     bool hasStorageOfItsOwn { false };
 };
 
+static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base, size_t offset, GPRReg scratch)
+{
+    constexpr int32_t tag = static_cast<int32_t>(JSValue::NumberTag >> 32);
+    auto at = [&](unsigned i) { return static_cast<int32_t>(offset + i * sizeof(EncodedJSValue)); };
+#if CPU(ARM64)
+    jit.move(TrustedImm32(tag), scratch);
+    for (unsigned i = 0; i < count; ++i)
+        jit.storePair32(jit.operand(i), scratch, base, TrustedImm32(at(i)));
+#else
+    UNUSED_PARAM(scratch);
+    for (unsigned i = 0; i < count; ++i) {
+        jit.store32(jit.operand(i), Address(base, at(i)));
+        jit.store32(TrustedImm32(tag), Address(base, at(i) + static_cast<int32_t>(sizeof(int32_t))));
+    }
+#endif
+}
+
 static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
 {
-    const auto [count, emptyCapacity, areDoubles, hasStorageOfItsOwn] = shape;
+    const auto [count, emptyCapacity, areDoubles, areInt32, hasStorageOfItsOwn] = shape;
     auto number = [&](unsigned i) { return jit.operandFPR(1 + i); };
     static_assert(maxArrayElementsInRegisters == 4);
     RELEASE_ASSERT(count <= maxArrayElementsInRegisters);
@@ -91,16 +109,20 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     JumpList slowPath;
     for (unsigned i = 0; areDoubles && i < count; i += 2)
         slowPath.append(branchIfEitherIsNaN(jit, number(i), number(std::min(i + 1, count - 1))));
-    slowPath.append(branchIfHavingABadTime(jit));
-    jit.loadPtr(Address(instanceGPR, hasStorageOfItsOwn ? AOT_INSTANCE_OFFSET(allocation.auxiliarySpace) : AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-    jit.loadPtr(Address(allocator, hasStorageOfItsOwn ? offsetOfArrayStorageAllocator(vectorLength) : offsetOfArrayWithStorageAllocator(vectorLength)), allocator);
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     std::optional<AssemblyHelpers::FreeListRefill> storageRefill;
     if (hasStorageOfItsOwn) {
+        slowPath.append(branchIfHavingABadTime(jit));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
+        jit.loadPtr(Address(allocator, offsetOfArrayStorageAllocator(vectorLength)), allocator);
+        slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
         storageRefill = allocateCellWithLateRefill(jit, storage, allocator, scratch, slowPath);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
+    } else {
+        RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(vectorLength) < ShortArrayWords::numberOfAllocators);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shortArrays.allocators) + ShortArrayWords::indexOfAllocator(vectorLength) * sizeof(void*)), allocator);
     }
-    AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath);
+    static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff);
+    AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, hasStorageOfItsOwn ? sizeof(JSArray) : sizeOfArrayWithStorage(vectorLength));
     if (!hasStorageOfItsOwn)
         jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
     jit.store64(TrustedImm64(static_cast<uint64_t>(vectorLength) << 32 | count), Address(storage, 0));
@@ -111,10 +133,13 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
             jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), scratch);
         for (unsigned i = count; i < vectorLength; ++i)
             jit.store64(scratch, Address(storage, sizeof(IndexingHeader) + i * sizeof(double)));
+    } else if (areInt32) {
+        emitStoreBoxedInt32(jit, count, storage, sizeof(IndexingHeader), scratch);
+        emitStoreValuesAndClear(jit, 1, 0, vectorLength - count, storage, sizeof(IndexingHeader) + count * sizeof(EncodedJSValue));
     } else
         emitStoreValuesAndClear(jit, 1, count, vectorLength, storage, sizeof(IndexingHeader));
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
-    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(areDoubles ? ArrayWithDouble : ArrayWithContiguous)), scratch);
+    jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(areDoubles ? ArrayWithDouble : areInt32 ? ArrayWithInt32 : ArrayWithContiguous)), scratch);
     jit.storePair64(scratch, storage, array, TrustedImm32(0));
     fenceAfterAllocation(jit);
     jit.returnToCaller();
@@ -130,7 +155,7 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     jit.callOperationAndReturn(Entry::operationAOTNewArray, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
-        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity | (hasStorageOfItsOwn ? storageOfItsOwnInArrayLiteralCount : 0) },
+        .spilledArguments = OperationCall::SpilledArguments { count, countAndCapacity | (hasStorageOfItsOwn ? storageOfItsOwnInArrayLiteralCount : 0) | (areInt32 ? int32ValuesInArrayLiteralCount : 0) },
     });
 }
 
@@ -143,6 +168,9 @@ StubSignature signatureOfArrayLiteral(StubKey key)
 }
 
 void generateArrayLiteral(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count() }); }
+
+StubSignature signatureOfArrayLiteralWithInt32(StubKey key) { return signatureOfArrayLiteral(arrayLiteral(key.count())); }
+void generateArrayLiteralWithInt32(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .areInt32 = true }); }
 
 StubSignature signatureOfFrameArrayLiteral(StubKey key)
 {

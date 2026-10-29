@@ -66,6 +66,8 @@ void remapTypes(FlowBodyUpdate& body, const TypeRemap& remap)
         return;
     for (FlowValueProof& proof : body.proofs)
         remap.apply(proof.type);
+    for (FlowValueExpectation& expectation : body.expectations)
+        remap.apply(expectation.type);
     for (FlowClaimUpdate& claim : body.claims)
         remap.apply(claim.arriving);
     for (FlowAccessStamp& access : body.accesses)

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCoroutines.h"
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -417,9 +418,33 @@ bool GenericCopy::mergesAllocationThatSinksWithItsCopyAt(BlockID block) const
     });
 }
 
+// A loop is only fused with a generator that has one creation. The call of a ramp becomes a creation once it is inlined.
+bool GenericCopy::mergesGeneratorWithItsCopyAt(BlockID block) const
+{
+    const UseLists& useLists = m_analyses.useLists();
+    auto createsGenerator = [&](const Value& value) {
+        if (value.opcode == Opcode::NewGenerator)
+            return true;
+        if (value.opcode != Opcode::CallDirect)
+            return false;
+        const Function& callee = m_context.program.at(value.function());
+        const CreatorRecord::Coroutine* record = coroutineOf(callee);
+        return callee.role == FunctionRole::CoroutineRamp && record && record->kind == CoroutineKind::Generator;
+    };
+    return std::ranges::any_of(m_analyses.liveness().liveAtHead(block), [&](ValueID value) {
+        ValueID identity = m_analyses.identityOf(value);
+        if (!createsGenerator(m_function.at(identity)))
+            return false;
+        BlockID definingBlock = useLists.blockOf(identity);
+        return definingBlock && isInRegion(definingBlock);
+    });
+}
+
 bool GenericCopy::canLeaveCopyAt(BlockID block) const
 {
     if (m_keepsAllocationsApart.get(block.index()) && mergesAllocationWithItsCopyAt(block))
+        return false;
+    if (mergesGeneratorWithItsCopyAt(block))
         return false;
     return !addsLoopEntry(block) && RegionCloner::canMergeAt(m_analyses, m_isInRegion, block);
 }

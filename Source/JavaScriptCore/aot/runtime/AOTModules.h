@@ -112,6 +112,13 @@ public:
     JSValue readExport(ModuleID, unsigned index);
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue);
+    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
+    bool mayBeMocked(ModuleID) const;
+    ModuleID moduleWithExportsOf(ModuleID) const;
+    void willMock(ModuleID module) { m_mockedModules.set(module.index()); }
+    void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
+    bool isMocked(ModuleID module) const { return m_mockedModules.get(module.index()); }
     JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
@@ -225,6 +232,7 @@ public:
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void dropErrorOfFile(ModuleID fileOrFace);
+    void didLoseErrorOfModule(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
@@ -304,6 +312,8 @@ private:
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
         bool didDropError { false };
+        // Of a CommonJS file: didLoseErrorOfModule().
+        bool wasReachedBySecondLoad { false };
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
@@ -415,6 +425,7 @@ private:
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     Identifier keyWithoutForm(ModuleID file);
     std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
+    bool isHeldForImport(ModuleID) const;
     void noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters&, ModuleID file);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -478,12 +489,22 @@ private:
         // In which the loader asks the root for its requests. Without one, the jobs of an import() are counted.
         ModuleGraphLoadingState* load { nullptr };
         size_t numberOfJobsInFrontOfFile { 0 };
+        // A require() loads the root, and the loader of `bun run` has taken the steps as far as the one in which the file runs.
+        bool isAheadOfStepsOfLoader { false };
         // The loader has gone through the graph as far as the step in which this file runs.
         std::optional<ModuleID> fileHandedToLoader { };
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
     };
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
+    void handSynchronousLoadToLoader(FilesBeingRun&);
+    void runSynchronousStepsInFrontOf(ModuleID file);
+    struct LoadHandedToLoader {
+        ModuleID root;
+        Strong<JSPromise> promise;
+    };
+    Vector<LoadHandedToLoader, 1> m_synchronousLoadsHandedToLoader;
+    void captureNoExports(ModuleID file);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
     void runStepsOfLoaderInFrontOf(ModuleID file);
     void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
@@ -497,6 +518,7 @@ private:
     BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
+    BitVector m_mockedModules;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };

@@ -32,7 +32,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
 
-static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, FlowResultTables& tables)
+static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, ValueSetID listsToldApart, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -86,8 +86,11 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
                 tables.sites.allocationClasses.append(WTF::move(instances));
             }
             tables.sites.allocationClasses[allocationClass.index()].impossibleMutations.remove(instance.markedMutations);
-            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index()))
+            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index())) {
                 tables.sites.sitesOfObjectsThatNeverChange.set(numberOfSites);
+                if (instance.builtinClass == BuiltinClasses::Array && isNeverToldApart(inputs, instance.object, listsToldApart))
+                    tables.sites.sitesOfListsNeverToldApart.set(numberOfSites);
+            }
             ++numberOfSites;
         }
     }
@@ -149,6 +152,10 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     for (size_t index : tables.sites.sitesOfObjectsThatNeverChange)
         orderedSitesOfObjectsThatNeverChange.set(orderedSiteOf[index].index());
     tables.sites.sitesOfObjectsThatNeverChange = WTF::move(orderedSitesOfObjectsThatNeverChange);
+    BitVector orderedSitesOfListsNeverToldApart;
+    for (size_t index : tables.sites.sitesOfListsNeverToldApart)
+        orderedSitesOfListsNeverToldApart.set(orderedSiteOf[index].index());
+    tables.sites.sitesOfListsNeverToldApart = WTF::move(orderedSitesOfListsNeverToldApart);
 
     auto renumber = [&](AllocationSiteID& site) {
         if (site)
@@ -364,7 +371,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
     ValueFlowUsesOfLibraryCode usesOfLibraryCode = findUsesOfLibraryCode(inputs);
-    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span()))) {
+    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span(), usesOfLibraryCode.exportsThatSpiesReplace.span()))) {
         build.destroyLater(WTF::move(solution));
         return FlowResults(createUnknownResultTables(program, build));
     }
@@ -501,9 +508,10 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         writesUnderNewNames = computeBuiltinResults(inputs, WTF::move(usesOfLibraryCode), tables, ledgerOfBuiltinObjects);
         ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);
     }, TaskPriority::Background);
+    ValueSetID listsToldApart = ValueSets::anything;
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
-        computeClosuresNeverCompared(inputs, heap, tables);
+        listsToldApart = computeClosuresNeverCompared(inputs, heap, tables);
         computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
@@ -530,8 +538,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         writesToContainers = nullptr;
         timesOfStep.didFinish("contents: types of contents"_s);
         inputs.containers = &containers;
-        stampAllocationsOfBuiltinInstances(inputs, containers, tables);
-        computeDataNodeResults(inputs, containers, types, tables);
+        stampAllocationsOfBuiltinInstances(inputs, containers, listsToldApart, tables);
+        computeDataNodeResults(inputs, containers, listsToldApart, types, tables);
         computeTypedResultResults(inputs, tables);
         orderAllocationSites(inputs.loops(), tables);
     });

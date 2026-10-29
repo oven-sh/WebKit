@@ -651,18 +651,12 @@ private:
 
     ClimbingSet withSourcesOfCopies(ClimbingSet objects)
     {
-        ClimbingSet all = objects;
+        SourcesOfCopies found(m_context, objects);
         ClimbingSet last = known(objects);
-        for (;;) {
+        do
             last = known(m_context.valueOf(m_context.readWhatWasWritten(last, copiedFromName)));
-            bool findsNewSource = false;
-            m_context.forEachMember(last, [&](ValueFlowObjectID source) {
-                findsNewSource |= !m_context.contains(all, source);
-            });
-            if (!findsNewSource)
-                return all;
-            all = m_context.unite(all, last);
-        }
+        while (found.add(last));
+        return found.withCopies();
     }
 
     void forEachNodeReadThrough(ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)

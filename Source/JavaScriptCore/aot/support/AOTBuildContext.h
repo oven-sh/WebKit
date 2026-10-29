@@ -106,6 +106,8 @@ public:
     }
 
     void finishDeferredDestruction();
+    // For where much has just died: how much memory the build holds at most does not hang on how soon the destroyer comes to it.
+    void giveFreedMemoryBack();
 
     void resolveFunctionToDump(const Typed::Program&);
     void setIdentifierNumbering(IdentifierNumbering&&);

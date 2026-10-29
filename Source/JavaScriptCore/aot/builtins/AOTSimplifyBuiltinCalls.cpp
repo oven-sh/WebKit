@@ -921,6 +921,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         rewrites += simplifyConcatenationsOfLiterals(context);
         rewrites += simplifySearchesOfLiterals(context);
     }
+    if (hasSitesIn(SiteList::ElementReads))
+        rewrites += simplifyCharacterReads(context);
     if (!hasSitesIn(SiteList::BuiltinCalls)) {
         bool hasTruncation = std::ranges::any_of(context.sitesIn(SiteList::SimplifiedIntrinsics), [&](const ValueSite& site) {
             return context.function.at(site.value).opcode == Opcode::ToIntegerOrInfinity;

@@ -61,6 +61,7 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.accessSiteLosses, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversSeenAtSites, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
@@ -196,6 +197,15 @@ bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
     const Vector<bool>& mayHaveDecidedStorage = m_tables.sites.receiversThatMayHaveDecidedStorage;
     return mayHaveDecidedStorage.isEmpty() || (access && !recordAt(mayHaveDecidedStorage, access, true));
 }
+
+std::optional<LayoutSetID> FlowResults::receiversSeenAt(AccessSiteID access) const
+{
+    uint32_t seen = access ? recordAt(m_tables.sites.receiversSeenAtSites, access, 0u) : 0;
+    if (!seen)
+        return std::nullopt;
+    return seen == 1 ? LayoutSetID() : LayoutSetID(seen - 2);
+}
+
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 

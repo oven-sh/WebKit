@@ -145,19 +145,34 @@ struct LiteralOrderSolver {
     Vector<Vector<uint32_t>> readersOfLayout = Vector<Vector<uint32_t>>(layouts.size());
     Vector<LiteralKeyOrders> literalOrdersOfLayout = Vector<LiteralKeyOrders>(layouts.size());
     BitVector hasOrdersUnread { };
+    FunctionID functionOfCopies { };
+    Vector<const ValueFlowStatement*> copiesBySite { };
 
     const LayoutFlow& flowOf(LayoutID layout) const { return layouts[layout.index()].flow; }
     LayoutID provenBaseOf(LayoutID layout) const { return flowOf(layout).baseState == BaseState::Layout ? flowOf(layout).base : LayoutID(); }
+
+    // Literals are looked at function by function, and one function may copy thousands of times.
+    const ValueFlowStatement* findCopy(FunctionID function, ValueID copy)
+    {
+        if (functionOfCopies != function) {
+            functionOfCopies = function;
+            copiesBySite.shrink(0);
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
+                if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::CopyDataProperties)
+                    copiesBySite.append(&statement);
+            }
+            AOT::stableSort(copiesBySite, { }, &ValueFlowStatement::site);
+        }
+        auto found = std::ranges::lower_bound(copiesBySite, copy, { }, &ValueFlowStatement::site);
+        return found != copiesBySite.end() && (*found)->site == copy ? *found : nullptr;
+    }
 
     CopiedObjects objectsCopiedBy(FunctionID function, ValueID copy)
     {
         const ValueFlowUniverse& universe = inputs.universe();
         CopiedObjects copied;
-        std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(function.index());
-        auto statement = std::ranges::find_if(statements, [&](const ValueFlowStatement& candidate) {
-            return candidate.kind == ValueFlowStatementKind::Operation && candidate.site == copy;
-        });
-        if (statement == statements.end()) {
+        const ValueFlowStatement* statement = findCopy(function, copy);
+        if (!statement) {
             copied.mayHaveNoKeys = true;
             return copied;
         }

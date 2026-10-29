@@ -29,6 +29,15 @@ struct ValidationFailure {
     FunctionID function;
     Typed::ValueID value;
     JSValue found;
+    // How compiled code held a value that has no encoding to read its class from, or Void if the check looked at no value. `found` is empty in both cases.
+    Typed::Representation unboxedAs { Typed::Representation::Unchosen };
+};
+
+// The third argument of operationAOTReportValidationFailure.
+struct ReportedFailure {
+    static constexpr unsigned unboxedAsShift = 16;
+
+    static constexpr uint32_t encode(ValidationFailureKind kind, Typed::Representation unboxedAs) { return static_cast<uint32_t>(kind) | static_cast<uint32_t>(unboxedAs) << unboxedAsShift; }
 };
 
 // What ValidationFailure::found holds for CallChangedKeptRegister and UnwindingChangedKeptRegister: an int32 with the register and, if a call names it, the callee.

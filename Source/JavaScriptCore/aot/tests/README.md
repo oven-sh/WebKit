@@ -68,7 +68,8 @@ diagnostic itself is left out. Together they run a folder in another way than it
 A test that crashes fails alone, because tests run in child processes. `run` starts one child per file. `native` starts one
 child for all its tests, and after a crash another one for the tests that are left. The failure is
 `FAIL <file>:1: crashed with <signal>` or `FAIL <name>: crashed with <signal>`, below the last lines the child printed. A child that
-prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails.
+prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails. On Linux and Windows a child ends with
+the process that started it, however that ends. Elsewhere a child that is killed takes what it has started with it.
 
 Under a debugger, run the test in `testaot` itself: `run` with a single file starts no child, and neither does
 `native --single-process`. `--after=<name>` runs only the native tests listed after that one.

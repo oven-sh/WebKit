@@ -70,8 +70,12 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
 
     JumpList slowPath;
     JumpList callerSlowPath;
+    bool hasAllocatorInInstance = operand == HoleArrayOperand::None && ShortArrayWords::indexOfAllocator(fixedCapacity) < ShortArrayWords::numberOfAllocators;
     switch (operand) {
     case HoleArrayOperand::None:
+        if (!hasAllocatorInInstance)
+            callerSlowPath.append(branchIfHavingABadTime(jit));
+        break;
     case HoleArrayOperand::LengthAndCapacity:
         callerSlowPath.append(branchIfHavingABadTime(jit));
         break;
@@ -80,6 +84,10 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     }
     switch (operand) {
     case HoleArrayOperand::None:
+        if (hasAllocatorInInstance) {
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shortArrays.allocators) + ShortArrayWords::indexOfAllocator(fixedCapacity) * sizeof(void*)), allocator);
+            break;
+        }
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
         jit.loadPtr(Address(allocator, offsetOfArrayWithStorageAllocator(fixedCapacity)), allocator);
         break;
@@ -94,7 +102,8 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         emitLoadAllocatorForCapacity(jit, capacity, scratch, allocator);
         break;
     }
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    if (!hasAllocatorInInstance)
+        slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     std::optional<unsigned> cellSize;
     if (operand == HoleArrayOperand::None && sizeOfArrayWithStorage(fixedCapacity) <= MarkedSpace::preciseCutoff)
         cellSize = sizeOfArrayWithStorage(fixedCapacity);

@@ -353,9 +353,12 @@ constexpr std::array optimizeSteps {
     ScheduleStep::beginFixpoint(LimitID::MaxSinkingRounds),
         ScheduleStep::run(SinkAllocations),
         ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
+        // A list that has just gone leaves a loop up to its length, which is a constant now.
+        ScheduleStep::run(UnrollShortLoops),
     ScheduleStep::endFixpoint(),
     // The tests of a cold function of a very large program. Nothing is inlined, expanded or sunk any more.
     ScheduleStep::runBehindRounds(PlaceTypeTests),
+    ScheduleStep::runBehindRounds(ConvertCountersToIntegers),
     ScheduleStep::run(ResolveCalls),
     ScheduleStep::run(ResolveAccesses),
     // Where the rounds above were cut short by their limit, ResolveCalls still finds calls to resolve here, and makes of a call with a spread what only ExpandIteration removes.
@@ -1889,6 +1892,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     runOptimizeStage();
     runSlotStage();
     runSelectStage();
+    m_build.giveFreedMemoryBack();
     // Whoever stops, prints or verifies between the two stages sees bodies that have all their words.
     const auto& options = m_build.options();
     if (m_runner.mayRunAnalysesTogether() && !options.verifiesProgram && !options.isVerifyOnly())

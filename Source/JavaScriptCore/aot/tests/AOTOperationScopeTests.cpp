@@ -170,7 +170,8 @@ static NEVER_INLINE void JIT_OPERATION_ATTRIBUTES allocateObject(JSGlobalObject*
 static constexpr bool operationsAreGuarded = CallWithoutCollection<&allocateObject>::call != &allocateObject;
 static_assert(!operationsAreGuarded || ASSERT_ENABLED);
 
-static ALWAYS_INLINE CallFrame* framePointerRegister()
+// ALWAYS_INLINE inlines nothing in a debug build, and a function of its own reads its own frame pointer.
+static inline __attribute__((__always_inline__)) CallFrame* framePointerRegister()
 {
     CallFrame* result;
 #if CPU(X86_64)
