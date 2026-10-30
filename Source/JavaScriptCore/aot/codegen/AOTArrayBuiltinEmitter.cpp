@@ -403,8 +403,15 @@ Integer ArrayBuiltinEmitter::indexOfString(const InlineCall& call, CellPointer a
 {
     Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Proven }, typeOf(call.receiver()), ContentsSlot::Element);
     bool elementsAreStrings = contents.isAnyString() && elements().isDense(call.receiver()) && !generator().validatesOrChecksProofs();
-    StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::Strings : SearchedElements::Values);
-    return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
+    if (call.numberOfArguments() == 1) {
+        StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::Strings : SearchedElements::Values);
+        return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
+    }
+    // Below 2^32: a negative start counts from the end, and the stub multiplies this by the size of an element. The host function answers both.
+    Integer start = wholeNumberOrElse(call.argument(1), missBlockOf(call));
+    missUnless(call, below(start, integer(1ll << 32)));
+    StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::StringsFromStart : SearchedElements::ValuesFromStart);
+    return Integer(callStub(call.context(), stub, { array.value(), searched.value(), start.value() }).first);
 }
 
 Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole)
@@ -418,9 +425,16 @@ Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
 }
 
+bool ArrayBuiltinEmitter::handlesSearch(const InlineCall& call)
+{
+    if (call.numberOfArguments() == 2)
+        return call.canMiss() && typeOf(call.argument(0)).isAnyString() && typeOf(call.argument(1)).isNumber();
+    return call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString());
+}
+
 void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
     bool maySearchForString = typeOf(call.argument(0)).primitives & Primitive::AnyString;
     finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, maySearchForString ? static_cast<int64_t>(MAX_ARRAY_INDEX) : INT32_MAX });
@@ -428,7 +442,7 @@ void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 
 void ArrayBuiltinEmitter::generateArrayIncludes(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
+    if (!checkChosenForm(call, handlesSearch(call)))
         return;
     finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), -1));
 }

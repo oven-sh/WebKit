@@ -43,4 +43,4 @@ v(ArrayGetAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Nev
 v(ArrayGetAtNumber, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayGetAtNumber)
 v(ArrayHasAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayHasAtIndex)
 v(ArrayHasAtNumber, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayHasAtNumber)
-v(ArrayIndexOfString, CalledByCode, (Values, Strings), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayIndexOfString)
+v(ArrayIndexOfString, CalledByCode, (Values, Strings, ValuesFromStart, StringsFromStart), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayIndexOfString)

@@ -183,10 +183,10 @@ bool mayHaveLazyProperty(VM& vm, JSCell* cell, UniquedStringImpl* uid, LookupPos
     if (cell->type() != CompiledClosureType)
         return true;
     auto* closure = uncheckedDowncast<Closure>(cell);
-    if (!closure->kind().isConstructor && !closure->kind().hasStaticFields())
+    if (!closure->kind().isConstructor)
         return false;
     const LayoutData* classLayout = closure->classData();
-    if (!classLayout || (closure->kind().isConstructor && !closure->getDirect(vm, vm.propertyNames->prototype)))
+    if (!classLayout || !closure->getDirect(vm, vm.propertyNames->prototype))
         return true;
     // A static field that a class above declares is a property of that class object alone.
     const FieldData* field = closure->state().objects->classes.staticField(*classLayout, uid);
@@ -220,7 +220,7 @@ GetValueFunc closurePrototypePropertyGetter()
 
 const LayoutData* Closure::classData() const
 {
-    return kind().isConstructor || kind().hasStaticFields() ? state().objects->classes.classConstructedBy(function()) : nullptr;
+    return kind().isConstructor ? state().objects->classes.classConstructedBy(function()) : nullptr;
 }
 
 bool Closure::isLazyClassObject() const
@@ -501,7 +501,8 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
     validateIsNotInFrame(vm, closure);
     didLookForNameProperty(vm, closure);
     closure->prepareForGenericAccess(vm);
-    StaticFields::ensureProperties(vm, *closure);
+    if (closure->kind().isConstructor)
+        StaticFields::ensureProperties(vm, *closure);
     Base::getOwnSpecialPropertyNames(object, globalObject, names, mode);
     if (mode == DontEnumPropertiesMode::Include && FunctionTables::hasPrototypePropertyAtCreation(closure->kind()) && closure->ensurePrototypeProperty(vm))
         names.add(vm.propertyNames->prototype);

@@ -1001,14 +1001,14 @@ static String describeCodeAddress(const void* address)
 }
 
 #if CPU(X86_64)
-// A job function is written in C++, and the compiler may leave a word of its frame as padding.
+// These are written in C++, and the compiler may leave a word of a frame as padding.
 static bool isInJobFunction(const void* code)
 {
     static constexpr size_t largestJobFunction = 4 * KB;
     auto isIn = [&](auto function) {
         return std::bit_cast<uintptr_t>(code) - std::bit_cast<uintptr_t>(function) < largestJobFunction;
     };
-    return isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
+    return isIn(&resumeAsyncFunction) || isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
 }
 #endif
 

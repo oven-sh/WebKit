@@ -96,7 +96,7 @@ static constexpr size_t grownSizeOfTable(size_t size, size_t smallest) { return 
 static constexpr bool isTableFullFor(size_t numberOfKeys, size_t size) { return numberOfKeys * 4 > size * 3; }
 static ALWAYS_INLINE size_t firstPositionInPairSet(uint64_t key, size_t size)
 {
-    return static_cast<UInt128>(key * 0x9e3779b97f4a7c15ull) * size >> 64;
+    return static_cast<size_t>(static_cast<UInt128>(key * 0x9e3779b97f4a7c15ull) * size >> 64);
 }
 
 bool ValueFlowPairSet::add(uint32_t first, uint32_t second)

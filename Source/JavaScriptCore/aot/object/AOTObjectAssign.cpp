@@ -841,7 +841,7 @@ static std::optional<AssignmentSource> assignmentSourceFor(JSObject* source, std
     return AssignmentSource { source, compiledSource, compiledSource->extraProperties(), orderWord, excludedNames, defines, compiledSource->extension(), compiledSource->state().strings.get() };
 }
 
-static void assignByPlan(VM&, Object& target, State&, AssignmentPlan&, JSObject* extra, const AssignmentSource&);
+static ALWAYS_INLINE void assignByPlan(VM&, Object& target, State&, AssignmentPlan&, JSObject* extra, const AssignmentSource&);
 
 static ALWAYS_INLINE uint64_t granuleBitsOf(const Extension* extensionOrNull) { return extensionOrNull ? extensionOrNull->granuleBits() : 0; }
 
@@ -1732,7 +1732,7 @@ static NEVER_INLINE bool storePropertiesOfPlanOneByOne(VM& vm, Object& target, S
     return valuesThatLeaveTheirSlots.isEmpty();
 }
 
-static void assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
+static ALWAYS_INLINE void assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
 {
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
     uint32_t orderWordBefore = target.orderWord();

@@ -16,6 +16,9 @@ class IRBuilder;
 class PassRunner;
 
 void splitCoroutines(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
+// A body of a generator becomes two functions that keep what lives across a yield in the words of the SavedFrame, as JSValues: the body itself, which runs from the call to the first yield,
+// and a function that the step stub enters with (frame, mode, sent) and that goes on behind any yield. A yield in either stores the words and returns, so no machine frame is saved or restored.
+void moveGeneratorFramesToHeap(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
 inline const CreatorRecord::Coroutine* coroutineOf(const Function& rampBodyOrWorker)
 {

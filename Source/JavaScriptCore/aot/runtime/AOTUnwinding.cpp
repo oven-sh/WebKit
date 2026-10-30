@@ -149,6 +149,8 @@ static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entry
 
 static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& site, EntryFrame* entryFrame)
 {
+    if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame))
+        return known;
     auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
@@ -188,8 +190,6 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
     CallSiteCache& cache = *state.callSiteCache;
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
     Instance* instance = state.onlyInstance;
-    if (!instance) [[unlikely]]
-        instance = CompiledFrameIterator::knownInstanceOfRun(state, start.framePointer, entryFrame);
     if (!instance) [[unlikely]]
         instance = findInstanceOfRun(vm, start, entryFrame);
     ReturnSiteInRun place = start;

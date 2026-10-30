@@ -1436,14 +1436,33 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context)
     return planTestPlacement(context, collectTestSites(context));
 }
 
-static TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&, std::optional<Vector<ProgramPoint>>&& splitPoints);
+enum class HoistsTests : bool { No, Yes };
+static TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&, std::optional<Vector<ProgramPoint>>&& splitPoints, HoistsTests = HoistsTests::Yes);
 
 TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites)
 {
     return planTestPlacement(context, WTF::move(sites), std::nullopt);
 }
 
-static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites, std::optional<Vector<ProgramPoint>>&& splitPoints)
+// A test in front of a loop holds its proof over the whole body, so the body becomes one stretch, and a copy of it would be cut short by the limit. Tests at their uses keep the stretches short.
+static bool isStretchBehindHoistedTestTooLong(FunctionPassContext& context, const TestStretches& stretches, const WantedProofs& wanted, std::span<const HoistedTest> hoistedTests)
+{
+    if (hoistedTests.empty())
+        return false;
+    uint32_t numberOfStretches = 0;
+    for (const StretchRange& range : stretches.ranges())
+        numberOfStretches = std::max(numberOfStretches, range.stretch + 1);
+    Vector<uint32_t> numberOfRanges(FillWith { }, numberOfStretches, 0u);
+    for (const StretchRange& range : stretches.ranges())
+        ++numberOfRanges[range.stretch];
+    for (uint32_t index = 0; index < hoistedTests.size(); ++index) {
+        if (wanted.isHoistedTestWanted(index) && numberOfRanges[stretches.stretchAtHeadOf(targetOf(context.function, hoistedTests[index].edge).block)] > context.limit(LimitID::MaxBlocksCopiedBehindStretches))
+            return true;
+    }
+    return false;
+}
+
+static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites, std::optional<Vector<ProgramPoint>>&& splitPoints, HoistsTests hoistsTests)
 {
     TestPlacementPlan plan;
     plan.sites = WTF::move(sites);
@@ -1462,7 +1481,9 @@ static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSit
         return plan;
 
     Vector<ExistingProof> proofs = findExistingProofs(context, *plan.conditions);
-    Vector<HoistedTest> hoistedTests = findHoistedTests(context, plan.sites, *plan.conditions, plan.requirements.span());
+    Vector<HoistedTest> hoistedTests;
+    if (hoistsTests == HoistsTests::Yes)
+        hoistedTests = findHoistedTests(context, plan.sites, *plan.conditions, plan.requirements.span());
     BitVector valuesThatStartNewStretch;
     if (splitPoints) {
         for (ProgramPoint point : *splitPoints)
@@ -1475,16 +1496,19 @@ static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSit
     WantedProofs wanted(events, coverage);
     TestStretches stretches(events, coverage, wanted);
 
+    if (isStretchBehindHoistedTestTooLong(context, stretches, wanted, hoistedTests.span()))
+        return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints), HoistsTests::No);
+
     BitVector repeatedInVain = findTestsRepeatedInVain(plan, coverage, stretches);
     if (!repeatedInVain.isEmpty()) {
         uint32_t index = 0;
         plan.sites.sites.removeAllMatching([&](const TestSite&) { return repeatedInVain.get(index++); });
-        return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
+        return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints), hoistsTests);
     }
     if (!splitPoints) {
         splitPoints = findPointsToSplitStretchesAt(context, plan, coverage, stretches);
         if (!splitPoints->isEmpty())
-            return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
+            return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints), hoistsTests);
     }
 
     const Function& function = context.function;

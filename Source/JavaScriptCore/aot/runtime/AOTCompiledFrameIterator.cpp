@@ -188,7 +188,7 @@ static bool hasZombieCallee(VM& vm, const CallFrame* callFrame, const void* retu
     return callee && callee->callerFrameOrEntryFrame() == callFrame && removeCodePtrTag(callee->rawReturnPC()) == returnAddress && callee->isZombieFrame();
 }
 
-SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor, CallFrame** adapterFrame) const
+SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor) const
 {
     Exit exit;
     do {
@@ -196,38 +196,36 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
         if (!site)
             return nullptr;
         enterFrame(cursor, *site);
-        if (site->isStubReturnSite() && isAdapterFrame(site->stubFrameKind)) {
-            if (adapterFrame)
-                *adapterFrame = cursor.callFrame;
+        if (site->isStubReturnSite() && isAdapterFrame(site->stubFrameKind))
             return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(cursor.callFrame) + AdapterFrame::offsetOfInstance);
-        }
     } while (passOverFrame(cursor, exit));
     return nullptr;
 }
 
-Instance* CompiledFrameIterator::knownInstanceOfRun(const VMState& state, CallFrame* framePointer, EntryFrame* entryFrame)
+// Every entry of a run while the VM has several instances counts, so the count and the entry frame name one run.
+Instance* CompiledFrameIterator::knownInstanceOfRun(const VMState& state, EntryFrame* entryFrame)
 {
-    const VMState::AdapterOfRun& known = state.adapterOfRecentRun;
-    const char* frame = reinterpret_cast<const char*>(known.frame);
-    if (known.frame && known.entryFrame == entryFrame && known.frame > framePointer && frame < reinterpret_cast<const char*>(entryFrame)
-        && *reinterpret_cast<Instance* const*>(frame + AdapterFrame::offsetOfInstance) == known.instance)
-        return known.instance;
-    return nullptr;
+    const VMState::InstanceOfRun& known = state.instanceOfRecentRun;
+    return known.entries == state.entriesWithSeveralInstances && known.entryFrame == entryFrame ? known.instance : nullptr;
+}
+
+// A file's instance outlives it until a collection. Each rethrow would walk to the adapter again.
+NEVER_INLINE Instance* CompiledFrameIterator::findInstanceAmongSeveral() const
+{
+    VMState& state = m_vm->aotState();
+    if (Instance* known = knownInstanceOfRun(state, m_cursor.entryFrame))
+        return known;
+    Instance* instance = findEnclosingAdapterInstance(m_cursor);
+    if (instance)
+        state.instanceOfRecentRun = { state.entriesWithSeveralInstances, m_cursor.entryFrame, instance };
+    return instance;
 }
 
 Instance* CompiledFrameIterator::tryFindInstance() const
 {
-    VMState& state = m_vm->aotState();
-    if (state.instances.size() != 1) {
-        // A file's instance outlives it until a collection. Each rethrow would walk to the adapter again.
-        if (Instance* known = knownInstanceOfRun(state, m_cursor.framePointer, m_cursor.entryFrame))
-            return known;
-        CallFrame* adapterFrame = nullptr;
-        Instance* instance = findEnclosingAdapterInstance(m_cursor, &adapterFrame);
-        if (instance)
-            state.adapterOfRecentRun = { m_cursor.entryFrame, adapterFrame, instance };
-        return instance;
-    }
+    const VMState& state = m_vm->aotState();
+    if (state.instances.size() != 1)
+        return findInstanceAmongSeveral();
 #if ASSERT_ENABLED
     // The walk is as long as the stack is deep, and an error that passes a handler in every frame asks at each of them.
     static std::atomic<unsigned> questions;

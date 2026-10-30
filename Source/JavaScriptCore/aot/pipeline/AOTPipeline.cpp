@@ -177,6 +177,7 @@ constexpr std::array rows {
     addingOnly({ }, programPass(SplitFreshResults, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph, Heat }, { }, resultsAboutBodies)),
     programPass(PromoteAggregateParameters, Optional, { Prepared, Prepared }, { Flow, EffectSummaries }, { }, resultsAboutBodies),
     programPass(SplitCoroutines, Required, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
+    programPass(MoveGeneratorFramesToHeap, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
@@ -1394,6 +1395,10 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, splitCoroutines, inputsFor(id), m_runner);
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
+    case PassID::MoveGeneratorFramesToHeap:
+        edit(id, moveGeneratorFramesToHeap, inputsFor(id), m_runner);
+        didAddFunctions();
+        return m_runner.lastProgramPassOutcome();
     case PassID::CallModules:
         edit(id, callModules, flow(), m_build);
         didAddFunctions();
@@ -1647,6 +1652,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
     stage.run(FunctionSchedule::Optimize);
+    stage.run(PassID::MoveGeneratorFramesToHeap);
     stage.run(PassID::ProveResults);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);

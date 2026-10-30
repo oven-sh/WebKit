@@ -206,6 +206,7 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     // Empty where no array has such a kind.
     Vector<bool> receiversThatMayHaveDecidedStorage;
+    bool keepsStorageOfListThatMayReadUndefined { false };
     // 0: flow says nothing. 1: no object that was seen to arrive has the name of the access. Else the number of the stamped set plus 2. Empty where nothing is stamped.
     Vector<uint32_t> receiversSeenAtSites;
     // Sorted by site.
@@ -406,6 +407,7 @@ public:
     // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
     // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.
     bool mayChangeStorageOfReceiver(AccessSiteID) const;
+    bool keepsStorageOfListThatMayReadUndefined() const { return m_tables.sites.keepsStorageOfListThatMayReadUndefined; }
     // What was stamped on the access, for a pass that meets the access after the stamp is gone. No answer: flow says nothing. No set: no object that was seen to arrive has the name of the access.
     std::optional<LayoutSetID> receiversSeenAt(AccessSiteID) const;
     Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;

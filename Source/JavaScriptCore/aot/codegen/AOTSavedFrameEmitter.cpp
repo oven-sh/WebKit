@@ -236,6 +236,89 @@ void SavedFrameEmitter::generateYieldBySavingFrame(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// What a body does at the first yield it comes to: it has never left a frame, so there is none yet.
+void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
+{
+    CellPointer generator = in<CellPointer>(value->generatorOperand());
+    uint32_t numberOfWords = value->numberOfWords();
+    size_t size = SavedFrame::allocationSize(numberOfWords);
+    const B3::AbstractHeap& words = m_heaps.entire(AbstractHeap::InternalFields);
+
+    B3::PatchpointValue* address = m_out.patchpoint(B3::pointerType());
+    address->effects = B3::Effects::none();
+    address->setGenerator([records = &m_records, function = value->function()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        records->stubCalls.moveAddressOfFunction(function, primaryEntry, params[0].gpr());
+    });
+    Pointer resumeAddress(address);
+
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), size);
+    CellPointer frame = cells.allocateHeapCell(allocator, slowPath);
+    {
+        CodeGenerator::InitializationScope scope(this->generator());
+        auto word = [&](ptrdiff_t offset) { return m_out.address(words, frame.value(), offset); };
+        cells.storeHeader(frame, loadImmutable64(AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)));
+        m_out.storePtr(m_out.intPtrZero, frame.value(), m_heaps.JSNonArray_butterfly);
+        // The number of words, no words skipped, version 0.
+        m_out.store64(m_out.constInt64(numberOfWords), word(SavedFrame::offsetOfNumberOfWords()));
+        static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3 && !static_cast<int32_t>(CoroutineKind::Generator) && !static_cast<int32_t>(SavedFrame::Continuation::None));
+        m_out.store64(m_out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), word(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+        m_out.store64(resumeAddress.value(), word(SavedFrame::offsetOfResumeAddress()));
+        m_out.store64(frame.value(), word(SavedFrame::offsetOfPromiseOrWaiter()));
+        m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfPreservedRegister()));
+        m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfAsyncContext()));
+        for (uint32_t index = 0; index < numberOfWords; ++index)
+            m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfWords() + index * sizeof(uint64_t)));
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    m_out.store64(frame.value(), m_out.address(words, generator.value(), Generator::offsetOfSavedFrame()));
+    emitter<BarrierEmitter>().barrier(value, generator);
+    join.add(frame);
+
+    m_out.appendTo(slowPath);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { generator, word32(static_cast<int32_t>(numberOfWords)), resumeAddress }, { .isOnRarePath = true }));
+    CellPointer result = join.finish();
+    define(value, Boxed(result.value()));
+}
+
+void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
+{
+    LValue frame = in<Boxed>(value->frameOperand()).value();
+    define(value, Boxed(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfWords() + value->index() * sizeof(uint64_t)))));
+}
+
+void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
+{
+    LValue frame = in<Boxed>(value->frameOperand()).value();
+    m_out.store64(in<Boxed>(value->valueOperand()).value(), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfWords() + value->index() * sizeof(uint64_t)));
+}
+
+void SavedFrameEmitter::generateGetResumeIndex(const ValueContext& value)
+{
+    LValue frame = in<Boxed>(value->frameOperand()).value();
+    define(value, Integer(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfResumeIndex()))));
+}
+
+// The state as the stub that suspends a generator leaves it: the initial yield leaves it as it is.
+void SavedFrameEmitter::generateSuspendInHeapFrame(const ValueContext& value)
+{
+    CellPointer generator = in<CellPointer>(value->generatorOperand());
+    LValue frame = in<Boxed>(value->frameOperand()).value();
+    const B3::AbstractHeap& words = m_heaps.entire(AbstractHeap::InternalFields);
+    m_out.store64(m_out.constInt64(value->resumeIndex()), m_out.address(words, frame, SavedFrame::offsetOfResumeIndex()));
+    LValue suspended = m_out.constInt32(static_cast<int32_t>(Generator::State::SuspendedAtYield));
+    if (value->isFirstRun()) {
+        Word32 state(m_out.load32(stateOf(generator)));
+        Condition isRunning = equal(state, word32(static_cast<int32_t>(Generator::State::Running)));
+        suspended = select(isRunning, static_cast<int32_t>(Generator::State::SuspendedAtYield), state).value();
+    }
+    m_out.store32(suspended, stateOf(generator));
+    emitter<BarrierEmitter>().barrier(value, CellPointer(frame));
+}
+
 void SavedFrameEmitter::generateAsyncGeneratorYield(const ValueContext& value)
 {
     switch (kindOfFunction()) {

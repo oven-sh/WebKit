@@ -73,6 +73,7 @@ public:
 
     // The arrays whose kind of storage is decided and would not be what it is behind a conversion to the storage of numbers.
     ValueSetID arraysThatMustNotBeConverted { ValueSets::nothing };
+    bool keepsStorageOfListThatMayReadUndefined { false };
 
 private:
     Vector<uint32_t> m_positionOfObject;

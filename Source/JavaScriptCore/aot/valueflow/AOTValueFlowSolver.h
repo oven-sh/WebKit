@@ -268,7 +268,7 @@ private:
     static size_t firstPositionOf(uint64_t keyPlusOne, size_t size)
     {
         uint64_t hash = keyPlusOne * 0x9e3779b97f4a7c15ull;
-        return static_cast<UInt128>((hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull) * size >> 64;
+        return static_cast<size_t>(static_cast<UInt128>((hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull) * size >> 64);
     }
     void grow();
 

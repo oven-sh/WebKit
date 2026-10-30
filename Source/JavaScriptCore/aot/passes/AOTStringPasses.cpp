@@ -1249,7 +1249,7 @@ Vector<ValueID, 8> StringBuilderStep::rewriteWebs(const StringBuilderPlan& plan)
         InsertionSite site = siteOfUse(use);
         switch (read.kind) {
         case StringStateUse::Length:
-            if (equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
+            if (use.kind == Use::Kind::Operand && equalityComparisonsOfStrings.contains(function.at(use.user).opcode)) {
                 ValueID length = insert(site, IRBuilder::make(Opcode::StringBuilderLength, { handle }));
                 ValueID lengthOfEmptyString = insert(site, makeInteger(0));
                 Value& comparison = function.edit(use.user);
@@ -1488,7 +1488,7 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
         ProgramPoint start = useLists.pointAfter(begin);
         BitVector closingBlocks;
         for (const Use& use : useLists.usesOf(begin)) {
-            if (closingOperations.contains(function.at(use.user).opcode))
+            if (use.kind == Use::Kind::Operand && closingOperations.contains(function.at(use.user).opcode))
                 closingBlocks.set(use.block.index());
         }
 

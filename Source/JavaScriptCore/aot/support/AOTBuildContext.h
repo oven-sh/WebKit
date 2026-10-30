@@ -10,6 +10,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTCurrentWork.h"
 #include "AOTDiagnostics.h"
+#include "AOTHostFunctionTexts.h"
 #include "AOTLimits.h"
 #include "AOTLosses.h"
 #include "AOTStatistics.h"
@@ -105,6 +106,9 @@ public:
         enqueueDeferredValue(makeUniqueWithoutFastMallocCheck<DeferredValueOf<T>>(WTF::move(value)));
     }
 
+    const HostFunctionTexts& functionTexts() const { return m_functionTexts; }
+    void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
+
     void finishDeferredDestruction();
     // For where much has just died: how much memory the build holds at most does not hang on how soon the destroyer comes to it.
     void giveFreedMemoryBack();
@@ -149,6 +153,7 @@ private:
     bool m_recordsLimitHits { true };
     ParallelLoops m_parallelLoops;
     Vector<std::unique_ptr<B3::CompilationScratch>> m_backEndScratches;
+    HostFunctionTexts m_functionTexts;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::ScratchRealms> m_scratchRealms;
     std::optional<BitVector> m_functionsToDump;

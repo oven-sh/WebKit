@@ -5,6 +5,11 @@
 
 #include "config.h"
 #include "AOTCoroutines.h"
+#include <cstdlib>
+#include "AOTSummarizeForInlining.h"
+#include "AOTSavedFrame.h"
+#include "AOTSSARepair.h"
+#include "AOTLiveness.h"
 
 #if ENABLE(AOT)
 
@@ -1833,6 +1838,510 @@ PassOutcome resolveAwaitedCalls(FunctionPassContext& context)
     if (context.function.blocks.size() == numberOfBlocksBefore)
         context.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
+}
+
+// MoveGeneratorFramesToHeap.
+
+namespace {
+
+// A frame larger than this keeps the form that copies the stack.
+AOT_THRESHOLD(uint32_t, maxWordsOfHeapFrame, 256);
+
+constexpr uint32_t noWord = UINT32_MAX;
+constexpr uint32_t wordOfGenerator = 0;
+
+struct YieldInFrame {
+    ValueID yield;
+    ProgramPoint point;
+    Vector<ValueID, 2> resultReads;
+    // Live behind the yield, in a word.
+    Vector<ValueID, 8> stored;
+    // Live behind the yield, and made again there.
+    Vector<ValueID, 4> constants;
+    // Listed by the yield and not read behind it: they stay alive until the next yield.
+    Vector<ValueID, 2> heldOnly;
+    // The words that a run that ends at this yield may have found filled and that hold nothing that lives on.
+    Vector<uint32_t, 4> wordsToClear;
+};
+
+struct HeapFramePlan {
+    FunctionID body;
+    FunctionID resume;
+    Function* resumeSlot { nullptr };
+    ValueID generator;
+    Vector<YieldInFrame, 4> yields;
+    Vector<uint32_t> wordOf;
+    uint32_t numberOfWords { 1 };
+};
+
+} // anonymous namespace
+
+static bool canLiveInWord(const Program& program, const Function& function, ValueID id)
+{
+    return program.typeOf(function, id).isJavaScriptValue();
+}
+
+static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
+{
+    plan.wordOf.fill(noWord, numberOfValues);
+    plan.wordOf[plan.generator.index()] = wordOfGenerator;
+    // For each word, the yields at which it is taken.
+    Vector<BitVector, 8> yieldsOfWord;
+    yieldsOfWord.append(BitVector(plan.yields.size()));
+    for (unsigned index = 0; index < plan.yields.size(); ++index)
+        yieldsOfWord[wordOfGenerator].quickSet(index);
+
+    BitVector isAssigned(numberOfValues);
+    isAssigned.quickSet(plan.generator.index());
+    for (unsigned first = 0; first < plan.yields.size(); ++first) {
+        for (auto list : { plan.yields[first].stored.span(), plan.yields[first].heldOnly.span() }) {
+            for (ValueID id : list) {
+                if (isAssigned.quickSet(id.index()))
+                    continue;
+                BitVector yields(plan.yields.size());
+                for (unsigned index = first; index < plan.yields.size(); ++index) {
+                    if (plan.yields[index].stored.contains(id) || plan.yields[index].heldOnly.contains(id))
+                        yields.quickSet(index);
+                }
+                uint32_t word = wordOfGenerator + 1;
+                for (; word < yieldsOfWord.size(); ++word) {
+                    BitVector overlap = yieldsOfWord[word];
+                    overlap.filter(yields);
+                    if (overlap.isEmpty())
+                        break;
+                }
+                if (word == yieldsOfWord.size())
+                    yieldsOfWord.append(BitVector(plan.yields.size()));
+                yieldsOfWord[word].merge(yields);
+                plan.wordOf[id.index()] = word;
+            }
+        }
+    }
+    plan.numberOfWords = yieldsOfWord.size();
+}
+
+// What a run that begins behind a yield may find filled when it comes to another: the words of each yield from which that one is reached without passing a third.
+static void findWordsToClear(HeapFramePlan& plan, const Function& function, FunctionAnalyses& analyses)
+{
+    const CFG& cfg = analyses.cfg();
+    Vector<BitVector, 4> wordsFoundAt(plan.yields.size(), [&](size_t) { return BitVector(plan.numberOfWords); });
+    auto wordsOf = [&](const YieldInFrame& yield) {
+        BitVector words(plan.numberOfWords);
+        for (ValueID id : yield.stored)
+            words.quickSet(plan.wordOf[id.index()]);
+        for (ValueID id : yield.heldOnly)
+            words.quickSet(plan.wordOf[id.index()]);
+        return words;
+    };
+    auto yieldIndexOf = [&](ValueID id) {
+        return plan.yields.findIf([&](const YieldInFrame& yield) { return yield.yield == id; });
+    };
+    for (const YieldInFrame& from : plan.yields) {
+        BitVector words = wordsOf(from);
+        BitVector isVisited(function.blocks.size());
+        Vector<BlockID, 8> worklist;
+        auto scan = [&](BlockID block, uint32_t firstIndex) {
+            const BlockValues& values = function.at(block).values;
+            for (uint32_t index = firstIndex; index < values.size(); ++index) {
+                if (function.at(values[index]).opcode == Opcode::YieldBySavingFrame) {
+                    wordsFoundAt[yieldIndexOf(values[index])].merge(words);
+                    // What stands in front of the yield may have thrown.
+                    if (function.at(block).handler && !isVisited.quickSet(function.at(block).handler->block.index()))
+                        worklist.append(function.at(block).handler->block);
+                    return;
+                }
+            }
+            for (BlockID successor : cfg.successors(block)) {
+                if (!isVisited.quickSet(successor.index()))
+                    worklist.append(successor);
+            }
+        };
+        scan(from.point.block, from.point.index + 1);
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            scan(block, 0);
+        }
+    }
+    for (unsigned index = 0; index < plan.yields.size(); ++index) {
+        YieldInFrame& yield = plan.yields[index];
+        BitVector words = wordsOf(yield);
+        for (size_t word : wordsFoundAt[index]) {
+            if (word != wordOfGenerator && !words.get(word))
+                yield.wordsToClear.append(static_cast<uint32_t>(word));
+        }
+    }
+}
+
+static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context, FunctionID id)
+{
+    const Program& program = context.program;
+    const Function& function = program.at(id);
+    FunctionAnalyses analyses(context, function);
+
+    HeapFramePlan plan;
+    plan.body = id;
+    plan.generator = driverOf(function);
+
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Block& data = function.at(block);
+        Vector<uint32_t, 4> indexes;
+        for (uint32_t index = 0; index < data.values.size(); ++index) {
+            const Value& value = function.at(data.values[index]);
+            if (value.opcode == Opcode::YieldBySavingFrame)
+                indexes.append(index);
+            else if (isBoundToFrame(function, data, index))
+                return std::nullopt;
+        }
+        if (indexes.isEmpty())
+            continue;
+
+        Liveness::LocalCalc localCalc(analyses.liveness(), block);
+        uint32_t pointIndex = data.values.size();
+        while (!indexes.isEmpty()) {
+            uint32_t index = indexes.takeLast();
+            while (pointIndex > index + 1)
+                localCalc.execute(--pointIndex);
+
+            YieldInFrame yield;
+            yield.yield = data.values[index];
+            yield.point = ProgramPoint { block, index };
+            for (const Use& use : analyses.useLists().usesOf(yield.yield)) {
+                if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ResultAt || use.block != block)
+                    return std::nullopt;
+                yield.resultReads.append(use.user);
+            }
+            bool isStorable = true;
+            localCalc.forEachLive([&](ValueID live) {
+                if (live == yield.yield || live == plan.generator)
+                    return;
+                if (isRematerializable(function.at(live))) {
+                    yield.constants.append(live);
+                    return;
+                }
+                if (!canLiveInWord(program, function, live)) {
+                    isStorable = false;
+                    return;
+                }
+                yield.stored.append(live);
+            });
+            if (!isStorable)
+                return std::nullopt;
+            if (localCalc.isLive(plan.generator))
+                yield.constants.append(plan.generator);
+            for (ValueID held : heldOperandsOf(function.at(yield.yield))) {
+                if (localCalc.isLive(held) || held == plan.generator || isRematerializable(function.at(held)) || !canLiveInWord(program, function, held) || yield.heldOnly.contains(held))
+                    continue;
+                yield.heldOnly.append(held);
+            }
+            plan.yields.append(WTF::move(yield));
+        }
+    }
+    if (plan.yields.isEmpty())
+        return std::nullopt;
+
+    assignWords(plan, function.values.size());
+    if (plan.numberOfWords > maxWordsOfHeapFrame)
+        return std::nullopt;
+    findWordsToClear(plan, function, analyses);
+    return plan;
+}
+
+static Vector<IRBuilder::Expansion, 4> cutYields(IRBuilder& builder, HeapFramePlan& plan, NOESCAPE const Invocable<void(YieldInFrame&, unsigned index)> auto& emitLeave)
+{
+    Function& function = builder.function();
+    Vector<unsigned, 4> order(plan.yields.size(), [](size_t index) { return static_cast<unsigned>(index); });
+    AOT::sort(order, std::ranges::greater { }, [&](unsigned index) { return std::tuple(plan.yields[index].point.block, plan.yields[index].point.index); });
+    Vector<IRBuilder::Expansion, 4> cuts;
+    cuts.grow(plan.yields.size());
+    for (unsigned index : order) {
+        YieldInFrame& yield = plan.yields[index];
+        cuts[index] = builder.beginExpansion(yield.point, yield.resultReads.span());
+        emitLeave(yield, index);
+    }
+    return cuts;
+}
+
+static void appendPut(IRBuilder& builder, ValueID frame, uint32_t word, ValueID value)
+{
+    Value put = IRBuilder::make(Opcode::PutHeapFrameWord, { frame, value });
+    put.setIndex(word);
+    builder.append(WTF::move(put));
+}
+
+// The generator's own word is written once, by the body.
+static void appendPutsOfYield(IRBuilder& builder, const HeapFramePlan& plan, const YieldInFrame& yield, ValueID frame)
+{
+    for (auto list : { yield.stored.span(), yield.heldOnly.span() }) {
+        for (ValueID id : list)
+            appendPut(builder, frame, plan.wordOf[id.index()], id);
+    }
+}
+
+static void rewriteBody(const AnalysisContext& context, TaskArenas& arenas, Function& function, HeapFramePlan& plan, const PassRunner& runner, const OptimizationInputs& inputs)
+{
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(analyses.context(), function, arenas.types, &analyses);
+    Vector<ValueID, 4> yieldedValues(plan.yields.size(), [&](size_t index) { return function.at(plan.yields[index].yield).valueOperand(); });
+
+    auto emitLeave = [&](YieldInFrame& yield, unsigned index) {
+        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { plan.generator });
+        allocation.setFunction(plan.resume);
+        allocation.setNumberOfWords(plan.numberOfWords);
+        ValueID frame = builder.append(WTF::move(allocation));
+        appendPut(builder, frame, wordOfGenerator, plan.generator);
+        appendPutsOfYield(builder, plan, yield, frame);
+        Value suspend = IRBuilder::make(Opcode::SuspendInHeapFrame, { plan.generator, frame });
+        suspend.setResumeIndex(index);
+        suspend.setIsFirstRun(true);
+        builder.append(WTF::move(suspend));
+        builder.emitReturn(yieldedValues[index]);
+    };
+    cutYields(builder, plan, emitLeave);
+    builder.setHandler(std::nullopt);
+    builder.emptyUnreachableBlocks();
+    analyses.didChangeControlFlow();
+    runner.runSchedule(FunctionSchedule::Simplify, context.program, inputs, context.id, function, arenas);
+}
+
+// Only a yield writes a word, right in front of its return, so what a run reads from a word the word still holds. A parameter holds it if all that arrives there does.
+static void removeStoresOfWhatTheWordHolds(Function& function, FunctionAnalyses& analyses, IRBuilder& builder, ValueID frame)
+{
+    constexpr int64_t notSeen = -2;
+    constexpr int64_t noWordAtAll = -1;
+    const CFG& cfg = analyses.cfg();
+    Vector<int64_t> wordOfParameter(FillWith { }, function.values.size(), notSeen);
+    auto wordHeldBy = [&](ValueID id) -> int64_t {
+        while (isCastWithoutTest(function.at(id).opcode))
+            id = function.at(id).operand(0);
+        const Value& value = function.at(id);
+        if (value.opcode == Opcode::GetHeapFrameWord)
+            return value.frameOperand() == frame ? static_cast<int64_t>(value.index()) : noWordAtAll;
+        if (analyses.useLists().locationOf(id).placement == ValuePlacement::Parameter)
+            return wordOfParameter[id.index()];
+        return noWordAtAll;
+    };
+    for (bool didChange = true; didChange;) {
+        didChange = false;
+        for (BlockID block : cfg.reversePostOrder()) {
+            const CompactList<ValueID>& parameters = function.at(block).parameters;
+            if (block == cfg.root() || function.at(block).handler)
+                continue;
+            for (uint32_t index = 0; index < parameters.size(); ++index) {
+                int64_t word = notSeen;
+                for (Edge edge : cfg.incomingEdges(block)) {
+                    const Target& target = targetOf(function, edge);
+                    int64_t arriving = index < target.arguments.size() ? wordHeldBy(target.arguments[index]) : noWordAtAll;
+                    if (arriving == notSeen)
+                        continue;
+                    word = word == notSeen || word == arriving ? arriving : noWordAtAll;
+                }
+                if (word != wordOfParameter[parameters[index].index()]) {
+                    wordOfParameter[parameters[index].index()] = word;
+                    didChange = true;
+                }
+            }
+        }
+    }
+    for (BlockID block : cfg.reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        BitVector indexes(values.size());
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode == Opcode::PutHeapFrameWord && wordHeldBy(value.valueOperand()) == static_cast<int64_t>(value.index()))
+                indexes.quickSet(index);
+        }
+        if (!indexes.isEmpty())
+            builder.eraseValues(block, indexes);
+    }
+}
+
+static void buildResumeFunction(const AnalysisContext& context, TaskArenas& arenas, const Function& body, HeapFramePlan plan, const PassRunner& runner, const OptimizationInputs& inputs)
+{
+    Function& function = *plan.resumeSlot;
+    function = body;
+    TypeArena& types = arenas.types;
+    TypeID modeType = types.intern(Type::integer(Range { static_cast<int64_t>(ResumeMode::Next), static_cast<int64_t>(ResumeMode::Return) }));
+
+    CreatorRecord::Coroutine record = body.creator.as<CreatorRecord::Coroutine>();
+    record.body = plan.resume;
+    record.promiseParameter = std::nullopt;
+    function.creator = record;
+    function.derivation.parameterMap = Vector<ParameterOrigin>(3, [](size_t) { return ParameterOrigin { std::nullopt }; });
+    function.captures = { };
+    function.flags.remove({ FunctionFlags::TakesCallee, FunctionFlags::HasNewTarget, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest });
+    function.parameters = Vector<DeclaredType> { DeclaredType(Proven::byPosition(TypeTable::anything)), DeclaredType(Proven::byPosition(modeType)), DeclaredType(Proven::byPosition(TypeTable::anything)) };
+    function.flags.remove(FunctionFlags::HasThis);
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+
+    // The entry block takes the three parameters. What it was stands behind it until the words have been given their definitions: all that is defined there reaches what it reached.
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(analyses.context(), function, types, &analyses);
+    builder.setHandler(std::nullopt);
+    BlockID formerEntry = builder.addBlock(function.at(entryBlock).frequency);
+    {
+        Block& from = function.edit(entryBlock, { BlockEdit::Values, BlockEdit::Parameters, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
+        Block& to = function.edit(formerEntry, { BlockEdit::Values, BlockEdit::Parameters, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
+        to.values = WTF::move(from.values);
+        to.parameters = WTF::move(from.parameters);
+        to.terminator = std::exchange(from.terminator, Terminator { });
+        to.shape = from.shape;
+        from.values = { };
+        from.parameters = { };
+    }
+    for (YieldInFrame& yield : plan.yields) {
+        if (yield.point.block == entryBlock)
+            yield.point.block = formerEntry;
+    }
+    analyses.didChangeControlFlow();
+    analyses.didChangeValues();
+    ValueID frame = builder.addParameter(entryBlock, TypeTable::anything);
+    ValueID mode = builder.addParameter(entryBlock, modeType);
+    ValueID sent = builder.addParameter(entryBlock, TypeTable::anything);
+
+    Vector<ValueID, 4> yieldedValues(plan.yields.size(), [&](size_t index) { return function.at(plan.yields[index].yield).valueOperand(); });
+    auto emitLeave = [&](YieldInFrame& yield, unsigned index) {
+        appendPutsOfYield(builder, plan, yield, frame);
+        if (!yield.wordsToClear.isEmpty()) {
+            ValueID absent = builder.append(IRBuilder::make(Opcode::Absent));
+            for (uint32_t word : yield.wordsToClear)
+                appendPut(builder, frame, word, absent);
+        }
+        Value suspend = IRBuilder::make(Opcode::SuspendInHeapFrame, { plan.generator, frame });
+        suspend.setResumeIndex(index);
+        builder.append(WTF::move(suspend));
+        builder.emitReturn(yieldedValues[index]);
+    };
+    Vector<IRBuilder::Expansion, 4> cuts = cutYields(builder, plan, emitLeave);
+
+    // One block for each yield defines what lives across it.
+    SSARepair repair(builder, analyses);
+    Vector<std::optional<SSARepair::Variable>> variableOf(function.values.size());
+    auto defineLive = [&](ValueID id, ValueID definition) {
+        std::optional<SSARepair::Variable>& variable = variableOf[id.index()];
+        if (!variable)
+            variable = repair.addVariable(id);
+        repair.addDefinition(*variable, definition);
+    };
+    Vector<std::pair<int64_t, Target>> cases;
+    for (unsigned index = 0; index < plan.yields.size(); ++index) {
+        const YieldInFrame& yield = plan.yields[index];
+        builder.setHandler(std::nullopt);
+        BlockID resume = builder.addBlock(function.at(cuts[index].continuation).frequency);
+        builder.moveToEndOf(resume);
+        builder.setOrigin(function.at(yield.yield).origin());
+        for (ValueID id : yield.constants) {
+            if (id == plan.generator) {
+                Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
+                read.setIndex(wordOfGenerator);
+                ValueID word = builder.append(WTF::move(read));
+                Value cast = IRBuilder::make(Opcode::AssumeType);
+                cast.becomeAssumeType(word, Proven::byConstruction(function.at(id).type));
+                defineLive(id, builder.append(WTF::move(cast)));
+                continue;
+            }
+            defineLive(id, builder.append(Value(function.at(id))));
+        }
+        for (ValueID id : yield.stored) {
+            Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
+            read.setIndex(plan.wordOf[id.index()]);
+            ValueID word = builder.append(WTF::move(read));
+            TypeID type = function.at(id).type;
+            if (type == TypeTable::anything) {
+                defineLive(id, word);
+                continue;
+            }
+            Value cast = IRBuilder::make(Opcode::AssumeType);
+            cast.becomeAssumeType(word, Proven::byConstruction(type));
+            cast.setExpected(function.at(id).expected());
+            defineLive(id, builder.append(WTF::move(cast)));
+        }
+        Arguments arguments;
+        arguments.append(sent);
+        arguments.append(mode);
+        builder.emitJump(cuts[index].continuation, WTF::move(arguments));
+        cases.append({ static_cast<int64_t>(index), Target { resume, { }, { } } });
+    }
+
+    builder.moveToEndOf(entryBlock);
+    builder.setOrigin(function.at(plan.yields[0].yield).origin());
+    ValueID resumeIndex = builder.append(Opcode::GetResumeIndex, { frame });
+    Arguments unspecified;
+    for (ValueID parameter : function.at(formerEntry).parameters) {
+        Value seed = IRBuilder::make(Opcode::Unspecified);
+        seed.setValueType(function.at(parameter).type);
+        unspecified.append(builder.append(WTF::move(seed)));
+    }
+    Vector<std::pair<int64_t, Target>> casesWithFormerEntry = cases;
+    builder.emitSwitch(resumeIndex, WTF::move(casesWithFormerEntry), Target { formerEntry, WTF::move(unspecified), { } });
+    repair.run();
+
+    // Nothing enters what the entry block was. The last case is what every index but the others means.
+    Terminator& terminator = function.edit(entryBlock, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+    terminator = Terminator { };
+    analyses.didChangeControlFlow();
+    builder.setHandler(std::nullopt);
+    builder.moveToEndOf(entryBlock);
+    builder.setOrigin(function.at(plan.yields[0].yield).origin());
+    Target last = WTF::move(cases.last().second);
+    cases.removeLast();
+    if (cases.isEmpty())
+        builder.emitJump(last.block);
+    else
+        builder.emitSwitch(resumeIndex, WTF::move(cases), WTF::move(last));
+    builder.emptyUnreachableBlocks();
+    analyses.didChangeControlFlow();
+
+    runner.runSchedule(FunctionSchedule::Simplify, context.program, inputs, context.id, function, arenas);
+    {
+        FunctionAnalyses cleaned(context, function);
+        IRBuilder cleaner(cleaned.context(), function, types, &cleaned);
+        removeStoresOfWhatTheWordHolds(function, cleaned, cleaner, function.at(entryBlock).parameters[0]);
+    }
+    runner.runSchedule(FunctionSchedule::Simplify, context.program, inputs, context.id, function, arenas);
+}
+
+void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
+{
+    BuildContext& build = runner.build();
+    // While it comes up.
+    static const char* const word = getenv("BUN_AOT_HEAP_FRAMES");
+    static const bool isOn = word && word[0] != '0';
+    if (!isOn)
+        return;
+    const Program& program = editor.program();
+    Vector<uint32_t> bodies = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        const Function& function = program.functions[index];
+        return function.hasBody() && function.role == FunctionRole::CoroutineBody && coroutineOfBody(function).kind == CoroutineKind::Generator && function.creator.as<CreatorRecord::Coroutine>().promiseParameter;
+    });
+    if (bodies.isEmpty())
+        return;
+
+    Vector<std::optional<HeapFramePlan>> found(bodies.size());
+    forEachIndexInParallel(build.parallelLoops(), bodies.size(), [&](unsigned index) {
+        FunctionID id(bodies[index]);
+        found[index] = planHeapFrame(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, id);
+    });
+    Vector<HeapFramePlan> plans;
+    for (std::optional<HeapFramePlan>& plan : found) {
+        if (plan)
+            plans.append(WTF::move(*plan));
+    }
+    build.statistics().count(StatisticID::GeneratorsWithHeapFrames, plans.size());
+    if (plans.isEmpty())
+        return;
+
+    uint32_t nextFunction = editor.reserveFunctions(plans.size()).index();
+    for (HeapFramePlan& plan : plans) {
+        plan.resume = FunctionID(nextFunction++);
+        plan.resumeSlot = &editor.at(plan.resume);
+    }
+    Vector<FunctionID> ids = plans.map([](const HeapFramePlan& plan) { return plan.body; });
+    Vector<FunctionID> resumes = plans.map([](const HeapFramePlan& plan) { return plan.resume; });
+    editFunctionsInParallel(editor, build, ids.span(), resumes.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
+        HeapFramePlan& plan = plans[index];
+        buildResumeFunction(AnalysisContext { build, program, &inputs.flow, &inputs.effects, plan.resume }, arenas, function, plan, runner, inputs);
+        rewriteBody(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, arenas, function, plan, runner, inputs);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

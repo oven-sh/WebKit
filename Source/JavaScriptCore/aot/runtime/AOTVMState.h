@@ -64,11 +64,12 @@ public:
     void didChangeInstances()
     {
         onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
-        adapterOfRecentRun = { };
+        instanceOfRecentRun = { };
     }
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
+    static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
     static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall() { return OBJECT_OFFSETOF(VMState, newTargetOfSuperCall); }
@@ -93,12 +94,13 @@ public:
     Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
-    struct AdapterOfRun {
+    uint64_t entriesWithSeveralInstances { 0 };
+    struct InstanceOfRun {
+        uint64_t entries { 0 };
         void* entryFrame { nullptr };
-        CallFrame* frame { nullptr };
         Instance* instance { nullptr };
     };
-    AdapterOfRun adapterOfRecentRun;
+    InstanceOfRun instanceOfRecentRun;
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
     // Set from when compiled code's `super(..)` enters a native constructor until that constructor requests the Structure for the new object, or returns. Only compared, never dereferenced.

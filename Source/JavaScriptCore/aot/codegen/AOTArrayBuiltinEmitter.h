@@ -96,6 +96,7 @@ private:
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);
+    bool handlesSearch(const InlineCall&);
     Integer indexOfSearched(const InlineCall&, HoleIs);
     // The answer for a short vector goes to `found`. The code behind it is reached by a longer one, with nothing compared. Compact code scans nothing.
     void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, Join<Integer>& found);

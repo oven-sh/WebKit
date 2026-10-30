@@ -478,6 +478,11 @@ ValueSetID& ValueFlowRuleContext::rememberedByStatement()
 {
     if (m_keyOfStatementOfThisTurn)
         return m_rememberedByStatementOfThisTurn;
+    if (m_solver.m_usesGeneralRulesOnly) {
+        if (std::exchange(m_statementThatRemembersOnGeneralWay, m_statement) != m_statement)
+            m_rememberedOnGeneralWay = { };
+        return m_rememberedOnGeneralWay;
+    }
     return m_solver.m_rememberedByStatement[m_statement.index()];
 }
 

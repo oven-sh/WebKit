@@ -190,6 +190,15 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, c
     return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
 
+SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numberOfWords, void* resumeAddress)
+{
+    SavedFrame* saved = create(vm, instance, CoroutineKind::Generator, numberOfWords, 0, 0);
+    std::ranges::fill(std::span { saved->words(), numberOfWords }, 0);
+    saved->m_resumeAddress = resumeAddress;
+    saved->m_flags = isHeapFrameFlag;
+    return saved;
+}
+
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
 {
     SavedFrame* saved = create(vm, instance, CoroutineKind::AsyncFunction, machineFrame);

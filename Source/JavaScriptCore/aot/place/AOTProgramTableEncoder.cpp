@@ -2141,6 +2141,11 @@ static void appendFunctionTexts(TableEncoder& encoder)
         FunctionID entrypoint;
     };
     const Program& program = encoder.program;
+    const HostFunctionTexts& hostTexts = encoder.build.functionTexts();
+    auto sizeOfText = [&](ModuleID id) -> size_t {
+        size_t size = program.at(id).functionText.size();
+        return size || !hostTexts.size ? size : hostTexts.size(hostTexts.owner, id.index());
+    };
     Vector<FunctionWithText> functions;
     Vector<Vector<RetainedTextRange>> moduleRanges(program.modules.size());
     for (size_t index = 0; !encoder.obfuscates() && index < program.functions.size(); ++index) {
@@ -2151,7 +2156,7 @@ static void appendFunctionTexts(TableEncoder& encoder)
         FunctionID entrypoint = encoder.findEntrypoint(id);
         if (!entrypoint)
             continue;
-        if (function.text.end > program.at(function.module).functionText.size()) {
+        if (function.text.end > sizeOfText(function.module)) {
             encoder.fail(ProgramTableRule::TableOutOfBounds, { }, id);
             continue;
         }
@@ -2179,8 +2184,15 @@ static void appendFunctionTexts(TableEncoder& encoder)
                 ranges[count++] = next;
         }
         ranges.shrink(count);
+        std::span<const uint8_t> moduleText = program.modules[module].functionText;
+        Vector<uint8_t> textOfHost;
+        if (moduleText.empty() && count) {
+            textOfHost.grow(hostTexts.size(hostTexts.owner, module));
+            hostTexts.copy(hostTexts.owner, module, textOfHost.mutableSpan().data());
+            moduleText = textOfHost.span();
+        }
         for (RetainedTextRange& range : ranges) {
-            std::span bytes = program.modules[module].functionText.subspan(range.start, range.end - range.start);
+            std::span bytes = moduleText.subspan(range.start, range.end - range.start);
             uint64_t hashAndSize = static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes))) << 32 | bytes.size();
             range.textOffset = offsetsByHashAndSize.add(hashAndSize, static_cast<uint32_t>(text.size())).iterator->value;
             if (range.textOffset < text.size() && equalSpans(text.subspan(range.textOffset, bytes.size()), bytes))

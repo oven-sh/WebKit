@@ -295,6 +295,11 @@ void FunctionVerifier::verifySuspension(BlockID block, uint32_t, ValueID id, con
     case Opcode::AwaitBySavingFrame:
     case Opcode::AwaitMayContinue:
     case Opcode::YieldBySavingFrame:
+    case Opcode::NewHeapFrame:
+    case Opcode::GetHeapFrameWord:
+    case Opcode::PutHeapFrameWord:
+    case Opcode::GetResumeIndex:
+    case Opcode::SuspendInHeapFrame:
     case Opcode::AsyncGeneratorYield:
     case Opcode::TakeGeneratorPrototype:
         isValid = m_function.role == FunctionRole::CoroutineBody;

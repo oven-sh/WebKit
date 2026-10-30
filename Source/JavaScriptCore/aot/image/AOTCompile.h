@@ -10,6 +10,7 @@
 #include "AOTArrivalSiteNumbers.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowReport.h"
+#include "AOTHostFunctionTexts.h"
 #include "AOTID.h"
 #include "AOTLosses.h"
 #include "AOTObfuscatedSites.h"
@@ -93,6 +94,8 @@ struct ProgramOwner {
     void* owner { nullptr };
     const ExternalFunctionBodies* externalBodies { nullptr };
     bool (*goesOnBehindFlowAnalysis)(void* owner, const FlowFindings*) { nullptr };
+    // Of a module whose text the program does not hold.
+    HostFunctionTexts functionTexts { };
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });

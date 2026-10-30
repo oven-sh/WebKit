@@ -189,7 +189,6 @@ public:
         recordReadsOfStoredFunctions();
         runFixpoint();
         refineEntriesByCalls();
-        recordDefinitionsOnDeclaredFunctions();
         AOT::sort(m_definitions);
     }
 
@@ -474,31 +473,6 @@ private:
                 return numbering.locationOf(user.layout(), user.fields()[*listedField]);
         }
         return std::nullopt;
-    }
-
-    // `K.n = 0` among the statements of a file: what is defined on is a read of the variable of the function that the file declares.
-    void recordDefinitionsOnDeclaredFunctions()
-    {
-        FlowScopeFrame& frame = ownerFrame();
-        const Program& program = m_index.program();
-        for (const Block& block : frame.body.blocks) {
-            for (ValueID id : block.values) {
-                const Value& definition = frame.body.at(id);
-                if (definition.opcode != Opcode::PropDefine)
-                    continue;
-                const Value& object = frame.body.at(sameObjectThroughCasts(frame.body, definition.objectOperand()));
-                if (object.opcode != Opcode::GetModuleVariable)
-                    continue;
-                const Variable& variable = program.at(object.variable());
-                FunctionID function = variable.initialization == VariableInitialization::Function ? variable.function : FunctionID();
-                VariableID staticField = function ? findStaticFieldVariable(program, function, definition.key()) : VariableID();
-                if (!staticField || m_index.locationOwners[staticField.index()] != m_owner.function)
-                    continue;
-                m_definitions.append({ staticField.index(), frame.function, id });
-                // A variable of a file holds the function from the start, so no closure is followed to here.
-                m_classesEvaluatedOnce.set(program.at(function).constructedClass.index());
-            }
-        }
     }
 
     void recordStoredFunction(FlowScopeLocation location, FunctionID function, const FlowScopeEntry& store)

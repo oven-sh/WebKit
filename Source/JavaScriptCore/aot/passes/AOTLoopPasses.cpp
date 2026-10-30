@@ -820,8 +820,10 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
                 return !(program.typeOf(function, operand).primitives & Primitive::FractionalNumber);
             };
             bool isReckonedWith = std::ranges::any_of(analyses.useLists().usesOf(parameters[index]), [&](const Use& use) {
+                if (use.kind != Use::Kind::Operand)
+                    return false;
                 const Value& user = function.at(use.user);
-                if (use.kind != Use::Kind::Operand || !hasOperatorForm(user.opcode) || relationalOperators.contains(user.opcode) || !loops.belongsTo(use.block, loop))
+                if (!hasOperatorForm(user.opcode) || relationalOperators.contains(user.opcode) || !loops.belongsTo(use.block, loop))
                     return false;
                 return user.numberOfOperands() != 2 || isWithoutFraction(user.operand(1 - use.operandIndex));
             });

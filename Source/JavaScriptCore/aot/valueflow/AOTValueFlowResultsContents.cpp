@@ -1075,7 +1075,10 @@ private:
                 const Type& elements = m_types.at(m_facts[index].contents[m_indexOfElements]);
                 bool isGivenMoreThanNumbers = m_arrayWrites[index].has(ArrayWrites::IsGivenMoreThanNumbers) && !m_arrayWrites[index].has(ArrayWrites::MeetsObjectThatIsNoArray);
                 // Nothing converts a list that may read undefined: ArrayCapacities' flowAllowsConversion().
-                bool mayBeConverted = mayGetDoubleStorage(ArrayStorage::Contiguous, elements) && !(elements.primitives & Primitive::Undefined);
+                bool mayReadUndefined = elements.primitives & Primitive::Undefined;
+                bool mayBeConverted = mayGetDoubleStorage(ArrayStorage::Contiguous, elements) && !mayReadUndefined;
+                if (isGivenMoreThanNumbers && meetsUndecidedList.quickGet(index) && mayReadUndefined)
+                    m_results.keepsStorageOfListThatMayReadUndefined = true;
                 if ((isGivenMoreThanNumbers && !(mayBeConverted && meetsUndecidedList.quickGet(index))) || (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayBeConverted))
                     m_facts[index].arrayStorage = ArrayStorage::Contiguous;
             }

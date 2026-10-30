@@ -435,6 +435,7 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
     Box<BinarySemaphore> outputIsComplete = Box<BinarySemaphore>::create();
     Ref<Thread> buildThread = startBuildThread("AOT build"_s, [&, outputIsComplete] {
         BuildContext context(options, hostPool);
+        context.setFunctionTexts(owner.functionTexts);
         run([&](const Typed::ReaderOfFinishedBodies& readBesideLastEffectSummaries) {
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
                 if (owner.release)

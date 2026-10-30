@@ -376,7 +376,7 @@ static void checkResumptionReferences(const StubCatalog& catalog)
 {
     AOT_TEST_CHECK(refersOnceBy(catalog, enterSavedFrame(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (GeneratorStepCheck check : stepChecks)
-        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), restoreSavedFrameToStack(), StubReference::Kind::Call));
+        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), enterGeneratorFrame(), StubReference::Kind::Call));
     AOT_TEST_CHECK(refersOnceBy(catalog, runAsyncGeneratorStep(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (StepConsumer consumer : stepConsumers) {
         AOT_TEST_CHECK(refersOnceBy(catalog, stepAsyncGenerator(consumer), runAsyncGeneratorStep(), StubReference::Kind::Jump));

@@ -1460,7 +1460,7 @@ static JSC_DECLARE_CUSTOM_SETTER(staticFieldSetter);
 
 bool ownsVariables(const Closure& classObject)
 {
-    return classObject.classData() && classObject.state().objects->closures.closureIfCreated(classObject.function()) == &classObject;
+    return classObject.kind().isConstructor && classObject.state().objects->closures.closureIfCreated(classObject.function()) == &classObject;
 }
 
 const FieldData* findOwnField(const Closure& classObject, UniquedStringImpl* uid)

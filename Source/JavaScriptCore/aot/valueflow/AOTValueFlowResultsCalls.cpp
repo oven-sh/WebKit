@@ -397,6 +397,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     };
 
     ValueSetID arraysThatMustNotBeConverted = inputs.containers ? inputs.containers->arraysThatMustNotBeConverted : ValueSets::nothing;
+    tables.sites.keepsStorageOfListThatMayReadUndefined = inputs.containers && inputs.containers->keepsStorageOfListThatMayReadUndefined;
     if (arraysThatMustNotBeConverted != ValueSets::nothing) {
         tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);

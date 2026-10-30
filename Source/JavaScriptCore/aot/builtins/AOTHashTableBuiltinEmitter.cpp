@@ -18,6 +18,7 @@
 #include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
 #include "JSMap.h"
+#include "RegisterSet.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -122,8 +123,24 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
 {
     LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
     LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
+#if CPU(X86_64)
+    // One mul gives both halves, as in the stubs. B3 would do two multiplications.
+    B3::PatchpointValue* halves = m_out.patchpoint(B3::Int64);
+    halves->append(a, B3::ValueRep::reg(X86Registers::eax));
+    halves->appendSomeRegister(b);
+    halves->resultConstraints = { B3::ValueRep::reg(X86Registers::eax) };
+    halves->clobber(RegisterSet(X86Registers::edx));
+    halves->effects = B3::Effects::none();
+    halves->setRunsWithoutFrame(true);
+    halves->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.m_assembler.mulq_r(params[2].gpr());
+        jit.m_assembler.xorq_rr(X86Registers::edx, X86Registers::eax);
+    });
+    return Word32(m_out.castToInt32(halves));
+#else
     LValue lowerHalf = m_out.mul(a, b);
     return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
+#endif
 }
 
 Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)

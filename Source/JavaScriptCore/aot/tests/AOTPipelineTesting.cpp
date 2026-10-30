@@ -439,6 +439,7 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::SplitFreshResults:
     case PassID::PromoteAggregateParameters:
     case PassID::SplitCoroutines:
+    case PassID::MoveGeneratorFramesToHeap:
     case PassID::CallModules:
     case PassID::CreateEntrypoints:
     case PassID::OutlineColdOperations:

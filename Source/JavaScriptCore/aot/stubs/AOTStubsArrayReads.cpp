@@ -217,7 +217,18 @@ void generateArrayHasAtIndex(StubAssembler& jit) { answerAtIndex(jit, ElementQue
 void generateArrayGetAtNumber(StubAssembler& jit) { answerAtNumber(jit, ElementQuestion::Get); }
 void generateArrayHasAtNumber(StubAssembler& jit) { answerAtNumber(jit, ElementQuestion::Has); }
 
-StubSignature signatureOfArrayIndexOfString(StubKey) { return signatureAtIndex(); }
+static bool searchesFromStart(StubKey key)
+{
+    SearchedElements elements = static_cast<SearchedElements>(key.form());
+    return elements == SearchedElements::ValuesFromStart || elements == SearchedElements::StringsFromStart;
+}
+
+StubSignature signatureOfArrayIndexOfString(StubKey key)
+{
+    if (searchesFromStart(key))
+        return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
+    return signatureAtIndex();
+}
 
 // characters holds the fiber word of a rope on entry. flags may alias string.
 static void loadSubstringCharactersAndFlags(StubAssembler& jit, GPRReg string, GPRReg characters, GPRReg offset, GPRReg flags, JumpList& notSubstring)
@@ -240,10 +251,12 @@ void generateArrayIndexOfString(StubAssembler& jit)
     constexpr int32_t wordSize = sizeof(uint64_t);
     constexpr int32_t is8BitFlag = StringImpl::flagIs8Bit();
     static_assert(sizeof(EncodedJSValue) == 8 && is8BitFlag == 4);
-    const bool elementsAreStrings = static_cast<SearchedElements>(jit.key().form()) == SearchedElements::Strings;
+    const SearchedElements searchedElements = static_cast<SearchedElements>(jit.key().form());
+    const bool elementsAreStrings = searchedElements == SearchedElements::Strings || searchedElements == SearchedElements::StringsFromStart;
+    const bool hasStart = searchesFromStart(jit.key());
     const GPRReg array = jit.operand(0);
     const GPRReg searchString = jit.operand(1);
-    const GPRReg cursor = jit.allocateScratch(StubRegister::A3);
+    const GPRReg cursor = hasStart ? jit.clobberOperand(2) : jit.allocateScratch(StubRegister::A3);
     // Address of the last element, plus 1, plus is8BitFlag if searchString is 8-bit.
     const GPRReg end = jit.allocateScratch(StubRegister::A4);
     // Length of searchString in the low 32 bits, its size in bytes in the high 32 bits.
@@ -261,15 +274,18 @@ void generateArrayIndexOfString(StubAssembler& jit)
     JumpList found;
     JumpList nextElement;
 
-    jit.loadPtr(Address(array, JSObject::butterflyOffset()), cursor);
+    const GPRReg butterfly = hasStart ? characters : cursor;
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    if (hasStart)
+        jit.getEffectiveAddress(BaseIndex(butterfly, cursor, CCallHelpers::TimesEight), cursor);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), end);
     jit.and32(TrustedImm32(IndexingShapeMask), end);
     static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
     notFound.append(jit.branch32(CCallHelpers::Below, end, TrustedImm32(ContiguousShape)));
     slowPath.append(jit.branch32(CCallHelpers::Above, end, TrustedImm32(ContiguousShape)));
-    jit.load32(Address(cursor, Butterfly::offsetOfPublicLength()), end);
-    notFound.append(jit.branchTest32(CCallHelpers::Zero, end));
-    jit.getEffectiveAddress(BaseIndex(cursor, end, CCallHelpers::TimesEight, 1 - static_cast<int32_t>(sizeof(EncodedJSValue))), end);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), end);
+    jit.getEffectiveAddress(BaseIndex(butterfly, end, CCallHelpers::TimesEight, 1 - static_cast<int32_t>(sizeof(EncodedJSValue))), end);
+    notFound.append(jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, end));
 
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);
     Jump searchStringIsRope = jit.branchIfRopeStringImpl(searchCharacters);

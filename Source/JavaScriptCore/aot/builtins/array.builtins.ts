@@ -115,7 +115,7 @@ const searchFromStart = (name: string, inlineBuiltin: string, nativeSymbol: stri
       ...allocationEffects,
       readsStateBeforeConversions: true,
       uses: { this: [b.readsContents()], searched: b.inspected },
-      implementation: b.inline(inlineBuiltin, { max: 1, otherwise: b.compiled("prelude/array-search", name, { stubConvention: true }) }),
+      implementation: b.inline(inlineBuiltin, { max: 2, otherwise: b.compiled("prelude/array-search", name, { stubConvention: true }) }),
     },
     searchInArrayLike(found),
   ] satisfies b.FunctionField[];

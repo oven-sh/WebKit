@@ -327,6 +327,8 @@ private:
     std::array<ValueFlowNodeID, 32> m_mutationNodes { };
     ValueSetMaker& m_maker;
     ValueFlowStatementID m_statement;
+    ValueFlowStatementID m_statementThatRemembersOnGeneralWay;
+    ValueSetID m_rememberedOnGeneralWay;
     uint32_t m_madeNodesOfStatement { UINT32_MAX };
     bool m_isFirstRunOfStatementOfBody { false };
     bool m_filtersKnownEdges { true };

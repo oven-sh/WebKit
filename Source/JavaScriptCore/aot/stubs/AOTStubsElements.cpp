@@ -223,9 +223,11 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
 
-    // Mostly a typed array. The entry for any key would only come to the same place by testing all of the above again.
+    // Mostly a typed array, whose arm below takes a key that is an int32. Any other key goes through the tests of the entry for any key.
     isNotCompiledObject.link(&jit);
-    jit.boxInt52(index, index, storage, number);
+    jit.signExtend32ToPtr(index, storage);
+    notHandled.append(jit.branch64(CCallHelpers::NotEqual, index, storage));
+    boxInt32(jit, index, index);
     isNeitherStringNorCompiledObject.append(jit.jump());
 
     notHandled.link(&jit);

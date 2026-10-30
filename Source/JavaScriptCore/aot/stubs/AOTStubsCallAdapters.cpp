@@ -145,6 +145,9 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     Label hasInstance = jit.label();
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         hasSeveralInstances.link(&jit);
+        jit.load64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfEntriesWithSeveralInstances()), instance);
+        jit.add64(TrustedImm32(1), instance);
+        jit.store64(instance, Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfEntriesWithSeveralInstances()));
         jit.load32(Address(callee, JSCell::structureIDOffset()), instance);
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);

@@ -104,6 +104,14 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
     IndexingType targetType = target->indexingType();
     bool targetIsPlain = !isCopyOnWrite(target->indexingMode()) && (hasInt32(targetType) || hasDouble(targetType) || hasContiguous(targetType)) && !target->structure()->outOfLineCapacity() && !target->structure()->hasElementsStartOffset();
     if (!target->length() && length && targetIsPlain) {
+        if (hasContiguous(targetType) && target->butterfly()->vectorLength() >= length) {
+            Butterfly* butterfly = target->butterfly();
+            butterfly->setPublicLength(length);
+            for (unsigned i = 0; i < length; ++i)
+                butterfly->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
+            vm.writeBarrier(target);
+            return true;
+        }
         unsigned vectorLength = length | 1;
         DeferGC deferGC(vm);
         if (void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull)) {
