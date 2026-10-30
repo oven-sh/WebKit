@@ -135,6 +135,10 @@ public:
     // its setter. While the hook runs, what the hook returns still takes the place of the value. It changes nothing, and
     // says so, where an assignment changes nothing: a read-only value, a property the program defined or deleted.
     JS_EXPORT_PRIVATE bool setStack(VM&, JSValue);
+    // The frames are weak: a collection that finds one dead formats them all, and the host composes "stack" from that
+    // text. A host whose hook needs the frames themselves (Error.prepareStackTrace gets a CallSite of each) calls this:
+    // the error keeps them alive until "stack" is composed or assigned, or other frames take their place.
+    JS_EXPORT_PRIVATE void retainStackFrames(VM&);
 
 #endif
 
@@ -225,6 +229,7 @@ protected:
     bool m_isComposingStack : 1;
     bool m_stackReplacedWhileComposing : 1;
     bool m_stackToComposeIsDetached : 1;
+    bool m_retainsStackFrames : 1;
     JSValue composeStack(VM&, bool& stored);
     void discardStackToCompose();
     void discardStackToComposeIfReplaced(VM&);

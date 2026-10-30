@@ -72,6 +72,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_isComposingStack(false)
     , m_stackReplacedWhileComposing(false)
     , m_stackToComposeIsDetached(false)
+    , m_retainsStackFrames(false)
 #endif
 {
 }
@@ -160,8 +161,9 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
     m_hasErrorInfo = false;
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
-    // The host puts its accessor for these frames.
+    // The host puts its accessor for these frames, and says again if it needs them kept.
     m_stackToComposeIsDetached = false;
+    m_retainsStackFrames = false;
 #endif
     vm.writeBarrier(this);
 }
@@ -172,6 +174,16 @@ void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    // retainStackFrames(). The mutator replaces the frames under the cell lock.
+    if (thisObject->m_retainsStackFrames) [[unlikely]] {
+        Locker locker { thisObject->cellLock() };
+        if (auto* stackTrace = thisObject->m_stackTrace.get()) {
+            for (auto& frame : *stackTrace)
+                frame.visitAggregate(visitor);
+        }
+    }
+#endif
     if (!thisObject->m_returnAddresses)
         return;
     Locker locker { thisObject->cellLock() };
@@ -609,10 +621,20 @@ void ErrorInstance::discardStackToCompose()
     m_stackTrace = nullptr;
     m_returnAddresses = nullptr;
     m_stackToComposeIsDetached = false;
+    m_retainsStackFrames = false;
     if (m_stackStringIsFramesOnly) {
         m_stackString = String();
         m_stackStringIsFramesOnly = false;
     }
+}
+
+void ErrorInstance::retainStackFrames(VM& vm)
+{
+    if (m_retainsStackFrames || !m_stackTrace)
+        return;
+    m_retainsStackFrames = true;
+    // A collection that has visited this error visits it again, for the frames.
+    vm.writeBarrier(this);
 }
 
 // A value takes the place of what "stack" is. What was made of the property before stays: Object.defineProperty(),
