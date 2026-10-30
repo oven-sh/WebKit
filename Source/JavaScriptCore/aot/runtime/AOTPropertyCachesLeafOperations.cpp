@@ -623,6 +623,27 @@ static std::optional<RefPtr<AtomStringImpl>> findAtomEqualTo(JSGlobalObject* glo
     return string->is8Bit() ? lookUp(Vector<Latin1Character>()) : lookUp(Vector<char16_t>());
 }
 
+static std::optional<bool> isEqualToName(JSString* string, const UniquedStringImpl& name)
+{
+    auto isEqual = [&]<typename Character>(std::span<const Character> characters) {
+        if (name.is8Bit() != (sizeof(Character) == 1))
+            return StringView(name) == StringView(characters);
+        if constexpr (sizeof(Character) == 1)
+            return equalSpans(name.span8(), characters);
+        else
+            return equalSpans(name.span16(), characters);
+    };
+    if (StringImpl* text = string->tryGetValueImpl())
+        return text->is8Bit() ? isEqual(text->span8()) : isEqual(text->span16());
+    auto resolveAndCompare = [&]<typename Character>(Vector<Character>&& characters) -> std::optional<bool> {
+        if (!characters.tryGrow(string->length()))
+            return std::nullopt;
+        string->resolveToBuffer(characters.mutableSpan());
+        return isEqual(std::span<const Character>(characters.span()));
+    };
+    return string->is8Bit() ? resolveAndCompare(Vector<Latin1Character>()) : resolveAndCompare(Vector<char16_t>());
+}
+
 static bool mayHaveFieldWithNameOfLength(const Object& object, unsigned length)
 {
     if (!object.state().tables.removedFields().empty())
@@ -647,13 +668,16 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
         return std::nullopt;
     JSString* string = asString(key);
     VM& vm = string->vm();
-    std::optional<RefPtr<AtomStringImpl>> atom = findAtomEqualTo(asObject(base)->globalObject(), string);
-    if (!atom)
-        return std::nullopt;
+    JSGlobalObject* globalObject = asObject(base)->globalObject();
+    unsigned length = string->length();
+    // Visiting a name costs about as much as hashing sixteen units of the key.
+    uint64_t remainingNames = length / 16;
+    UniquedStringImpl* nameWithSameLength = nullptr;
+    std::optional<RefPtr<AtomStringImpl>> atom;
     for (JSObject* object = asObject(base); object; object = checksPrototypes ? object->getPrototypeDirect().getObject() : nullptr) {
         JSObject* holder = object;
         if (Object* compiled = compiledObjectOrNull(object)) {
-            if (mayHaveFieldWithNameOfLength(*compiled, string->length()))
+            if (mayHaveFieldWithNameOfLength(*compiled, length))
                 return std::nullopt;
             holder = compiled->extraProperties();
             if (!holder)
@@ -661,11 +685,47 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
         }
         if (!hasOrdinaryLookups(holder))
             return std::nullopt;
+        Structure* structure = holder->structure();
+        if (!atom) {
+            unsigned numberOfNames = structure->isDictionary() ? structure->dictionaryPropertyCount() : numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
+            bool needsHash = numberOfNames > remainingNames;
+            if (!needsHash) {
+                remainingNames -= numberOfNames;
+                structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+                    UniquedStringImpl* name = entry.key();
+                    if (name->length() != length || name->isSymbol() || name == nameWithSameLength)
+                        return true;
+                    needsHash = !!nameWithSameLength;
+                    if (!needsHash)
+                        nameWithSameLength = name;
+                    return !needsHash;
+                });
+            }
+            if (!needsHash)
+                continue;
+            atom = findAtomEqualTo(globalObject, string);
+            if (!atom)
+                return std::nullopt;
+            // The holders visited so far have no other name of this length.
+            if (*atom && atom->get() == nameWithSameLength)
+                return nameWithSameLength;
+        }
         // The holder keeps the atom alive.
-        if (*atom && isValidOffset(holder->structure()->get(vm, PropertyName(atom->get()))))
+        if (*atom && isValidOffset(structure->get(vm, PropertyName(atom->get()))))
             return atom->get();
     }
-    return nullptr;
+    if (atom || !nameWithSameLength)
+        return nullptr;
+    std::optional<bool> isEqual = isEqualToName(string, *nameWithSameLength);
+    if (!isEqual)
+        return std::nullopt;
+    if (!*isEqual)
+        return nullptr;
+    // Only compared. A flat key that comes back takes the text of the atom, so that later accesses compare nothing.
+    static thread_local const JSString* lastKeyCompared;
+    if (std::exchange(lastKeyCompared, string) == string && string->tryGetValueImpl())
+        string->toExistingAtomString(globalObject);
+    return nameWithSameLength;
 }
 
 // A compiled object's fields have names that appear in the program, which are atoms wherever they are looked up, and its extra properties are in an ordinary object.

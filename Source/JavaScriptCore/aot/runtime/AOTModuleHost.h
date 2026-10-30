@@ -105,6 +105,7 @@ JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 // False: both functions above return false for every path that starts with `start`.
 JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
+JS_EXPORT_PRIVATE bool isLeftToCodeOutsideImage(StringView specifier, StringView directoryOfImporter);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);
@@ -114,6 +115,8 @@ JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A mock stands in place of a module of the library, and the loader of the host has it.
 JS_EXPORT_PRIVATE bool hostAnswersInPlaceOf(JSGlobalObject*, ModuleID, LoadByName);
+// Code of the program has required the module of the library, and the engine keeps what the next require() answers: what a mock has stored there since, too.
+JS_EXPORT_PRIVATE bool isInRequireCache(JSGlobalObject*, ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 // A file that the host starts by itself, as a test runner starts a test file, stays compiled whatever it imports.
 enum class StartedBy : uint8_t { Code, Host };
@@ -130,7 +133,8 @@ JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE JSValue moduleExports(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void setModuleExports(JSGlobalObject*, ModuleID, JSValue);
-JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*);
+// What `require.main` answers while `Bun.main` is the path of this file. Null where `bun run` has no module object for it yet.
+JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*, ModuleID);
 // Of the file whose require() came to the module first. Null where the program recorded none.
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
 // Calls the functor with the module object of each CommonJS file that the module has required since the last call, in the order of the first require() of each.
@@ -193,6 +197,8 @@ JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, Str
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
+// The loader may answer for a name with another module than before: the next import() of a name that is left to it asks again.
+JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
 JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);

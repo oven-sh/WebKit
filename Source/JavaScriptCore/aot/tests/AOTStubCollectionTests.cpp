@@ -161,8 +161,10 @@ public:
     void markAsWalked() { at<uint8_t>(CompactTable::offsetOfKeysShift()) |= CompactTable::wasWalked; }
     void deleteLastEntry()
     {
-        AOT_TEST_CHECK(m_keyWidth == Width::Narrow);
-        at<uint32_t>(m_offsetOfKeys + (used() - 1) * sizeof(uint32_t)) = 0;
+        if (m_keyWidth == Width::Wide)
+            at<uint64_t>(m_offsetOfKeys + (used() - 1) * sizeof(uint64_t)) = 0;
+        else
+            at<uint32_t>(m_offsetOfKeys + (used() - 1) * sizeof(uint32_t)) = 0;
         at<uint32_t>(CompactTable::offsetOfAliveCount())--;
     }
     Vector<uint8_t> copyOfBytes() const { return Vector<uint8_t>(std::span<const uint8_t>(m_bytes, m_size)); }
@@ -398,6 +400,44 @@ static void testStringKeys()
             Vector<StringKey> keys = appendStringKeys(collections, mapTable, size.numberOfKeys, valuesAreCells);
             for (const StringKey& key : keys)
                 setTable.append(key.cell, key.text.impl()->hash(), 0);
+
+            uint64_t map = collections.createOwner(JSMapType, mapTable.address());
+            uint64_t set = collections.createOwner(JSSetType, setTable.address());
+            for (const StringKey& key : keys)
+                checkStringLookups(collections, map, set, key);
+            checkStringsWithoutHash(collections, map, set, keys.first());
+            checkStringsWithoutHash(collections, map, set, keys.last());
+            checkAbsentStrings(collections, map, set);
+        }
+    }
+}
+
+// On its way to each string the search comes by a key of another kind, or by the place of a deleted key, that has the hash of the string.
+static void testStringsBesideOtherKeys()
+{
+    Collections collections;
+    FakeHeap& heap = collections.heap;
+    for (const TableSize& size : tableSizes) {
+        for (Width keyWidth : { Width::Narrow, Width::Wide }) {
+            FakeTable mapTable(heap, size.capacity, keyWidth, Width::Wide);
+            FakeTable setTable(heap, size.capacity, keyWidth, Width::None);
+            Vector<StringKey> keys;
+            for (unsigned i = 0; 2 * i + 1 < size.numberOfKeys; ++i) {
+                String text = makeString("key"_s, i);
+                unsigned hash = text.impl()->hash();
+                uint64_t other = !i ? bitsOf(jsUndefined()) : i == 1 ? bitsOf(jsBoolean(true)) : keyWidth == Width::Wide && i % 2 ? bitsOf(jsNumber(i)) : heap.createCell(FinalObjectType);
+                mapTable.append(other, hash, bitsOf(jsNull()));
+                setTable.append(other, hash, 0);
+                if (i % 4 == 2) {
+                    mapTable.deleteLastEntry();
+                    setTable.deleteLastEntry();
+                }
+                uint64_t cell = heap.createString(text);
+                uint64_t value = bitsOf(jsNumber(1000 + i));
+                mapTable.append(cell, hash, value);
+                setTable.append(cell, hash, 0);
+                keys.append({ text, cell, value });
+            }
 
             uint64_t map = collections.createOwner(JSMapType, mapTable.address());
             uint64_t set = collections.createOwner(JSSetType, setTable.address());
@@ -673,8 +713,7 @@ static void checkTableFilledByStubs(Collections& collections, const TableSize& s
         bool isString = number % 2;
         std::optional<uint64_t> value = createValue(heap, number, valueWidth);
         TableEntry entry = isString ? createStringEntry(heap, makeString("key"_s, number), value) : createEntryComparedByBits(createKeyComparedByBits(heap, number, keyWidth), value);
-        // The stubs for strings alone leave a table with wide keys to the operations.
-        KeyComparison comparison = number % 4 < 2 || (isString && keyWidth == Width::Wide) ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
+        KeyComparison comparison = number % 4 < 2 ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
         if (number == size.capacity) {
             checkTableIsUnchanged(collections, comparison, owner, table, entry);
             break;
@@ -1082,7 +1121,7 @@ static void checkDeletions(Collections& collections, const TableSize& size, Widt
 
     for (uint32_t number = 0; number < entries.size(); number += 3) {
         bool isString = number % 2;
-        KeyComparison comparison = number % 4 < 2 || (isString && keyWidth == Width::Wide) ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
+        KeyComparison comparison = number % 4 < 2 ? KeyComparison::AnyValue : isString ? KeyComparison::String : KeyComparison::Bits;
         uint64_t keyWithSameValue = !isString ? entries[number].key : number % 12 < 6 ? heap.createStringWithoutHash(texts[number]) : heap.createString(createHashedCopy(texts[number], number % 8 < 4));
         checkDeletedEntry(collections, comparison, owner, table, entries[number], keyWithSameValue);
     }
@@ -1119,19 +1158,6 @@ static void testDeletionsLeftToOperations()
     for (uint64_t key : { bitsOf(jsNumber(0.5)), heap.createCell(HeapBigIntType) })
         checkLeftToOperation(collections, mapDelete(KeyComparison::AnyValue), Entry::operationAOTMapDelete, map, key);
     AOT_TEST_CHECK(table.copyOfBytes() == bytesBefore);
-
-    FakeTable wideTable(heap, 4, Width::Wide, Width::Wide);
-    Vector<StringKey> keysOfWideTable = appendStringKeys(collections, wideTable, 2, true);
-    uint64_t mapWithWideKeys = collections.createOwner(JSMapType, wideTable.address());
-    uint64_t setWithWideKeys = collections.createOwner(JSSetType, wideTable.address());
-    Vector<uint8_t> bytesOfWideTable = wideTable.copyOfBytes();
-    checkLeftToOperation(collections, mapGet(KeyComparison::String), Entry::operationAOTMapGet, mapWithWideKeys, keysOfWideTable[0].cell);
-    checkLeftToOperation(collections, mapHas(KeyComparison::String), Entry::operationAOTMapHas, mapWithWideKeys, keysOfWideTable[1].cell);
-    checkLeftToOperation(collections, setHas(KeyComparison::String), Entry::operationAOTSetHas, setWithWideKeys, keysOfWideTable[0].cell);
-    checkLeftToOperation(collections, mapDelete(KeyComparison::String), Entry::operationAOTMapDelete, mapWithWideKeys, keysOfWideTable[0].cell);
-    checkLeftToOperation(collections, setDelete(KeyComparison::String), Entry::operationAOTSetDelete, setWithWideKeys, keysOfWideTable[1].cell);
-    checkAnswer(collections, mapGet(KeyComparison::AnyValue), mapWithWideKeys, keysOfWideTable[1].cell, keysOfWideTable[1].value);
-    AOT_TEST_CHECK(wideTable.copyOfBytes() == bytesOfWideTable);
 
     uint64_t mapWithoutStorage = collections.createOwner(JSMapType, 0);
     for (KeyComparison comparison : comparisonsOfStrings)
@@ -1227,6 +1253,7 @@ std::span<const NativeTest> stubCollectionTests()
     static constexpr NativeTest tests[] = {
         { "stubs/collections/tables-in-image"_s, ImageTests::whenExecutable<testTablesInImage> },
         { "stubs/collections/string-keys"_s, ImageTests::whenExecutable<testStringKeys> },
+        { "stubs/collections/strings-beside-other-keys"_s, ImageTests::whenExecutable<testStringsBesideOtherKeys> },
         { "stubs/collections/keys-compared-by-bits"_s, ImageTests::whenExecutable<testKeysComparedByBits> },
         { "stubs/collections/keys-left-to-operations"_s, ImageTests::whenExecutable<testKeysLeftToOperations> },
         { "stubs/collections/owners-without-storage"_s, ImageTests::whenExecutable<testOwnersWithoutStorage> },

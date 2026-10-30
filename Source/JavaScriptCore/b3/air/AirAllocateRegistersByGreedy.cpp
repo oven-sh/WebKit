@@ -2421,6 +2421,15 @@ private:
         return (point - positionOfHead) / PointOffsets::PointsPerInst;
     }
 
+    Origin originAt(Point point)
+    {
+        if (!m_code.shouldPreserveB3Origins() && !m_code.proc().policy().allocation.keepsValuesAfterLowering)
+            return Origin();
+        BasicBlock* block = findBlockContainingPoint(point);
+        Value* origin = block->at(instIndex(positionOfHead(block), point)).origin;
+        return origin ? origin->origin() : Origin();
+    }
+
     static Point LEGACY_NODELETE pointAtOffset(Point point, PointOffsets offset)
     {
         static_assert(!(PointOffsets::PointsPerInst & (PointOffsets::PointsPerInst - 1)));
@@ -4718,6 +4727,8 @@ private:
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
         const bool spansStretches = m_splitPolicy.spansStretchesOfClobbers;
+        const uint64_t maxClobberSites = m_code.proc().limit(Limit::MaxClobberSitesPerSplit);
+        std::optional<Point> firstPointPastMaxClobberSites;
 
         Reg bestSplitReg;
         constexpr UseDefCost invalidSplitCost(std::numeric_limits<float>::infinity());
@@ -4734,6 +4745,7 @@ private:
             if (!candidates.contains(r))
                 continue;
             UseDefCost splitCost(0);
+            unsigned numberOfClobbers = 0;
             nextClobberSite = 0;
             SpillCost evictionCost(0);
             bool evicts = false;
@@ -4745,7 +4757,10 @@ private:
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        if (site.usesOrDefsTmp) {
+                        bool isPastMaxClobberSites = !site.usesOrDefsTmp && m_splitPolicy.limitsClobberSitesPerSplit && ++numberOfClobbers > maxClobberSites;
+                        if (isPastMaxClobberSites && !firstPointPastMaxClobberSites)
+                            firstPointPastMaxClobberSites = site.point;
+                        if (site.usesOrDefsTmp || isPastMaxClobberSites) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any
@@ -4792,8 +4807,11 @@ private:
             minSplitCost = minSplitCostWithEviction;
             bestSplitReg = bestSplitRegWithEviction;
         }
-        if (minSplitCost >= splitCostLimit)
+        if (minSplitCost >= splitCostLimit) {
+            if (firstPointPastMaxClobberSites)
+                m_code.proc().didReachLimit(Limit::MaxClobberSitesPerSplit, originAt(*firstPointPastMaxClobberSites));
             return false; // No register found or better to spill than to split
+        }
         ASSERT(bestSplitReg);
 
         LiveRange holeRange;

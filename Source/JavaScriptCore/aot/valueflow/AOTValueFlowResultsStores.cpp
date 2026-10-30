@@ -727,9 +727,12 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
         ValueFlowObjectID key = m_inputs.sets().onlyMember(maker.intersect(keys, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Absent) }))));
         return key && m_inputs.universe().kindOf(key) == ValueFlowObjectKind::Key && m_inputs.universe().keyOf(key).index() == name.payload;
     }
+    const Value& store = m_inputs.program.at(statement.function).at(statement.site);
+    if (statement.opcode == Opcode::PrivateDefine)
+        return m_inputs.program.at(store.layout()).fields[store.field()].key.index() == name.payload;
     if (!Value::opcodesWithKey.contains(statement.opcode))
         return false;
-    PropertyKeyID key = m_inputs.program.at(statement.function).at(statement.site).key();
+    PropertyKeyID key = store.key();
     return key && key.index() == name.payload;
 }
 

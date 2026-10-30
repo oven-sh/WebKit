@@ -28,6 +28,9 @@ public:
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
+    // `[...source]`: the AppendElements that comes right behind an empty literal with storage for any value and a planned capacity. The literal is then made with those elements,
+    // by the code of the literal, and the append has no code.
+    std::optional<ValueID> appendThatFillsLiteral(BlockID, ValueID literal);
     // Cleared: every element is a hole. Not cleared: whoever asks fills all of them before anything else runs, so nobody sees what lies there.
     enum class ElementsBelowLength : bool { Cleared, NotCleared };
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath, ElementsBelowLength = ElementsBelowLength::Cleared);

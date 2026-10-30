@@ -17,6 +17,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTRewrite.h"
 #include "AOTSSARepair.h"
+#include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <array>
@@ -696,6 +697,17 @@ struct EdgeThreader : Rewrite {
         return evaluateTypeTest(program, tested.isNeverNullish ? passed.withoutNullish() : passed, context.types.at(test.testedType())) != KnownBoolean::Unknown;
     }
 
+    bool sparesLookIntoCell(const Block& block, const Value& test, Edge edge) const
+    {
+        TestedParameter tested = parameterTestedBy(block, test);
+        auto looksIntoCells = [&](const Type& from) {
+            return computeTypeTestPlanOfBoxedValue(program, tested.isNeverNullish ? from.withoutNullish() : from, context.types.at(test.testedType())).looksIntoCells();
+        };
+        return looksIntoCells(typeOf(tested.parameter)) && !looksIntoCells(typeOf(substituteParameter(block, tested.parameter, targetOf(function, edge).arguments)));
+    }
+
+    bool isSeldomTaken(Edge edge) const { return at(edge.from).frequency.predicted() == BlockFrequency::Rare; }
+
     // What an edge passes decides the test, but the block does more than test: it reads a variable that the code below uses, or may throw. No edge can skip that, and a copy of it costs less than the test and the merge.
     // A slow path that comes back knows nothing of what it passes. It keeps the block, and with it the test, which the other edges no longer pay for.
     // Only behind the rounds: PlaceTypeTests would copy the code below the join once more for the type that the copy knows.
@@ -724,25 +736,31 @@ struct EdgeThreader : Rewrite {
                 return false;
             if (RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) != CloneCheck::CanClone)
                 return false;
-            // The copy then folds to nothing, or to the refusal of null and undefined.
-            bool holdsTestAlone = testsParameter && block.values.size() == (parameterTestedBy(block, test).isNeverNullish ? 2 : 1);
-            bool someEdgeDecides = false;
-            bool everyEdgeDecidesOrIsSeldomTaken = std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
+            bool holdsTestAlone = testsParameter && std::ranges::all_of(block.values, [&](ValueID value) {
+                return value == condition || value == test.valueOperand() || !estimatedCodeBytes(program, function, at(value));
+            });
+            bool someEdgeGains = false;
+            bool everyEdgeGainsOrIsSeldomTaken = std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
                 if (!canRedirect(edge))
                     return false;
                 if (choosesByParameter)
                     return decidedTargetOf(block.terminator, knownValueOf(program, function, substituteParameter(block, condition, targetOf(function, edge).arguments))).has_value();
-                if (!decidesTypeTest(block, test, edge))
-                    return context.isBehindRounds && holdsTestAlone && at(edge.from).frequency.predicted() == BlockFrequency::Rare && heatClassOf(context, id).predicted() >= leastHeatOfJoinsCopiedBesideSlowPaths;
-                someEdgeDecides = true;
+                if (!decidesTypeTest(block, test, edge)) {
+                    if (!context.isBehindRounds || !holdsTestAlone || heatClassOf(context, id).predicted() < leastHeatOfJoinsCopiedBesideSlowPaths)
+                        return false;
+                    if (isSeldomTaken(edge))
+                        return true;
+                    if (!sparesLookIntoCell(block, test, edge))
+                        return false;
+                }
+                someEdgeGains = true;
                 return true;
             });
-            return everyEdgeDecidesOrIsSeldomTaken && (choosesByParameter || someEdgeDecides);
+            return everyEdgeGainsOrIsSeldomTaken && (choosesByParameter || someEdgeGains);
         });
         if (!hasCandidates)
             return PassOutcome::Unchanged;
 
-        // The edges that decide nothing keep the block. Where every edge decides, the last one keeps it.
         Vector<Edge, 8> decidedEdges;
         Vector<std::pair<BlockID, Expected<BlockFrequency>>, 4> blocksKeptBySlowPaths;
         for (BlockID candidate : candidates) {
@@ -753,7 +771,7 @@ struct EdgeThreader : Rewrite {
             size_t before = decidedEdges.size();
             Expected<BlockFrequency> frequencyOfRest = BlockFrequency::Rare;
             for (Edge edge : edges) {
-                if (choosesByParameter || decidesTypeTest(block, test, edge))
+                if (choosesByParameter || decidesTypeTest(block, test, edge) || !isSeldomTaken(edge))
                     decidedEdges.append(edge);
                 else if (isRarerThan(frequencyOfRest, at(edge.from).frequency).predicted())
                     frequencyOfRest = at(edge.from).frequency;

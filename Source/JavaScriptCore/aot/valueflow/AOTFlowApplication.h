@@ -197,6 +197,12 @@ void forEachAccessSiteValue(const Function& function, NOESCAPE const Invocable<v
     }
 }
 
+// `class B extends either {}`: an object of B has room for the private names of each parent that it may have. Whoever brings an object to an access under such a name, it has the name in the field for it.
+struct FlowLayoutsWithPrivateName {
+    PropertyKeyID key;
+    Vector<LayoutID> layouts;
+};
+
 struct FlowApplication {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowApplication);
 
@@ -206,6 +212,8 @@ struct FlowApplication {
     Vector<FlowVariableUpdate> variables;
     Vector<FlowSignatureUpdate> signatures;
     Vector<FlowBodyUpdate> bodies;
+    // In the order of the keys. Only names for which a field was appended.
+    Vector<FlowLayoutsWithPrivateName> layoutsWithPrivateNames;
     bool hasDictionaries { false };
     Vector<std::pair<TypeID, TypeID>> typesBehindDictionaries;
     Vector<std::pair<TypeID, TypeID>> typesTestedBehindDictionaries;

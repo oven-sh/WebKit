@@ -88,6 +88,7 @@ void Policy::disable(PolicySwitch policySwitch)
     case PolicySwitch::SplitLiveRanges:
         air.splitting.splitsAroundClobbersEarly = false;
         air.splitting.spansStretchesOfClobbers = false;
+        air.splitting.limitsClobberSitesPerSplit = false;
         air.splitting.splitsIntoClustersOverBlocks = false;
         break;
     CLEAR_FIELD_CASE(SplitLiveRangesAroundFrame, air.splitting.splitsAroundFrame);

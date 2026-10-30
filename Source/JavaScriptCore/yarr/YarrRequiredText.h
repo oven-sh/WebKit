@@ -51,6 +51,10 @@ struct RequiredText {
     bool isFirstAttemptAlwaysMade { false };
     // One of those is none the less tried at every place.
     bool isSilentOnSomeRepeatedAlternative { false };
+    // The pattern has alternatives that begin with a $ that holds at the end of the subject alone, of which all this says nothing.
+    bool allowsEmptyMatchAtEnd { false };
+    // Of findTextOfEveryMatch(), with allowsEmptyMatchAtEnd: every other alternative is tried at the first place alone.
+    bool isForFirstAttemptOnly { false };
 };
 
 // The rarest first. A second one is nearer to the start of a match: its distance has a bound, the first one's has none.

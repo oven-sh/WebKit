@@ -917,7 +917,7 @@ void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
 const LayoutData* ClassTable::classLeftToRecordHeldBy(JSObject* holder, ClassSide& side) const
 {
     if (auto* prototype = dynamicDowncast<ClassPrototype>(holder)) {
-        const LayoutData* layout = hasClassOf(*prototype) ? classWithIndex(prototype->classIndex()) : nullptr;
+        const LayoutData* layout = classOf(*prototype);
         if (!layout || !leavesDefinitionToRecord(*layout) || classPrototypeIfExists(*layout) != holder)
             return nullptr;
         side = ClassSide::Prototype;

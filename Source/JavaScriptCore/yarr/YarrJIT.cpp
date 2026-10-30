@@ -10939,7 +10939,7 @@ class YarrGenerator final : public YarrJITInfo {
             // An attempt that fails within a few units costs less than the code of a search: what pays is a text behind a run.
             return hasStartSearch || required.greatestDistance == required.leastDistance || required.leastDistance > greatestRequiredTextDistance || !canGenerateSharedRoutine(SharedRoutine { requiredTextRoutine(required) });
         });
-        if (!m_requiredTexts.isEmpty() && m_requiredTexts[0].isSilentOnSomeRepeatedAlternative)
+        if (!m_requiredTexts.isEmpty() && (m_requiredTexts[0].isSilentOnSomeRepeatedAlternative || m_requiredTexts[0].allowsEmptyMatchAtEnd))
             m_requiredTexts.clear();
         if (m_requiredTexts.isEmpty())
             return;

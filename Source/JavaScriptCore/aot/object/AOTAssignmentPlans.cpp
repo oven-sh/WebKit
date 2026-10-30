@@ -538,6 +538,17 @@ void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store
     store.move = move;
 }
 
+NEVER_INLINE void AssignmentPlanCache::describeMoves(AssignmentPlan& plan)
+{
+    plan.hasDescribedMoves = true;
+    const LayoutData& layout = uncheckedDowncast<CompiledStructure>(plan.target.decode())->layout();
+    for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
+        // A run copies such bits without a move.
+        if (!store.copiesBitsUntested)
+            describeMove(*m_state.instance.vm, store, layout, plan.sharesTypesWithSource);
+    }
+}
+
 void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
 {
     Object* record = compiledObjectOrNull(target);
@@ -550,6 +561,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         return notePlanWithoutUse("the source has no list of its properties"_s);
     // A source of another image is listed and read by its own image, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
+    plan.sharesTypesWithSource = sharesTypes;
     const LayoutData* layout = record ? &record->layout() : nullptr;
     JSGlobalObject* realm = target->structure()->realm();
     Structure* extraPropertiesBefore = extraProperties ? extraProperties->structure() : Instance::of(realm)->realm.emptyExtraPropertiesStructure;
@@ -629,8 +641,6 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         }
         store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
             && !(store.leavesUndefinedAndNullToOtherWay && property.field->slotHoldsUndefinedAndNull);
-        if (!store.copiesBitsUntested)
-            describeMove(vm, store, *layout, sharesTypes);
         plan.mayStoreCells |= traits.holdsCell;
         plan.readsOutOfLineFields |= property.field && property.field->isOutOfLine();
         if (field->isOutOfLine())

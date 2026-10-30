@@ -33,6 +33,8 @@ JSString* functionSourceText(JSGlobalObject*, FunctionID);
 // UTF-8. Empty where the executable does not hold the text.
 std::span<const Latin1Character> functionSourceBytes(FunctionID);
 std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID);
+// The lines of that text above the place where the function begins: none but for the constructor of a class.
+unsigned linesOfTextAboveSource(FunctionID);
 
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);

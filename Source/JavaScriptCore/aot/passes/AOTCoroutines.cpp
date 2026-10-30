@@ -717,9 +717,10 @@ static void forEachSuspensionWithLastCrossings(const Function& function, Functio
 
 static void eraseEverywhere(IRBuilder&, const BitVector& marked);
 
-// `x = null` lets go of what x held. Where the function was suspended since it last read that value there is nothing left to let go of: it runs in a new frame.
-// Left in place, the hint would be the one reader for whose sake the suspended function holds the value.
-static PassOutcome dropReleaseHintsBehindSuspensions(FunctionPassContext& context)
+// `x = null` lets go of what x held. Where the function may be suspended between its last read of that value and the hint, the hint would be the one reader for whose
+// sake the suspended function holds the value. The registers and stack slots that hold it are those of the run that read it last, and the next run may lie at the same
+// addresses and never write them: a loop that steps a generator. So such a hint moves up to where the value was last read.
+static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& context)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -731,45 +732,95 @@ static PassOutcome dropReleaseHintsBehindSuspensions(FunctionPassContext& contex
         return PassOutcome::Unchanged;
 
     const CFG& cfg = analyses.cfg();
+    const UseLists& useLists = analyses.useLists();
+    auto isReadBy = [&](const Value& value, ValueID released) {
+        bool isRead = false;
+        value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == released; });
+        return isRead && value.opcode != Opcode::ReleaseHint;
+    };
     auto isReadAtEndOf = [&](const Block& block, ValueID released) {
         bool isRead = block.subject == released;
         block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead |= operand == released; });
         block.forEachTarget([&](const Target& target) { isRead |= target.arguments.contains(released); });
         return isRead;
     };
-    auto isSuspendedSinceLastRead = [&](BlockID blockOfHint, uint32_t indexOfHint) {
-        ValueID released = function.at(function.at(blockOfHint).values[indexOfHint]).valueOperand();
+    // The blocks at whose heads something other than a hint has yet to read the value.
+    auto blocksInFrontOfReads = [&](ValueID released) {
+        BitVector blocks(function.blocks.size());
+        Vector<BlockID, 8> worklist;
+        auto add = [&](BlockID block) {
+            if (block != useLists.blockOf(released) && !blocks.set(block.index()))
+                worklist.append(block);
+        };
+        for (const Use& use : useLists.usesOf(released)) {
+            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ReleaseHint)
+                add(use.block);
+        }
+        while (!worklist.isEmpty()) {
+            for (BlockID predecessor : cfg.predecessors(worklist.takeLast()))
+                add(predecessor);
+        }
+        return blocks;
+    };
+    auto isReadBehindEndOf = [&](BlockID block, ValueID released, const BitVector* isInFrontOfReads) {
+        if (isReadAtEndOf(function.at(block), released))
+            return true;
+        if (!isInFrontOfReads)
+            return false;
+        for (BlockID successor : cfg.successors(block)) {
+            if (isInFrontOfReads->get(successor.index()))
+                return true;
+        }
+        return false;
+    };
+
+    struct WayBack {
+        bool isSuspended { false };
+        // Right behind the last read of the value, or behind where it is made.
+        Vector<ProgramPoint, 4> behindLastReads;
+        // Entered from a block that goes on to read the value another way.
+        Vector<BlockID, 4> enteredFromReaders;
+    };
+    enum class Asked : uint8_t { WhetherSuspended, WholeWay };
+    // Over all that may have run since the value was last read. Without the blocks in front of reads it goes too far back, never too little.
+    auto walkBackToLastReads = [&](ValueID released, ProgramPoint from, const BitVector* isInFrontOfReads, Asked asked) {
+        WayBack way;
         BitVector isVisited(function.blocks.size());
         Vector<BlockID, 8> worklist;
-        bool isSuspended = false;
         auto scan = [&](BlockID id, uint32_t end) {
             const Block& block = function.at(id);
             for (uint32_t index = end; index--;) {
-                const Value& value = function.at(block.values[index]);
-                if (block.values[index] == released)
-                    return;
-                bool isRead = false;
-                value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == released; });
-                if (isRead && value.opcode != Opcode::ReleaseHint)
-                    return;
-                if (canHoldOperands(value.opcode) && analyses.maySuspend(block.values[index])) {
-                    isSuspended = true;
+                bool maySuspend = canHoldOperands(function.at(block.values[index]).opcode) && analyses.maySuspend(block.values[index]);
+                if (block.values[index] == released || isReadBy(function.at(block.values[index]), released)) {
+                    // Behind `await x` the function has been suspended.
+                    if (!maySuspend)
+                        way.behindLastReads.append(ProgramPoint { id, index + 1 });
                     return;
                 }
+                way.isSuspended |= maySuspend;
+                if (way.isSuspended && asked == Asked::WhetherSuspended)
+                    return;
             }
-            if (block.parameters.contains(released))
+            if (block.parameters.contains(released)) {
+                way.behindLastReads.append(ProgramPoint::atHeadOf(id));
                 return;
+            }
+            bool isEnteredFromReader = false;
             for (BlockID predecessor : cfg.predecessors(id)) {
-                if (!isVisited.set(predecessor.index()) && !isReadAtEndOf(function.at(predecessor), released))
+                if (isReadBehindEndOf(predecessor, released, isInFrontOfReads))
+                    isEnteredFromReader = true;
+                else if (!isVisited.set(predecessor.index()))
                     worklist.append(predecessor);
             }
+            if (isEnteredFromReader)
+                way.enteredFromReaders.append(id);
         };
-        scan(blockOfHint, indexOfHint);
-        while (!isSuspended && !worklist.isEmpty()) {
+        scan(from.block, from.index);
+        while (!worklist.isEmpty() && (!way.isSuspended || asked == Asked::WholeWay)) {
             BlockID block = worklist.takeLast();
             scan(block, function.at(block).values.size());
         }
-        return isSuspended;
+        return way;
     };
 
     // A join that only hints read, itself or through other such joins, reads what flows into it for nobody's sake.
@@ -798,19 +849,63 @@ static PassOutcome dropReleaseHintsBehindSuspensions(FunctionPassContext& contex
         }
     }
 
+    struct MovedHint {
+        ProgramPoint point;
+        ValueID released;
+        Origin origin;
+    };
+    Vector<MovedHint, 8> moved;
     BitVector dropped;
     for (BlockID block : cfg.reversePostOrder()) {
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            if (value.opcode == Opcode::ReleaseHint && (!isRead.get(value.valueOperand().index()) || isSuspendedSinceLastRead(block, index)))
+            if (value.opcode != Opcode::ReleaseHint)
+                continue;
+            ValueID released = value.valueOperand();
+            if (!isRead.get(released.index())) {
                 dropped.set(values[index].index());
+                continue;
+            }
+            if (!walkBackToLastReads(released, ProgramPoint { block, index }, nullptr, Asked::WhetherSuspended).isSuspended)
+                continue;
+            // Under another name the value may be read on.
+            BitVector isInFrontOfReads = blocksInFrontOfReads(released);
+            bool isReadOn = isReadBehindEndOf(block, released, &isInFrontOfReads);
+            for (uint32_t later = index + 1; later < values.size(); ++later)
+                isReadOn |= isReadBy(function.at(values[later]), released);
+            if (isReadOn) {
+                dropped.set(values[index].index());
+                continue;
+            }
+            WayBack way = walkBackToLastReads(released, ProgramPoint { block, index }, &isInFrontOfReads, Asked::WholeWay);
+            // What is read on another way behind the suspension is held for that read.
+            if (!way.isSuspended)
+                continue;
+            dropped.set(values[index].index());
+            for (ProgramPoint point : way.behindLastReads)
+                moved.append(MovedHint { point, released, value.origin() });
+            for (BlockID entered : way.enteredFromReaders) {
+                // A hint there is read on every way into the block.
+                if (!walkBackToLastReads(released, ProgramPoint::atHeadOf(entered), &isInFrontOfReads, Asked::WhetherSuspended).isSuspended)
+                    moved.append(MovedHint { ProgramPoint::atHeadOf(entered), released, value.origin() });
+            }
         }
     }
     if (dropped.isEmpty())
         return PassOutcome::Unchanged;
     {
         IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        AOT::stableSortInLine(moved, [](const MovedHint& a, const MovedHint& b) {
+            return std::tuple(a.point.block, a.point.index, a.released) < std::tuple(b.point.block, b.point.index, b.released);
+        });
+        for (size_t index = 0; index < moved.size(); ++index) {
+            if (index && moved[index - 1].point == moved[index].point && moved[index - 1].released == moved[index].released)
+                continue;
+            builder.setOrigin(moved[index].origin);
+            builder.insertBefore(moved[index].point, IRBuilder::make(Opcode::ReleaseHint, { moved[index].released }));
+        }
+        builder.applyInsertions();
         eraseEverywhere(builder, dropped);
         for (BlockID id : cfg.reversePostOrder()) {
             if (id == entryBlock)
@@ -841,7 +936,7 @@ static PassOutcome listLiveValues(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (!function.isUnsplitCoroutine())
         return outcome;
-    outcome = dropReleaseHintsBehindSuspensions(context);
+    outcome = moveReleaseHintsInFrontOfSuspensions(context);
     // What the function still captures when it is split it holds until it ends.
     BitVector isHeldUntilTheEnd;
     const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
@@ -2943,48 +3038,6 @@ static bool isHeldAtSuspension(const Function& function, const Use& use)
     return use.kind == Use::Kind::Operand && isHeldOperand(function.at(use.user), use.operandIndex);
 }
 
-// A guard speaks of the value that its test looked at. The test and whoever names the guard read one and the same value only within a stretch.
-static bool namesOnlyGuardsOfStretch(const Program& program, const Function& function, FunctionAnalyses& analyses, const Stretches& stretches, const PlaceOfKeptUse& place)
-{
-    auto locate = [&](ValueID parameter) {
-        return analyses.useLists().locationOf(parameter);
-    };
-    // A block may be handed the guard of a test that stands in another stretch.
-    auto isOfStretch = [&](ValueID guard) {
-        bool isOfStretch = stretches.behind(guard) == place.stretch;
-        if (!isOfStretch)
-            return false;
-        forEachGuardOrigin(program, function, analyses.cfg(), locate, guard, [&](Proof, const GuardOrigin& origin) {
-            isOfStretch = (origin.source == GuardSource::SwitchCase ? stretches.atTail[origin.switchBlock.index()] : stretches.behind(origin.test)) == place.stretch;
-            return isOfStretch ? IterationStatus::Continue : IterationStatus::Done;
-        });
-        return isOfStretch;
-    };
-    switch (place.use.kind) {
-    case Use::Kind::Operand: {
-        const Value& user = function.at(place.use.user);
-        for (uint32_t index = 0; index < user.numberOfOperands(); ++index) {
-            if (ValueID operand = user.operand(index); operand && user.operandKind(index) == OperandKind::Guard && !isOfStretch(operand))
-                return false;
-        }
-        return true;
-    }
-    case Use::Kind::TerminatorOperand: {
-        const Terminator& terminator = function.at(place.use.block).terminator;
-        for (uint32_t index = 0; index < terminator.numberOfOperands(); ++index) {
-            if (ValueID operand = terminator.operand(index); operand && terminator.operandKind(index) == OperandKind::Guard && !isOfStretch(operand))
-                return false;
-        }
-        return true;
-    }
-    case Use::Kind::EdgeArgument:
-    case Use::Kind::HandlerArgument:
-    case Use::Kind::BlockSubject:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool canBeKeptInHeapWord(const Program& program, const Function& function, FunctionAnalyses& analyses, const Stretches& stretches, ValueID id)
 {
     const Value& value = function.at(id);
@@ -3006,7 +3059,91 @@ static bool canBeKeptInHeapWord(const Program& program, const Function& function
         // What a block passes to its handler is there at its head.
         if (use.kind == Use::Kind::HandlerArgument)
             return false;
-        return acceptsCastOfValue(function, use) && namesOnlyGuardsOfStretch(program, function, analyses, stretches, place);
+        return acceptsCastOfValue(function, use);
+    });
+}
+
+// Each stretch reads a kept value back on its own, and a cast made in one stretch may be used in the next: a test and the user of its guard must still reach the same read through their casts.
+static void removeValuesGuardedAcrossReads(const Program& program, const Function& function, FunctionAnalyses& analyses, const Stretches& stretches, Vector<ValueID>& kept)
+{
+    BitVector isKept(function.values.size());
+    BitVector isIdentityOfKept(function.values.size());
+    for (ValueID id : kept) {
+        isKept.quickSet(id.index());
+        isIdentityOfKept.quickSet(analyses.identityOf(id).index());
+    }
+
+    using Root = std::pair<ValueID, uint32_t>;
+    auto rootOf = [&](ValueID id, uint32_t stretchOfUse) -> Root {
+        for (;;) {
+            if (isKept.quickGet(id.index()) && stretchOfUse != stretches.behind(id))
+                return { id, stretchOfUse };
+            const Value& value = function.at(id);
+            if (!isCastOrConversion(value.opcode))
+                return { id, Stretches::unknown };
+            stretchOfUse = stretches.inFrontOfValue[id.index()];
+            id = value.operand(0);
+        }
+    };
+
+    BitVector isIdentityToRemove(function.values.size());
+    auto forEachValueLookedAt = [&](const auto& operation, const auto& visit) {
+        for (uint32_t index = 0; index < operation.numberOfOperands(); ++index) {
+            if (ValueID operand = operation.operand(index); operand && operation.operandKind(index) != OperandKind::Guard)
+                visit(operand);
+        }
+    };
+    auto locate = [&](ValueID parameter) {
+        return analyses.useLists().locationOf(parameter);
+    };
+    auto visitUser = [&](const auto& user, uint32_t stretchOfUser) {
+        Vector<ValueID, 2> guards;
+        for (uint32_t index = 0; index < user.numberOfOperands(); ++index) {
+            if (ValueID operand = user.operand(index); operand && user.operandKind(index) == OperandKind::Guard)
+                guards.append(operand);
+        }
+        if (guards.isEmpty())
+            return;
+        forEachValueLookedAt(user, [&](ValueID guarded) {
+            ValueID identity = analyses.identityOf(guarded);
+            if (!isIdentityOfKept.quickGet(identity.index()))
+                return;
+            Root root = rootOf(guarded, stretchOfUser);
+            auto compare = [&](ValueID tested, uint32_t stretchOfTest) {
+                if (analyses.identityOf(tested) == identity && rootOf(tested, stretchOfTest) != root)
+                    isIdentityToRemove.quickSet(identity.index());
+            };
+            for (ValueID guard : guards) {
+                forEachGuardOrigin(program, function, analyses.cfg(), locate, guard, [&](Proof, const GuardOrigin& origin) {
+                    switch (origin.source) {
+                    case GuardSource::Test:
+                        forEachValueLookedAt(function.at(origin.test), [&](ValueID tested) {
+                            compare(tested, stretches.inFrontOfValue[origin.test.index()]);
+                        });
+                        break;
+                    case GuardSource::SwitchCase:
+                        forEachValueLookedAt(function.at(origin.switchBlock).terminator, [&](ValueID tested) {
+                            compare(tested, stretches.atTail[origin.switchBlock.index()]);
+                        });
+                        break;
+                    case GuardSource::Allocation:
+                        compare(origin.test, stretches.behind(origin.test));
+                        break;
+                    }
+                    return isIdentityToRemove.quickGet(identity.index()) ? IterationStatus::Done : IterationStatus::Continue;
+                });
+            }
+        });
+    };
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values)
+            visitUser(function.at(id), stretches.inFrontOfValue[id.index()]);
+        visitUser(function.at(block).terminator, stretches.atTail[block.index()]);
+    }
+    if (isIdentityToRemove.isEmpty())
+        return;
+    kept.removeAllMatching([&](ValueID id) {
+        return isIdentityToRemove.quickGet(analyses.identityOf(id).index());
     });
 }
 
@@ -3086,6 +3223,8 @@ static std::optional<KeptWordsPlan> planKeptWords(const AnalysisContext& context
                 plan.values.append(crossing.value);
         }
     }
+    if (!plan.values.isEmpty())
+        removeValuesGuardedAcrossReads(program, function, analyses, stretches, plan.values);
     if (plan.values.isEmpty())
         return std::nullopt;
     return plan;

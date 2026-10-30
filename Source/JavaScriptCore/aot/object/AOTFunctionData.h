@@ -234,6 +234,14 @@ struct FunctionTextEntry {
 };
 static_assert(sizeof(FunctionTextEntry) == 12 && isImageRecord<FunctionTextEntry>);
 
+// The text of a constructor is that of its class, and the constructor begins at its parameters. This is how many lines of the text stand above them, where there are any.
+// Ascending by the function, which is its own source.
+struct ConstructorLineData {
+    uint32_t function;
+    uint32_t linesOfTextAbove;
+};
+static_assert(sizeof(ConstructorLineData) == 8 && isImageRecord<ConstructorLineData>);
+
 // In functionLengths and in closureCaptureCounts: the function stands in functionsWithLargeCounts.
 static constexpr uint8_t countsAreListed = UINT8_MAX;
 
@@ -272,6 +280,7 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(functionsWithLargeCounts, FunctionWithLargeCountsData) \
     v(closureCellNumbers, Number24) \
     v(functionTexts, FunctionTexts) \
+    v(constructorLines, ConstructorLineData) \
     v(constructors, ConstructorData) \
     v(boundFunctions, BoundFunctionData) \
     v(constructEntrypoints, ConstructEntrypointData) \

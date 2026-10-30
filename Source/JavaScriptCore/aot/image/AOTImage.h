@@ -122,6 +122,9 @@ public:
     // How many stand in front of it.
     unsigned position() const { return m_position; }
     const Image* atPosition(unsigned) const;
+    // How many layout indices, and how many modules, those in front of it have together. A number that counts on from there says which image of the list it is of.
+    uint32_t layoutIndicesBelow() const { return m_layoutIndicesBelow; }
+    uint32_t modulesBelow() const { return m_modulesBelow; }
     // In the list of this image.
     const Image* findInListByCodeAddress(const void*) const;
     const Image& holderOfStringHeader(uint32_t number) const;
@@ -188,7 +191,10 @@ public:
     JS_EXPORT_PRIVATE bool containsCharactersOf(const StringImpl&) const;
     static bool isBackedByStaticData(const StringImpl&);
 
+    std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
+    // Sorts every function without a closure word on first use.
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
+    bool hasSortedFunctionIndex() const { return !m_functionsByID.isEmpty(); }
     std::optional<FunctionID> innerEntryContaining(const void* pc) const;
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
@@ -229,6 +235,8 @@ private:
     const Image* m_first { this };
     mutable std::atomic<const Image*> m_above { nullptr };
     unsigned m_position { 0 };
+    uint32_t m_layoutIndicesBelow { 0 };
+    uint32_t m_modulesBelow { 0 };
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;

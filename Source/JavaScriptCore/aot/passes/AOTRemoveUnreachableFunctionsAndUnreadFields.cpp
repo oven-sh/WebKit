@@ -235,7 +235,7 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
 {
     // The brand of a class without private methods only tells its evaluations apart. A private field says by itself whether an object has it.
     if (field.flags.contains(FieldFlags::IsBrand))
-        return !field.flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsBrandOfMethods }) && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
+        return !field.flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsAddedLate, FieldFlags::IsBrandOfMethods }) && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
     if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
         return false;

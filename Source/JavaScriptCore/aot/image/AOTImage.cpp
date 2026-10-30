@@ -18,6 +18,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -313,6 +314,9 @@ void Image::publishAbove(const Image& first, std::unique_ptr<Image>&& unpublishe
     image->m_number = images.size();
     image->m_first = &first;
     image->m_position = below.m_position + 1;
+    image->m_layoutIndicesBelow = WTF::checkedSum<uint32_t>(below.m_layoutIndicesBelow, below.programTables().numberOfLayoutIndices);
+    // The table of modules ends with a record that is no module.
+    image->m_modulesBelow = WTF::checkedSum<uint32_t>(below.m_modulesBelow, below.programTables().modules().size() - 1);
     RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
     image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
     s_lastPublished.store(image.get(), std::memory_order_release);

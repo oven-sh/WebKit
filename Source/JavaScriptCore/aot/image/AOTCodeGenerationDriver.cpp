@@ -88,6 +88,8 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
                 Typed::ClosureFunctionRange closures = pipeline.placement->closureFunctions();
                 stubOptions.closureNumbersBelow = closures.numbersBelow;
                 stubOptions.endOfClosureNumbers = closures.numbersBelow + closures.end.index() - closures.first.index();
+                stubOptions.layoutIndicesBelow = context.imagesBelow() ? context.imagesBelow()->layoutIndices() : 0;
+                stubOptions.numberOfLayoutIndices = static_cast<uint32_t>(program.layouts.size());
             }
             plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(stubOptions, WTF::move(policy));
             context.setIdentifierNumbering(WTF::move(numbering));

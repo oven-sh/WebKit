@@ -405,7 +405,10 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     }
     if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
         return uncacheableOnce(SlotAccess::Read);
-    return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable, .imageOfVariable = static_cast<uint16_t>(isOfOtherImage ? (state.instance.program->position() + 1) << PackedSlot::hiddenWordOffsetShift : 0) };
+    std::optional<uint16_t> imageOfVariable = isOfOtherImage ? PropertyAnswer::tryEncodeImageOfVariable(state.instance.program->position()) : std::optional<uint16_t>(0);
+    if (!imageOfVariable)
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable, .imageOfVariable = *imageOfVariable };
 }
 
 enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
@@ -549,8 +552,10 @@ PropertyAnswer classifyRead(const ReadQuery& query)
                 return PropertyAnswer::uncacheable(access, flattenOnce(vm, receiver));
             SlotValueKind valueKind = field ? traitsOf(field->slot.representation()).valueKind : SlotValueKind::DeferredClosure;
             if (field && valueKind != SlotValueKind::DeferredClosure && valueKind != SlotValueKind::LiteralString) {
-                unsigned position = Instance::owning(receiver)->program->position();
-                return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .field = field, .variable = field->slot, .imageOfVariable = static_cast<uint16_t>((position + 1) << PackedSlot::hiddenWordOffsetShift) };
+                std::optional<uint16_t> imageOfVariable = PropertyAnswer::tryEncodeImageOfVariable(Instance::owning(receiver)->program->position());
+                if (!imageOfVariable)
+                    return PropertyAnswer::uncacheable(access);
+                return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .field = field, .variable = field->slot, .imageOfVariable = *imageOfVariable };
             }
         }
         // Whatever else is read of a class or a function: `x instanceof Theirs` reads Symbol.hasInstance and "prototype". Its own image says what there is to say of it.
@@ -567,11 +572,13 @@ PropertyAnswer classifyRead(const ReadQuery& query)
             case PropertyAnswerKind::Absent:
             case PropertyAnswerKind::Accessor:
                 return answer;
-            case PropertyAnswerKind::Variable:
-                if (traitsOf(answer.variable.representation()).valueKind == SlotValueKind::DeferredClosure)
+            case PropertyAnswerKind::Variable: {
+                std::optional<uint16_t> imageOfVariable = PropertyAnswer::tryEncodeImageOfVariable(owner->program->position());
+                if (traitsOf(answer.variable.representation()).valueKind == SlotValueKind::DeferredClosure || !imageOfVariable)
                     break;
-                answer.imageOfVariable = static_cast<uint16_t>((owner->program->position() + 1) << PackedSlot::hiddenWordOffsetShift);
+                answer.imageOfVariable = *imageOfVariable;
                 return answer;
+            }
             default:
                 break;
             }

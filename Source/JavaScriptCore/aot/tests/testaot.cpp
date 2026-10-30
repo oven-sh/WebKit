@@ -413,6 +413,7 @@ int main(int argc, char** argv)
         JSC::Options::notifyOptionsChanged();
     }
     JSC::initialize();
+    installTrapReporter();
 
     checkTestCommandNames();
     setProgramPath(String::fromUTF8(commandLine[0]));

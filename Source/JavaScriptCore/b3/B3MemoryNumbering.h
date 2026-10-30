@@ -98,6 +98,15 @@ private:
         bool isForwardedStore;
     };
 
+    struct ReplacedLoadCheck {
+        IndexSet<BasicBlock*> reachable;
+        Vector<BasicBlock*> blockOfValue;
+        Vector<unsigned> indexInBlock;
+        // Locations are numbered from 1.
+        Vector<unsigned> locationReadBy;
+        Vector<unsigned> lastLocationEnteredFor;
+    };
+
     struct MixingValueKeyHash {
         static unsigned hash(const ValueKey& key)
         {
@@ -141,7 +150,8 @@ private:
     Result replacePureCallIfRedundant(Value* current, PatchpointValue*);
     void validateReplacedLoads();
     void logReplacedLoads();
-    bool isUnchangedSince(const ReplacedLoad&, const IndexSet<BasicBlock*>& reachable, Value*& clobber);
+    bool isOnEveryPathTo(Value* earlier, Value* later, const ReplacedLoadCheck&) const;
+    bool isUnchangedSince(const ReplacedLoad&, ReplacedLoadCheck&, Value*& clobber);
 
     Procedure& m_proc;
     Dominators* m_dominators { nullptr };

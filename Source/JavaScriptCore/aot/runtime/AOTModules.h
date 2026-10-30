@@ -32,6 +32,7 @@ namespace JSC {
 class JSCellButterfly;
 class JSModuleLoader;
 class ModuleLoadingContext;
+class ModuleRegistryEntry;
 class ScriptFetchParameters;
 class ThrowScope;
 
@@ -74,6 +75,8 @@ struct LinkContext {
     macro(JSObject*, firstRequirerOfOtherImage) \
     macro(JSValue, requireFunction) \
     macro(JSValue, requiredValue) \
+    macro(JSValue, valueInRequireCache) \
+    macro(JSObject*, exportsOfMock) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
@@ -134,6 +137,8 @@ public:
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
+    // Importers are bound past a module that only hands names on, and a body without code never runs: its status says nothing. Plain Bun has loaded it with the first module that imports it.
+    bool wasLoadedWithImporter(ModuleID) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
@@ -192,9 +197,13 @@ public:
     MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root }; }
     bool hasBegunToLoad(ModuleID) const;
     bool hostAnswersInPlaceOf(ModuleID, LoadByName);
-    bool requireAnswersNamespaceWithMock(ModuleID);
+    bool isKeptInRequireCache(ModuleID) const;
+    bool isInRequireCache(ModuleID) const;
+    void takeOutOfRequireCache(ModuleID);
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
+    // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
+    void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
     void runMocksBelow(ModuleID root);
     void loadEvictedFilesBelow(ModuleID root);
@@ -319,7 +328,11 @@ public:
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
-    void collectKeysOfUncompiledCode(ModuleID, OrderedHashSet<UniquedStringImpl*>& keys);
+    struct RequestsOfUncompiledCode;
+    void collectRequestsOfUncompiledCode(ModuleID, RequestsOfUncompiledCode&);
+    // Null: the statements that name the module say nothing of its type.
+    RefPtr<ScriptFetchParameters> fetchParametersOf(ModuleID external) const;
+    ModuleRegistryEntry* registryEntry(const Identifier& key, const ScriptFetchParameters*);
     bool comesToCodeThatDoesNotLoad(ModuleID root);
     bool setIsWalkingRequests(bool isWalkingRequests) { return std::exchange(m_isWalkingRequests, isWalkingRequests); }
     // A graph is being loaded until its root is linked.
@@ -355,15 +368,18 @@ public:
     JSValue execute(ModuleID);
 
     // A whole require(): who required whom is recorded here, whoever asks. Without a referrer it is the evaluation and its answer alone: for the host's own loads, and for a site with operations around it that record.
-    JSValue require(ModuleID, ModuleID referrer = { });
+    // Program: the loader of the host asks for code of the program that this image does not hold.
+    enum class RequiredBy : uint8_t { Referrer, Program };
+    JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
     void evaluateCommonJS(ModuleID);
     JSValue commonJSExports(ModuleID) const;
     JSValue exportsSeenByLoader(ModuleID);
     void setCommonJSExports(ModuleID module, JSValue exports) { setValue(module, exports); }
     void mockWhatRequireAnswered(ModuleID, JSObject* exports);
+    void mockWhatRequireCacheHolds(ModuleID, JSObject* exports);
     void recordRequire(ModuleID, ModuleID referrer);
     JSObject* moduleObject(ModuleID);
-    JSObject* mainModuleObject();
+    JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
     JSValue requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild);
@@ -534,12 +550,16 @@ private:
     std::optional<ModuleID> mainCommonJSModule();
     void decideMainCommonJSModule(std::optional<ModuleID>);
     std::optional<ModuleID> firstFileThatLoaderFindsBelow(ModuleID root);
+    std::optional<std::pair<Modules*, ModuleID>> firstFileOfRealmThatLoaderFindsBelow(ModuleID root);
+    void decideMainCommonJSModuleOfRealm(Modules* owner, ModuleID file);
     void lookForMainCommonJSModule();
     void noteFirstRequestFromHost(ModuleID);
     void noteLoadOfGraph(ModuleID root);
     JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
-    JSValue answerRequire(ModuleID, ModuleID referrer = { });
+    JSValue answerRequire(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer);
+    JSValue requireThroughCache(ModuleID, ModuleID referrer);
+    JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
     JSValue loadEvictedFile(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void willRequireESModule(ModuleID);

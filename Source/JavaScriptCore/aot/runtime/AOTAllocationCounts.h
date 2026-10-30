@@ -12,6 +12,7 @@
 #include "Options.h"
 #include "VM.h"
 #include <array>
+#include <tuple>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -70,7 +71,7 @@ private:
     template<typename Functor> const String& wordsAtAllocatingFrame(VM&, Typed::FunctionID constructor, Counted, uint64_t detail, const Functor& describeCounted);
 
     // A line is put into words once. From then on the numbers of the frame and of what is counted there find it: a loop that allocates comes here with every free list.
-    UncheckedKeyHashMap<std::pair<uint64_t, uint64_t>, String> m_wordsOfLines;
+    UncheckedKeyHashMap<std::tuple<uint64_t, uint64_t, unsigned>, String> m_wordsOfLines;
     Lines m_allocations;
     Lines m_refills;
     Lines m_made;

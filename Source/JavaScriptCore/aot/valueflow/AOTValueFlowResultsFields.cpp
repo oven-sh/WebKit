@@ -1419,6 +1419,9 @@ struct FieldResults {
             return !program.isIndexLike(key);
         if (kind == PropertyKeyKind::CreatedSymbol)
             return inputs.symbolsCreatedOnce && inputs.symbolsCreatedOnce->get(key.index());
+        // A class that is evaluated again makes names of its own for an object that has those of an earlier evaluation, and no field is for them.
+        if (kind == PropertyKeyKind::PrivateName)
+            return application.layouts[program.at(key).owner.index()].classFlow.evaluations == ExecutionCount::AtMostOnce;
         return kind == PropertyKeyKind::WellKnownSymbol || kind == PropertyKeyKind::RegisteredSymbol || kind == PropertyKeyKind::ModulePrivateName;
     }
 
@@ -1434,6 +1437,8 @@ struct FieldResults {
             for (const Value& value : program.functions[index].values) {
                 if (Value::opcodesWithKey.contains(value.opcode) && value.key())
                     ++countsOfWorker[worker][value.key().index()];
+                else if (familyOf(value.opcode) == OperationFamily::PrivateAccess)
+                    ++countsOfWorker[worker][program.at(value.layout()).fields[value.field()].key.index()];
             }
         });
         Vector<uint32_t> counts(FillWith { }, numberOfKeys, 0u);
@@ -1874,7 +1879,7 @@ struct FieldResults {
             keysByLayout[id.index()].removeAllMatching([&](PropertyKeyID key) {
                 auto declarers = layoutsWithField.find(key.index());
                 PropertyKeyKind kind = program.at(key).kind;
-                bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName;
+                bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName && kind != PropertyKeyKind::PrivateName;
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
                     return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
@@ -1988,6 +1993,11 @@ struct FieldResults {
                 });
                 if (hasOneFormOfValue && formOfValue && !field.accessor.isAccessor())
                     field.formOfValue = *formOfValue;
+                // `class B extends either {}`: the constructor of a parent puts its private names on an object of B. Every store under such a name goes to the node of the field that declares it.
+                if (const PropertyKey& name = program.at(key); name.kind == PropertyKeyKind::PrivateName) {
+                    stored = maker.unite(stored, inputs.solver().possibleValuesOf(inputs.bodies().nodes().field(name.owner, *program.at(name.owner).findField(key))));
+                    storedNumbers = ValueFlowNumbers::any();
+                }
                 WritesSeen writes = writesSeen(writers, stored, true, possible);
                 ClaimsOfFieldsEnabled enabled = claimsEnabledFor(index);
                 enabled.storeCounts &= !sets.isEmpty(stored);

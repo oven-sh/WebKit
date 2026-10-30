@@ -119,6 +119,7 @@ public:
     std::optional<Type> typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID, const Type&);
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
+    bool turnsAwayObjectMadeForOtherClass(ValueSetID, const Type&);
     bool turnsAwayEveryObject(ValueSetID, const Type&);
     bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
 

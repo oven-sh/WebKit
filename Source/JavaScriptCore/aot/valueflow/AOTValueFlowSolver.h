@@ -289,6 +289,7 @@ public:
         uint32_t fullRounds { 0 };
         uint64_t statementRuns { 0 };
         uint64_t edgesLogged { 0 };
+        uint64_t readers { 0 };
         uint64_t testsWhetherSetsMeet { 0 };
         uint32_t functionsReached { 0 };
         uint32_t madeNodesAtRest { 0 };
@@ -818,6 +819,7 @@ private:
     template<typename T> void growAndFill(ListWithRoomToFill<T>&, size_t size, T value);
     void takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& madeNodes);
     void letGoOf(Vector<uint32_t>&& madeNodes);
+    void forgetReadersOf(std::span<const ValueFlowNodeID>);
     void makeReadersDue(std::span<const ValueFlowNodeID> moved);
     struct WatchShard;
     void watch(WatchShard&, ValueFlowNodeID, ValueSetID within, ValueFlowStatementID, bool isAskedLast);

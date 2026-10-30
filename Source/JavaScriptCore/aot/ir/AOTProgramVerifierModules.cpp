@@ -228,6 +228,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         : !rules.hasRuntimeModule || isLibrary;
     bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
+        && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
     auto isBound = [&](const ModuleExport& entry) {
         return hasOneBinding(program, entry);

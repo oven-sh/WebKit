@@ -16,6 +16,7 @@ v(NewEmptyArray, CalledByCode, (ContiguousCapacity1, ContiguousCapacity3, Double
 v(NewEmptyArrayWithCapacity, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArrayWithCapacity)
 v(NewArrayWithLength, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayWithLength)
 v(NewArrayOfLength, CalledByCode, (Int32, Double, Contiguous), FormAxis | CountAxis, 1, maxArrayLengthInStubKey, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfLength)
+v(NewArrayOfElements, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, ArrayStorage, Elements) | writes(AllocatorState), NewArrayOfElements)
 v(NewArrayOfHolesSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfHolesSlow)
 v(NewArrayFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewArrayFrontEnd)
 AOT_STUB_FRONT_END(NewArray, NewArrayFrontEnd)

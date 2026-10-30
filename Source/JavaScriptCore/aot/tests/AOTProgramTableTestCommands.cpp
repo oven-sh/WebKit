@@ -619,6 +619,8 @@ static void printFunctionTexts(const TablesContext& context)
     auto text = byteCast<Latin1Character>(context.bytes.subspan(texts[0].textOffset));
     for (const FunctionTextEntry& entry : entries)
         context.out.println("f", entry.function, " ", entry.start, "..", entry.end, " \"", StringView(text.subspan(entry.start, entry.end - entry.start)), "\"");
+    for (const ConstructorLineData& constructor : context.tables.constructorLines())
+        context.out.println("constructor f", constructor.function, " linesOfTextAbove=", constructor.linesOfTextAbove);
 }
 
 static void printModuleRecords(const TablesContext& context)
@@ -744,6 +746,10 @@ static void printModules(const TablesContext& context)
     RecordLine(context, "modulesByPath"_s).list("modules"_s, ModuleNumbers(tables.modulesByPath(), tables.modules().size()), [&](uint32_t module) {
         context.printer.print(ModuleID(module));
     });
+    for (const UncompiledModuleData& uncompiled : tables.modulesOfUncompiledCode()) {
+        if (uncompiled.typeAttribute != UncompiledModuleData::noTypeAttribute)
+            RecordLine(context, "typeAttribute"_s).field("module"_s, ModuleID(uncompiled.module)).field("type"_s, StringID(uncompiled.typeAttribute));
+    }
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
         RecordLine(context, "runtimeModule"_s).field("id"_s, RuntimeModuleID(runtimeModule.registryID)).field("module"_s, ModuleID(runtimeModule.module));
     for (const CompiledRuntimeFunctionData& runtimeFunction : tables.compiledRuntimeFunctions()) {

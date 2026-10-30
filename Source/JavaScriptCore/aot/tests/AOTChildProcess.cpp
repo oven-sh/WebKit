@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompile.h"
 #include "AOTVector.h"
 #include <array>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
@@ -17,6 +20,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
 #include <wtf/Seconds.h>
+#include <wtf/Threading.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -402,6 +406,110 @@ void enterTemporaryFolder()
         FileSystem::deleteNonEmptyDirectory(folder);
     });
 }
+
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+#if CPU(X86_64)
+static constexpr int trapSignal = SIGILL;
+static constexpr std::array registerNames { "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rdi", "rsi", "rbp", "rbx", "rdx", "rax", "rcx", "rsp", "rip" };
+#else
+static constexpr int trapSignal = SIGTRAP;
+#endif
+
+static void printToStandardError(const char* format, ...) WTF_ATTRIBUTE_PRINTF(1, 2);
+static void printToStandardError(const char* format, ...)
+{
+    std::array<char, 256> text;
+    va_list arguments;
+    va_start(arguments, format);
+    int length = vsnprintf(text.data(), text.size(), format, arguments);
+    va_end(arguments);
+    if (length <= 0)
+        return;
+    ssize_t written = write(STDERR_FILENO, text.data(), std::min<size_t>(length, text.size() - 1));
+    UNUSED_VARIABLE(written);
+}
+
+static void reportTrap(int signal, siginfo_t*, void* context)
+{
+    constexpr uintptr_t redZoneSize = 128;
+    constexpr uintptr_t dumpedStackSize = 4 * KB;
+    constexpr uintptr_t wordsPerLine = 4;
+    constexpr unsigned maxFrames = 64;
+
+    const mcontext_t& machineContext = static_cast<ucontext_t*>(context)->uc_mcontext;
+#if CPU(X86_64)
+    uintptr_t pc = machineContext.gregs[REG_RIP];
+    uintptr_t sp = machineContext.gregs[REG_RSP];
+    uintptr_t fp = machineContext.gregs[REG_RBP];
+#else
+    uintptr_t pc = machineContext.pc;
+    uintptr_t sp = machineContext.sp;
+    uintptr_t fp = machineContext.regs[29];
+#endif
+
+    std::array<char, 16> threadName { };
+    prctl(PR_GET_NAME, threadName.data());
+    printToStandardError("%s in thread \"%s\" at 0x%llx\n", signalName(signal).characters(), threadName.data(), static_cast<unsigned long long>(pc));
+
+    std::array<char, 1024> work;
+    if (size_t size = describeWhereThisThreadStopped(work)) {
+        ssize_t written = write(STDERR_FILENO, work.data(), size);
+        UNUSED_VARIABLE(written);
+    }
+
+    printToStandardError("registers:");
+#if CPU(X86_64)
+    for (size_t index = 0; index < registerNames.size(); ++index)
+        printToStandardError(" %s=%llx", registerNames[index], static_cast<unsigned long long>(machineContext.gregs[index]));
+#else
+    for (size_t index = 0; index < std::size(machineContext.regs); ++index)
+        printToStandardError(" x%zu=%llx", index, static_cast<unsigned long long>(machineContext.regs[index]));
+#endif
+
+    const StackBounds& stack = Thread::currentSingleton().stack();
+    auto isOnStack = [&](uintptr_t address) {
+        return !(address % sizeof(uintptr_t)) && stack.contains(reinterpret_cast<void*>(address));
+    };
+
+    printToStandardError("\nreturn addresses:");
+    for (unsigned count = 0; count < maxFrames && isOnStack(fp) && isOnStack(fp + sizeof(uintptr_t)); ++count) {
+        auto* frame = reinterpret_cast<const uintptr_t*>(fp);
+        printToStandardError(" 0x%llx", static_cast<unsigned long long>(frame[1]));
+        if (frame[0] <= fp)
+            break;
+        fp = frame[0];
+    }
+
+    printToStandardError("\nstack:\n");
+    constexpr uintptr_t lineSize = wordsPerLine * sizeof(uintptr_t);
+    for (uintptr_t address = (sp - redZoneSize) & ~(lineSize - 1); address < sp + dumpedStackSize && isOnStack(address) && isOnStack(address + lineSize - sizeof(uintptr_t)); address += lineSize) {
+        auto* words = reinterpret_cast<const uintptr_t*>(address);
+        printToStandardError("0x%llx: %016llx %016llx %016llx %016llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(words[0]), static_cast<unsigned long long>(words[1]), static_cast<unsigned long long>(words[2]), static_cast<unsigned long long>(words[3]));
+    }
+
+    struct sigaction defaultAction { };
+    defaultAction.sa_handler = SIG_DFL;
+    sigaction(signal, &defaultAction, nullptr);
+    raise(signal);
+}
+
+void installTrapReporter()
+{
+    struct sigaction action { };
+    action.sa_sigaction = reportTrap;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    sigaction(trapSignal, &action, nullptr);
+}
+
+#else
+
+void installTrapReporter()
+{
+}
+
+#endif
 
 String ChildProcessResult::description() const
 {

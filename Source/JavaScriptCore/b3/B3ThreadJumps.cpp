@@ -877,8 +877,9 @@ private:
     // A double that equals itself is not NaN, and the bits of a non-NaN double, read as a signed integer, never exceed those of +Infinity.
     TriState evaluateBitsOfNonNaNDouble(Value* test, const DominatingCondition& known)
     {
-        Value* number = known.value->opcode() == Equal ? known.value->child(0) : nullptr;
-        if (!known.isNonZero || !number || number != known.value->child(1) || number->type() != Double || !isComparisonWithConstant(test))
+        bool saysEqual = known.value->opcode() == Equal ? known.isNonZero : known.value->opcode() == NotEqual && !known.isNonZero;
+        Value* number = saysEqual ? known.value->child(0) : nullptr;
+        if (!number || number != known.value->child(1) || number->type() != Double || !isComparisonWithConstant(test))
             return TriState::Indeterminate;
         Value* bits = valueOnPath(test->child(0));
         if (!bits || bits->opcode() != BitwiseCast || !isSameOnPath(bits->child(0), number, m_maxTestDepth))

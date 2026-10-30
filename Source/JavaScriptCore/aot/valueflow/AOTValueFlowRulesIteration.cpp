@@ -79,6 +79,8 @@ struct IteratorStep {
     bool takesReturnedValue { false };
     ValueFlowObjectID pair;
     std::optional<uint32_t> indexInPattern { };
+    // `for (const each of [1, , 3])`
+    bool readsHolesAsUndefined { false };
 };
 
 struct StepOfBuiltinIterator {
@@ -309,8 +311,10 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
             std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, universe.builtinOf(method));
             if (!iteration)
                 return;
-            takeContents(context, context.restrict(containers, iteration->containers), *iteration, step.pair, target, step.indexInPattern);
-            if (step.takesReturnedValue)
+            ClimbingSet stepped = context.restrict(containers, iteration->containers);
+            takeContents(context, stepped, *iteration, step.pair, target, step.indexInPattern);
+            bool mayReadHole = step.readsHolesAsUndefined && iteration->iteratorClass == BuiltinClasses::ArrayIterator && iteration->kind == IterationKind::Values && holdsSomething(context, stepped);
+            if (step.takesReturnedValue || mayReadHole)
                 context.add(values, universe.undefinedValue());
         });
     };
@@ -394,7 +398,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         ValueFlowNodeID values = statement.result ? statement.result : nodeThatNobodyReads(context);
         if (operation.operand(OperandIndex::IteratorResume::sent))
             sendToIterators(context, state, operands[1]);
-        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), operation.stepIndex() }, values);
+        stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), operation.stepIndex(), !operation.stepIndex() }, values);
         if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
             context.add(values, context.universe().undefinedValue());
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)

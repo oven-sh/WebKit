@@ -29,6 +29,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTThisAllocationInlines.h"
 #include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
 #include "ExceptionHelpers.h"
@@ -147,7 +148,30 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
     OPERATION_RETURN(scope, result);
 }
 
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance*, JSCell* constructor, JSCell* newTarget);
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createCompiledThis(Instance*, JSCell* constructor, JSCell* newTarget);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSCell*, (Instance* instance, JSCell* constructor, JSCell* newTarget))
+{
+    VM& vm = *instance->vm;
+    if (Structure* structure = rememberedStructureOfThis(vm, constructor, newTarget)) [[likely]] {
+        if (compiledLayoutOrNull(structure))
+            [[clang::musttail]] return createCompiledThis(instance, constructor, newTarget);
+        if (JSObject* object = tryCreateFinalObjectInline(vm, structure)) [[likely]]
+            return { object, nullptr };
+    }
+    [[clang::musttail]] return createThisSlow(instance, constructor, newTarget);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createCompiledThis(Instance* instance, JSCell* constructor, JSCell* newTarget)
+{
+    Structure* structure = uncheckedDowncast<JSFunction>(newTarget)->rareData()->compiledAllocationStructure();
+    if (JSObject* object = tryCreateCompiledObjectInline(*instance, structure, *compiledLayoutOrNull(structure))) [[likely]]
+        return { object, nullptr };
+    [[clang::musttail]] return createThisSlow(instance, constructor, newTarget);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance* instance, JSCell* constructor, JSCell* newTarget)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateThis);
     JSObject* constructorObject = cellArgument<JSObject>(constructor, Entry::operationAOTCreateThis);
@@ -329,7 +353,7 @@ static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint3
     return declared;
 }
 
-// Null for a class that declares no brand of its own. A brand that the layout inherits from a base class does not count.
+// Null for a class that declares no brand of its own. A brand that the layout inherits from a base class does not count, nor does the room for the brand of a parent that the class may have, which no object is required to fill.
 static const FieldData* brandOf(State& state, const LayoutData& classLayout, JSCellButterfly* token)
 {
     constexpr int32_t noBrandField = -1;
@@ -341,7 +365,7 @@ static const FieldData* brandOf(State& state, const LayoutData& classLayout, JSC
         };
         brandField = jsNumber(noBrandField);
         for (const FieldData& field : classLayout.fields()) {
-            if (field.isBrand() && !isInherited(field)) {
+            if (field.isBrand() && field.isRequired() && !isInherited(field)) {
                 brandField = jsNumber(static_cast<int32_t>(classLayout.indexOf(field)));
                 break;
             }

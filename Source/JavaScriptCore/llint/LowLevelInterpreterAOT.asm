@@ -137,16 +137,8 @@ macro loadConstantOperand(size, index, value, isLoaded)
     jmp isLoaded
 end
 
-macro loadInstanceOfRealm(instance, hasNone)
-    loadp CodeBlock[cfr], instance
-    loadp CodeBlock::m_globalObject[instance], instance
-    loadp JSGlobalObject::m_aotInstance[instance], instance
-    btpz instance, hasNone
-    # The tables of one image say nothing about the cells of another.
-    btpnz InstanceAbove[instance], hasNone
-end
-
-# For what is the same in every instance of a VM: the base of the cage of cells.
+# The first instance of the realm. Every instance has alike: the base of the cage of cells, the realm, the allocators and the headers of the engine's own cells.
+# And code that is not compiled asks the tables of the first about every cell that is no compiled object: AOT::instanceOfInterpreter().
 macro loadAnyInstanceOfRealm(instance, hasNone)
     loadp CodeBlock[cfr], instance
     loadp CodeBlock::m_globalObject[instance], instance
@@ -567,7 +559,7 @@ end
 # t3: the object, t1: the uid.
 macro testPresenceInObject(slow, isPresent, isAbsent)
     bbeq JSCell::m_type[t3], CompiledObjectType, .isCompiledObject
-    loadInstanceOfRealm(t5, slow)
+    loadAnyInstanceOfRealm(t5, slow)
     jmp .hasInstance
 .isCompiledObject:
     loadInstanceOfCompiledObject(t3, t5, t2, slow)
@@ -687,7 +679,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 .probe:
     loadi OpGetById::Metadata::m_modeMetadata.defaultMode.structureID[t2], t7
     bbb JSCell::m_type[t3], ObjectType, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadIdentifier(size, OpGetById, m_property, t1, t0)
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .slow)
@@ -699,9 +691,10 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 .readsHashedSlot:
     getFromHashedSlot(t6, .otherKind, .callsCustomGetter, .done)
 
-    # As in getFromCompiledObject(): the holder is asked as for a field of its own.
+    # As in getFromCompiledObject(): the holder is asked as for a field of its own. It may be of another image than these tables.
 .otherKind:
     bbneq SlotKind[t6], constexpr AOT::Slot::Kind::InheritedField, .slow
+    btpnz InstanceAbove[t5], .slow
     loadp SlotPayload[t6], t3
     loadi JSCell::m_structureID[t3], t2
     findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .slow)
@@ -736,6 +729,30 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 end)
 
 aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+    # An element that an array of values holds. Neither profile of the ordinary handler has a reader here.
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .otherAccess)
+    btqnz t0, notCellMask, .otherAccess
+    get(m_property, t1)
+    loadOperandInRegister(size, t1, t3, .indexIsConstant)
+.hasIndex:
+    bqb t3, numberTag, .otherAccess
+    loadb JSCell::m_indexingTypeAndMisc[t0], t2
+    andi IndexingShapeMask, t2
+    bieq t2, ContiguousShape, .holdsValues
+    bineq t2, Int32Shape, .otherAccess
+.holdsValues:
+    loadp JSObjectWithButterfly::m_butterfly[t0], t1
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .otherAccess
+    zxi2q t3, t3
+    loadq [t1, t3, 8], t0
+    btqz t0, .otherAccess
+    return(t0)
+
+.indexIsConstant:
+    loadConstantOperand(size, t1, t3, .hasIndex)
+
+.otherAccess:
     getByVal(size, get, dispatch, metadata, return, macro ()
         get(m_base, t0)
         loadConstantOrVariableCell(size, t0, t3, .slow)
@@ -815,7 +832,7 @@ aotOp(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
     btqnz t3, notCellMask, .slow
     bbb JSCell::m_type[t3], ObjectType, .slow
     btbz JSCell::m_flags[t3], ImplementsDefaultHasInstance, .slow
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadi JSCell::m_structureID[t3], t2
     loadp InstanceHasInstanceUID[t5], t1
     move t3, t7
@@ -1301,7 +1318,7 @@ end
 
 # JSLexicalEnvironment::create(), once SymbolTable::notifyCreation() has nothing left to say.
 aotOp(op_create_lexical_environment, OpCreateLexicalEnvironment, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     get(m_symbolTable, t0)
     loadConstantOrVariable(size, t0, t1)
     bpneq (constexpr AOT::Interpreter::PlacesInSymbolTable::offsetOfSingleton)[t1], constexpr AOT::Interpreter::PlacesInSymbolTable::invalidatedSingleton, .slow
@@ -1363,7 +1380,7 @@ end)
 
 # AOT::generateNewPromise().
 aotOp(op_new_promise, OpNewPromise, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     loadp InstancePromiseAllocator[t5], t0
     btpz t0, .slow
     allocateCell(t0, t1, t2, .slow)
@@ -1612,7 +1629,7 @@ end)
 
 # constructArrayNegativeIndexed(), where storing the elements leaves the indexing type of the profile as it is.
 aotOp(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
-    loadInstanceOfRealm(t5, .slow)
+    loadAnyInstanceOfRealm(t5, .slow)
     # AOT::branchIfHavingABadTime().
     btiz InstanceNewArrayWithContiguousHeader[t5], .slow
     metadata(t6, t0)
@@ -1949,7 +1966,7 @@ aotOp(op_add, OpAdd, macro (size, get, dispatch, metadata, return)
     orp isRopeInPointer, t2
 
     # t1: the right string, t2: the left string and the flags, t3: the length
-    loadInstanceOfRealm(t5, .ordinary)
+    loadAnyInstanceOfRealm(t5, .ordinary)
     loadp InstanceRopeStringAllocator[t5], t6
     allocateCell(t6, t7, t0, .ordinary)
     loadq InstanceStringHeader[t5], t0
@@ -2081,6 +2098,24 @@ aotOp(op_call, OpCall, macro (size, get, dispatch, metadata, return)
     end
 
     callHelper(aot_op_call, OpCall, dispatchAfterCallWithoutProfile, m_valueProfile, m_dst, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
+end)
+
+aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+
+    macro getCallee(dst)
+        get(m_callee, dst)
+    end
+
+    macro getArgumentStart(dst)
+        getu(size, OpConstruct, m_argv, dst)
+    end
+
+    macro getArgumentCount(dst)
+        getu(size, OpConstruct, m_argc, dst)
+    end
+
+    callHelper(aot_op_construct, OpConstruct, dispatchAfterCallWithoutProfile, m_valueProfile, m_dst, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentStart, getArgumentCount)
 end)
 end
 
@@ -2379,6 +2414,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpAdd, op_add)
     if not ARM64E
         setEntryAddresses(OpCall, op_call)
+        setEntryAddresses(OpConstruct, op_construct)
     end
     setEntryAddresses(OpCreateLexicalEnvironment, op_create_lexical_environment)
     setEntryAddresses(OpEnumeratorGetByVal, op_enumerator_get_by_val)

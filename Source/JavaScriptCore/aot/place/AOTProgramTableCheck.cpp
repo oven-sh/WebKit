@@ -16,6 +16,7 @@
 #include "AOTObjectVisiting.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
@@ -176,8 +177,11 @@ static void checkModuleTables(const TableCheck& check)
         && (linkPlanRoots.empty() ? check.tables.linkPlanStepsOfRoots().empty() : linkPlanRoots.back().module == numberOfModules && linkPlanRoots.back().firstStep == check.tables.linkPlanStepsOfRoots().size());
     check.expect(everyPlanIsInBounds, ProgramTableRule::TableOutOfBounds);
 
-    bool listsUncompiledCode = std::ranges::all_of(check.tables.modulesOfUncompiledCode(), [&](uint32_t module) {
-        return module < numberOfModules && modules[module].isUncompiledCode();
+    bool listsUncompiledCode = std::ranges::is_sorted(check.tables.modulesOfUncompiledCode(), { }, &UncompiledModuleData::module) && std::ranges::all_of(check.tables.modulesOfUncompiledCode(), [&](const UncompiledModuleData& entry) {
+        if (entry.module >= numberOfModules || !modules[entry.module].isUncompiledCode())
+            return false;
+        StringID typeAttribute = check.program.modules[entry.module].typeAttribute;
+        return entry.typeAttribute == (typeAttribute ? typeAttribute.index() : UncompiledModuleData::noTypeAttribute);
     }) && static_cast<size_t>(std::ranges::count_if(modules.first(numberOfModules), &ModuleData::isUncompiledCode)) == check.tables.modulesOfUncompiledCode().size();
     check.expect(listsUncompiledCode, ProgramTableRule::TableOutOfBounds);
 
@@ -469,6 +473,9 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
                 return !encoder.placement.rankOfClass(test.classLayout);
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
         });
+        AOT::stableSort(plan.cellTests.mutableSpan(), { }, [&](const CellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(encoder.placement.closureNumberOf(encoder.findEntrypoint(test.function))) : -1;
+        });
         // In a plan, String says that some string passes. In a record it says that every string passes.
         uint16_t primitives = plan.stringLiterals.isEmpty() ? plan.passingPrimitives : (plan.passingPrimitives & ~Primitive::String) | Primitive::LiteralString;
         plan.stringLiterals.removeAllMatching([&](StringID literal) {
@@ -524,6 +531,9 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeType& encoded, co
     if (integers && (integers->first != expected.integers->minimum || integers->second != expected.integers->maximum))
         return false;
     if (!std::ranges::equal(encoded.literalStrings(), expected.literalStrings.span(), { }, { }, &StringID::index))
+        return false;
+    size_t numberOfTestsOfMoreThanOneFunction = std::ranges::count_if(expected.cellTests, [](const CellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+    if (encoded.numberOfTestsOfMoreThanOneFunctionIfFew != std::min<size_t>(RuntimeType::hasManyTestsOfMoreThanOneFunction, numberOfTestsOfMoreThanOneFunction))
         return false;
     return std::ranges::equal(encoded.cellTests(), expected.cellTests, [&](const RuntimeCellTest& cellTest, const CellTest& test) {
         return isEncodingOf(check, cellTest, test);

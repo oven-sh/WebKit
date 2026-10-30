@@ -286,12 +286,30 @@ EncodedFunctionTables encodeFunctionTables(const FunctionTableInputs& inputs, Bu
     return tables;
 }
 
+std::optional<uint32_t> Image::imageFunctionFromClosureWord(FunctionID id) const
+{
+    uint64_t word = closureWord(id);
+    if (!word)
+        return std::nullopt;
+    CodeLocation entry = locate(std::bit_cast<const void*>(ClosureWord::addressOf(word, std::bit_cast<uintptr_t>(code().data()))));
+    if (entry.kind != CodeKind::Function || function(entry.function).function() != id.index())
+        return std::nullopt;
+    return entry.function;
+}
+
 std::optional<uint32_t> Image::imageFunctionOf(FunctionID id) const
 {
+    const ClosureFunctionRangeData& closures = programTables().closureFunctions;
+    auto hasClosureWord = [&](uint32_t function) {
+        return function >= closures.first && function < closures.end;
+    };
+    if (hasClosureWord(id.index()))
+        return imageFunctionFromClosureWord(id);
     std::call_once(m_didSortFunctionsByID, [&] {
-        m_functionsByID = Vector<uint32_t>(header().counts.functions, [](size_t function) {
-            return static_cast<uint32_t>(function);
-        });
+        for (uint32_t function = 0; function < header().counts.functions; ++function) {
+            if (!hasClosureWord(this->function(function).function()))
+                m_functionsByID.append(function);
+        }
         AOT::sort(m_functionsByID, { }, [&](uint32_t function) {
             return this->function(function).function();
         });

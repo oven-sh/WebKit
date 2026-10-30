@@ -267,6 +267,18 @@ TypeTestPlan computeTypeTestPlanFromAnything(const Program& program, const Type&
     return plan;
 }
 
+TypeTestPlan computeTypeTestPlanOfBoxedValue(const Program& program, const Type& from, const Type& to)
+{
+    TypeTestPlan plan;
+    if (from.isSubsetOf(to, program))
+        plan.verdict = TypeTestVerdict::AlwaysPasses;
+    else if (!from.overlaps(to, program))
+        plan.verdict = TypeTestVerdict::NeverPasses;
+    else
+        fillPlan(plan, program, from, to);
+    return plan;
+}
+
 void TypeTestPlan::dump(PrintStream& out) const
 {
     static constexpr std::array verdicts { "NeedsTest"_s, "AlwaysPasses"_s, "NeverPasses"_s };

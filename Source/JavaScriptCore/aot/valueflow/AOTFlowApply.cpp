@@ -314,6 +314,15 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         field.flags = { FieldFlags::IsAddedLate };
         if (appended.isFilledByCreators)
             field.flags.add(FieldFlags::IsFilledByCreator);
+        if (const PropertyKey& name = program.at(appended.key); name.kind == PropertyKeyKind::PrivateName) {
+            constexpr OptionSet<FieldFlags> flagsOfPrivateNames { FieldFlags::IsPrivate, FieldFlags::IsImmutable, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsBrandOfMethods };
+            const Layout& owner = program.at(name.owner);
+            const Field& declaration = owner.fields[*owner.findField(appended.key)];
+            field.flags.add(declaration.flags & flagsOfPrivateNames);
+            // Flow follows no class token.
+            if (declaration.flags.contains(FieldFlags::IsBrand))
+                field.declared = declaration.declared;
+        }
         field.flow = appended.flow;
         field.form = appended.formOfValue;
         if (appended.accessor.isAccessor())

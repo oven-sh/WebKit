@@ -248,6 +248,11 @@ struct AssignmentPlan {
     std::unique_ptr<MappedCopy> copyWithoutFrame;
     // There is such a copy, or nobody has asked yet.
     bool mayCopyWithoutFrame { true };
+    // The moves of the field stores are described when the plan has run as before for the first time: many a plan runs once.
+    bool sharesTypesWithSource { false };
+    bool hasDescribedMoves { false };
+    // In a row: times that somebody came to ask and the plan did not run as before.
+    uint8_t numberOfTimesAskedInVain { 0 };
 };
 
 struct CopyOfTwoPlan {
@@ -318,6 +323,9 @@ public:
     // Null where the names that the copy leaves out have not been listed yet.
     FieldMap* fieldMapFor(const LayoutData& target, const LayoutData& source, uint32_t excludedRunNumberPlusOne);
     FieldMap::Entry describeMappedField(VM&, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne);
+    // The move that gives most values of the store the form of its slot, if there is one.
+    void describeMove(VM&, AssignmentPlan::FieldStore&, const LayoutData& target, bool sharesTypes);
+    void describeMoves(AssignmentPlan&);
     ALWAYS_INLINE const ExcludedNameList& excludedNames(VM&, const ExcludedRun&);
     void didWritePlan(AssignmentPlan& plan)
     {
@@ -364,7 +372,6 @@ private:
     ALWAYS_INLINE AssignmentPlan* find(StructureID target, StructureID extraProperties, const AssignmentSource&, uint32_t hash);
     AssignmentPlan* makePlan(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&, uint32_t hash);
     void fillPlan(VM&, AssignmentPlan&, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
-    void describeMove(VM&, AssignmentPlan::FieldStore&, const LayoutData& target, bool sharesTypes);
     void fillPlanForCopyOfTwo(VM&, CopyOfTwoPlan&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy);
     bool isSecondCopy(uint32_t hash);
     AssignmentPlan* planAt(uint32_t index) const { return m_sets ? (*m_sets)[index / waysPerSet].ways[index % waysPerSet].get() : nullptr; }
@@ -453,6 +460,8 @@ ALWAYS_INLINE MappedCopy& AssignmentPlanCache::mappedCopyAt(uint64_t targetWords
 
 ALWAYS_INLINE void AssignmentPlanCache::didRunAsBefore(AssignmentPlan& plan)
 {
+    if (!plan.hasDescribedMoves) [[unlikely]]
+        describeMoves(plan);
     if (!plan.excludedNames.isEmpty())
         return;
     m_recentPlans[recentIndex(plan.target, plan.source, plan.sourceOrderWord, plan.excludedList ? plan.excludedList->runNumberPlusOne() : 0)] = &plan;
@@ -464,6 +473,8 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
 // For a copy that takes no frame, whose Structures are known.
 void describeMovesForStub(MappedCopy&);
 bool clearFieldsMovedInVain(const MappedCopy&, const MappedCopy::Move* end, JSCell* target);
+// For the operation that has no frame yet, where the copy kept at the place follows a plan.
+bool tryCopyFollowingPlanWithoutFrame(Instance&, JSCell* target, EncodedJSValue source, uint32_t excludedRunNumberPlusOne);
 // Defines plain properties one behind the other on an object without an integrity level, under any names but indexes: the way of a copy that has no plan.
 bool definePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
 // The same for stores to an object on which every store writes or creates an own data property: a property that exists keeps its attributes.

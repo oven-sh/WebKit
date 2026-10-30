@@ -122,14 +122,12 @@ static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
 
 StructureRows& StructureRows::ofImageAt(unsigned position)
 {
-    static constexpr unsigned maxImagesInRealm = 8;
-    static std::array<AlignedStorage<StructureRows>, maxImagesInRealm> rows;
-    static std::array<std::once_flag, maxImagesInRealm> onceFlags;
-    RELEASE_ASSERT(position < maxImagesInRealm);
-    std::call_once(onceFlags[position], [&] {
-        new (NotNull, rows[position].get()) StructureRows;
-    });
-    return *rows[position];
+    static Lock lock;
+    static NeverDestroyed<Vector<std::unique_ptr<StructureRows>>> rows;
+    Locker locker { lock };
+    while (rows->size() <= position)
+        rows->append(std::unique_ptr<StructureRows>(new StructureRows));
+    return *rows.get()[position];
 }
 
 StructureRows::StructureRows()
@@ -1043,7 +1041,7 @@ static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifi
         State* state = instance ? instance->state : nullptr;
         if (!state || object->butterfly())
             return false;
-        const LayoutData* classLayout = state->objects->classes.classWithIndex(uncheckedDowncast<ClassPrototype>(object)->classIndex());
+        const LayoutData* classLayout = state->objects->classes.classOf(*uncheckedDowncast<ClassPrototype>(object));
         for (const MethodData& method : classLayout->methods()) {
             if (method.flags & methodHasComputedName)
                 return false;

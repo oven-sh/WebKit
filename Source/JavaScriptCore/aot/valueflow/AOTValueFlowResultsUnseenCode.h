@@ -23,7 +23,7 @@ inline bool unseenCodeHasLoader(const ValueFlowSolution& solution) { return isRa
 inline bool copiesOfFilesNameWhatTheyImport(const ValueFlowSolution& solution)
 {
     return isRaised(solution, ValueFlowHostNode::UnseenCopiesOfFilesMayRun)
-        && std::ranges::any_of(solution.program().modules, [](const Module& module) { return module.flags.contains(ModuleFlags::MayBeEvicted); });
+        && std::ranges::any_of(solution.program().modules, [](const Module& module) { return module.flags.containsAny({ ModuleFlags::MayBeEvicted, ModuleFlags::IsFoundByName }); });
 }
 inline bool filesOfProgramAreLoadedByName(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::ModulesAreRequiredByName) || isRaised(solution, ValueFlowHostNode::ModulesAreImportedByName) || copiesOfFilesNameWhatTheyImport(solution); }
 inline bool modulesAreLoadedByName(const ValueFlowSolution& solution) { return filesOfProgramAreLoadedByName(solution) || isRaised(solution, ValueFlowHostNode::LibraryModulesAreRequiredByName) || isRaised(solution, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames); }

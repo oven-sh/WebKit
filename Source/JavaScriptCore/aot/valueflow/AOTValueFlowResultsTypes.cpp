@@ -2405,6 +2405,15 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     };
     proveValuesOfStatements();
 
+    // `this` in the constructor of a base class and in the initializers of the fields of a class: every object that the constructor makes comes by, whichever class below it is made for.
+    auto isObjectBeingMade = [&](ValueID value) {
+        RootThroughCasts object = sameObjectThroughCasts(function, value);
+        if (function.kind == FunctionKind::Initializer) {
+            std::optional<unsigned> thisParameter = function.thisParameterIndex();
+            return thisParameter && object == function.at(entryBlock).parameters[*thisParameter];
+        }
+        return function.kind == FunctionKind::BaseConstructor && function.at(object).opcode == Opcode::NewObject && function.at(object).layout() == function.constructedClass;
+    };
     auto observedValues = std::ranges::equal_range(inputs.bodies().observedValues(), id, { }, &ValueFlowObservedValue::function);
     Vector<ValueID, 4> replacedChecks;
     BitVector checksThatLetAllPass(function.values.size());
@@ -2433,7 +2442,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         }
         const Type& expected = program.at(test.expectedType().predicted());
         ValueSetID seen = inputs.seenValuesOf(maker, observed.operand);
-        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(seen, expected) || positions.turnsAwayEveryObject(held, expected) || positions.turnsAwayEverySeenObject(seen, expected)))
+        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(seen, expected) || (isObjectBeingMade(test.operand(0)) && positions.turnsAwayObjectMadeForOtherClass(seen, expected)) || positions.turnsAwayEveryObject(held, expected) || positions.turnsAwayEverySeenObject(seen, expected)))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 

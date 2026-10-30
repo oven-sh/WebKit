@@ -29,6 +29,7 @@ class CacheRegistry;
 class CustomAccessorTable;
 
 class StructureRows {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StructureRows);
     WTF_MAKE_NONCOPYABLE(StructureRows);
 public:
     // The images that share a realm keep their caches apart: a slot says things in the numbers of one image.

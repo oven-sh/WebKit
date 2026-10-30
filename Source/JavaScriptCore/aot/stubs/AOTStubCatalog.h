@@ -57,6 +57,9 @@ struct StubOptions {
     uint32_t firstStringHeader { 0 };
     uint32_t closureNumbersBelow { 0 };
     uint32_t endOfClosureNumbers { 0 };
+    // Image::layoutIndicesBelow(), and ProgramTables::numberOfLayoutIndices of this image.
+    uint32_t layoutIndicesBelow { 0 };
+    uint32_t numberOfLayoutIndices { 0 };
     // Whether the stubs read and call the traps of a proxy themselves. It chooses between two roads to one answer and says nothing about the program: where it is false, the stubs leave an access through a proxy to the run time.
     // So it may rest on a guess that the program meets no proxy.
     Typed::Expected<bool> callsTrapsOfProxies { true };

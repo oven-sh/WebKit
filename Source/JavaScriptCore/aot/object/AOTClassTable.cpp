@@ -94,10 +94,20 @@ ClassTable::ClassTable(State& state)
 
 ClassTable::~ClassTable() = default;
 
+static uint32_t layoutIndicesBelow(const State& state)
+{
+    const Image* image = state.instance.program;
+    return image ? image->layoutIndicesBelow() : 0;
+}
+
 bool ClassTable::hasClassOf(const ClassPrototype& prototype) const
 {
-    const Image* image = m_state.instance.program;
-    return prototype.imagePosition() == (image ? image->position() : 0);
+    return prototype.classNumber() - layoutIndicesBelow(m_state) < m_tables.numberOfLayoutIndices;
+}
+
+const LayoutData* ClassTable::classOf(const ClassPrototype& prototype) const
+{
+    return hasClassOf(prototype) ? classWithIndex(prototype.classNumber() - layoutIndicesBelow(m_state)) : nullptr;
 }
 
 const LayoutData* ClassTable::classWithIndex(uint32_t index) const
@@ -236,7 +246,7 @@ JSObject* ClassTable::createClassPrototype(VM& vm, const LayoutData& classLayout
         m_state.immortalCells->add(structure);
     }
     uint32_t memberRow = hasOneClassObject(classLayout) ? m_tables.classMemberRows()[m_tables.rankOfClass(classLayout.index)] : ClassRowEntry::noRow;
-    JSObject* prototype = ClassPrototype::create(vm, structure, classLayout.index, memberRow, m_state.instance.program->position());
+    JSObject* prototype = ClassPrototype::create(vm, structure, layoutIndicesBelow(m_state) + classLayout.index, memberRow);
     registerClassPrototype(classLayout, prototype);
     return prototype;
 }
@@ -628,7 +638,7 @@ std::optional<ClassTable::LazyPrototypeLookupResult> ClassTable::findThroughLazy
             ImageOfCellScope imageOfPrototype(vm, prototype);
             return owner->state->objects->classes.findThroughLazyPrototypes(vm, below, name, true, creation);
         }
-        const LayoutData& classLayout = *classWithIndex(uncheckedDowncast<ClassPrototype>(prototype)->classIndex());
+        const LayoutData& classLayout = *classOf(*uncheckedDowncast<ClassPrototype>(prototype));
         auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
         if (!member)
             return std::nullopt;
@@ -1330,9 +1340,9 @@ Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject,
     return structure;
 }
 
-ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow, unsigned imagePosition)
+ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classNumber, uint32_t memberRow)
 {
-    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow, imagePosition);
+    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classNumber, memberRow);
     object->finishCreation(vm);
     return object;
 }
@@ -1341,7 +1351,7 @@ void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
 {
     ImageOfCellScope imageOfCell(this);
     RELEASE_ASSERT(ordinary->classInfoForCells() == JSFinalObject::info() && ordinary->inlineCapacity() == inlineCapacity && ordinary->storedPrototype() == structure()->storedPrototype());
-    m_classIndex = 0;
+    m_classNumber = 0;
     m_numberOfLookups = 0;
     m_hasRepeatedLookup = false;
     m_flags = { };
@@ -1357,7 +1367,7 @@ JSObject* ClassPrototype::classObject() const
 {
     ImageOfCellScope imageOfCell(this);
     State& state = stateOf(this);
-    const LayoutData& classLayout = *state.objects->classes.classWithIndex(classIndex());
+    const LayoutData& classLayout = *state.objects->classes.classOf(*this);
     return asObject(state.objects->closures.closure(vm(), FunctionID(classLayout.classData().classConstructor)));
 }
 
@@ -1400,7 +1410,7 @@ std::optional<bool> ClassPrototype::tryGetDeclaredMember(VM& vm, PropertyName na
     if ((methodType != PropertySlot::InternalMethodType::Get && methodType != PropertySlot::InternalMethodType::HasProperty) || butterfly() || !name.uid())
         return std::nullopt;
     ClassTable& classes = stateOf(this).objects->classes;
-    const LayoutData& classLayout = *classes.classWithIndex(classIndex());
+    const LayoutData& classLayout = *classes.classOf(*this);
     if (name.uid()->isSymbol() && std::ranges::none_of(classLayout.methods(), [](auto& method) { return method.flags & methodHasComputedName; }) && !classes.declaresOwnMember(classLayout, name.uid())) {
         slot.setIsTaintedByOpaqueObject();
         return false;
@@ -1438,7 +1448,7 @@ bool ClassPrototype::hasMember(JSObject* object, PropertyName name)
     if (isThen && prototype->m_flags.contains(Flag::HasCheckedThen))
         return prototype->m_flags.contains(Flag::DeclaresThen);
     ClassTable& classes = stateOf(object).objects->classes;
-    bool isDeclared = classes.declaresOwnMember(*classes.classWithIndex(prototype->classIndex()), uid);
+    bool isDeclared = classes.declaresOwnMember(*classes.classOf(*prototype), uid);
     if (isThen) {
         prototype->m_flags.add(Flag::HasCheckedThen);
         prototype->m_flags.set(Flag::DeclaresThen, isDeclared);

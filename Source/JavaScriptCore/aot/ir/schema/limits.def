@@ -13,7 +13,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     All(Any, CompileTime, NotOptimized, 4294967295, 4294967295, 0, "every limit that can be lowered, each to no less than its smallest value")
 
     MaxFoldedStringBytes(Load, Memory, NotOptimized, 65536, 65536, 0, "the length of a constant-folded string")
-    MaxComputedSpecifierCandidates(Load, CompileTime, GenericPath, 1024, 1024, 0, "modules a dynamic import path can match")
     MaxVariablesFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "variables that hand the name of a built-in module on to one another")
     MaxParametersFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "parameters that hand the name of a built-in module on to one another")
     MaxProgramsPerBuild(Load, CompileTime, NotOptimized, 128, 128, 0, "entry points that are each compiled as a program of their own")
@@ -211,6 +210,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxLeavesToRebalance(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "operands in a rebalanced expression")
     MaxBitTestTargets(GenerateCode, CodeSize, NotOptimized, 3, 3, 0, "targets of a switch lowered to bit tests")
     MaxCompareChainSearchSize(GenerateCode, CompileTime, NotOptimized, 16, 16, 0, "compare chain search work")
+    MaxClobberSitesPerSplit(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "calls a live range is split around")
 
     ClosureAllocationSites(BuildImage, BitWidth, BuildError, 16777216, 16777216, 0, "places that create closures")
     ImageFunctions(BuildImage, BitWidth, BuildError, 16777215, 16777215, 0, "functions in a program, with the copies and entry points that the compiler makes")

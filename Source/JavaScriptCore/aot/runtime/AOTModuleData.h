@@ -197,6 +197,15 @@ struct ModuleDisplayPathData {
     Number24 path;
 };
 
+// In the order of the modules.
+struct UncompiledModuleData {
+    static constexpr uint32_t noTypeAttribute = UINT32_MAX;
+
+    uint32_t module;
+    // `import data from "./data.txt" with { type: "toml" }`: what the statement that names the module says of its type. The loader of the host is asked with it.
+    uint32_t typeAttribute;
+};
+
 struct ModuleRequestData {
     static constexpr uint32_t maxTarget = (1u << 20) - 1;
 
@@ -420,6 +429,7 @@ struct CompiledRuntimeFunctionData {
 
 static_assert(sizeof(ModuleData) == 40 && isImageRecord<ModuleData>);
 static_assert(sizeof(ModuleDirectoryData) == 6 && isImageRecord<ModuleDirectoryData> && sizeof(ModuleDisplayPathData) == 6 && isImageRecord<ModuleDisplayPathData>);
+static_assert(sizeof(UncompiledModuleData) == 8 && isImageRecord<UncompiledModuleData>);
 static_assert(sizeof(ModuleRequestData) == 3 && alignof(ModuleRequestData) == 1 && isImageRecord<ModuleRequestData>);
 static_assert(ModuleRequestData::create(0xbcdef, true, false, true).target() == 0xbcdef);
 static_assert(sizeof(LinkPlanStepData) == 4 && isImageRecord<LinkPlanStepData>);
@@ -464,7 +474,7 @@ struct HashOfDirectory {
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(directoriesOfModulesByPath, uint32_t) \
-    v(modulesOfUncompiledCode, uint32_t) \
+    v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEntryParameterIndexes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
@@ -1052,64 +1051,12 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
             spiedHolders.append({ holders, { } });
         spiedHolders[position.iterator->value].keys.add(maker, keys, mayBeAnyKey);
     };
-
-    // `const spyOn = (object, name) => track(bunSpyOn(object, name))` is one call for all who call the helper: every object that any of them passes, under every name that any of
-    // them passes. Files outside the image call it with names nobody sees, so that is every export of every module that a compiled file spies on. Where such files run, what they
-    // pass is theirs to name, and an operand that is a parameter goes by the calls of the function: the object and the name of one call together.
-    bool followsParametersToCallers = inputs.solver().input().refusedCode.hostRunsFilesOutsideImage;
-    std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
-    std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
-    struct Passed {
-        ValueSetID value { ValueSets::nothing };
-        std::optional<unsigned> parameter { };
-    };
-    auto passedBy = [&](const ValueFlowStatement& call, unsigned argument) -> Passed {
-        std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
-        if (operands.size() <= 2 + argument)
-            return { };
-        Passed passed { heap.possibleValuesOf(operands[2 + argument]), std::nullopt };
-        const Function& function = program.at(call.function);
-        ValueID definition = definitionThroughSameValues(function, function.at(call.site).operand(2 + argument));
-        if (function.at(definition).opcode != Opcode::Parameter)
-            return passed;
-        EntryParameterIndexes indexes;
-        std::optional<uint32_t> index = indexes.find(function, definition);
-        if (index && *index >= function.firstParameterIndex() && *index - function.firstParameterIndex() < function.numberOfPositionalParameters())
-            passed.parameter = *index - function.firstParameterIndex();
-        return passed;
-    };
-    struct PassesOnToSpy {
-        FunctionID function;
-        Passed holder;
-        Passed key;
-    };
-    Vector<PassesOnToSpy> toFollow;
-    Vector<std::array<uint32_t, 5>> followed;
-    auto noteSpyCalledIn = [&](FunctionID caller, Passed holder, Passed key) {
-        if (!followsParametersToCallers || (!holder.parameter && !key.parameter))
-            return noteSpy(holder.value, key.value);
-        std::array<uint32_t, 5> entry { caller.index(), holder.parameter ? *holder.parameter + 1 : 0, holder.parameter ? 0 : holder.value.index(), key.parameter ? *key.parameter + 1 : 0, key.parameter ? 0 : key.value.index() };
-        auto position = std::ranges::lower_bound(followed, entry);
-        if (position != followed.end() && *position == entry)
-            return;
-        followed.insert(position - followed.begin(), entry);
-        toFollow.append({ caller, holder, key });
-    };
     forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
         // Once code runs that nobody has seen the spies are out of sight, and every call of a value that nobody knows might be a spy on any export of any namespace
         // object that has escaped. The run time refuses by name a spy on an export that the build has closed, so only the spies in sight count.
         if (!application.isCalleeListed)
             return;
-        ValueSetID holders = application.valueAt(BuiltinOperand::argument(0), maker);
-        ValueSetID keys = application.valueAt(BuiltinOperand::argument(1), maker);
-        // `spyOn.call(undefined, object, name)`: the operands of the statement are not those of the spy.
-        if (const ValueFlowStatement* call = application.statement; call && call->kind == ValueFlowStatementKind::Operation && call->opcode == Opcode::Call) {
-            Passed holder = passedBy(*call, 0);
-            Passed key = passedBy(*call, 1);
-            if (holder.value == holders && key.value == keys)
-                return noteSpyCalledIn(call->function, holder, key);
-        }
-        noteSpy(holders, keys);
+        noteSpy(application.valueAt(BuiltinOperand::argument(0), maker), application.valueAt(BuiltinOperand::argument(1), maker));
     });
 
     // Such a variable holds the unknown value too where somebody may have laid something else on the object of the module, and the unknown value covers a spy that has
@@ -1132,6 +1079,8 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
         });
     };
     if (!variablesOfSpies.isEmpty() || !variablesOfHoldersOfSpies.isEmpty()) {
+        std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+        std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
         for (uint32_t index = 0; index < program.functions.size(); ++index) {
             if (!inputs.isReached(FunctionID(index)))
                 continue;
@@ -1140,157 +1089,10 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
                 const ValueFlowStatement& statement = statements[position];
                 if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || !callsImportOfSpy(function, function.at(statement.site)))
                     continue;
-                if (inputs.bodies().operandsOf(statement).size() >= 4)
-                    noteSpyCalledIn(FunctionID(index), passedBy(statement, 0), passedBy(statement, 1));
-            }
-        }
-    }
-
-    // One pass over the calls of the program for all the functions that are followed at once, however many those are.
-    enum class Way : uint8_t { Call, CallWithList, CallThroughCall, Binding };
-    struct CallInSight {
-        ValueSetID callees;
-        uint32_t statement;
-        Way way;
-        // A value nobody knows is called, and a namespace object is among what is passed.
-        bool mayCallWhatIsOutOfSight;
-        // `helper(...list)`, `helper.apply(undefined, list)`, `Reflect.apply(helper, undefined, list)`: any member of the list may stand at any position.
-        ValueSetID contentsOfList;
-    };
-    Vector<CallInSight> callsInSight;
-    SetsMeetingOneSet holdingPlaceholder(inputs.sets(), maker.unite(maker.of(ValueFlowUniverse::unknownObject()), maker.of(ValueFlowUniverse::untrackedObject())));
-    SetsMeetingOneSet holdingNamespace(inputs.sets(), universe.namespaces());
-    auto listsNamespace = [&](ValueSetID values) {
-        return !ValueSets::isComplement(values) && holdingNamespace.contains(values);
-    };
-    if (!toFollow.isEmpty()) {
-        Vector<std::pair<BuiltinID, SetsMeetingOneSet>, 4> setsCalling;
-        for (BuiltinID caller : { Builtins::FunctionPrototypeCall, Builtins::FunctionPrototypeBind, Builtins::FunctionPrototypeApply, Builtins::ReflectApply })
-            setsCalling.append({ caller, SetsMeetingOneSet(inputs.sets(), maker.of(universe.objectOf(caller))) });
-        // The unknown value covers a built-in that has escaped, and `helper.call` may be anything where files outside the image run. The text still says which member is meant.
-        auto calls = [&](ValueSetID callees, PropertyKeyID calleeKey, BuiltinID caller) {
-            if (calleeKey && calleeKey == program.keyOf(builtins.at(caller).name))
-                return true;
-            return setsCalling[setsCalling.findIf([&](const auto& entry) { return entry.first == caller; })].second.contains(callees);
-        };
-        auto note = [&](uint32_t statement, Way way, const ValueFlowOperand& called, std::span<const ValueFlowOperand> passed, const ValueFlowOperand* list) {
-            ValueSetID callees = heap.possibleValuesOf(called);
-            ValueSetID contents = list ? heap.writtenUnder(maker, heap.expand(maker, heap.possibleValuesOf(*list)), elementsName) : ValueSets::nothing;
-            bool mayBeAnything = ValueSets::isComplement(callees) || holdingPlaceholder.contains(callees);
-            bool passesNamespace = mayBeAnything && (list ? listsNamespace(contents) : std::ranges::any_of(passed, [&](const ValueFlowOperand& operand) { return listsNamespace(heap.possibleValuesOf(operand)); }));
-            callsInSight.append({ callees, statement, way, passesNamespace, contents });
-        };
-        for (uint32_t index = 0; index < program.functions.size(); ++index) {
-            if (!inputs.isReached(FunctionID(index)))
-                continue;
-            for (uint32_t position = ranges[index].statement; position < ranges[index + 1].statement; ++position) {
-                const ValueFlowStatement& statement = statements[position];
                 std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-                if (statement.kind != ValueFlowStatementKind::Operation || operands.size() < 3)
-                    continue;
-                if (statement.opcode == Opcode::CallList)
-                    note(position, Way::CallWithList, operands[0], { }, &operands[2]);
-                if (statement.opcode != Opcode::Call)
-                    continue;
-                note(position, Way::Call, operands[0], operands.subspan(2), nullptr);
-                ValueSetID callees = callsInSight.last().callees;
-                PropertyKeyID calleeKey = program.functions[index].at(statement.site).calleeKey();
-                // The function is the receiver, and its operands stand one further on.
-                if (calls(callees, calleeKey, Builtins::FunctionPrototypeCall))
-                    note(position, Way::CallThroughCall, operands[1], operands.subspan(3), nullptr);
-                if (calls(callees, calleeKey, Builtins::FunctionPrototypeBind))
-                    note(position, Way::Binding, operands[1], operands.subspan(3), nullptr);
-                if (operands.size() >= 4 && calls(callees, calleeKey, Builtins::FunctionPrototypeApply))
-                    note(position, Way::CallWithList, operands[1], { }, &operands[3]);
-                if (operands.size() >= 5 && calls(callees, { }, Builtins::ReflectApply))
-                    note(position, Way::CallWithList, operands[2], { }, &operands[4]);
+                if (operands.size() >= 4)
+                    noteSpy(heap.possibleValuesOf(operands[2]), heap.possibleValuesOf(operands[3]));
             }
-        }
-    }
-    ValueSetID outOfSight = maker.unite(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()));
-    while (!toFollow.isEmpty()) {
-        Vector<PassesOnToSpy> wave = std::exchange(toFollow, { });
-        Vector<ValueFlowObjectID> closures = WTF::map(wave, [&](const PassesOnToSpy& passing) { return universe.closureOf(passing.function); });
-        Vector<unsigned> passingOutOfSight;
-        UncheckedKeyHashMap<uint32_t, Vector<unsigned, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> passingWithClosure;
-        for (unsigned index = 0; index < wave.size(); ++index) {
-            passingWithClosure.add(closures[index].index(), Vector<unsigned, 1>()).iterator->value.append(index);
-            if (inputs.sets().contains(outOfSight, closures[index]))
-                passingOutOfSight.append(index);
-        }
-        ValueSetID closuresOfWave = maker.of(closures.span());
-        SetsMeetingOneSet callingSome(inputs.sets(), closuresOfWave);
-        Vector<std::pair<ValueSetID, ValueSetID>> passedInSight;
-        passedInSight.fill({ ValueSets::nothing, ValueSets::nothing }, wave.size());
-
-        auto noteCallOf = [&](unsigned index, const CallInSight& call, bool isListed) {
-            const PassesOnToSpy& passing = wave[index];
-            const ValueFlowStatement& statement = statements[call.statement];
-            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-            auto oneFurtherOn = [&](const Passed& passed) -> std::optional<ValueSetID> {
-                if (!passed.parameter)
-                    return passed.value;
-                return 3 + *passed.parameter < operands.size() ? std::optional(heap.possibleValuesOf(operands[3 + *passed.parameter])) : std::nullopt;
-            };
-            Passed holder = passing.holder;
-            Passed key = passing.key;
-            switch (call.way) {
-            case Way::Call:
-                if (passing.holder.parameter)
-                    holder = passedBy(statement, *passing.holder.parameter);
-                if (passing.key.parameter)
-                    key = passedBy(statement, *passing.key.parameter);
-                break;
-            case Way::CallWithList:
-                if (passing.holder.parameter)
-                    holder = { call.contentsOfList, std::nullopt };
-                if (passing.key.parameter)
-                    key = { call.contentsOfList, std::nullopt };
-                break;
-            case Way::CallThroughCall:
-                holder = { oneFurtherOn(passing.holder).value_or(ValueSets::nothing), std::nullopt };
-                key = { oneFurtherOn(passing.key).value_or(ValueSets::nothing), std::nullopt };
-                break;
-            case Way::Binding: {
-                // Whoever calls what bind() answers passes the rest, and nobody follows that here: what is not bound is all that arrives at the parameter.
-                std::optional<ValueSetID> bound = oneFurtherOn(passing.holder);
-                if (!isListed && !bound)
-                    return;
-                holder = { bound.value_or(passing.holder.value), std::nullopt };
-                key = { oneFurtherOn(passing.key).value_or(passing.key.value), std::nullopt };
-                break;
-            }
-            }
-            // No node lists what has escaped beside a value nobody knows: a call of such a value that passes a namespace object where the function takes one may be a call of it.
-            if (!isListed && !listsNamespace(holder.value))
-                return;
-            passedInSight[index].first = maker.unite(passedInSight[index].first, holder.value);
-            passedInSight[index].second = maker.unite(passedInSight[index].second, key.value);
-            noteSpyCalledIn(statement.function, holder, key);
-        };
-        for (const CallInSight& call : callsInSight) {
-            bool listsSome = !ValueSets::isComplement(call.callees) && callingSome.contains(call.callees);
-            if (listsSome) {
-                inputs.sets().forEachMember(maker.intersect(call.callees, closuresOfWave), [&](ValueFlowObjectID closure) {
-                    for (unsigned index : passingWithClosure.get(closure.index()))
-                        noteCallOf(index, call, true);
-                });
-            }
-            if (!call.mayCallWhatIsOutOfSight)
-                continue;
-            for (unsigned index : passingOutOfSight) {
-                if (!listsSome || !inputs.sets().contains(call.callees, closures[index]))
-                    noteCallOf(index, call, false);
-            }
-        }
-        // What is listed at the parameters and comes by none of these ways goes with all that arrives.
-        for (unsigned index = 0; index < wave.size(); ++index) {
-            const PassesOnToSpy& passing = wave[index];
-            ValueSetID namespacesPassed = maker.intersect(passing.holder.value, universe.namespaces());
-            if (ValueSetID others = maker.intersect(namespacesPassed, ValueSets::complement(passedInSight[index].first)); passing.holder.parameter && others != ValueSets::nothing)
-                noteSpy(others, passing.key.value);
-            if (ValueSetID others = maker.intersect(maker.intersect(passing.key.value, universe.keys()), ValueSets::complement(passedInSight[index].second)); passing.key.parameter && others != ValueSets::nothing)
-                noteSpy(namespacesPassed, others);
         }
     }
 

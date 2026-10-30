@@ -66,6 +66,11 @@ static void emitAtExit(StubAssembler& jit, JumpList& exit, const Functor& emitEn
     emitEnd();
 }
 
+static bool hasFoundExit(const HashTableExits& exits)
+{
+    return !exits.foundInCompactTable.empty() || !exits.foundAmongNarrowKeys.empty() || !exits.foundAmongWideKeys.empty();
+}
+
 static void returnConstant(StubAssembler& jit, JSValue value)
 {
     jit.move(TrustedImm64(JSValue::encode(value)), jit.result());
@@ -160,10 +165,12 @@ static void emitClearInColumn(StubAssembler& jit, Jump isWide, GPRReg column, GP
     isCleared.link(&jit);
 }
 
-static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, JumpList& keysAreNarrow, JumpList& keysAreWide)
+static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, HashTableExits& exits)
 {
     const GPRReg result = jit.result();
-    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &keysAreNarrow, &keysAreWide);
+    const bool everyoneKnowsTheWidth = exits.foundInCompactTable.empty();
+    exits.foundInCompactTable.link(&jit);
+    emitLoadValuesOfCompactTable(jit, registers, registers.keys, &exits.foundAmongNarrowKeys, &exits.foundAmongWideKeys, everyoneKnowsTheWidth);
     Jump isWide = jit.branchTest8(CCallHelpers::NonZero, Address(registers.table, CompactTable::offsetOfValueWidth()), TrustedImm32(static_cast<int32_t>(CompactTable::Width::Wide)));
     jit.load32(BaseIndex(registers.keys, registers.entry, CCallHelpers::TimesFour), result);
     Jump isNotCell = jit.branch32(CCallHelpers::Below, result, TrustedImm32(minCell32));
@@ -176,10 +183,10 @@ static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegis
     jit.returnToCaller();
 }
 
-static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg value, JumpList* doesNotFit, JumpList* keysAreNarrow = nullptr)
+static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, GPRReg value, JumpList* doesNotFit, JumpList* keysAreNarrow = nullptr, bool everyoneKnowsTheWidth = false)
 {
     const GPRReg values = registers.keys;
-    emitLoadValuesOfCompactTable(jit, registers, values, keysAreNarrow);
+    emitLoadValuesOfCompactTable(jit, registers, values, keysAreNarrow, nullptr, everyoneKnowsTheWidth);
     emitStoreInColumn(jit, branchIfValuesAreWide(jit, registers), values, registers.entry, value, registers.candidate, doesNotFit);
 }
 
@@ -273,16 +280,17 @@ static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
     exits.foundInCompactTable.append(exits.foundAmongWideKeys);
-    if (!value)
+    if (!value) {
         exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        if (!value) {
+        emitAtExit(jit, exits.foundInCompactTable, [&] {
             returnOwner(jit, registers);
-            return;
-        }
-        emitStoreValueOfCompactTable(jit, registers, *value, &exits.unknown, &exits.foundAmongNarrowKeys);
+        });
+    } else if (hasFoundExit(exits)) {
+        const bool everyoneKnowsTheWidth = exits.foundInCompactTable.empty();
+        exits.foundInCompactTable.link(&jit);
+        emitStoreValueOfCompactTable(jit, registers, *value, &exits.unknown, &exits.foundAmongNarrowKeys, everyoneKnowsTheWidth);
         emitBarrierAndReturnOwner(jit, registers, registers.table);
-    });
+    }
 
     RELEASE_ASSERT(exits.absent.empty());
     JumpList isFull;
@@ -388,9 +396,8 @@ void generateMapGet(StubAssembler& jit)
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitLoadValueOfCompactTable(jit, registers, exits.foundAmongNarrowKeys, exits.foundAmongWideKeys);
-    });
+    if (hasFoundExit(exits))
+        emitLoadValueOfCompactTable(jit, registers, exits);
     emitAtExit(jit, exits.absent, [&] {
         returnConstant(jit, jsUndefined());
     });

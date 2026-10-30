@@ -17,6 +17,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
+#include "AOTThisAllocationInlines.h"
 #include "AOTThreshold.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
@@ -130,10 +131,6 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return createWithoutFields(vm, m_state.objects->layouts, m_state.objects->structures.objectStructure(vm, classLayout.shape, prototype), classLayout);
 }
 
-// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its closure number.
-static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
-static_assert(ClosureWord::functionMask < constructorIsNewTarget);
-
 // What createThis() allocates depends on new.target, on which function is constructed and on the instance of that function.
 static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, JSObject* constructor, JSObject* newTarget)
 {
@@ -220,7 +217,7 @@ const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
     // The class of another image is none of this table's.
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
-        return hasClassOf(*lazyPrototype) ? classWithIndex(lazyPrototype->classIndex()) : nullptr;
+        return classOf(*lazyPrototype);
     ClassSide side;
     const LayoutData* held = classHeldBy(prototype, side);
     return held && side == ClassSide::Prototype && isDefinedByClass(*held) ? held : nullptr;

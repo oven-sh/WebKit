@@ -1021,11 +1021,18 @@ static void handOut(ValueFlowRuleContext& context, ValueFlowObjectID moduleObjec
     context.add(context.nodes().ofHost(ValueFlowHostNode::ModuleObjectsHandedOut), only(context, moduleObject));
 }
 
+// The run time answers for the same files: Modules::mainModuleObject().
+static BitVector modulesThatMayBeMain(ValueFlowRuleContext& context)
+{
+    bool findsFilesByName = context.refusedCode().hostRunsFilesOutsideImage || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
+    return modulesThatHostAsksFor(context.program(), findsFilesByName);
+}
+
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entry, Vector<ValueFlowObjectID, 32>& objects)
 {
     const ValueFlowProgramNodes& nodes = context.nodes();
     bool answersMainModule = entry == Builtins::ModuleRequireMain || entry == Builtins::ProcessMainModule;
-    if (!answersMainModule)
+    if (!answersMainModule || isHostFlagRaised(context, ValueFlowHostNode::CodeOutsideImageIsLoaded))
         objects.append(context.universe().objectOf(Builtins::ModuleObject));
     if (!namesWaysToModuleObjects(context.program()))
         return;
@@ -1041,8 +1048,8 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
         return answer(ValueFlowHostNode::ParentsOfModuleObjects);
     if (!answersMainModule)
         return;
-    for (const Entry& entryPoint : context.program().entries) {
-        if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, entryPoint.module)) {
+    for (size_t index : modulesThatMayBeMain(context)) {
+        if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, ModuleID(static_cast<uint32_t>(index)))) {
             handOut(context, moduleObject);
             objects.append(moduleObject);
         }
@@ -1179,8 +1186,8 @@ static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
     ClimbingSet process = only(context, context.universe().objectOf(context.program().builtins().at(Builtins::ProcessMainModule).holder));
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) && !mayMachineCodeRun(context) && !context.holdsAnyOf(process, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(process, ValueFlowProgramNodes::lost()))
         return;
-    for (const Entry& entryPoint : context.program().entries)
-        exposeModuleObjectOf(context, entryPoint.module);
+    for (size_t index : modulesThatMayBeMain(context))
+        exposeModuleObjectOf(context, ModuleID(static_cast<uint32_t>(index)));
 }
 
 // Array.prototype.map and its like read `constructor` from their receiver and `Symbol.species` from that. Nothing else that happens to an escaped object goes that way.
@@ -1353,6 +1360,9 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         const Builtin& entry = builtins.at(BuiltinID(index));
         if (entry.origin == BuiltinOrigin::Host && entry.scope == BuiltinScope::Realm && isObjectKind(entry.kind) && builtins.canonicalID(BuiltinID(index)) == BuiltinID(index))
             objectsOfHost.append(universe.objectOf(BuiltinID(index)));
+        // Unseen code can read process.versions too, and gets the same object.
+        if (entry.scope == BuiltinScope::Realm && entry.holder && builtins.at(entry.holder).kind != BuiltinKind::Prototype && builtins.isUnder(BuiltinID(index), Builtins::GlobalThis))
+            exposeNativeCellsReturnedBy(context, BuiltinID(index));
     }
     if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         letAnythingHappenTo(context, ClimbingSet(context.maker().of(objectsOfHost.span())));

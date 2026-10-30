@@ -15,4 +15,4 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 # CHECK: modulesByPath
 # CHECK-NEXT: directoriesOfModulesByPath
-# CHECK-NEXT: modulesOfUncompiledCode 2 8
+# CHECK-NEXT: modulesOfUncompiledCode 2 16

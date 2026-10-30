@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTNativeTest.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
 #include <wtf/ASCIICType.h>
@@ -213,6 +215,38 @@ static void testCrashesOnRequest()
     CRASH();
 }
 
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+static NEVER_INLINE void trapWithMarkerOnStack()
+{
+    volatile uint64_t marker = 0x5afe5afe5afe5afeull;
+    UNUSED_VARIABLE(marker);
+    __builtin_trap();
+}
+
+static void testTrapsOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    runOnBuildThread([] {
+        CurrentWork::ofCurrentThread();
+        trapWithMarkerOnStack();
+    });
+}
+
+static void testTrapIsReported()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "trap-on-request/trap"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+    AOT_TEST_CHECK(result.output.contains(" in thread \"AOT build\" at 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("registers:"_s) && result.output.contains("return addresses: 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("5afe5afe5afe5afe"_s));
+}
+
+#endif
+
 #if OS(LINUX)
 
 static constexpr const char* endParentRequestVariable = "TESTAOT_END_PARENT_ON_REQUEST";
@@ -351,6 +385,10 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
         { "child-process/crash-leaves-no-files"_s, testCrashLeavesNoFiles },
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+        { "child-process/trap-is-reported"_s, testTrapIsReported },
+        { "trap-on-request/trap"_s, testTrapsOnRequest },
+#endif
 #if OS(LINUX)
         { "child-process/ends-with-parent"_s, testChildEndsWithParent },
         { "end-parent-on-request/parent"_s, testStartsChildOnRequest },

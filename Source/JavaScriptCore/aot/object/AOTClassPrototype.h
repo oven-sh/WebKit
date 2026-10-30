@@ -26,7 +26,7 @@ public:
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     // memberRow: where the row of the class begins in the field table, or ClassRowEntry::noRow.
-    static ClassPrototype* create(VM&, Structure*, uint32_t classIndex, uint32_t memberRow, unsigned imagePosition);
+    static ClassPrototype* create(VM&, Structure*, uint32_t classNumber, uint32_t memberRow);
 
     DECLARE_INFO;
 
@@ -49,11 +49,9 @@ public:
     void convertToOrdinaryObject(VM&, Structure* ordinary);
 
     static bool hasMember(JSObject* classPrototype, PropertyName);
-    uint32_t classIndex() const { return m_classIndex & maxClassIndex; }
-    // Image::position() of the image that has the class.
-    unsigned imagePosition() const { return m_classIndex >> bitsOfClassIndex; }
-    static constexpr ptrdiff_t offsetOfClassIndex() { return OBJECT_OFFSETOF(ClassPrototype, m_classIndex); }
-    static constexpr unsigned bitsOfClassIndex = 24;
+    // The layout index of the class behind Image::layoutIndicesBelow() of the image that has it. ClassTable::classOf() finds the class.
+    uint32_t classNumber() const { return m_classNumber; }
+    static constexpr ptrdiff_t offsetOfClassNumber() { return OBJECT_OFFSETOF(ClassPrototype, m_classNumber); }
     JSObject* classObject() const;
     static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);
@@ -65,18 +63,17 @@ private:
     };
     AOT_CLASS_THRESHOLD(unsigned, minEarlyAnswers, 4);
     static constexpr unsigned numberOfNameBits = 32;
-    static constexpr uint32_t maxClassIndex = (1u << bitsOfClassIndex) - 1;
 
-    ClassPrototype(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow, unsigned imagePosition)
+    ClassPrototype(VM& vm, Structure* structure, uint32_t classNumber, uint32_t memberRow)
         : Base(vm, structure)
-        , m_classIndex(classIndex | imagePosition << bitsOfClassIndex)
+        , m_classNumber(classNumber)
         , m_memberRow(memberRow)
     {
     }
 
     static void createMembers(JSObject*);
 
-    uint32_t m_classIndex;
+    uint32_t m_classNumber;
     uint16_t m_numberOfLookups { 0 };
     bool m_hasRepeatedLookup { false };
     OptionSet<Flag> m_flags;

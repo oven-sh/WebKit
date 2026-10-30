@@ -257,6 +257,158 @@ void generateNewArrayWithLength(StubAssembler& jit)
     emitArrayOfHoles(jit, indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), HoleArrayOperand::LengthAndCapacity);
 }
 
+static_assert(std::is_same_v<decltype(&operationAOTNewArrayOfElements), OperationReturnType<JSCell*> (JIT_OPERATION_ATTRIBUTES *)(Instance*, JSCell*, uint64_t)>);
+static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+
+StubSignature signatureOfNewArrayOfElements(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+void generateNewArrayOfElements(StubAssembler& jit)
+{
+    static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
+    const IndexingType made = indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form()));
+    const GPRReg source = jit.operand(0);
+    const GPRReg capacity = jit.clobberOperand(1);
+    const GPRReg array = jit.result();
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
+    const GPRReg elements = jit.allocateScratch(StubRegister::T10);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T11);
+    const GPRReg element = jit.allocateScratch(StubRegister::T12);
+    const GPRReg count = jit.allocateScratch(StubRegister::T13);
+    const GPRReg kind = jit.allocateScratch(StubRegister::T14);
+    const GPRReg position = allocator;
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
+    RELEASE_ASSERT(noOverlap(source, capacity, array, allocator, elements, storage, element, count, kind));
+    const BaseIndex read(elements, position, CCallHelpers::TimesEight);
+    const BaseIndex written(storage, position, CCallHelpers::TimesEight);
+
+    JumpList givesUp;
+    jit.load8(Address(source, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeMask), kind);
+    jit.sub32(TrustedImm32(Int32Shape), kind);
+    givesUp.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32((made & IndexingShapeMask) - Int32Shape)));
+    givesUp.append(jit.branch64(CCallHelpers::Above, capacity, TrustedImm32(maxHoleArrayCapacity)));
+    jit.or32(TrustedImm32(1), capacity);
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), elements);
+    jit.load32(Address(elements, Butterfly::offsetOfPublicLength()), count);
+    givesUp.append(jit.branch32(CCallHelpers::Above, count, capacity));
+    givesUp.append(branchIfHavingABadTime(jit));
+    emitLoadAllocatorForCapacity(jit, capacity, element, allocator);
+    givesUp.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, array, allocator, element, givesUp);
+
+    jit.store32(count, Address(array, sizeof(JSArray)));
+    jit.store32(capacity, Address(array, sizeof(JSArray) + sizeof(uint32_t)));
+    jit.addPtr(TrustedImm32(sizeof(JSArray) + sizeof(IndexingHeader)), array, storage);
+    jit.move(count, position);
+    Jump isFull = jit.branch32(CCallHelpers::AboveOrEqual, position, capacity);
+    if (made == ArrayWithDouble)
+        jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), element);
+    Label clear = jit.label();
+    if (made == ArrayWithDouble)
+        jit.store64(element, written);
+    else
+        jit.store64(TrustedImm32(0), written);
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, capacity).linkTo(clear, &jit);
+    isFull.link(&jit);
+
+    auto finish = [&] {
+        jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(made)), element);
+        jit.storePair64(element, storage, array, TrustedImm32(0));
+        fenceAfterAllocation(jit);
+        jit.returnToCaller();
+    };
+    JumpList findsHole;
+    auto giveUp = [&] {
+        if (!findsHole.empty()) {
+            findsHole.link(&jit);
+            jit.store32(TrustedImm32(0), Address(array, sizeof(JSArray)));
+            jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(made)), element);
+            jit.storePair64(element, storage, array, TrustedImm32(0));
+            fenceAfterAllocation(jit);
+        }
+        givesUp.link(&jit);
+        jit.or64(TrustedImm64(static_cast<int64_t>(made) << 32), capacity);
+        jit.callOperationAndReturn(Entry::operationAOTNewArrayOfElements, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
+    };
+
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
+    jit.move(TrustedImm32(0), position);
+    if (made == ArrayWithInt32) {
+        Label copy = jit.label();
+        jit.load64(read, element);
+        findsHole.append(jit.branchTest64(CCallHelpers::Zero, element));
+        jit.store64(element, written);
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
+        isEmpty.link(&jit);
+        finish();
+        giveUp();
+        return;
+    }
+    if (made == ArrayWithDouble) {
+        Jump holdsIntegers = jit.branchTest32(CCallHelpers::Zero, kind);
+        Label copy = jit.label();
+        jit.loadDouble(read, number);
+        findsHole.append(jit.branchDouble(CCallHelpers::DoubleNotEqualOrUnordered, number, number));
+        jit.storeDouble(number, written);
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
+        isEmpty.link(&jit);
+        Label isFilled = jit.label();
+        finish();
+        holdsIntegers.link(&jit);
+        Label convert = jit.label();
+        jit.load64(read, element);
+        findsHole.append(jit.branchTest64(CCallHelpers::Zero, element));
+        jit.convertInt32ToDouble(element, number);
+        jit.storeDouble(number, written);
+        jit.add32(TrustedImm32(1), position);
+        jit.branch32(CCallHelpers::Below, position, count).linkTo(convert, &jit);
+        jit.jump().linkTo(isFilled, &jit);
+        giveUp();
+        return;
+    }
+    Jump holdsDoubles = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(DoubleShape - Int32Shape));
+    Label copy = jit.label();
+    jit.load64(read, element);
+    Jump isNoHole = jit.branchTest64(CCallHelpers::NonZero, element);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), element);
+    isNoHole.link(&jit);
+    jit.store64(element, written);
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, count).linkTo(copy, &jit);
+
+    isEmpty.link(&jit);
+    Label isFilled = jit.label();
+    finish();
+
+    holdsDoubles.link(&jit);
+    Label box = jit.label();
+    {
+        JumpList isNotInt32;
+        jit.loadDouble(read, number);
+        Jump isHole;
+        PureDouble pure = PureDouble::branchIfNaN(jit, number, isHole);
+        branchIfNotExactInt32(jit, number, element, isNotInt32, numberScratch);
+        boxInt32(jit, element, element);
+        Jump isBoxedInt32 = jit.jump();
+        isNotInt32.link(&jit);
+        boxDouble(jit, pure, element);
+        Jump isBoxedDouble = jit.jump();
+        isHole.link(&jit);
+        jit.move(TrustedImm64(JSValue::ValueUndefined), element);
+        isBoxedInt32.link(&jit);
+        isBoxedDouble.link(&jit);
+        jit.store64(element, written);
+    }
+    jit.add32(TrustedImm32(1), position);
+    jit.branch32(CCallHelpers::Below, position, count).linkTo(box, &jit);
+    jit.jump().linkTo(isFilled, &jit);
+    giveUp();
+}
+
 void generateNewArrayOfLength(StubAssembler& jit)
 {
     static_assert(ShortArrayWords::indexOfAllocator(arrayLiteralVectorLength(maxArrayLengthInStubKey)) < ShortArrayWords::numberOfAllocators);

@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -34,6 +35,14 @@ public:
     unsigned count() const { return m_images.size(); }
     const ImageNumberRanges& numbersOfLast() const { return m_images.last()->header().numbers; }
     uint32_t capacityOfStringHeaders() const { return m_images.first()->header().numbers.capacityOfStringHeaders; }
+    // Image::layoutIndicesBelow() of the image that is built.
+    uint32_t layoutIndices() const
+    {
+        CheckedUint32 sum = 0;
+        for (const std::unique_ptr<Image>& image : m_images)
+            sum += image->programTables().numberOfLayoutIndices;
+        return sum;
+    }
     // What one of them leaves open, for its tests or for a write of its own, no image over it locks or takes for a constant.
     void forEachUnlockedBuiltinMember(NOESCAPE const Invocable<void(BuiltinID)> auto& functor) const
     {

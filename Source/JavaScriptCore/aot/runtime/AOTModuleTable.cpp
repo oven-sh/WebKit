@@ -318,6 +318,13 @@ String ModuleTable::displayPathText(ModuleID module) const
     return charactersInFront ? path.substring(charactersInFront) : path;
 }
 
+String ModuleTable::typeAttribute(ModuleID module) const
+{
+    ASSERT(data(module).isUncompiledCode());
+    auto listed = std::ranges::lower_bound(modulesOfUncompiledCode(), module.index(), { }, &UncompiledModuleData::module);
+    return listed->typeAttribute == UncompiledModuleData::noTypeAttribute ? String() : ProgramStrings::text(*m_tables, StringID(listed->typeAttribute));
+}
+
 String ModuleTable::pathTextForLineColumns(ModuleID module) const
 {
     return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);

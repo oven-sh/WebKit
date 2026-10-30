@@ -75,7 +75,7 @@ public:
     // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
     const Entry* withMethodReadSite(const Image&, const Entry*);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
-    // It remembers the inlined frames of the function that was asked for last.
+    // It remembers the inlined frames of the functions that were asked for lately.
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }
 
     static constexpr size_t initialNumberOfEntries = 128;
@@ -105,7 +105,8 @@ private:
     size_t m_numberOfFilledEntries { 0 };
     size_t m_numberOfEvictions { 0 };
     FixedVector<Entry> m_entries;
-    InlineFrameReader m_inlineFrames;
+    DecodedInlineFrames m_decodedInlineFrames;
+    InlineFrameReader m_inlineFrames { m_decodedInlineFrames };
     std::array<Position, numberOfPositions> m_positions;
 };
 static_assert(sizeof(CallSiteCache::Entry) <= 64);

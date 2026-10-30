@@ -422,6 +422,10 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
             if (std::optional<RuntimeCellTest> encoded = encodeCellTest(encoder, records, test))
                 cellTests.append(*encoded);
         }
+        // RuntimeType::testsOfOneFunctionEach().
+        AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
         for (StringID literal : plan.stringLiterals) {
             if (!numbered.isLeftOut(literal))
                 literalStrings.append(literal);
@@ -442,6 +446,7 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
     for (StringID string : literalStrings)
         header.flags |= numbered.isWithoutText(string) ? RuntimeType::hasLiteralStringWithoutText : numbered.indexOf(string) ? 0 : RuntimeType::hasLiteralStringWithoutWord;
     header.numberOfCellTests = static_cast<uint16_t>(cellTests.size());
+    header.numberOfTestsOfMoreThanOneFunctionIfFew = static_cast<uint8_t>(std::min<size_t>(RuntimeType::hasManyTestsOfMoreThanOneFunction, std::ranges::count_if(cellTests, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; })));
     header.numberOfLiteralStrings = static_cast<uint16_t>(literalStrings.size());
 
     Vector<uint32_t, 16> words;
@@ -2134,6 +2139,15 @@ static bool hasFunctionText(const Program& program, const Function& function)
     return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
+static uint32_t linesOfClassAboveConstructor(const Program& program, const Function& function)
+{
+    if ((function.kind != FunctionKind::BaseConstructor && function.kind != FunctionKind::DerivedConstructor) || !function.constructedClass)
+        return 0;
+    unsigned firstLine = program.lineColumnFor(function.module, program.at(function.constructedClass).position).line;
+    unsigned line = program.lineColumnFor(function.module, function.position).line;
+    return line > firstLine ? line - firstLine : 0;
+}
+
 static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionTraceRecord> traces)
 {
     struct RetainedTextRange {
@@ -2152,6 +2166,7 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
         return size || !hostTexts.size ? size : hostTexts.size(hostTexts.owner, id.index());
     };
     Vector<FunctionWithText> functions;
+    Vector<ConstructorLineData> constructorLines;
     Vector<Vector<RetainedTextRange>> moduleRanges(program.modules.size());
     for (size_t index = 0; !encoder.obfuscates() && index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
@@ -2167,7 +2182,12 @@ static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionT
         }
         functions.append({ id, entrypoint });
         moduleRanges[function.module.index()].append({ function.text.start, function.text.end });
+        if (uint32_t lines = linesOfClassAboveConstructor(program, function))
+            constructorLines.append({ traces[entrypoint.index()].sourceFunctionIndex, lines });
     }
+    AOT::sortInLine(constructorLines, { }, &ConstructorLineData::function);
+    constructorLines.shrink(std::ranges::unique(constructorLines, { }, &ConstructorLineData::function).begin() - constructorLines.begin());
+    encoder.setTable(ProgramTableIndex::constructorLines, constructorLines);
     if (functions.isEmpty()) {
         encoder.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts> { });
         return;
@@ -2778,10 +2798,12 @@ void encodeModuleTables(TableEncoder& encoder)
     for (const RequireEdge& edge : encoder.placement.requireEdges())
         sitesThatAskRunTime.append(ModuleImportSite { edge.referrer.index(), edge.target.index() });
     Vector<uint32_t> groupsLoadedWithGroups = groupModulesLoadedTogether(lists.modules.mutableSpan(), lists.requests.span(), sitesThatAskRunTime.span());
-    Vector<uint32_t> modulesOfUncompiledCode;
+    Vector<UncompiledModuleData> modulesOfUncompiledCode;
     for (uint32_t index = 0; index + 1 < lists.modules.size(); ++index) {
-        if (lists.modules[index].isUncompiledCode())
-            modulesOfUncompiledCode.append(index);
+        if (!lists.modules[index].isUncompiledCode())
+            continue;
+        StringID typeAttribute = program.modules[index].typeAttribute;
+        modulesOfUncompiledCode.append({ index, typeAttribute ? encoder.shownStringNumber(typeAttribute) : UncompiledModuleData::noTypeAttribute });
     }
     encoder.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);

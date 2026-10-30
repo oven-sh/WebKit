@@ -1496,6 +1496,12 @@ bool Modules::needsLoaderForRequire(ModuleID module)
         return false;
     if (data(module).isLoadedByLoader())
         return true;
+    // The loader itself runs the file that asks, in a step of a load: evaluateLoadedCommonJSFile() lists such a file as its own root. It has the graph of that load in its hands,
+    // and the steps of this require() may settle what that graph waits for: then the graph runs before the require() returns.
+    for (const FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+        if (files->fileOrFace == files->root)
+            return true;
+    }
     if (!numberOfGraphsBeingLoaded())
         return false;
     return m_rootWhoseFilesRanAhead || comesToLoadInFlight(module);
@@ -2677,15 +2683,15 @@ JSValue Modules::execute(ModuleID module)
     return value;
 }
 
-JSValue Modules::require(ModuleID target, ModuleID referrer)
+JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
     // Only a program that names a way from one module object to another can tell.
     if (!referrer || !m_showsWaysBetweenModuleObjects) [[likely]]
-        return answerRequire(target, referrer);
+        return answerRequire(target, referrer, requiredBy);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     recordRequire(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue required = answerRequire(target, referrer);
+    JSValue required = answerRequire(target, referrer, requiredBy);
     RETURN_IF_EXCEPTION(scope, { });
     recordRequire(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
@@ -2764,7 +2770,44 @@ JSValue Modules::loadEvictedFile(ModuleID file)
     return value;
 }
 
-JSValue Modules::answerRequire(ModuleID target, ModuleID referrer)
+JSValue Modules::requireThroughCache(ModuleID target, ModuleID referrer)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule& loaded = ensureLoaded(target);
+    if (JSValue kept = loaded.valueInRequireCache)
+        return kept;
+    bool isMocked = m_libraryModulesWithMock.get(target.index()) && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, m_table.pathText(target));
+    JSValue answered = isMocked ? answerRequireWithMock(target, referrer) : answerRequire(target);
+    RETURN_IF_EXCEPTION(scope, { });
+    loaded.valueInRequireCache.set(*this, answered);
+    return answered;
+}
+
+// The first require() behind a mock, as fetchCommonJSModule() of the host answers it.
+JSValue Modules::answerRequireWithMock(ModuleID target, ModuleID referrer)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The loader, which holds what stands in place of the module, asks nobody.
+    if (referrer && m_libraryModulesThatMockReplaces.get(target.index()))
+        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, true));
+    // The factory of a mock may not have settled.
+    if (JSObject* exports = ensureLoaded(target).exportsOfMock) {
+        JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (esModule && esModule.toBoolean(realm)) {
+            JSValue defaultExport = exports->getIfPropertyExists(realm, vm.propertyNames->defaultKeyword);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (defaultExport && !defaultExport.isUndefined())
+                return defaultExport;
+        }
+    }
+    // An import had loaded the module when it was mocked. There the loader holds it as an ES module, so require() gets the namespace object, with the mock in it.
+    RELEASE_AND_RETURN(scope, moduleNamespace(target, ModulePhase::Evaluation));
+}
+
+JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2774,10 +2817,9 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer)
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
     // The library gets its own modules from the registry, where no mock stands.
-    if (referrer && targetData.isOfLibrary() && !data(referrer).isOfLibrary() && hostAnswersInPlaceOf(target, LoadByName::Require)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, true));
-    if (referrer && targetData.isOfLibrary() && !data(referrer).isOfLibrary() && requireAnswersNamespaceWithMock(target)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, moduleNamespace(target, ModulePhase::Evaluation));
+    bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
+    if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, requireThroughCache(target, referrer));
     if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
         m_state.statics->fillVariablesOfAllFiles();
 
@@ -2946,16 +2988,85 @@ std::optional<ModuleID> Modules::firstFileThatLoaderFindsBelow(ModuleID root)
     return std::nullopt;
 }
 
+// The graph below the entry point of a realm goes through all of its images. The loader has resolved what it has come to.
+std::optional<std::pair<Modules*, ModuleID>> Modules::firstFileOfRealmThatLoaderFindsBelow(ModuleID root)
+{
+    using Place = std::pair<Modules*, ModuleID>;
+    auto placeOf = [](Modules& modules, ModuleID target) -> Place {
+        if (!modules.data(target).isUncompiledCode())
+            return { &modules, target };
+        const Vector<Identifier>& keysOfFilesBelow = modules.m_instance.vm->aotState().parts[modules.m_instance.program->position()].keysOfFilesInImagesBelow;
+        String path;
+        if (target.index() < keysOfFilesBelow.size() && !keysOfFilesBelow[target.index()].isNull())
+            path = keysOfFilesBelow[target.index()].string();
+        else if (LoadedModule* loaded = modules.loadedIfExists(target); loaded && !loaded->resolvedKey.isNull())
+            path = loaded->resolvedKey.string();
+        else
+            return { &modules, target };
+        for (Instance* instance = modules.m_instance.globalObject->aotInstance(); instance && instance != &modules.m_instance; instance = instance->above) {
+            Modules* below = instance->state->modules.get();
+            if (!below)
+                continue;
+            if (std::optional<ModuleID> found = below->m_table.findByPath(path))
+                return { below, *found };
+        }
+        return { &modules, target };
+    };
+    if (isCommonJSFileOrFace(root))
+        return Place { this, fileOf(root) };
+    if (!isLoadedWithRequests(root))
+        return std::nullopt;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
+    auto isNew = [&](const Place& place) {
+        return seen.add(static_cast<uint64_t>(place.first->m_instance.program->position()) << 32 | place.second.index()).isNewEntry;
+    };
+    Vector<Place, 16> importers { Place { this, root } };
+    isNew(importers[0]);
+    for (size_t index = 0; index < importers.size(); ++index) {
+        auto [modules, importer] = importers[index];
+        for (const ModuleRequestData& request : modules->m_table.requests(importer)) {
+            if (request.isHoisted || request.isRequire || request.isDeferred)
+                continue;
+            Place target = placeOf(*modules, request.targetModule());
+            if (target.first->isCommonJSFileOrFace(target.second))
+                return Place { target.first, target.first->fileOf(target.second) };
+            if (target.first->isLoadedWithRequests(target.second) && isNew(target))
+                importers.append(target);
+        }
+    }
+    return std::nullopt;
+}
+
+// One file of a realm is the main one, or none: `owner` is null.
+void Modules::decideMainCommonJSModuleOfRealm(Modules* owner, ModuleID file)
+{
+    for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state->modules.get())
+            modules->decideMainCommonJSModule(modules == owner ? std::optional(file) : std::nullopt);
+    }
+}
+
 // Asked in front of every require() that makes a module object, and by whoever wants to know.
 void Modules::lookForMainCommonJSModule()
 {
     if (m_isMainCommonJSModuleDecided)
         return;
+    // The search begins at the entry point of the realm, whichever image holds it.
+    if (m_otherImageHoldsEntryPointOfRealm) [[unlikely]] {
+        if (Modules* modules = modulesWithEntryPointOfRealm(); modules && modules != this) {
+            modules->lookForMainCommonJSModule();
+            if (m_isMainCommonJSModuleDecided)
+                return;
+            if (modules->m_isMainCommonJSModuleDecided)
+                return decideMainCommonJSModule(std::nullopt);
+        }
+    }
     // Nothing of the program runs before the loader has come to the first file below the entry point.
-    if (m_firstModuleRequestedByHost && !std::exchange(m_didSearchBelowEntryPoint, true)) {
-        // A require() in another image has asked for it, so a file has a module object before the loader comes to one.
-        if (LoadedModule* first = loadedIfExists(*m_firstModuleRequestedByHost); first && first->firstRequirerOfOtherImage)
-            return decideMainCommonJSModule(std::nullopt);
+    if (m_firstModuleRequestedByHost && !m_otherImageHoldsEntryPointOfRealm && !std::exchange(m_didSearchBelowEntryPoint, true)) {
+        if (m_instance.vm->aotState().hasSeveralImages) [[unlikely]] {
+            if (auto file = firstFileOfRealmThatLoaderFindsBelow(*m_firstModuleRequestedByHost))
+                return decideMainCommonJSModuleOfRealm(file->first, file->second);
+        }
         if (std::optional<ModuleID> file = firstFileThatLoaderFindsBelow(*m_firstModuleRequestedByHost))
             return decideMainCommonJSModule(file);
     }
@@ -2963,10 +3074,14 @@ void Modules::lookForMainCommonJSModule()
         if (!wasRequestedByLoader(file))
             continue;
         // A require() that throws leaves no module object behind.
-        bool someFileHasModuleObject = std::ranges::any_of(m_modulesFirstRequiredByCallsInProgress, [&](ModuleID required) {
-            return status(required) != ModuleStatus::Failed;
-        });
-        return decideMainCommonJSModule(someFileHasModuleObject ? std::nullopt : std::optional(file));
+        bool someFileHasModuleObject = false;
+        for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+            Modules* modules = instance->state->modules.get();
+            someFileHasModuleObject |= modules && std::ranges::any_of(modules->m_modulesFirstRequiredByCallsInProgress, [&](ModuleID required) {
+                return modules->status(required) != ModuleStatus::Failed;
+            });
+        }
+        return decideMainCommonJSModuleOfRealm(someFileHasModuleObject ? nullptr : this, file);
     }
 }
 
@@ -3035,18 +3150,13 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
     return objects.module;
 }
 
-JSObject* Modules::mainModuleObject()
+JSObject* Modules::mainModuleObject(ModuleID main)
 {
-    Modules* modules = modulesWithEntryPointOfRealm();
-    if (!modules)
+    ModuleID file = fileOf(main);
+    // Flow lists the same files: modulesThatMayBeMain().
+    if (data(file).kind != ModuleKind::CommonJs || !data(file).isEntryPoint() || !mayHandOutModuleObject(file) || !wasRequestedByLoader(file))
         return nullptr;
-    if (modules != this) [[unlikely]] {
-        RunningImageScope scope(m_instance.vm->aotState(), modules->m_instance.program);
-        return modules->mainModuleObject();
-    }
-    if (data(*m_firstModuleRequestedByHost).kind != ModuleKind::CommonJs || !mayHandOutModuleObject(*m_firstModuleRequestedByHost))
-        return nullptr;
-    return moduleObject(*m_firstModuleRequestedByHost);
+    return moduleObject(file);
 }
 
 // `bun run` keeps the module object of every file that a require() has named, whatever the file holds, and of every CommonJS file that its loader of ES modules has come to. Whoever asks first makes the object.
@@ -3203,10 +3313,13 @@ void Modules::recordRequireFromOtherImage(ModuleID target, JSObject* moduleObjec
     bool isCommonJSFile = data(target).kind == ModuleKind::CommonJs;
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || data(target).kind == ModuleKind::Data) || !mayHandOutModuleObject(target))
         return;
+    lookForMainCommonJSModule();
     LoadedModule& required = ensureLoaded(target);
     if (required.firstRequirer || required.firstRequirerOfOtherImage || (isCommonJSFile && wasRequestedByLoader(target)))
         return;
     required.firstRequirerOfOtherImage.set(*this, moduleObjectOfReferrer);
+    if (!m_isMainCommonJSModuleDecided)
+        m_modulesFirstRequiredByCallsInProgress.append(target);
 }
 
 void Modules::recordRequireOfOtherImage(ModuleID referrer, ModuleID required)

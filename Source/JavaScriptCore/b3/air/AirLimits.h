@@ -32,6 +32,7 @@ inline constexpr unsigned minBlocksToSolveLivenessInPostOrder = 256;
 // Ordinary code has about two.
 inline constexpr size_t maxBoundaryIndicesPerInst = 32;
 
+inline constexpr unsigned maxClobberSitesPerSplit = 32;
 inline constexpr unsigned maxBlocksOnClusterPaths = 6;
 inline constexpr unsigned maxAffinityGroupSizeWithoutMap = 24;
 inline constexpr unsigned clobberPointsPerChunk = 64;

@@ -49,6 +49,8 @@ public:
     ~ClassTable();
 
     const LayoutData* classWithIndex(uint32_t) const;
+    // Null: the class is of another image.
+    const LayoutData* classOf(const ClassPrototype&) const;
     void askEveryClassForItsPrototype(VM&);
     const LayoutData* classConstructedBy(FunctionID) const;
     const LayoutData* classConstructedByClosureWithNumber(uint32_t closureNumber) const { return classConstructedBy(FunctionID(m_tables.closureFunctionWithNumber(closureNumber))); }

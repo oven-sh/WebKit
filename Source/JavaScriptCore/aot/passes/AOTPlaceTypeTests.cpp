@@ -4570,6 +4570,26 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
     return true;
 }
 
+// What `new Array(n)` says its length is, before anything else has touched it, is n.
+static ValueID numberReadAsLength(FunctionPassContext& context, std::span<const ListMadeWithLength> listsMade, ValueID list, ValueID read)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    for (const ListMadeWithLength& made : listsMade) {
+        if (analyses.identityOf(list) != made.list)
+            continue;
+        ValueLocation creation = analyses.useLists().locationOf(made.list);
+        ValueLocation location = analyses.useLists().locationOf(read);
+        if (location.block != creation.block || location.index < creation.index)
+            return { };
+        bool isFirst = std::ranges::all_of(function.at(creation.block).values.span().subspan(creation.index + 1, location.index - creation.index - 1), [&](ValueID id) {
+            return isCast(function.at(id).opcode) || storageMeasuredBy(context.program, function.at(id));
+        });
+        return isFirst ? made.length : ValueID();
+    }
+    return { };
+}
+
 // `k < list.length` in front of `list[k]` asks what the access needs to know. The test for that stands behind the comparison and fails into the arm of the program, which it never does.
 // So the access has no test of its own, whose generic arm would write the list and come back into the loop: nobody could then say that the list keeps its length.
 static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context)
@@ -4605,11 +4625,12 @@ static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& c
             continue;
         // The length is the one that the list has where the comparison is made.
         ValueID owner;
-        if (measured && measured->heap == AbstractHeap::ArrayStorage) {
+        bool isMeasured = measured && measured->heap == AbstractHeap::ArrayStorage;
+        const BlockValues& values = function.at(block).values;
+        size_t indexOfLength = values.find(length);
+        if (isMeasured && indexOfLength != notFound) {
             const Type& list = context.program.typeOf(function, measured->owner);
-            const BlockValues& values = function.at(block).values;
-            size_t indexOfLength = values.find(length);
-            if (indexOfLength == notFound || !list.singleBuiltinClass() || list.mayBeUndefinedOrNull() || !pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Storage))
+            if (!list.singleBuiltinClass() || list.mayBeUndefinedOrNull() || !pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Storage))
                 continue;
             bool isCurrent = std::ranges::none_of(values.span().subspan(indexOfLength + 1), [&](ValueID id) {
                 const EffectsOnEdges& effects = analyses.effectsOf(id);
@@ -4618,12 +4639,15 @@ static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& c
             if (isCurrent)
                 owner = measured->owner;
         } else {
+            ValueID number = isMeasured ? numberReadAsLength(context, listsMade.span(), measured->owner, length) : length;
+            if (!number)
+                continue;
             for (const ListMadeWithLength& made : listsMade) {
-                if (analyses.identityOf(made.length) != analyses.identityOf(length))
+                if (analyses.identityOf(made.length) != analyses.identityOf(number))
                     continue;
                 if (!relations)
                     relations.emplace(analyses);
-                if (hasLengthItWasMadeWith(context, *relations, made.list, made.length, block)) {
+                if (hasLengthItWasMadeWith(context, *relations, made.list, isMeasured ? length : made.length, block)) {
                     owner = made.list;
                     break;
                 }

@@ -48,6 +48,7 @@ struct LiveRangeSplitPolicy {
 
     AIR_POLICY_OF_CLIENT(bool, splitsAroundClobbersEarly, false);
     AIR_POLICY_OF_CLIENT(bool, spansStretchesOfClobbers, false);
+    AIR_POLICY_OF_CLIENT(bool, limitsClobberSitesPerSplit, false);
     AIR_POLICY_OF_CLIENT(bool, splitsIntoClustersOverBlocks, false);
     AIR_POLICY_OF_CLIENT(bool, splitsAroundFrame, false);
 };

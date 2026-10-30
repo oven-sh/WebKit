@@ -172,6 +172,11 @@ bool beginsAtInputStartAlone(const PatternAlternative& alternative)
     return !alternative.m_terms.isEmpty() && alternative.m_terms[0].type == PatternTerm::Type::AssertionBOL && !alternative.m_terms[0].multiline();
 }
 
+bool beginsAtInputEndAlone(const PatternAlternative& alternative)
+{
+    return !alternative.m_terms.isEmpty() && alternative.m_terms[0].type == PatternTerm::Type::AssertionEOL && !alternative.m_terms[0].multiline();
+}
+
 // Of the body's alternatives: no match of it begins anywhere but at the first place that a search tries.
 bool isTriedAtFirstPlaceAlone(const PatternAlternative& alternative)
 {
@@ -189,12 +194,17 @@ public:
     }
 
     bool hasFailed() const { return m_hasFailed; }
+    bool allowsEmptyMatchAtEnd() const { return m_allowsEmptyMatchAtEnd; }
 
     // Of the body: the alternatives that are tried at one place after another.
     Extent walk(const PatternDisjunction& disjunction, Runs& runs, unsigned depth)
     {
         Vector<const PatternAlternative*, 8> alternatives;
         for (auto& alternative : disjunction.m_alternatives) {
+            if (!depth && beginsAtInputEndAlone(*alternative)) {
+                m_allowsEmptyMatchAtEnd = true;
+                continue;
+            }
             if (depth || m_covers == Covers::EveryAlternative || !isTriedAtFirstPlaceAlone(*alternative))
                 alternatives.append(alternative.get());
         }
@@ -419,6 +429,7 @@ private:
     // What the match can hold between its start and the term that is walked. Without a value: anything.
     std::optional<Place> m_inFront;
     bool m_hasFailed { false };
+    bool m_allowsEmptyMatchAtEnd { false };
 };
 
 struct Candidate {
@@ -568,7 +579,7 @@ ALWAYS_INLINE unsigned nextStartOfRepeatedAlternatives(const RequiredTexts& text
                 places[i] = (earliest < length ? findText(required, subject, earliest) : length) + 1;
             size_t found = places[i] - 1;
             if (found >= length)
-                return length + 1;
+                return required.allowsEmptyMatchAtEnd ? length : length + 1;
             if (found - start > required.greatestDistance) {
                 start = found - required.greatestDistance;
                 if (sizeof(CharType) > 1 && required.decodesSurrogatePairs && U16_IS_TRAIL(subject[start]) && U16_IS_LEAD(subject[start - 1]))
@@ -650,6 +661,8 @@ RequiredTexts find(const YarrPattern& pattern, Covers covers)
         result.append(makeRequiredText(*rarest));
     if (nearest && rarest->run->distance.greatest == unbounded && !endsWalkSoon(*rarest))
         result.append(makeRequiredText(*nearest));
+    for (auto& required : result)
+        required.allowsEmptyMatchAtEnd = finder.allowsEmptyMatchAtEnd();
     return result;
 }
 
@@ -685,6 +698,9 @@ std::optional<RequiredText> findTextOfEveryMatch(const YarrPattern& pattern)
     if (result.isEmpty())
         return std::nullopt;
     fillTables(result[0], pattern);
+    result[0].isForFirstAttemptOnly = result[0].allowsEmptyMatchAtEnd && std::ranges::all_of(pattern.m_body->m_alternatives, [](auto& alternative) {
+        return isTriedAtFirstPlaceAlone(*alternative) || beginsAtInputEndAlone(*alternative);
+    });
     return WTF::move(result[0]);
 }
 

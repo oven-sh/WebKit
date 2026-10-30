@@ -3479,7 +3479,8 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     if (!requiredTexts.isEmpty()) {
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", requiredTexts.size(), " texts that every match holds");
         (*flatProgram)->setRequiredTexts(requiredTexts);
-    } else if (textOfEveryMatch && (*flatProgram)->triesOnlyOnce && !(*flatProgram)->isEnteredOutOfLine && !(*flatProgram)->jitCountsTurns && textOfEveryMatch->greatestDistance == RequiredText::unbounded) {
+    }
+    if (textOfEveryMatch && ((*flatProgram)->triesOnlyOnce || textOfEveryMatch->isForFirstAttemptOnly) && !(*flatProgram)->isEnteredOutOfLine && !(*flatProgram)->jitCountsTurns && textOfEveryMatch->greatestDistance == RequiredText::unbounded && !textOfEveryMatch->knowsUnitsInFront) {
         // An attempt that comes to the text at a known place fails there sooner than a search ends.
         dataLogLnIf(Options::verboseRegExpCompilation(), "Looks for a text that every match holds once the attempt has gone back often");
         (*flatProgram)->setTextOfEveryMatch(WTF::move(*textOfEveryMatch));

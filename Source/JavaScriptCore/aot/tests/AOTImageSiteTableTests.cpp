@@ -294,9 +294,9 @@ static void checkPositionsOf(const BodiesImage& built, uint32_t function, const 
     AOT_TEST_CHECK(!built.table().positionOf(index, firstReadSiteInFrontOf(CallSiteIndex(count), 1)));
 }
 
-static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite)
+static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite, uint32_t function = 1)
 {
-    const InlineFrameRecord& record = reader.at(built.table(), built.image.indexOf(1), frame);
+    const InlineFrameRecord& record = reader.at(built.table(), built.image.indexOf(function), frame);
     AOT_TEST_CHECK(record.parent == shape.parent);
     AOT_TEST_CHECK(record.callSite == CallSiteIndex(callSite));
     AOT_TEST_CHECK(record.function == (shape.calledBuiltin ? functionInFramesOf(shape.calledBuiltin, built.table().programTables().numberOfFunctions()) : FunctionID(shape.callee)));
@@ -313,6 +313,38 @@ static void testCallSitesInlineFrames()
     InlineFrameReader reader;
     for (unsigned frame : { 3u, 1u, 2u })
         checkInlineFrame(reader, built, frame, chainedFrames[frame - 1], 1 + frame);
+}
+
+static void testCallSitesInlineFramesOfTwoFunctionsInTurn()
+{
+    const std::array<unsigned, 3> siblingFramesByCall { 0, 1, 2 };
+    BodiesImage built(5, bodies(bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall).code, bodyWithInlineFrames(4, 0, siblingFrames, siblingFramesByCall).code));
+    auto readBothThrice = [&](InlineFrameReader& reader) {
+        for (unsigned turn = 0; turn < 3; ++turn) {
+            for (unsigned frame : { 3u, 1u, 2u })
+                checkInlineFrame(reader, built, frame, chainedFrames[frame - 1], 1 + frame);
+            for (unsigned frame : { 2u, 1u })
+                checkInlineFrame(reader, built, frame, siblingFrames[frame - 1], frame, 4);
+        }
+    };
+    InlineFrameReader remembersOne;
+    readBothThrice(remembersOne);
+
+    DecodedInlineFrames decoded;
+    InlineFrameReader reader(decoded);
+    readBothThrice(reader);
+    AOT_TEST_CHECK(decoded.numberOfTimesDecoded() == 2);
+
+    // More of a function's frames than are kept are decoded, and kept from then on.
+    DecodedInlineFrames decodedOutwards;
+    InlineFrameReader readsOutwards(decodedOutwards);
+    for (unsigned turn = 0; turn < 2; ++turn) {
+        for (unsigned frame : { 1u, 2u, 3u }) {
+            checkInlineFrame(readsOutwards, built, frame, chainedFrames[frame - 1], 1 + frame);
+            checkInlineFrame(readsOutwards, built, 1, siblingFrames[0], 1, 4);
+        }
+    }
+    AOT_TEST_CHECK(decodedOutwards.numberOfTimesDecoded() == 4);
 }
 
 static void testCallSitesInlineFrameOfBuiltin()
@@ -702,6 +734,7 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/inline-frames"_s, testCallSitesInlineFrames },
         { "image/call-sites/inline-frame-of-a-built-in"_s, testCallSitesInlineFrameOfBuiltin },
         { "image/call-sites/many-inline-frames"_s, testCallSitesManyInlineFrames },
+        { "image/call-sites/inline-frames-of-two-functions-in-turn"_s, testCallSitesInlineFramesOfTwoFunctionsInTurn },
         { "image/call-sites/site-frames"_s, testCallSitesSiteFrames },
         { "image/call-sites/site-frames-without-code"_s, testCallSitesSiteFramesWithoutCode },
         { "image/call-sites/fault-and-poll-sites"_s, testCallSitesFaultAndPollSites },

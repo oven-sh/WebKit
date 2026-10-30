@@ -287,6 +287,20 @@ bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& 
     return !m_inputs.sets().isSubset(maker().intersect(set, universe.constructedObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
+// `class B extends either {}`: what the constructor of a parent makes for B has the layout of B, which is none of the parent's while nobody knows the parent of B.
+bool ValueFlowPositions::turnsAwayObjectMadeForOtherClass(ValueSetID set, const Type& type)
+{
+    if (ValueSets::isComplement(set) || !type.isJavaScriptValue() || type.anyObject)
+        return false;
+    std::span<const LayoutID> members = membersOf(m_inputs.program, type);
+    return m_inputs.sets().anyMember(maker().intersect(set, m_inputs.universe().objectsThatPickTheirLayout()), [&](ValueFlowObjectID object) {
+        const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
+        return picked && std::ranges::any_of(picked->layouts, [&](LayoutID layout) {
+            return !std::ranges::binary_search(members, layout);
+        });
+    });
+}
+
 bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
 {
     const ValueFlowUniverse& universe = m_inputs.universe();

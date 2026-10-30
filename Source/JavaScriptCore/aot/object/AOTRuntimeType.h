@@ -81,7 +81,9 @@ struct alignas(4) RuntimeType {
 
     uint16_t primitives;
     uint8_t flags;
-    uint8_t unused;
+    // Those that stand in front of testsOfOneFunctionEach(): a type has a handful. With more than fit here it says so, and they are counted.
+    static constexpr uint8_t hasManyTestsOfMoreThanOneFunction = UINT8_MAX;
+    uint8_t numberOfTestsOfMoreThanOneFunctionIfFew;
     uint16_t numberOfCellTests;
     uint16_t numberOfLiteralStrings;
 
@@ -91,6 +93,20 @@ struct alignas(4) RuntimeType {
     {
         return { reinterpret_cast<const RuntimeCellTest*>(this + 1), numberOfCellTests };
     }
+
+    // A member that holds one of many functions has a test for each of them. They stand behind all other tests, by rising number.
+    size_t numberOfTestsOfMoreThanOneFunction() const
+    {
+        if (numberOfTestsOfMoreThanOneFunctionIfFew != hasManyTestsOfMoreThanOneFunction) [[likely]]
+            return numberOfTestsOfMoreThanOneFunctionIfFew;
+        std::span<const RuntimeCellTest> tests = cellTests();
+        return std::ranges::partition_point(tests, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; }) - tests.begin();
+    }
+
+    std::span<const RuntimeCellTest> testsOfOneFunctionEach() const { return cellTests().subspan(numberOfTestsOfMoreThanOneFunction()); }
+    std::span<const RuntimeCellTest> testsOfMoreThanOneFunction() const { return cellTests().first(numberOfTestsOfMoreThanOneFunction()); }
+
+    bool listsClosureNumber(uint32_t number) const { return std::ranges::binary_search(testsOfOneFunctionEach(), number, { }, &RuntimeCellTest::operand); }
 
     std::span<const uint32_t> literalStrings() const
     {
@@ -121,7 +137,7 @@ struct alignas(4) RuntimeType {
 
     bool acceptsEveryObject() const
     {
-        for (const RuntimeCellTest& test : cellTests()) {
+        for (const RuntimeCellTest& test : testsOfMoreThanOneFunction()) {
             if (test.kind == CellTestKind::IsObject)
                 return true;
         }

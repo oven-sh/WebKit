@@ -93,7 +93,7 @@ private:
     WriteBarrier<JSObject> m_liveSources;
     ModuleID m_module;
     ModuleID m_face;
-    uint8_t m_imagePosition;
+    unsigned m_imagePosition;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };

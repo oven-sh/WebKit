@@ -400,21 +400,15 @@ bool RuntimeLayoutTable::valueHasType(const RuntimeType& type, JSValue value) co
 
 bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) const
 {
-    // A member that holds one of many functions has a test for each of them.
-    bool hasAskedForFunction = false;
-    std::optional<uint32_t> closureNumber;
-    for (const RuntimeCellTest& test : type.cellTests()) {
-        if (test.kind != CellTestKind::IsClosureOf) {
-            if (cellPassesTest(test, cell))
-                return true;
-            continue;
-        }
-        if (!std::exchange(hasAskedForFunction, true))
-            closureNumber = closureNumberOf(cell);
-        if (closureNumber == test.closureNumber())
+    std::span<const RuntimeCellTest> tests = type.testsOfMoreThanOneFunction();
+    for (const RuntimeCellTest& test : tests) {
+        if (cellPassesTest(test, cell))
             return true;
     }
-    return false;
+    if (tests.size() == type.numberOfCellTests)
+        return false;
+    std::optional<uint32_t> closureNumber = closureNumberOf(cell);
+    return closureNumber && type.listsClosureNumber(*closureNumber);
 }
 
 std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, JSValue value) const

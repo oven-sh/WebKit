@@ -4277,7 +4277,13 @@ RegisterID* AssignBracketNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
     RefPtr<RegisterID> base = generator.emitNodeForLeftHandSide(m_base, m_subscriptHasAssignments || m_rightHasAssignments, m_subscript->isPure(generator) && m_right->isPure(generator));
-    RefPtr<RegisterID> property = generator.emitNodeForLeftHandSideForProperty(m_subscript, m_rightHasAssignments, m_right->isPure(generator));
+#if ENABLE(AOT)
+    // The store names the property itself, so no register holds the name.
+    bool storeNamesProperty = Options::runsCompiledImage() && isNonIndexStringElement(*m_subscript);
+#else
+    constexpr bool storeNamesProperty = false;
+#endif
+    RefPtr<RegisterID> property = storeNamesProperty ? nullptr : generator.emitNodeForLeftHandSideForProperty(m_subscript, m_rightHasAssignments, m_right->isPure(generator));
     RefPtr<RegisterID> value = generator.destinationForAssignResult(dst);
     RefPtr<RegisterID> result = generator.emitNode(value.get(), m_right);
 

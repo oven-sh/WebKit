@@ -17,6 +17,7 @@
 #include "AOTCompiledCaller.h"
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
+#include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
@@ -671,7 +672,7 @@ static ALWAYS_INLINE PlaceInFunctionText placeInFunctionTextOf(const CompiledFra
     std::optional<SourcePosition> definition = frame.inlineFrame ? std::nullopt : image->positionOf(frame.code.index(), CallSiteIndex(0));
     std::optional<unsigned> line;
     if (place && definition && place->source == definition->source && place->lineColumn.line >= definition->lineColumn.line)
-        line = place->lineColumn.line - definition->lineColumn.line;
+        line = place->lineColumn.line - definition->lineColumn.line + linesOfTextAboveSource(description.sourceFunction());
     return PlaceInFunctionText { frame.returnAddress, description.sourceFunction(), line, place ? place->source : ModuleID(), place ? place->lineColumn : LineColumn() };
 }
 

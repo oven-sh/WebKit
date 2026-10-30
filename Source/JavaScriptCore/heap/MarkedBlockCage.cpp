@@ -14,6 +14,7 @@
 #include "ReservedRangeHeap.h"
 #include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "WeakBlock.h"
 #include "WeakInlines.h"
 #include <algorithm>
 #include <array>
@@ -421,6 +422,8 @@ MarkedBlockCage::MarkedBlockCage()
 
 MarkedBlockCage::~MarkedBlockCage()
 {
+    for (void* block : std::exchange(m_spareWeakBlocks, { }))
+        WeakBlockMalloc::free(block);
     releaseOwnLastReserve();
     // The blocks of this VM have gone back to the range.
     if (m_owesSharedReserve)
@@ -558,7 +561,7 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables });
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Tables, ExhaustedHeap::WeakBlocks });
 }
 
 bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
@@ -574,6 +577,11 @@ bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
         if (!vm.symbolImplToSymbolMap.tryGrowEarly())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
+    }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::WeakBlocks)) {
+        if (!tryFillSpareWeakBlocks())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::WeakBlocks);
     }
     if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
@@ -794,7 +802,7 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     vm.traps().setNeedsOutOfMemoryError(false);
     didThrowOutOfMemoryError(vm);
@@ -895,6 +903,35 @@ void MarkedBlockCage::willAddArrayBuffer(VM& vm)
         return;
     addExhaustedHeap(ExhaustedHeap::ListOfArrayBuffers);
     vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+bool MarkedBlockCage::keepsSpareWeakBlocks()
+{
+    return s_isGrowable;
+}
+
+bool MarkedBlockCage::tryFillSpareWeakBlocks()
+{
+    while (m_spareWeakBlocks.size() < numberOfSpareWeakBlocks) {
+        void* block = WeakBlockMalloc::tryAlignedMalloc(WeakBlock::blockSize, WeakBlock::blockSize);
+        if (!block)
+            return false;
+        m_spareWeakBlocks.append(block);
+    }
+    return true;
+}
+
+void* MarkedBlockCage::allocateWeakBlock(VM& vm)
+{
+    if (!tryFillSpareWeakBlocks() && !vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        addExhaustedHeap(ExhaustedHeap::WeakBlocks);
+        vm.traps().setNeedsOutOfMemoryError(true);
+    }
+    if (m_spareWeakBlocks.isEmpty()) [[unlikely]] {
+        logExhaustion(ExhaustedHeap::Cells);
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    }
+    return m_spareWeakBlocks.takeLast();
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

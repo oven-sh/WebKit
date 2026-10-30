@@ -16,6 +16,7 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTStubsArrays.h"
+#include "AOTValueIdentity.h"
 #include <ranges>
 #include <wtf/StdLibExtras.h>
 
@@ -420,6 +421,9 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
 
 void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
 {
+    ValueID list = sameObjectThroughCasts(m_function, value->arrayOperand()).valueInFrontOfFacts();
+    if (ArrayAllocationEmitter(generator()).appendThatFillsLiteral(value.block(), list) == value.id())
+        return;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });

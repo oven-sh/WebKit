@@ -116,6 +116,7 @@ public:
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
         findStepsAndRunsAtStart();
+        findStartPair();
         computeDirtyCaptureRanges();
 
         if (!program->text.isEmpty()) {
@@ -942,6 +943,7 @@ private:
         unsigned leastSizeOfMatch { 0 };
         unsigned termsLeftToVisit { maxTermsVisitedForStartTable };
         bool mayMatchOnlyAtInputStart { false };
+        bool mayMatchOnlyAtInputEnd { false };
         std::optional<char32_t> onlyWideStart;
         bool hasSeveralWideStarts { false };
 
@@ -994,6 +996,10 @@ private:
                 start.mayMatchOnlyAtInputStart |= !place;
                 return;
             case PatternTerm::Type::AssertionEOL:
+                if (place || term.multiline())
+                    break;
+                start.mayMatchOnlyAtInputEnd = true;
+                return;
             case PatternTerm::Type::AssertionWordBoundary:
             case PatternTerm::Type::ParentheticalAssertion:
             case PatternTerm::Type::NumberedForwardReference:
@@ -1151,6 +1157,41 @@ private:
         m_program->firstStartFoundByTablesAlone = std::numeric_limits<unsigned>::max();
     }
 
+    void findStartPair()
+    {
+        if (m_program->startScan != FlatStartScan::Table || m_program->skipsStartsBehindFailedRuns || m_decodesSurrogatePairs)
+            return;
+        auto& pair = m_program->startPair;
+        bool hasFirst = false;
+        for (unsigned place = 0; place < m_program->startTableDepth; ++place) {
+            if (m_program->startTable[256] >> place & 1)
+                continue;
+            unsigned count = 0;
+            unsigned least = 0;
+            unsigned greatest = 0;
+            for (unsigned member = 0; member < 256; ++member) {
+                if (!(m_program->startTable[member] >> place & 1))
+                    continue;
+                if (!count++)
+                    least = member;
+                greatest = member;
+            }
+            bool isLetterInBothCases = count == 2 && isASCIIUpper(least) && greatest == toASCIILower(least);
+            if (count != 1 && !isLetterInBothCases)
+                continue;
+            if (!std::exchange(hasFirst, true)) {
+                pair.first = static_cast<Latin1Character>(greatest);
+                pair.firstCaseMask = isLetterInBothCases ? 0x20 : 0;
+                pair.firstPlace = place;
+                continue;
+            }
+            pair.second = static_cast<Latin1Character>(greatest);
+            pair.secondCaseMask = isLetterInBothCases ? 0x20 : 0;
+            pair.secondPlace = place;
+            m_program->startScan = FlatStartScan::TableBehindPair;
+        }
+    }
+
     void computeStartScan(Alternatives alternatives)
     {
         if (m_program->triesOnlyOnce)
@@ -1182,10 +1223,14 @@ private:
             --start.depth;
         if (!start.depth)
             return;
+        bool hasFirstCharacter = start.mayBeWide[0] || std::ranges::any_of(start.at[0].bits, [](uint64_t word) { return !!word; });
+        if (start.mayMatchOnlyAtInputEnd && !hasFirstCharacter)
+            return;
 
         m_program->startScan = FlatStartScan::Table;
         m_program->startTableDepth = start.depth;
         m_program->mayMatchOnlyAtInputStart = start.mayMatchOnlyAtInputStart;
+        m_program->mayMatchOnlyAtInputEnd = start.mayMatchOnlyAtInputEnd;
         m_program->firstStartFoundByTablesAlone = start.mayMatchOnlyAtInputStart;
         unsigned firstCount = 0;
         for (unsigned place = 0; place < start.depth; ++place) {

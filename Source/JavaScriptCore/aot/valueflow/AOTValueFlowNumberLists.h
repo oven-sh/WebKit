@@ -131,6 +131,8 @@ public:
         ++m_numberOfNumbers;
     }
 
+    void clear(uint32_t& list) { m_numberOfNumbers -= giveBack(std::exchange(list, 0)); }
+
     // Of up to sixteen numbers the latest comes first.
     void forEach(uint32_t list, NOESCAPE const auto& functor) const
     {
@@ -259,6 +261,22 @@ private:
         uint32_t& firstFree = m_firstFree[room];
         *m_words.at(list) = firstFree;
         firstFree = list;
+    }
+
+    size_t giveBack(uint32_t list)
+    {
+        if (isAllInName(list))
+            return !!list;
+        const uint32_t* words = m_words.at(list);
+        if (uint32_t size = words[0]; size != isDealtOut) {
+            giveBackList(list, roomFor(size));
+            return size;
+        }
+        size_t numberOfNumbers = 0;
+        for (unsigned index = 0; index < listsDealtTo; ++index)
+            numberOfNumbers += giveBack(words[1 + index]);
+        giveBackList(list, listsDealtTo);
+        return numberOfNumbers;
     }
 
     ValueFlowWords m_words;

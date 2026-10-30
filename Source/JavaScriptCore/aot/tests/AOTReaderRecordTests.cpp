@@ -167,6 +167,7 @@ void testModuleRecords()
         damages.enumerator<SyntheticExportRule>("Module.exportRule"_s, module(offsetof(Wire::Module, exportRule)));
         damages.enumerator<RequireResult>("Module.requireResult"_s, module(offsetof(Wire::Module, requireResult)));
         damages.enumerator<ExternalKind>("Module.externalKind"_s, module(offsetof(Wire::Module, externalKind)));
+        damages.optionalID("Module.typeAttribute"_s, module(offsetof(Wire::Module, typeAttribute)), List::Strings);
         damages.external("Module.runtimeModule"_s, module(offsetof(Wire::Module, runtimeModule)));
         damages.optionalID("Module.referrer"_s, module(offsetof(Wire::Module, referrer)), List::Modules);
         damages.optionalID("Module.body"_s, module(offsetof(Wire::Module, body)), List::Functions);

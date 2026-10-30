@@ -11,9 +11,13 @@
 #include "AOTBuildContext.h"
 #include "AOTCoroutines.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
+#include "AOTInductionVariables.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -344,6 +348,103 @@ static bool expectOperandTypesOfFirstOverload(FunctionPassContext& context)
     return true;
 }
 
+// `new Array(n)` returns only if the number n is a whole number from 0 to 2^32 - 1, or -0, and the list is then that long. No comparison tells -0 from 0,
+// so behind the call a comparison with n asks for the length of the list. That is an integer, and so is a counter that stays below it.
+static bool compareWithLengthsOfNewLists(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::CallBuiltin) || !analyses.opcodesOfValues().intersects(relationalOperators))
+        return false;
+
+    struct NewList {
+        ValueID list;
+        ValueID number;
+        ProgramPoint behind;
+        Vector<Use, 4> comparisons { };
+    };
+    Vector<NewList, 2> lists;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& call = function.at(values[index]);
+            if (call.opcode != Opcode::CallBuiltin || call.argumentsOperands().empty() || inlineImplementationOf(program, call) != InlineBuiltin::ArrayWithLength)
+                continue;
+            // Anything but a number would be the only element.
+            ValueID number = call.argumentsOperands()[0];
+            if (!program.typeOf(function, number).isNumber() || program.typeOf(function, number).isInteger())
+                continue;
+            // What flow knows of the lists made here stands in the cast behind the call.
+            ValueID list = values[index];
+            uint32_t last = index;
+            while (last + 1 < values.size() && function.at(values[last + 1]).opcode == Opcode::AssumeType && function.at(values[last + 1]).operand(0) == list)
+                list = values[++last];
+            if (proofsNeededFromGuard(program, function, IRBuilder::make(Opcode::GetArrayLength, { list, ValueID() })).isEmpty())
+                lists.append({ list, number, { block, last + 1 } });
+        }
+    }
+    if (lists.isEmpty())
+        return false;
+
+    bool hasComparison = false;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& comparison = function.at(id);
+            if (!relationalOperators.contains(comparison.opcode))
+                continue;
+            for (uint32_t operandIndex = 0; operandIndex < comparison.numberOfOperands(); ++operandIndex) {
+                ValueID compared = analyses.identityOf(comparison.operand(operandIndex));
+                for (NewList& made : lists) {
+                    if (compared != analyses.identityOf(made.number) || !analyses.dominates(made.list, analyses.useLists().pointOf(id)))
+                        continue;
+                    made.comparisons.append(Use { Use::Kind::Operand, block, id, operandIndex });
+                    hasComparison = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!hasComparison)
+        return false;
+
+    // What an edge says of n, it would now say of the length. Whoever reads it there wants n, which may be -0.
+    ValueSubstitution namesOnEdges(function);
+    for (const NewList& made : lists) {
+        for (const Use& use : made.comparisons) {
+            for (const Use& branch : analyses.useLists().usesOf(use.user)) {
+                if (branch.kind != Use::Kind::TerminatorOperand || function.at(branch.block).terminator.kind != TerminatorKind::Branch)
+                    continue;
+                for (uint32_t targetIndex = 0; targetIndex < 2; ++targetIndex) {
+                    const Target& target = targetOf(function, Edge { branch.block, targetIndex });
+                    size_t result = target.proofs.find(use.operandIndex);
+                    if (result != notFound)
+                        namesOnEdges.replace(function.at(target.block).parameters[firstEdgeResultParameter(function, branch.block, targetIndex) + result], function.at(use.user).operand(use.operandIndex));
+                }
+            }
+        }
+    }
+    if (!namesOnEdges.isEmpty())
+        namesOnEdges.apply(function, &analyses);
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    Vector<ValueID> changed;
+    for (const NewList& made : lists) {
+        if (made.comparisons.isEmpty())
+            continue;
+        builder.setOrigin(function.at(made.list).origin());
+        ValueID length = builder.insertBefore(made.behind, IRBuilder::make(Opcode::GetArrayLength, { made.list, ValueID() }));
+        for (const Use& use : made.comparisons) {
+            replaceUse(function, use, length);
+            changed.append(use.user);
+        }
+    }
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    narrowValueTypes(TypePropagationInputs { program, context.id, function, analyses, context.types, context.build, &context.typingMemo }, changed.span());
+    return true;
+}
+
 static PassOutcome runSteps(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -395,9 +496,10 @@ static PassOutcome runSteps(FunctionPassContext& context)
         rewriteForwardedTailCalls(context, calls.span());
         didChangeIf(!calls.isEmpty());
     }
-    if (!hasSitesIn(SiteList::BuiltinUses))
-        return outcome;
-    return outcome | BuiltinResolver(context).run();
+    if (hasSitesIn(SiteList::BuiltinUses))
+        outcome |= BuiltinResolver(context).run();
+    didChangeIf(compareWithLengthsOfNewLists(context));
+    return outcome;
 }
 
 PassOutcome resolveBuiltins(FunctionPassContext& context)

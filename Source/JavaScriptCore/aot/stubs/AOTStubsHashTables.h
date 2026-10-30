@@ -82,8 +82,8 @@ ptrdiff_t offsetOfHashTableStorage();
 void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLookup, HashTableExits&);
 // hash = rapidHashMix64(key). On x86-64 hash is rax and scratch is rdx.
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
-// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test.
-void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr);
+// Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test, which is left out where nobody falls in from above.
+void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr, bool everyoneKnowsTheWidth = false);
 
 } } // namespace JSC::AOT
 

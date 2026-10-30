@@ -63,6 +63,7 @@ static void enableEveryAirSwitch(Air::Policy& air)
     air.registers.evictsHolderOfPreferredRegister = true;
     air.splitting.splitsAroundClobbersEarly = true;
     air.splitting.spansStretchesOfClobbers = true;
+    air.splitting.limitsClobberSitesPerSplit = true;
     air.splitting.splitsIntoClustersOverBlocks = true;
     air.splitting.splitsAroundFrame = true;
     air.frame.shrinkWraps = true;
@@ -129,7 +130,7 @@ static bool hasSamePreferredRegisters(const Policy& policy, const Policy& other)
 static bool hasSameLiveRangeSplitting(const Policy& policy, const Policy& other)
 {
     auto fieldsOf = [](const Air::LiveRangeSplitPolicy& splitting) {
-        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.spansStretchesOfClobbers, splitting.splitsIntoClustersOverBlocks);
+        return std::tuple(splitting.splitsAroundClobbersEarly, splitting.spansStretchesOfClobbers, splitting.limitsClobberSitesPerSplit, splitting.splitsIntoClustersOverBlocks);
     };
     return fieldsOf(policy.air.splitting) == fieldsOf(other.air.splitting);
 }

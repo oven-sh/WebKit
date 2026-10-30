@@ -73,18 +73,17 @@ struct ReturnAddressTrace {
     std::span<const uint32_t> flagWords() const { return { reinterpret_cast<const uint32_t*>(this + 1) + numberOfReturnAddresses, numberOfFlagWords(numberOfReturnAddresses) }; }
 
     // In a VM that runs several images a trace may hold several runs, each of one image: compiled code of one run has called the run in front of it, with no frame that is listed between.
-    // Each address counts from the code of its own image. Behind the flag words, in such a VM only, stand the number of runs and a word for each.
-    static constexpr unsigned imagePositionBits = 3;
-    static constexpr size_t sizeOfRunTable(size_t numberOfRuns) { return numberOfRuns ? (1 + numberOfRuns) * sizeof(uint32_t) : 0; }
-    static constexpr uint32_t encodeRun(size_t endOfReturnAddresses, unsigned imagePosition) { return static_cast<uint32_t>(endOfReturnAddresses) << imagePositionBits | imagePosition; }
-    static constexpr size_t endOfRun(uint32_t run) { return run >> imagePositionBits; }
-    static constexpr unsigned imagePositionOfRun(uint32_t run) { return run & ((1u << imagePositionBits) - 1); }
-    static_assert(returnAddressCountBits + imagePositionBits <= 32);
+    // Each address counts from the code of its own image. Behind the flag words, in such a VM only, stand the number of runs and a record for each.
+    struct Run {
+        uint32_t endOfReturnAddresses;
+        uint32_t imagePosition;
+    };
+    static constexpr size_t sizeOfRunTable(size_t numberOfRuns) { return numberOfRuns ? sizeof(uint32_t) + numberOfRuns * sizeof(Run) : 0; }
     uint32_t* runTable() { return reinterpret_cast<uint32_t*>(this + 1) + numberOfReturnAddresses + numberOfFlagWords(numberOfReturnAddresses); }
-    std::span<const uint32_t> runs() const
+    std::span<const Run> runs() const
     {
         const uint32_t* table = reinterpret_cast<const uint32_t*>(this + 1) + numberOfReturnAddresses + numberOfFlagWords(numberOfReturnAddresses);
-        return { table + 1, table[0] };
+        return { reinterpret_cast<const Run*>(table + 1), table[0] };
     }
 
     OptionSet<Flag> flagsAt(size_t index) const { return OptionSet<Flag>::fromRaw(static_cast<uint8_t>(flagWords()[index / returnAddressesPerFlagWord] >> shiftInFlagWord(index) & flagsMask)); }

@@ -851,6 +851,13 @@ std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID source)
     return bytesOf(tables, entries.front());
 }
 
+unsigned linesOfTextAboveSource(FunctionID source)
+{
+    std::span constructors = programTables().constructorLines();
+    auto found = std::ranges::lower_bound(constructors, source.index(), { }, &ConstructorLineData::function);
+    return found != constructors.end() && found->function == source.index() ? found->linesOfTextAbove : 0;
+}
+
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
 {
     VM& vm = globalObject->vm();

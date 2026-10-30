@@ -130,6 +130,32 @@ static void testImageFunctionOf()
     AOT_TEST_CHECK(!loaded.imageFunctionOf(FunctionID(merged.build.program().functions.size() + 100)));
 }
 
+static void testImageFunctionOfClosureFunctions()
+{
+    TestBuild build(5);
+    FunctionID withCode = build.genericEntrypointOf(1);
+    FunctionID atPrimaryEntry = build.genericEntrypointOf(2);
+    FunctionID firstBesideBody = build.genericEntrypointOf(3);
+    FunctionID secondBesideBody = build.genericEntrypointOf(4);
+    TestImage image = build.build(bodies(plainBody(1), plainBody(2), plainBody(withCode.index()), jumpOnlyBody(atPrimaryEntry.index(), 2), wordThenJumpBody(firstBesideBody.index(), 5, 2), wordThenJumpBody(secondBesideBody.index(), 6, 2)));
+    const Image& loaded = *image.image;
+    AOT_TEST_CHECK(image.built.aliases.size() == 3);
+
+    std::optional<uint32_t> index = loaded.imageFunctionOf(withCode);
+    AOT_TEST_CHECK(index && loaded.rootFunctionOf(*index) == withCode);
+    AOT_TEST_CHECK(loaded.imageFunctionFromClosureWord(withCode) == index);
+    for (const EntryAlias& alias : image.built.aliases) {
+        AOT_TEST_CHECK(loaded.closureWord(alias.function));
+        AOT_TEST_CHECK(!loaded.imageFunctionOf(alias.function));
+    }
+    AOT_TEST_CHECK(!loaded.hasSortedFunctionIndex());
+
+    AOT_TEST_CHECK(!loaded.imageFunctionFromClosureWord(FunctionID(1u)));
+    index = loaded.imageFunctionOf(FunctionID(1u));
+    AOT_TEST_CHECK(index && loaded.rootFunctionOf(*index) == FunctionID(1u));
+    AOT_TEST_CHECK(loaded.hasSortedFunctionIndex());
+}
+
 static void testInnerEntryAfterBody()
 {
     MergedImage merged;
@@ -722,6 +748,7 @@ std::span<const NativeTest> imageFunctionTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/functions/image-function-of"_s, testImageFunctionOf },
+        { "image/functions/image-function-of-closure-functions"_s, testImageFunctionOfClosureFunctions },
         { "image/functions/inner-entry-after-body"_s, testInnerEntryAfterBody },
         { "image/functions/inner-entry-before-body"_s, testInnerEntryBeforeBody },
         { "image/functions/inner-entry-at-primary-entry"_s, testInnerEntryAtPrimaryEntry },

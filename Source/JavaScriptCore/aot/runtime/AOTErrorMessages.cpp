@@ -83,7 +83,7 @@ static String constructorName(JSObject* prototype)
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype)) {
         ImageOfCellScope imageOfPrototype(prototype);
         const ClassTable& classes = (*Instance::owning(prototype)->state).objects->classes;
-        return initialNameProperty(FunctionID(classes.classWithIndex(lazyPrototype->classIndex())->classData().classConstructor));
+        return initialNameProperty(FunctionID(classes.classOf(*lazyPrototype)->classData().classConstructor));
     }
     if (CompiledCallee::isCompiledCallee(prototype))
         return { };

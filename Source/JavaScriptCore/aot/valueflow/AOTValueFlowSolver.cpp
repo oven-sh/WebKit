@@ -3321,6 +3321,7 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records)
     constexpr size_t recordsPerShare = 256;
     struct Share {
         Vector<ValueFlowStatementID> statements;
+        Vector<ValueFlowNodeID> nodesWithReaders;
         uint32_t numberOfNodesPutToRest { 0 };
     };
     Vector<Share> shares((records.size() + recordsPerShare - 1) / recordsPerShare);
@@ -3329,13 +3330,15 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records)
         Vector<uint32_t, 64> toLetGo;
         Vector<uint32_t, 64> recordsWhosePartsAreLetGo;
         // A record keeps its parts awake from its first user to its last.
-        auto letGo = [&](uint32_t number) {
-            if (WTF::atomicExchangeAdd(&m_numberOfUsers[number], static_cast<uint32_t>(-1), std::memory_order_relaxed) != 1)
-                return;
+        auto putToRest = [&](uint32_t number) {
             ++share.numberOfNodesPutToRest;
             MadeNodes& madeNodes = m_madeNodes[number];
             madeNodes.set(MadeNodes::HasBeenAtRest);
             m_graph.putToRest(madeNodes.first, madeNodes.key.numberOfNodes());
+            for (uint32_t offset = 0; offset < madeNodes.key.numberOfNodes(); ++offset) {
+                if (ValueFlowNodeID node(madeNodes.first.index() + offset); readersOf(node))
+                    share.nodesWithReaders.append(node);
+            }
             if (ValueFlowStatementID statement = madeNodes.statement()) {
                 if (uint32_t list = std::exchange(m_usesOfStatement[statement.index()], noSolverIndex); list != noSolverIndex)
                     toLetGo.append(list);
@@ -3343,6 +3346,10 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records)
             }
             if (madeNodes.has(MadeNodes::HasParts))
                 recordsWhosePartsAreLetGo.append(number);
+        };
+        auto letGo = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
+            if (WTF::atomicExchangeAdd(&m_numberOfUsers[number], static_cast<uint32_t>(-1), std::memory_order_relaxed) == 1)
+                putToRest(number);
         };
         for (uint32_t number : records.subspan(index * recordsPerShare, std::min(recordsPerShare, records.size() - index * recordsPerShare)))
             letGo(number);
@@ -3360,13 +3367,40 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records)
             giveBackUses(m_usesOfThreads[worker], list, count);
         }
     });
+    Vector<ValueFlowNodeID> nodesWithReaders;
     for (const Share& share : shares) {
         m_counters.madeNodesAtRest += share.numberOfNodesPutToRest;
+        nodesWithReaders.appendVector(share.nodesWithReaders);
         if (m_valuesShownToStatement.isEmpty())
             continue;
         for (ValueFlowStatementID statement : share.statements)
             m_valuesShownToStatement.remove(statement.index());
     }
+    forgetReadersOf(nodesWithReaders.span());
+}
+
+// Nobody asks for these nodes any more: each reader has run again without them. Whoever asks again is noted again.
+void ValueFlowSolver::forgetReadersOf(std::span<const ValueFlowNodeID> nodes)
+{
+    AOT_THRESHOLD(size_t, fewestNodesForThreads, 1024);
+    auto forget = [&](ValueFlowNodeID node) {
+        m_readerShards[readerShardOf(node)].readersOfNodes.clear(m_readersOfNode[node.index()]);
+        m_listenersOfNode[node.index()] &= ~ReadsNode;
+        if (node.index() < m_coveringStateOfShownView.size())
+            m_coveringStateOfShownView[node.index()] = UINT16_MAX;
+    };
+    if (nodes.size() < fewestNodesForThreads) {
+        for (ValueFlowNodeID node : nodes)
+            forget(node);
+        return;
+    }
+    std::array<Vector<ValueFlowNodeID>, numberOfReaderShards> nodesOfShard;
+    for (ValueFlowNodeID node : nodes)
+        nodesOfShard[readerShardOf(node)].append(node);
+    forEachIndexInParallel(m_loops, numberOfReaderShards, [&](unsigned shard) {
+        for (ValueFlowNodeID node : nodesOfShard[shard])
+            forget(node);
+    });
 }
 
 void ValueFlowSolver::noteNodesAskedFor()
@@ -6486,6 +6520,7 @@ void ValueFlowSolver::report()
     build.statistics().count(hitsOf(LimitID::MaxValueFlowSetMembers), m_counters.nodesSaturated);
     build.statistics().count(StatisticID::LayoutsOutsideFamily, m_counters.nodesHoldingObjectsOutsideFamily);
     build.statistics().count(StatisticID::FlowEdgesLogged, m_counters.edgesLogged);
+    build.statistics().count(StatisticID::FlowReaders, m_counters.readers);
 
     if (!build.validates())
         return;
@@ -6766,6 +6801,7 @@ void ValueFlowSolver::solve()
         if (countsReadersAndEdges)
             dumpEdgesByEnds();
     }
+    m_counters.readers = numberOfReaders();
     m_stepTimes.begin();
     fillNumbersThatNobodyGave();
     m_stepTimes.didFinish("behind the rounds: numbers that nobody gave"_s);

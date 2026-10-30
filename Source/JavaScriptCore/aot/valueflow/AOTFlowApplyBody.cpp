@@ -23,6 +23,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTValuesOfSteps.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -196,6 +197,15 @@ static void insertBehindDefinitions(const FlowCastInsertion& insertion, const Co
             continue;
 
         ProgramPoint point = useLists.pointAfter(definition);
+        // The step that finds the end answers undefined. What leaves that out holds where the step has not found the end.
+        if constexpr (std::is_same_v<Entry, FlowValueProof>) {
+            const Value& read = function.at(definition);
+            bool isValueOfStep = read.opcode == Opcode::ResultAt && function.at(read.resultsOperand()).opcode == Opcode::IteratorResume && useLists.blockOf(read.resultsOperand()) == point.block;
+            if (isValueOfStep && !(insertion.body.types.at(entry.type).primitives & Primitive::Undefined)) {
+                if (BlockID behind = blockThatAloneUsesValueOfStep(function, insertion.analyses.cfg(), useLists, insertion.analyses.dominators(), read.resultsOperand()))
+                    point = ProgramPoint::atHeadOf(behind);
+            }
+        }
         uint32_t firstUse = static_cast<uint32_t>(redirectedUses.size());
         for (const Use& use : uses) {
             if (acceptsCastOfValue(function, use) && (placement == ValuePlacement::InBlock || pointDominates(insertion, useLists, point, use)))
@@ -706,6 +716,17 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
 
     for (const FlowAccessStamp& stamp : update.accesses)
         function.edit(stamp.value).setReceivers(stamp.receivers);
+
+    std::span<const FlowLayoutsWithPrivateName> layoutsWithPrivateNames = body.application.layoutsWithPrivateNames.span();
+    for (uint32_t index = 0; !layoutsWithPrivateNames.empty() && index < function.values.size(); ++index) {
+        const Value& access = function.values[index];
+        if (familyOf(access.opcode) != OperationFamily::PrivateAccess || access.receivers())
+            continue;
+        PropertyKeyID key = body.program.at(access.layout()).fields[access.field()].key;
+        auto found = std::ranges::lower_bound(layoutsWithPrivateNames, key, { }, &FlowLayoutsWithPrivateName::key);
+        if (found != layoutsWithPrivateNames.end() && found->key == key)
+            function.edit(ValueID(index)).setReceivers(body.types.intern(LayoutSet::open(Vector<LayoutID>(found->layouts))));
+    }
 
     for (ValueID open : update.opensOfUndecidedStorage)
         function.edit(open).setStorageIsUndecided(true);

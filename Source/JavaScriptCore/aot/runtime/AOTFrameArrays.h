@@ -28,6 +28,7 @@ constexpr bool mayBeGivenFrameArray(Entry entry)
     case Entry::operationAOTGetByVal:
     case Entry::operationAOTApply:
     case Entry::operationAOTAppendElements:
+    case Entry::operationAOTNewArrayOfElements:
     case Entry::operationAOTCreateUnmappedArguments:
     case Entry::operationAOTCreateMappedArguments:
     case Entry::operationAOTContentsHaveType:

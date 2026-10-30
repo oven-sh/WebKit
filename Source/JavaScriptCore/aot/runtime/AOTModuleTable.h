@@ -73,7 +73,9 @@ public:
     bool holdsPathStartingWith(StringView start) const;
     // The next search for the path of the module finds it at once.
     void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;
-    std::span<const uint32_t> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
+    std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
+    // Of a module of uncompiled code. Null: the statements that name it say nothing of its type.
+    String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.

@@ -267,6 +267,42 @@ static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
 
 void InlineFrameReader::read(const Image& image, uint32_t function, unsigned last)
 {
+    if (!m_decoded) {
+        decode(image, function, last);
+        return;
+    }
+    auto& functions = m_decoded->m_functions;
+    if (functions.isEmpty() && m_function && (m_image != &image || *m_function != function)) {
+        functions.grow(DecodedInlineFrames::numberOfFunctions);
+        keep();
+    }
+    if (!functions.isEmpty()) {
+        const auto& kept = functions[function % DecodedInlineFrames::numberOfFunctions];
+        if (kept.image == &image && kept.function == function && last <= kept.frames.size()) {
+            m_image = &image;
+            m_function = function;
+            m_frames.shrink(0);
+            m_frames.append(kept.frames.span());
+            return;
+        }
+    }
+    ++m_decoded->m_numberOfTimesDecoded;
+    decode(image, function, last);
+    if (!functions.isEmpty())
+        keep();
+}
+
+void InlineFrameReader::keep()
+{
+    auto& kept = m_decoded->m_functions[*m_function % DecodedInlineFrames::numberOfFunctions];
+    kept.image = m_image;
+    kept.function = *m_function;
+    kept.frames.shrink(0);
+    kept.frames.append(m_frames.span());
+}
+
+void InlineFrameReader::decode(const Image& image, uint32_t function, unsigned last)
+{
     std::optional<StreamHead> head = readHead(image, function);
     RELEASE_ASSERT(head && last && last <= head->numberOfInlineFrames);
     const uint8_t* cursor = head->inlineFrames.data();

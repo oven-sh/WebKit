@@ -550,6 +550,33 @@ CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& valu
     return join.finish();
 }
 
+std::optional<ValueID> ArrayAllocationEmitter::appendThatFillsLiteral(BlockID block, ValueID id)
+{
+    const Value& literal = m_function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.storage() != AllocationStorage::Heap || !literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty())
+        return std::nullopt;
+    if (literal.literalStorage() == ArrayLiteralStorage::Profiled && literal.staticsOffset())
+        return std::nullopt;
+    if (get(literal.capacityOperand()).value->hasInt())
+        return std::nullopt;
+    std::span<const ValueID> values = m_function.at(block).values.span();
+    auto next = std::ranges::find(values, id);
+    if (next == values.end())
+        return std::nullopt;
+    // Only casts of the literal stand between the two: nothing runs, nobody else has the list, and the source is there when the literal is made.
+    for (++next; next != values.end(); ++next) {
+        const Value& value = m_function.at(*next);
+        if (value.opcode != Opcode::AssumeType && value.opcode != Opcode::AppendElements)
+            return std::nullopt;
+        bool isAppend = value.opcode == Opcode::AppendElements;
+        if (sameObjectThroughCasts(m_function, isAppend ? value.arrayOperand() : value.valueOperand()).valueInFrontOfFacts() != id)
+            return std::nullopt;
+        if (isAppend)
+            return *next;
+    }
+    return std::nullopt;
+}
+
 CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& value)
 {
     std::span<const ValueID> elements = value->elementsOperands();
@@ -566,6 +593,11 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
             return newArrayOf(value, elements, array);
         if (std::optional<EmptyArray> emptyArray = emptyArrayWithCapacity(form, constantCapacity | 1))
             return callNewEmptyArray(value, *emptyArray);
+    }
+
+    if (std::optional<ValueID> append = appendThatFillsLiteral(value.block(), value.id())) {
+        Integer room = select(belowOrEqual(capacity, integer(maxCapacity)), capacity, integer(0));
+        return CellPointer(callStub(value, newArrayOfElements(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value(), room.value() }).first);
     }
 
     LBasicBlock fallback = newBlock();

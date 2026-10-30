@@ -285,6 +285,7 @@ void SavedFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(SavedFrame);
 
 // A word that the map does not list is dead, or it is no reference: an integer, half a fraction, the header for the next closure, whatever compiled code keeps over the suspension.
+// A live word that is no reference can read as one: of two integers that share it, the upper one may be the upper half of the addresses of cells. Where the map says that a word is live, it is kept.
 void SavedFrame::poisonDeadUnlistedWords(VM& vm)
 {
     static_assert(locationHolding(2 * 3) == 3 && !isInUpperHalf(2 * 3) && locationHolding(2 * 3 - 1) == 3 && isInUpperHalf(2 * 3 - 1));
@@ -293,7 +294,7 @@ void SavedFrame::poisonDeadUnlistedWords(VM& vm)
     std::optional<SavedFrameMap> map = liveSlotMap(m_liveSlotMapOffsetPlusOne);
     RELEASE_ASSERT(map);
     auto poisonDeadUnlistedWord = [&](uint32_t location) {
-        if (map->listsValue(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
+        if (map->listsValue(location) || map->listsOtherLiveWord(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
             return;
         uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + numberOfWordsSkippedAtTop() - location];
         if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)

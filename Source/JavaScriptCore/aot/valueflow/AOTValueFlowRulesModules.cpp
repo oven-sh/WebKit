@@ -962,7 +962,7 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
         enterLoaderOfHost(context);
         if (statement.result) {
             context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
-            // Modules::requireAnswersNamespaceWithMock()
+            // Modules::answerRequireWithMock()
             connect(context, namespaceOf(context, module), statement.result);
         }
     }

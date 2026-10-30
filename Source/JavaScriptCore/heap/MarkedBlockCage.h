@@ -113,7 +113,7 @@ public:
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
     // Tables: the VM's hash tables that hold one entry per live value of some kind, such as Symbols. Growing one is a single large malloc.
-    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2, ListOfArrayBuffers = 1 << 3 };
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2, ListOfArrayBuffers = 1 << 3, WeakBlocks = 1 << 4 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
@@ -143,6 +143,10 @@ public:
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
     // The same for the heap's list of array buffers. No collection runs here: the caller's cell is not finished.
     void willAddArrayBuffer(VM&);
+    // The same for the blocks that weak handles lie in. A handle cannot fail, so with limited address space its block comes out of a few spare ones, which are filled up again each time.
+    // Where they cannot be, the program is owed an error while some are left.
+    static bool keepsSpareWeakBlocks();
+    void* allocateWeakBlock(VM&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 
@@ -154,6 +158,9 @@ private:
     bool tryRestoreOwnReserve();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
+    bool tryFillSpareWeakBlocks();
+
+    static constexpr size_t numberOfSpareWeakBlocks = 16;
 
     ReservedRangeHeap* m_range { nullptr };
     uintptr_t m_base { 0 };
@@ -177,6 +184,7 @@ private:
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
+    Vector<void*, numberOfSpareWeakBlocks> m_spareWeakBlocks;
     void* m_largeCellReserve { nullptr };
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };

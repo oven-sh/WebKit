@@ -274,8 +274,12 @@ static void answerByClassMembersAndReturn(StubAssembler& jit, ObjectLookupQuesti
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.index);
     isUnknown.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.structure, Structure::realmOffset()), r.index));
     isUnknown.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(r.object, JSObject::butterflyOffset())));
-    if (jit.options().sharesRealms)
-        isUnknown.append(jit.branch8(CCallHelpers::NotEqual, Address(r.object, ClassPrototype::offsetOfClassIndex() + ClassPrototype::bitsOfClassIndex / 8), TrustedImm32(static_cast<int32_t>(jit.options().imagesBelow))));
+    if (jit.options().sharesRealms) {
+        jit.load32(Address(r.object, ClassPrototype::offsetOfClassNumber()), r.index);
+        if (jit.options().layoutIndicesBelow)
+            jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().layoutIndicesBelow)), r.index);
+        isUnknown.append(jit.branch32(CCallHelpers::AboveOrEqual, r.index, TrustedImm32(static_cast<int32_t>(jit.options().numberOfLayoutIndices))));
+    }
     // `constructor` is a member of every class, whether or not the image names it.
     loadNumberOfName(jit, r, name, isUnknown, isUnknown);
     jit.load32(Address(r.object, ClassPrototype::offsetOfMemberRow()), r.index);

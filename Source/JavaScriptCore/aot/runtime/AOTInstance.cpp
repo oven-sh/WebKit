@@ -529,13 +529,15 @@ bool belongsToOtherImageSlow(VM& vm, const JSCell* cell)
         return !running.programTables().hasClosureNumber(*closureNumber);
     const ClassInfo* info = cell->classInfo();
     if (info == ClassPrototype::info())
-        return uncheckedDowncast<ClassPrototype>(cell)->imagePosition() != running.position();
+        return uncheckedDowncast<ClassPrototype>(cell)->classNumber() - running.layoutIndicesBelow() >= running.programTables().numberOfLayoutIndices;
     if (info == ModuleNamespace::info())
         return uncheckedDowncast<ModuleNamespace>(cell)->imagePosition() != running.position();
     return false;
 }
 
-Instance* Instance::owning(const JSCell* cell)
+// Never in line: a caller that had the rare call below in its own body would keep slots for what it saves around that call and write them on that road alone,
+// and the collector reads every word of the frames between a job and the body of an async generator.
+NEVER_INLINE Instance* Instance::owning(const JSCell* cell)
 {
     Instance* first = cell->structure()->realm()->aotInstance();
     if (!first || !first->above) [[likely]]
@@ -558,8 +560,15 @@ NEVER_INLINE Instance* Instance::findInstanceOwning(const JSCell* cell)
         return instance;
     };
     const ClassInfo* info = cell->classInfo();
-    if (info == ClassPrototype::info())
-        return atPosition(uncheckedDowncast<ClassPrototype>(cell)->imagePosition());
+    if (info == ClassPrototype::info()) {
+        uint32_t classNumber = uncheckedDowncast<ClassPrototype>(cell)->classNumber();
+        Instance* instance = first;
+        while (classNumber - instance->program->layoutIndicesBelow() >= instance->program->programTables().numberOfLayoutIndices) {
+            instance = instance->above;
+            RELEASE_ASSERT(instance);
+        }
+        return instance;
+    }
     if (info == ModuleNamespace::info())
         return atPosition(uncheckedDowncast<ModuleNamespace>(cell)->imagePosition());
     if (info == SavedFrame::info()) {

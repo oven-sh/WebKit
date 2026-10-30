@@ -250,6 +250,24 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     SharedMemo<ListedReceivers> listedBlocks;
     Vector<uint64_t> layoutsWithFieldOfKey = findLayoutsWithFieldOfKey(inputs, application);
     Vector<uint32_t> layoutsOfMembers = findLayoutsOfMembers(inputs);
+    if (inputs.build.isEnabledEverywhere(FlowResultKind::ReceiverSets)) {
+        BitVector privateNamesOfAppendedFields;
+        for (const FlowLayoutUpdate& layout : application.layouts) {
+            for (const FlowAppendedField& field : layout.appendedFields) {
+                if (program.at(field.key).kind == PropertyKeyKind::PrivateName)
+                    privateNamesOfAppendedFields.set(field.key.index());
+            }
+        }
+        for (size_t key : privateNamesOfAppendedFields) {
+            auto begin = std::ranges::lower_bound(layoutsWithFieldOfKey, static_cast<uint64_t>(key) << 32);
+            auto end = std::ranges::lower_bound(begin, layoutsWithFieldOfKey.end(), static_cast<uint64_t>(key + 1) << 32);
+            if (static_cast<uint64_t>(end - begin) > inputs.build.limit(LimitID::MaxLayoutsInType))
+                continue;
+            application.layoutsWithPrivateNames.append({ PropertyKeyID(static_cast<uint32_t>(key)), Vector<LayoutID>(static_cast<size_t>(end - begin), [&](size_t index) {
+                return LayoutID(static_cast<uint32_t>(begin[index]));
+            }) });
+        }
+    }
     constexpr uint16_t noClass = UINT16_MAX;
     static_assert(BuiltinClassID::hashTableDeletedIndex < noClass);
     auto builtinClassesOfMembers = std::make_unique<std::atomic<uint16_t>[]>(universe.numberOfObjects());

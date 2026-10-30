@@ -147,9 +147,15 @@ class TypeRecord {
 public:
     TypeRecord(std::initializer_list<RuntimeCellTest> tests)
     {
-        m_words.append(0);
+        // As the encoder of the tables writes them: the tests of one function each stand behind all others, by rising number.
+        Vector<RuntimeCellTest> ordered(tests);
+        std::ranges::stable_sort(ordered, { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
+        size_t numberInFront = std::ranges::count_if(ordered, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+        m_words.append(static_cast<uint32_t>(std::min<size_t>(numberInFront, RuntimeType::hasManyTestsOfMoreThanOneFunction)) << 24);
         m_words.append(static_cast<uint32_t>(tests.size()));
-        for (const RuntimeCellTest& test : tests) {
+        for (const RuntimeCellTest& test : ordered) {
             auto words = std::bit_cast<std::array<uint32_t, 2>>(test);
             m_words.append(words[0]);
             m_words.append(words[1]);

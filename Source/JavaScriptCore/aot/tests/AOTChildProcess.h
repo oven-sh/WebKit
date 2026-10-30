@@ -33,6 +33,9 @@ const String& programPath();
 void enterTemporaryFolder();
 String temporaryFolder();
 
+// Before this process dies of a trap, it prints the thread, the registers, the return addresses and the top of the stack.
+void installTrapReporter();
+
 class ChildProcessLauncher {
 public:
     ChildProcessLauncher(String&& program, Vector<String>&& sharedArguments);

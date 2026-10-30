@@ -655,6 +655,45 @@ static void checkUnlistedDeadWordIsPoisoned(LoadedProgram& program)
     checkWordsAfterCollection(program, frame, *saved, listedInFrame);
 }
 
+// The map of the compiled function, made to say that these words are live and hold no reference, and that every other word is dead.
+static void listOtherLiveWordsInMapOf(uint32_t function, const Vector<uint32_t>& locations)
+{
+    std::span<const uint32_t> words = Image::current()->frameMapWords(function);
+    AOT_TEST_CHECK(words.size() >= 2 && locations.last() < 32);
+    uint32_t bits = 0;
+    for (uint32_t location : locations)
+        bits |= 1u << location;
+    overwriteWordInImage(words[0], SavedFrameMap::listsEveryLiveWordBit | 1u << 16);
+    overwriteWordInImage(words[1], bits);
+    SavedFrameMap map = *SavedFrameMap::tryCreate(words, 0);
+    AOT_TEST_CHECK(map.listsEveryLiveWord() && valuesOf(map).isEmpty() && narrowReferencesOf(map).isEmpty() && otherLiveWordsOf(map) == locations);
+}
+
+// Two integers that share a word read as the address of a cell where the upper one is the upper half of such addresses.
+static void checkLiveWordThatReadsAsADeadCellIsKept(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t function = findFunctionWithMap(*Image::current()).function;
+    Vector<uint32_t> liveLocations;
+    for (uint32_t location = 1; location < 32; ++location)
+        liveLocations.append(location);
+    listOtherLiveWordsInMapOf(function, liveLocations);
+
+    HandMadeFrame frame = fillFrameWithUnreferencedObjects(program, liveLocations);
+    SavedFrame* saved = saveHandMadeFrame(program, frame, function);
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(vm.heap.isMarked(saved));
+
+    unsigned numberOfDeadCells = 0;
+    for (uint32_t location : liveLocations) {
+        numberOfDeadCells += !hasSurvivedCollection(vm, std::bit_cast<JSCell*>(frame.wordAt(location)));
+        AOT_TEST_CHECK(saved->wordAt(location) == frame.wordAt(location));
+    }
+    AOT_TEST_CHECK(numberOfDeadCells);
+    for (uint32_t location : frame.candidateLocations)
+        AOT_TEST_CHECK(saved->wordAt(location) == 0u);
+}
+
 // The map of the compiled function, made to list other words of the frame.
 static void listValuesInMapOf(uint32_t function, const Vector<uint32_t>& locations)
 {
@@ -1265,6 +1304,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/root-limit"_s, testRootLimit },
         { "saved-frame/callable-for-the-engine-only"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSavedFrameIsCallableForTheEngineOnly> },
         { "saved-frame/unlisted-dead-word-is-poisoned"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkUnlistedDeadWordIsPoisoned> },
+        { "saved-frame/live-word-that-reads-as-a-dead-cell-is-kept"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLiveWordThatReadsAsADeadCellIsKept> },
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
         { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
         { "saved-frame/lowest-words-are-cleared-at-the-first-save"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLowestWordsAreClearedAtTheFirstSave> },

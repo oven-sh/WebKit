@@ -70,6 +70,7 @@ runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; 
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
+runtime NewArrayOfElements : JSCell* (JSCell* source, uint64_t capacity) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ReserveCollectionCapacity : void (JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects

@@ -120,11 +120,40 @@ static bool rejectWriteToLockedProperty(JSGlobalObject* globalObject, ThrowScope
     return typeError(globalObject, scope, true, policy.message);
 }
 
+// The callback that makes a lazy property may call JavaScript (process.stdout), which a lookup that only asks forbids.
+static std::optional<bool> isReadOnlyLazyProperty(VM& vm, JSObject* object, PropertyName propertyName)
+{
+    for (JSObject* holder = object;;) {
+        Structure* structure = holder->structure();
+        TypeInfo typeInfo = structure->typeInfo();
+        if (typeInfo.overridesGetOwnPropertySlot() && !typeInfo.hasStaticPropertyTable())
+            return std::nullopt;
+        unsigned attributes;
+        if (isValidOffset(structure->get(vm, propertyName, attributes)))
+            return std::nullopt;
+        if (holder->hasNonReifiedStaticProperties()) {
+            if (auto entry = structure->findPropertyHashEntry(propertyName)) {
+                if (!(entry->value->attributes() & PropertyAttribute::PropertyCallback))
+                    return std::nullopt;
+                return entry->value->attributes() & PropertyAttribute::ReadOnly;
+            }
+        }
+        if (typeInfo.overridesGetPrototype())
+            return std::nullopt;
+        JSValue prototype = structure->storedPrototype(holder);
+        if (!prototype.isObject())
+            return std::nullopt;
+        holder = asObject(prototype);
+    }
+}
+
 // OrdinarySet fails by itself when the lookup finds a read-only property or an accessor without a setter, on the object or on its prototype chain.
 static bool specRejectsStore(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (std::optional<bool> isReadOnly = isReadOnlyLazyProperty(vm, object, propertyName))
+        return *isReadOnly;
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool isFound = object->getPropertySlot(globalObject, propertyName, slot);
     slot.disallowVMEntry.reset();

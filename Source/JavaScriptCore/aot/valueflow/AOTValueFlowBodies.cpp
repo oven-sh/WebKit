@@ -22,6 +22,7 @@
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowTypedResults.h"
 #include "AOTValueIdentity.h"
+#include "AOTValuesOfSteps.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/Hasher.h>
@@ -1584,28 +1585,16 @@ private:
         }
     }
 
-    bool readsValueOfStepThatFindsEnd(BlockID block, ValueID step)
+    bool readsValueOfStepThatFindsEnd(ValueID step)
     {
         const Value& operation = m_function.at(step);
         if (operation.readsValueWhenDone() || operation.stepIndex())
             return false;
-        auto reads = [&](ValueID id, IteratorResumeResult result) {
-            const Value& value = m_function.at(id);
-            return value.opcode == Opcode::ResultAt && value.resultsOperand() == step && value.index() == static_cast<uint32_t>(result);
-        };
-        const Terminator& terminator = m_function.at(block).terminator;
-        if (terminator.kind != TerminatorKind::Branch || !reads(terminator.operand(0), IteratorResumeResult::Done))
-            return true;
-        BlockID behind = terminator.notTaken().block;
-        if (behind == terminator.taken().block || m_cfg.incomingEdges(behind).size() != 1)
-            return true;
-        size_t numberOfReads = 0;
-        for (uint32_t index = step.index() + 1; index < m_function.values.size(); ++index)
-            numberOfReads += reads(ValueID(index), IteratorResumeResult::Value);
-        size_t numberOfReadsBehind = std::ranges::count_if(m_function.at(behind).values, [&](ValueID id) {
-            return reads(id, IteratorResumeResult::Value);
-        });
-        return numberOfReads != numberOfReadsBehind;
+        if (!m_uses) {
+            m_uses.emplace(m_function, m_cfg);
+            m_dominators.emplace(m_cfg, false);
+        }
+        return !blockThatAloneUsesValueOfStep(m_function, m_cfg, *m_uses, *m_dominators, step);
     }
 
     void addResultNodes()
@@ -1620,7 +1609,7 @@ private:
                 bool isInsideType = type && resultRuleOf(opcode) != ResultRule::Results && opcode != Opcode::Builtin;
                 ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : kindOfResultMask(opcode);
                 description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type, kind) : 0);
-                if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(block, id))
+                if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(id))
                     m_body.seedsOnceReached.append({ description.name, constantOf(Primitive::Undefined), 0 });
             }
         }
@@ -2291,6 +2280,8 @@ private:
     FunctionID m_id;
     const Function& m_function;
     CFG m_cfg;
+    std::optional<UseLists> m_uses;
+    std::optional<Dominators> m_dominators;
     Body m_body;
     InternedBodyRecords<Body::Constant> m_constants;
     InternedBodyRecords<Body::Mask> m_masks;

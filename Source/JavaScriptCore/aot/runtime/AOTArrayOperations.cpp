@@ -170,6 +170,31 @@ static bool mayRefuseOrRunOtherCode(JSArray* array)
     return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
 }
 
+static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // No dense storage holds more, and element by element the rest would go into a sparse map.
+    if (static_cast<uint64_t>(target->length()) + source->length() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    bool isAppended = isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isAppended)
+        return;
+    isAppended = !isFrameArray(source) && tryAppendArrayWithHoles(globalObject, vm, target, source);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isAppended)
+        return;
+    unsigned length = source->length();
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue element = source->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, void());
+        target->push(globalObject, element);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
@@ -189,24 +214,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
         callMethodInEngine(instance, Builtins::ArrayPrototypePush, target, elements);
         OPERATION_RETURN(scope);
     }
-    // No dense storage holds more, and element by element the rest would go into a sparse map.
-    if (static_cast<uint64_t>(target->length()) + source->length() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope);
-    }
-    if (isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source))
-        OPERATION_RETURN(scope);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (!isFrameArray(source) && tryAppendArrayWithHoles(globalObject, vm, target, source))
-        OPERATION_RETURN(scope);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    unsigned length = source->length();
-    for (unsigned i = 0; i < length; ++i) {
-        JSValue element = source->getIndex(globalObject, i);
-        OPERATION_RETURN_IF_EXCEPTION(scope);
-        target->push(globalObject, element);
-        OPERATION_RETURN_IF_EXCEPTION(scope);
-    }
+    appendElements(globalObject, vm, target, source);
     OPERATION_RETURN(scope);
 }
 
@@ -406,29 +414,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance*
     OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, JSValue::decode(lengthOrElement)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instance, uint32_t lengthAndCapacity, uint32_t flags))
+static JSArray* newArrayOfHoles(Instance* instance, JSGlobalObject* globalObject, VM& vm, unsigned length, unsigned capacity, IndexingType indexingType)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfHoles);
-    unsigned length = lengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
-    unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
-    RELEASE_ASSERT(length <= capacity && (flags == ArrayWithDouble || flags == ArrayWithInt32 || flags == ArrayWithContiguous));
-    IndexingType indexingType = static_cast<IndexingType>(flags);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(length <= capacity && (indexingType == ArrayWithDouble || indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous));
     // The code that asks for an array with elements stores them into plain storage, and converts the array behind that.
     if (!length && globalObject->isHavingABadTime()) [[unlikely]] {
         JSArray* array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
         if (!array)
             throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, array);
+        return array;
     }
     Structure* structure = globalObject->originalArrayStructureForIndexingType(indexingType);
     if (JSArray* array = tryCreateArrayWithStorage(vm, structure, length, capacity)) {
         instance->findMissingShortArrayAllocator(capacity);
-        OPERATION_RETURN(scope, array);
+        return array;
     }
     void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
     if (!storage) {
         throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, nullptr);
+        return nullptr;
     }
     Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
     butterfly->setVectorLength(capacity);
@@ -439,7 +444,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
         else
             butterfly->contiguous().atUnsafe(i).clear();
     }
-    OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, structure, butterfly));
+    return JSArray::createWithButterfly(vm, nullptr, structure, butterfly);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instance, uint32_t lengthAndCapacity, uint32_t flags))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfHoles);
+    unsigned length = lengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
+    unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
+    OPERATION_RETURN(scope, newArrayOfHoles(instance, globalObject, vm, length, capacity, static_cast<IndexingType>(flags)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfElements, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t capacityAndIndexingType))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfElements);
+    JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTNewArrayOfElements);
+    uint32_t capacity = static_cast<uint32_t>(capacityAndIndexingType);
+    IndexingType indexingType = static_cast<IndexingType>(capacityAndIndexingType >> 32);
+    RELEASE_ASSERT(capacity <= MAX_STORAGE_VECTOR_LENGTH && (indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous));
+    JSArray* array = newArrayOfHoles(instance, globalObject, vm, 0, (capacity ? capacity : BASE_CONTIGUOUS_VECTOR_LEN_EMPTY) | 1, indexingType);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    appendElements(globalObject, vm, array, source);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, array);
 }
 
 // JSObject::ensureLengthSlow() for a full vector with nothing in front of it: the same new length, the same rounding, and a vector with an allocation of its own is reallocated, so a grown array takes the memory it takes in JSArray::push().

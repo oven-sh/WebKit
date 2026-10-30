@@ -85,7 +85,7 @@ record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool
 record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
-    externalKind: ExternalKind runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
+    externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
     requiredNames: Span<RequiredName> otherNames: Span<String> positions: SourcePositions functionText: Span<Byte>
     | engine namespaceLayout: Layout?

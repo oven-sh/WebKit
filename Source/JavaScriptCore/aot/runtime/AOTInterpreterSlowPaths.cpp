@@ -62,11 +62,12 @@ void willRunInInterpreter(CodeBlock* codeBlock)
 
 static JSValue getById(Instance&, JSCell* base, const Identifier&);
 
-static Instance* runningInstanceOf(JSGlobalObject* realm)
+// Code that is not compiled is of no image. What it asks of a cell that is no compiled object it asks the tables of the first image of the realm, whichever image has called it.
+// Whoever asks them runs that image meanwhile: to it a closure or a namespace of another image is a stranger's, as to its own code.
+static Instance* instanceOfInterpreter(JSGlobalObject* realm)
 {
     Instance* instance = realm->aotInstance();
-    // The caches of one image say nothing about the cells of another: where a realm runs several, the interpreter asks the cells.
-    return instance && instance->state && !instance->above ? instance : nullptr;
+    return instance && instance->state ? instance : nullptr;
 }
 
 // The tables of the image of a compiled object say of it all that they say where there is one image. Whoever asks them runs that image meanwhile.
@@ -138,8 +139,13 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
         return callCustomGetter(instance, slot, base, ident);
     case Slot::Kind::Field:
         return readField(instance, slot, *uncheckedDowncast<Object>(base));
-    case Slot::Kind::InheritedField:
-        return getById(instance, slot.holder, ident);
+    case Slot::Kind::InheritedField: {
+        Instance* instanceOfHolder = instanceOfCompiledObject(instance.globalObject, slot.holder);
+        if (!instanceOfHolder)
+            return { };
+        ImageOfInstanceScope imageOfHolder(*instanceOfHolder);
+        return getById(*instanceOfHolder, slot.holder, ident);
+    }
     case Slot::Kind::ExtraProperty: {
         JSObject* extraProperties = uncheckedDowncast<Object>(base)->extraProperties();
         return extraProperties ? extraProperties->getDirect(Slot::offsetFor(slot.extraProperty.wordIndex)) : JSValue();
@@ -263,13 +269,13 @@ JSValue callCustomGetter(const CustomAccessorRecord& record, JSCell* base, const
 static std::optional<JSValue> tryGetByName(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {
     bool isCompiledObject = base->type() == CompiledObjectType;
-    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : instanceOfInterpreter(globalObject);
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterReadSlowPaths);
+    ImageOfInstanceScope imageOfTables(*instance);
     if (!isCompiledObject)
         return tryGetFromOrdinaryObject(*instance, base, ident, cache);
-    ImageOfCellScope imageOfBase(*instance->vm, base);
     return getById(*instance, base, ident);
 }
 
@@ -338,9 +344,10 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObje
 
 void didGetById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    Instance* instance = instanceOfInterpreter(globalObject);
     if (!instance || structureBefore->isDictionary() || slot.isCacheableValue() || (isJSArray(base) && ident == instance->vm->propertyNames->length))
         return;
+    ImageOfInstanceScope imageOfTables(*instance);
     PropertyCaches& caches = *instance->state->propertyCaches;
     UniquedStringImpl* uid = ident.impl();
     if (caches.findByKey(structureBefore, uid, SlotAccess::Read) || !caches.shouldFile(structureBefore->id(), uid, SlotAccess::Read))
@@ -359,11 +366,11 @@ std::optional<JSValue> tryGetByVal(JSGlobalObject* globalObject, JSCell* base, J
 std::optional<bool> tryInById(JSGlobalObject* globalObject, JSObject* base, const Identifier& ident)
 {
     bool isCompiledObject = base->type() == CompiledObjectType;
-    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : instanceOfInterpreter(globalObject);
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterPresenceSlowPaths);
-    ImageOfCellScope imageOfBase(*instance->vm, base);
+    ImageOfInstanceScope imageOfTables(*instance);
     if (!instance->state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read))
         return hasPropertyAndCache(instance, base, { ident.impl(), std::nullopt });
     return base->hasProperty(instance->globalObject, ident);
@@ -380,11 +387,11 @@ std::optional<bool> tryInByVal(JSGlobalObject* globalObject, JSObject* base, JSV
 bool tryPutById(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, JSValue value, bool isStrict)
 {
     bool isCompiledObject = base->type() == CompiledObjectType;
-    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : runningInstanceOf(globalObject);
+    Instance* instance = isCompiledObject ? instanceOfCompiledObject(globalObject, base) : instanceOfInterpreter(globalObject);
     if (!instance)
         return false;
     count(*instance, RuntimeCounterID::InterpreterStoreSlowPaths);
-    ImageOfCellScope imageOfBase(*instance->vm, base);
+    ImageOfInstanceScope imageOfTables(*instance);
     putById(*instance, base, ident, value, isStrict);
     return true;
 }
@@ -397,10 +404,11 @@ bool tryPutByVal(JSGlobalObject* globalObject, JSCell* base, JSValue key, JSValu
 
 std::optional<bool> tryInstanceOf(JSGlobalObject* globalObject, JSValue value, JSValue constructor)
 {
-    Instance* instance = runningInstanceOf(globalObject);
+    Instance* instance = instanceOfInterpreter(globalObject);
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterReadSlowPaths);
+    ImageOfInstanceScope imageOfTables(*instance);
     return instanceOfAndCache(instance, value, constructor);
 }
 
@@ -488,6 +496,7 @@ void ObjectLiteralPlans::clear()
 JSObject* ObjectLiteralPlans::tryBuildRecord(VM& vm, const ObjectLiteralPlan& plan, const EncodedJSValue* values)
 {
     const ObjectBuilderPlan& builder = *plan.recordBuilder;
+    ImageOfInstanceScope imageOfRecord(builder.m_state.instance);
     for (unsigned index = 0; index < plan.numberOfValues; ++index) {
         JSValue value = JSValue::decode(values[index]);
         if (value.isCell() ? !value.isString() && !value.isObject() : value.isUndefined() && !builder.m_state.objects->layouts.slotAdmits(*builder.m_fields[index].field, value))
@@ -652,9 +661,10 @@ void ObjectLiteralPlans::didOutgrowCell(Instance& instance, Structure* beforeAdd
 void didAllocateFirstPropertyOutsideCell(JSGlobalObject* globalObject, Structure* beforeAddition)
 {
     didLeaveInlineAllocation(globalObject->vm());
-    Instance* instance = runningInstanceOf(globalObject);
+    Instance* instance = instanceOfInterpreter(globalObject);
     if (!instance)
         return;
+    ImageOfInstanceScope imageOfTables(*instance);
     if (ObjectLiteralPlans* plans = instance->state->objects->caches->objectLiteralPlans.get())
         plans->didOutgrowCell(*instance, beforeAddition);
 }
@@ -706,9 +716,10 @@ bool planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
     Structure* emptyStructure = profile.structure();
     allocatorWord(profile) = std::bit_cast<uintptr_t>(subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(emptyStructure->inlineCapacity()), AllocatorForMode::EnsureAllocator).localAllocator());
 
-    Instance* instance = runningInstanceOf(globalObject);
+    Instance* instance = instanceOfInterpreter(globalObject);
     if (!instance)
         return true;
+    ImageOfInstanceScope imageOfTables(*instance);
 
     VirtualRegister object = instruction->as<OpNewObject>().m_dst;
     Vector<UniquedStringImpl*, ObjectLiteralPlan::maxNumberOfValues> names;

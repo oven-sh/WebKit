@@ -57,6 +57,7 @@ inline ValueFlowCellName cellOfDroppedResults(const BuiltinTable& builtins)
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
 // Whoever takes the member without naming it holds what the member answers out of a native cell as a value nobody knows.
 void openProxiesThatMemberAnswers(ValueFlowRuleContext&, BuiltinID member);
+void exposeNativeCellsReturnedBy(ValueFlowRuleContext&, BuiltinID member);
 // True where flow can list the own names of every object among the values: `held` gets them.
 bool listKeysAsObjectKeysDoes(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID held);
 

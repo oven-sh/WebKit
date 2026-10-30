@@ -465,12 +465,21 @@ auto Modules::ensureLoaded(ModuleID module) -> LoadedModule&
     return *m_loaded.add(module, makeUnique<LoadedModule>()).iterator->value;
 }
 
+static bool isNamedByNumber(StringView path, ModuleID module)
+{
+    return path.startsWith('#') && parseInteger<uint32_t>(path.substring(1)) == module.index();
+}
+
 Identifier Modules::moduleKey(ModuleID module)
 {
     // Every importer of a module that the loader goes through asks for the key.
     if (ModuleRecord* record = m_records.get(module))
         return record->moduleKey();
-    return Identifier::fromString(*m_instance.vm, m_table.pathText(module));
+    String path = m_table.pathText(module);
+    // The face of a file is `#` and its number in its image. A realm has one registry for all its images, so there the number says the image too.
+    if (m_instance.program->sharesRealms() && isNamedByNumber(path, module)) [[unlikely]]
+        path = makeString('#', moduleIDForHost(*m_instance.program, module).index());
+    return Identifier::fromString(*m_instance.vm, path);
 }
 
 // The loader hands the key to the host, which asks for the module under it. Every importer of the module asks for the key, and the record that the host will ask for keeps it.
@@ -600,10 +609,55 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
 // The body of a module that is mocked before it has run never runs. What the mock does not give reads as undefined, as a name does that the mock's own module lacks in plain Bun.
 void Modules::fillExportsOfBodyThatNeverRuns(ModuleID module)
 {
+    // `export { b } from "./b.js"` exports the variable of the other module, whose body runs for whoever imports that module itself.
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> variablesOfOtherModules;
+    BitVector seen(m_table.size());
+    seen.quickSet(module.index());
+    Vector<ModuleID, 32> work { module };
+    while (!work.isEmpty()) {
+        for (const ModuleRequestData& request : m_table.requests(work.takeLast())) {
+            if (request.isRequire || seen.quickSet(request.target()))
+                continue;
+            work.append(request.targetModule());
+            for (const ModuleExportData& moduleExport : m_table.exports(request.targetModule())) {
+                if (moduleExport.kind() == ModuleExportKind::Variable)
+                    variablesOfOtherModules.add(std::bit_cast<uint32_t>(moduleExport.variable));
+            }
+        }
+    }
     for (const ModuleExportData& moduleExport : m_table.exports(module)) {
-        if (moduleExport.kind() == ModuleExportKind::Variable && moduleExport.isReplaceable && !ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable))
+        if (moduleExport.kind() != ModuleExportKind::Variable || !moduleExport.isReplaceable || variablesOfOtherModules.contains(std::bit_cast<uint32_t>(moduleExport.variable)))
+            continue;
+        if (!ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable))
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, jsUndefined());
     }
+}
+
+bool Modules::wasLoadedWithImporter(ModuleID module) const
+{
+    BitVector seen(m_table.size());
+    Vector<ModuleID, 32> work;
+    for (uint32_t index = 0; index < m_table.size(); ++index) {
+        if (ModuleID(index) != module && status(ModuleID(index)) != ModuleStatus::Unlinked) {
+            seen.quickSet(index);
+            work.append(ModuleID(index));
+        }
+    }
+    while (!work.isEmpty()) {
+        ModuleID importer = work.takeLast();
+        // What only a mocked module imports is not loaded.
+        if (isMocked(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
+            if (request.isHoisted || request.isRequire || request.isDeferred)
+                continue;
+            if (request.targetModule() == module)
+                return true;
+            if (!seen.quickSet(request.target()))
+                work.append(request.targetModule());
+        }
+    }
+    return false;
 }
 
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value)
@@ -753,6 +807,16 @@ void Modules::mockWhatRequireAnswered(ModuleID module, JSObject* exports)
 {
     if (LoadedModule* loaded = loadedIfExists(module); loaded && loaded->requiredValue)
         loaded->requiredValue.set(*this, exports);
+}
+
+void Modules::mockWhatRequireCacheHolds(ModuleID module, JSObject* exports)
+{
+    if (!isKeptInRequireCache(module))
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.exportsOfMock.set(*this, exports);
+    if (loaded.valueInRequireCache)
+        loaded.valueInRequireCache.set(*this, exports);
 }
 
 void Modules::deferMock(ModuleID module)
@@ -1342,18 +1406,34 @@ bool Modules::hostAnswersInPlaceOf(ModuleID module, LoadByName way)
     if (!host().replacesNativeModule || !host().replacesNativeModule(m_instance.globalObject, name))
         return false;
     // And its transpiler writes the global `Bun` for `require("bun")`.
-    if (way == LoadByName::Require && (name.startsWith("node:"_s) || name == "bun"_s))
+    if (way == LoadByName::Require && (name.startsWith("node:"_s) || name == "bun"_s || isInRequireCache(module)))
         return false;
     return (isNative && way == LoadByName::Import) || m_libraryModulesThatMockReplaces.get(module.index());
 }
 
-// An import had loaded the module when it was mocked. There the loader holds it as an ES module, so a require() that asks the loader gets the namespace object, with the mock in it.
-bool Modules::requireAnswersNamespaceWithMock(ModuleID module)
+// Under `bun run` the first require() of a module of the library from code of the program leaves a module object in require.cache, which answers the later ones.
+// A mock stores what its factory gave into a module object that is there. Only a module that may be mocked can tell.
+bool Modules::isKeptInRequireCache(ModuleID module) const
 {
-    if (!m_libraryModulesWithMock.get(module.index()) || m_libraryModulesThatMockReplaces.get(module.index()))
+    if (!data(module).isOfLibrary() || !data(module).mayBeMocked())
         return false;
     String name = m_table.pathText(module);
-    return !name.startsWith("node:"_s) && name != "bun"_s && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, name);
+    return !name.startsWith("node:"_s) && name != "bun"_s;
+}
+
+bool Modules::isInRequireCache(ModuleID module) const
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->valueInRequireCache;
+}
+
+// `delete require.cache[name]` takes the module from the loader too: a mock is all that stands under the name then.
+void Modules::takeOutOfRequireCache(ModuleID module)
+{
+    if (isInRequireCache(module))
+        ensureLoaded(module).valueInRequireCache.set(*this, JSValue());
+    if (m_libraryModulesWithMock.get(module.index()))
+        m_libraryModulesThatMockReplaces.set(module.index());
 }
 
 std::optional<ModuleID> Modules::findByName(const Identifier& key)
@@ -2126,8 +2206,8 @@ static bool isText(StringView path)
 
 bool Modules::isTextNamedByProgram(StringView url) const
 {
-    return isText(url) && std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](uint32_t module) {
-        return url == m_table.pathText(ModuleID(module));
+    return isText(url) && std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](const UncompiledModuleData& entry) {
+        return url == m_table.pathText(ModuleID(entry.module));
     });
 }
 
@@ -2172,6 +2252,14 @@ const Identifier& Modules::resolvedKey(ModuleID external)
     return loaded.resolvedKey;
 }
 
+void Modules::forgetWhatNamesResolvedTo()
+{
+    for (const UncompiledModuleData& external : m_table.modulesOfUncompiledCode()) {
+        if (LoadedModule* loaded = loadedIfExists(ModuleID(external.module)))
+            loaded->resolvedKey = Identifier();
+    }
+}
+
 void Modules::admitCodeNamedBy(JSValue specifier)
 {
     if (m_admitsCodeOutsideImage || !specifier.isString())
@@ -2179,8 +2267,8 @@ void Modules::admitCodeNamedBy(JSValue specifier)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     auto text = asString(specifier)->view(m_instance.globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    m_admitsCodeOutsideImage = std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](uint32_t module) {
-        String name = m_table.pathText(ModuleID(module));
+    m_admitsCodeOutsideImage = std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](const UncompiledModuleData& entry) {
+        String name = m_table.pathText(ModuleID(entry.module));
         return !isText(name) && (text == name || (text->startsWith(name) && text[name.length()] == '/'));
     });
 }
@@ -2270,6 +2358,31 @@ ModuleGraphLoadingState* Modules::loadThatWaitsFor(ModuleID requester, const Ide
     return loadOfRoot;
 }
 
+// `import data from "./data.txt" with { type: "toml" }`: as the parser makes them of the statement.
+RefPtr<ScriptFetchParameters> Modules::fetchParametersOf(ModuleID external) const
+{
+    String type = m_table.typeAttribute(external);
+    std::optional<ScriptFetchParameters::Type> kind = ScriptFetchParameters::parseType(type);
+    if (!kind)
+        return nullptr;
+    if (*kind == ScriptFetchParameters::Type::HostDefined)
+        return ScriptFetchParameters::create(type);
+    return ScriptFetchParameters::create(*kind);
+}
+
+// The loader keeps one module for a name and a kind of type.
+static ModuleMapKey placeInLoader(const Identifier& key, const ScriptFetchParameters* fetchParameters)
+{
+    return { key.impl(), fetchParameters ? fetchParameters->type() : ScriptFetchParameters::Type::JavaScript };
+}
+
+ModuleRegistryEntry* Modules::registryEntry(const Identifier& key, const ScriptFetchParameters* fetchParameters)
+{
+    if (!fetchParameters)
+        return loader()->registryEntry(key);
+    return loader()->moduleMap().get(placeInLoader(key, fetchParameters)).get();
+}
+
 void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, ModuleGraphLoadingState& load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -2337,6 +2450,9 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
             appendRequestsOfUncompiledCode(module, record);
             return;
         }
+        // The host has asked for the graph, and no import(). A job that runs between the steps of the load may require a part of it. A root whose files ran ahead counts as it is.
+        if (!m_instance.vm->synchronousModuleQueue() && m_rootWhoseFilesRanAhead != module && !m_loadsInFlight.containsIf([&](const LoadInFlight& known) { return known.root == module; }))
+            didStartLoad(load.promise(), module);
         for (LoadInFlight& load : m_loadsInFlight)
             load.isWalked |= load.root == module;
         if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !mustWaitForFile && planLevelsOfLoad(module)) {
@@ -2346,7 +2462,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         }
     }
 
-    OrderedHashSet<UniquedStringImpl*> keys;
+    UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash> keys;
     WTF::Vector<Identifier, 8> keptAlive;
     for (const ModuleRequestData& request : m_table.imports(module)) {
         if (request.isHoisted)
@@ -2379,35 +2495,49 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
             keptAlive.append(keyOfRequest(target));
         else
             continue;
-        if (!keys.add(keptAlive.last().impl()).isNewEntry)
+        RefPtr<ScriptFetchParameters> fetchParameters = targetData.isUncompiledCode() ? fetchParametersOf(target) : nullptr;
+        if (!keys.add(placeInLoader(keptAlive.last(), fetchParameters.get())).isNewEntry)
             continue;
-        record->appendRequestedModule(keptAlive.last(), nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
+        record->appendRequestedModule(keptAlive.last(), WTF::move(fetchParameters), request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
         if (!targetData.isUncompiledCode())
             record->didRequestCompiledModule(keptAlive.last(), target);
     }
 }
 
+// In the order in which the graph comes to them. The modules keep the keys alive.
+struct Modules::RequestsOfUncompiledCode {
+    struct Request {
+        UniquedStringImpl* key;
+        RefPtr<ScriptFetchParameters> fetchParameters;
+    };
+
+    UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash> seen;
+    WTF::Vector<Request, 8> list;
+};
+
 // Throws where a name does not resolve.
-void Modules::collectKeysOfUncompiledCode(ModuleID module, OrderedHashSet<UniquedStringImpl*>& keys)
+void Modules::collectRequestsOfUncompiledCode(ModuleID module, RequestsOfUncompiledCode& requests)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     BitVector visited(m_table.size());
     visited.quickSet(module.index());
     Vector<std::span<const ModuleRequestData>, 16> path { m_table.requests(module) };
     while (!path.isEmpty()) {
-        std::span<const ModuleRequestData>& requests = path.last();
-        if (requests.empty()) {
+        std::span<const ModuleRequestData>& left = path.last();
+        if (left.empty()) {
             path.removeLast();
             continue;
         }
-        ModuleID target = requests.front().targetModule();
-        requests = requests.subspan(1);
+        ModuleID target = left.front().targetModule();
+        left = left.subspan(1);
         if (!data(target).reachesUncompiledCode())
             continue;
         if (data(target).isUncompiledCode()) {
             const Identifier& key = resolvedKey(target);
             RETURN_IF_EXCEPTION(scope, void());
-            keys.add(key.impl());
+            RefPtr<ScriptFetchParameters> fetchParameters = fetchParametersOf(target);
+            if (requests.seen.add(placeInLoader(key, fetchParameters.get())).isNewEntry)
+                requests.list.append({ key.impl(), WTF::move(fetchParameters) });
         } else if (status(target) == ModuleStatus::Unlinked && !visited.quickSet(target.index()))
             path.append(m_table.requests(target));
     }
@@ -2417,14 +2547,14 @@ void Modules::collectKeysOfUncompiledCode(ModuleID module, OrderedHashSet<Unique
 bool Modules::comesToCodeThatDoesNotLoad(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    OrderedHashSet<UniquedStringImpl*> keys;
-    collectKeysOfUncompiledCode(root, keys);
+    RequestsOfUncompiledCode requests;
+    collectRequestsOfUncompiledCode(root, requests);
     if (scope.exception()) [[unlikely]] {
         TRY_CLEAR_EXCEPTION(scope, true);
         return true;
     }
-    for (UniquedStringImpl* key : keys) {
-        if (ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromUid(*m_instance.vm, key)); entry && entry->fetchError())
+    for (const auto& request : requests.list) {
+        if (ModuleRegistryEntry* entry = registryEntry(Identifier::fromUid(*m_instance.vm, request.key), request.fetchParameters.get()); entry && entry->fetchError())
             return true;
     }
     return false;
@@ -2436,11 +2566,11 @@ ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRec
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!data(module).reachesUncompiledCode())
         return record;
-    OrderedHashSet<UniquedStringImpl*> keys;
-    collectKeysOfUncompiledCode(module, keys);
+    RequestsOfUncompiledCode requests;
+    collectRequestsOfUncompiledCode(module, requests);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    for (UniquedStringImpl* key : keys)
-        record->appendRequestedModule(Identifier::fromUid(vm, key), nullptr, ModulePhase::Evaluation);
+    for (auto& request : requests.list)
+        record->appendRequestedModule(Identifier::fromUid(vm, request.key), WTF::move(request.fetchParameters), ModulePhase::Evaluation);
     return record;
 }
 
@@ -2463,7 +2593,7 @@ AbstractModuleRecord* Modules::uncompiledRecord(ModuleID external)
         return loaded.uncompiledRecord;
     const Identifier& key = resolvedKey(external);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    ModuleRegistryEntry* entry = loader()->registryEntry(key);
+    ModuleRegistryEntry* entry = registryEntry(key, fetchParametersOf(external).get());
     AbstractModuleRecord* record = entry ? entry->record() : nullptr;
     if (!record) {
         throwException(m_instance.globalObject, scope, createExternalModuleNotLoadedError(m_instance.globalObject, m_table.pathText(external)));
@@ -2591,27 +2721,44 @@ const ModuleHost& moduleHostOf(JSGlobalObject* realm)
     return *host;
 }
 
-// Where a realm has several images, a number that the host holds names the image too: above the number stands the position of the image and one more.
-// A number without that part is of the image that runs.
-static constexpr unsigned shiftOfImageInModuleID = 24;
+// Where a realm has several images, a number that the host holds names the image too: it counts on from the modules of the images in front, Image::modulesBelow(), and a bit says that it does.
+// A number without the bit is of the image that runs. With the bit it is still an int32 that is not negative: a job holds it as one.
+static constexpr uint32_t countsThroughImages = 1u << 30;
+
+static bool namesImage(ModuleID fromHost)
+{
+    return fromHost && fromHost.index() & countsThroughImages;
+}
 
 ModuleID moduleIDForHost(const Image& image, ModuleID module)
 {
     if (!image.sharesRealms()) [[likely]]
         return module;
-    RELEASE_ASSERT(!(module.index() >> shiftOfImageInModuleID));
-    return ModuleID(module.index() | (image.position() + 1) << shiftOfImageInModuleID);
+    uint32_t number = WTF::checkedSum<uint32_t>(image.modulesBelow(), module.index());
+    RELEASE_ASSERT(number < countsThroughImages);
+    return ModuleID(number | countsThroughImages);
 }
 
 // Nothing where the host names a module of another image.
 std::optional<ModuleID> moduleOfImage(const Image& image, std::optional<ModuleID> fromHost)
 {
-    unsigned positionAndOne = fromHost && *fromHost ? fromHost->index() >> shiftOfImageInModuleID : 0;
-    if (!positionAndOne) [[likely]]
+    if (!fromHost || !namesImage(*fromHost)) [[likely]]
         return fromHost;
-    if (positionAndOne - 1 != image.position())
+    uint32_t index = (fromHost->index() & ~countsThroughImages) - image.modulesBelow();
+    if (index >= ModuleTable(image.programTables()).size())
         return std::nullopt;
-    return ModuleID(fromHost->index() & ((1u << shiftOfImageInModuleID) - 1));
+    return ModuleID(index);
+}
+
+// Of a number that names its image. No image: none of the list has so many modules below it and of its own.
+static std::pair<const Image*, ModuleID> findImageOfModule(const Image& imageOfList, ModuleID fromHost)
+{
+    ASSERT(namesImage(fromHost));
+    for (const Image* image = &imageOfList.first(); image; image = image->above()) {
+        if (std::optional<ModuleID> module = moduleOfImage(*image, fromHost))
+            return { image, *module };
+    }
+    return { nullptr, ModuleID() };
 }
 
 namespace {
@@ -2647,11 +2794,10 @@ public:
 private:
     const Image* takeImage()
     {
-        unsigned positionAndOne = m_module ? m_module.index() >> shiftOfImageInModuleID : 0;
-        if (!positionAndOne) [[likely]]
+        if (!namesImage(m_module)) [[likely]]
             return nullptr;
-        m_module = ModuleID(m_module.index() & ((1u << shiftOfImageInModuleID) - 1));
-        const Image* image = Image::current()->atPosition(positionAndOne - 1);
+        const Image* image;
+        std::tie(image, m_module) = findImageOfModule(*Image::current(), m_module);
         RELEASE_ASSERT(image);
         return image;
     }
@@ -2744,11 +2890,25 @@ struct ModulesFoundInSeveralImages {
 };
 }
 
+// As Modules::moduleKey() spells it where images share realms.
+static std::optional<ModuleID> findModuleNamedByNumber(const Image& running, StringView publicPath)
+{
+    std::optional<uint32_t> number = parseInteger<uint32_t>(publicPath.substring(1));
+    if (!number || !namesImage(ModuleID(*number)))
+        return std::nullopt;
+    auto [image, module] = findImageOfModule(running, ModuleID(*number));
+    if (!image || !isNamedByNumber(ModuleTable(image->programTables()).pathText(module), module))
+        return std::nullopt;
+    return ModuleID(*number);
+}
+
 std::optional<ModuleID> findModule(StringView publicPath)
 {
     static NeverDestroyed<ModulesFoundInSeveralImages> modulesFound;
     const Image* running = Image::current();
     bool keepsWhatIsFound = running && running->sharesRealms();
+    if (keepsWhatIsFound && publicPath.startsWith('#'))
+        return findModuleNamedByNumber(*running, publicPath);
     if (keepsWhatIsFound) {
         std::optional<ModuleID> kept;
         {
@@ -2757,15 +2917,12 @@ std::optional<ModuleID> findModule(StringView publicPath)
                 kept = entry->value;
         }
         if (kept) {
-            const Image* image = running->atPosition((kept->index() >> shiftOfImageInModuleID) - 1);
-            ModuleID module(kept->index() & ((1u << shiftOfImageInModuleID) - 1));
-            if (image) {
+            // Another list of images may have filed it.
+            if (auto [image, module] = findImageOfModule(*running, *kept); image) {
                 ModuleTable table(image->programTables());
-                if (module.index() < table.size()) {
-                    table.willBeAskedForPath(module, publicPath.hash());
-                    if (table.findByPath(publicPath) == module)
-                        return kept;
-                }
+                table.willBeAskedForPath(module, publicPath.hash());
+                if (table.findByPath(publicPath) == module)
+                    return kept;
             }
         }
     }
@@ -2775,7 +2932,7 @@ std::optional<ModuleID> findModule(StringView publicPath)
             found = moduleIDForHost(image, *module);
         return found ? IterationStatus::Done : IterationStatus::Continue;
     });
-    if (found && keepsWhatIsFound && found->index() >> shiftOfImageInModuleID) {
+    if (found && keepsWhatIsFound && namesImage(*found)) {
         String copy = publicPath.toString().isolatedCopy();
         Locker locker { modulesFound->lock };
         modulesFound->byPath.set(WTF::move(copy), *found);
@@ -2803,6 +2960,38 @@ bool mayHoldPathStartingWith(StringView start)
     return mayHold;
 }
 
+static StringView withoutSeparatorAtEnd(StringView directory)
+{
+    while (directory.length() > 1 && (directory[directory.length() - 1] == '/' || directory[directory.length() - 1] == '\\'))
+        directory = directory.left(directory.length() - 1);
+    return directory;
+}
+
+static StringView directoryOf(StringView path)
+{
+    size_t separator = path.reverseFind('/');
+    if (size_t backslash = path.reverseFind('\\'); backslash != notFound && (separator == notFound || backslash > separator))
+        separator = backslash;
+    return separator == notFound ? StringView() : path.left(separator);
+}
+
+bool isLeftToCodeOutsideImage(StringView specifier, StringView directoryOfImporter)
+{
+    const Image* image = Image::current();
+    // Where images share realms, a program names the files of the images below it this way.
+    if (!image || image->sharesRealms())
+        return false;
+    ModuleTable table(image->programTables());
+    return std::ranges::any_of(table.modulesOfUncompiledCode(), [&](const UncompiledModuleData& entry) {
+        ModuleID module(entry.module);
+        String name = table.pathText(module);
+        if (name.startsWith('.')) {
+            std::optional<ModuleID> referrer = table.data(module).referrerModule();
+            return specifier == name && referrer && withoutSeparatorAtEnd(directoryOfImporter) == withoutSeparatorAtEnd(directoryOf(table.pathText(*referrer)));
+        }
+        return specifier == name || (!name.startsWith('/') && specifier.startsWith(name) && specifier[name.length()] == '/');
+    });
+}
 
 // Each frame of each stack trace asks.
 struct PathOfModule {
@@ -2877,8 +3066,10 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
-    if (!modules || modules->data(module).isOfLibrary())
+    if (!modules)
         return;
+    if (modules->data(module).isOfLibrary())
+        return modules->takeOutOfRequireCache(module);
     if (!modules->mayBeEvicted(module)) {
         if (modules->wouldBeEvicted(module))
             throwLoaderChangeRefused(realm, LoaderChange::TakeOutOfRequireCache, modules->table().pathText(module));
@@ -3064,10 +3255,14 @@ bool refusesHostObjectsOutsideImage(JSGlobalObject* realm)
     return refusesCodeOutsideImage(realm, { }) && !(modules && modules->isAskingHost());
 }
 
-JSObject* mainModuleObject(JSGlobalObject* realm)
+JSObject* mainModuleObject(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
-    Modules* modules = modulesThatShowWaysBetweenModuleObjects(realm);
-    return modules ? modules->mainModuleObject() : nullptr;
+    // Asked of the image that runs, not of the one that holds the file.
+    if (!modulesThatShowWaysBetweenModuleObjects(realm))
+        return nullptr;
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->mainModuleObject(module) : nullptr;
 }
 
 JSObject* parentModuleObject(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -3231,9 +3426,14 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optiona
     if (!modules)
         return { };
     // The loader asks for code of the program, which may lie in another image or on disk. The library gets its own modules from the registry.
-    if (modules->requireAnswersNamespaceWithMock(module)) [[unlikely]]
-        return modules->moduleNamespace(module, ModulePhase::Evaluation);
-    return modules->require(module, moduleOfImage(*Image::current(), referrer).value_or(ModuleID()));
+    return modules->require(module, moduleOfImage(*Image::current(), referrer).value_or(ModuleID()), Modules::RequiredBy::Program);
+}
+
+bool isInRequireCache(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isInRequireCache(module);
 }
 
 void willRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<ModuleID> referrer, JSObject* moduleObjectOfReferrer)
@@ -3246,7 +3446,9 @@ void willRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::option
 
 void didRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, ModuleID referrerOfHost)
 {
-    if (moduleOfHost.index() >> shiftOfImageInModuleID == referrerOfHost.index() >> shiftOfImageInModuleID) [[likely]]
+    if (!namesImage(moduleOfHost) && !namesImage(referrerOfHost)) [[likely]]
+        return;
+    if (namesImage(moduleOfHost) && namesImage(referrerOfHost) && findImageOfModule(*Image::current(), moduleOfHost).first == findImageOfModule(*Image::current(), referrerOfHost).first)
         return;
     ModuleFromHost referrer(realm, referrerOfHost);
     if (Modules* modules = modulesOf(realm))
@@ -3255,12 +3457,11 @@ void didRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, ModuleID ref
 
 std::pair<Modules*, ModuleID> Modules::ownerOfRequiredModule(ModuleID required)
 {
-    unsigned positionAndOne = required.index() >> shiftOfImageInModuleID;
-    if (!positionAndOne) [[likely]]
+    if (!namesImage(required)) [[likely]]
         return { this, required };
     for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
-        if (instance->program->position() == positionAndOne - 1)
-            return { instance->state->modules.get(), ModuleID(required.index() & ((1u << shiftOfImageInModuleID) - 1)) };
+        if (std::optional<ModuleID> module = moduleOfImage(*instance->program, required))
+            return { instance->state->modules.get(), *module };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -3355,6 +3556,14 @@ void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost)
         modules->deferMock(module);
 }
 
+void didChangePlugins(JSGlobalObject* realm)
+{
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state->modules.get())
+            modules->forgetWhatNamesResolvedTo();
+    }
+}
+
 void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
@@ -3372,13 +3581,16 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
     Modules& modules = *found;
     // Compiled code names objects of a module of the library, so its body runs: the mock stands under its names alone. The body runs now, or it would store over them.
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
+        auto scope = DECLARE_THROW_SCOPE(realm->vm());
         modules.willMockLibraryModule(module);
         modules.evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        RETURN_IF_EXCEPTION(scope, void());
+        modules.mockWhatRequireCacheHolds(module, exports);
         return;
     }
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs) {
-        if (ModuleStatus status = modules.status(module); status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) {
+        if (ModuleStatus status = modules.status(module); (status == ModuleStatus::Unlinked || status == ModuleStatus::Linked) && !modules.wasLoadedWithImporter(module)) {
             modules.fillExportsOfBodyThatNeverRuns(module);
             modules.leaveOutWhatMockLacks(module, exports);
         }
@@ -3873,7 +4085,7 @@ ModuleNamespace::ModuleNamespace(VM& vm, Structure* structure, ModuleID module, 
     , m_capturedValues(dynamicExports.capturedValues, WriteBarrierEarlyInit)
     , m_liveSources(dynamicExports.liveSources, WriteBarrierEarlyInit)
     , m_module(module)
-    , m_imagePosition(static_cast<uint8_t>(vm.aotState().image->position()))
+    , m_imagePosition(vm.aotState().image->position())
     , m_isDeferred(phase == ModulePhase::Defer)
     , m_mayNeedEvaluation(m_isDeferred && modules().data(module).hasExportTable())
 {

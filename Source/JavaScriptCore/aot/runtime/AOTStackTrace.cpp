@@ -718,8 +718,8 @@ static ALWAYS_INLINE void appendFramesBelow(VM& vm, JSCell* owner, WTF::Vector<S
     vm.interpreter.getAsyncStackTrace(owner, results, awaiter, maxStackSize < std::numeric_limits<size_t>::max() - results.size() ? results.size() + maxStackSize : std::numeric_limits<size_t>::max());
 }
 
-// What is left to do once the return addresses are there. `runs`: ReturnAddressTrace::encodeRun(), none in a VM of one image.
-static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate, Instance* instance, const CapturedRun& run, std::span<const uint32_t> runs, const RunWalk& walk, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered, EntryFrame* entryFrameOfLastRun)
+// What is left to do once the return addresses are there. `runs`: none in a VM of one image.
+static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate, Instance* instance, const CapturedRun& run, std::span<const ReturnAddressTrace::Run> runs, const RunWalk& walk, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered, EntryFrame* entryFrameOfLastRun)
 {
     if (run.hasFrameNamedByCallee || run.hasFrameListedBehindTailCall || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
         return nullptr;
@@ -731,7 +731,7 @@ static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, siz
     if (!runs.empty()) {
         uint32_t* table = trace->runTable();
         *table = runs.size();
-        memcpySpan(std::span(table + 1, runs.size()), runs);
+        memcpySpan(std::span(reinterpret_cast<ReturnAddressTrace::Run*>(table + 1), runs.size()), runs);
     }
 
     // The frames below go behind the frames on top, so the frames on top count as results and not as frames above.
@@ -794,8 +794,8 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
         instance = findInstanceAmongSeveral(vm, start);
     if (!instance)
         return nullptr;
-    Vector<uint32_t, 8> runs;
-    runs.append(ReturnAddressTrace::encodeRun(run.returnAddresses.size(), walk->image().position()));
+    Vector<ReturnAddressTrace::Run, 8> runs;
+    runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
     EntryFrame* entryFrameOfLastRun = start.entryFrame;
     {
         // The tables of a run are asked while its image runs.
@@ -821,7 +821,7 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
             if (walk->isAtEnd())
                 continue;
             captureRun<true>(vm, *walk, run, maxStackSize, run.foundConstructorToSkip ? nullptr : lastConstructorToSkip, { run.numberShown, true }, true, FunctionTables::of(vm).framesMayBeNamedByCallee());
-            runs.append(ReturnAddressTrace::encodeRun(run.returnAddresses.size(), walk->image().position()));
+            runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
         }
     }
     return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, runs.span(), *walk, framesAbove, start.calleeWasEntered, entryFrameOfLastRun);
@@ -1081,9 +1081,9 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
         return;
     }
     size_t begin = 0;
-    for (uint32_t run : trace.runs()) {
-        size_t end = ReturnAddressTrace::endOfRun(run);
-        RunningImageScope imageOfRun(state, state.parts[ReturnAddressTrace::imagePositionOfRun(run)].image);
+    for (const ReturnAddressTrace::Run& run : trace.runs()) {
+        size_t end = run.endOfReturnAddresses;
+        RunningImageScope imageOfRun(state, state.parts[run.imagePosition].image);
         if (!showRunOf(trace, begin, end, filter, numberToOmit, emit))
             return;
         // As captureRun() begins a run that lies below another.
@@ -1324,7 +1324,7 @@ std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* 
         return std::nullopt;
     const Image& image = *Image::current();
     for (FunctionID candidate : { function, sourceFunctionOf(function) }) {
-        if (auto code = image.imageFunctionOf(candidate))
+        if (auto code = image.imageFunctionFromClosureWord(candidate))
             return TraceFrame { CompiledFunctionID(*code), function, CallSiteIndex(0), false, false, true };
     }
     // Where every construction is compiled at its place, the constructor has code only as what a construction by value enters.

@@ -143,7 +143,7 @@ struct FlatFrame {
     uint32_t extra;
 };
 
-enum class FlatStartScan : uint8_t { None, OneCharacter, Table, RequiredTextsAlone };
+enum class FlatStartScan : uint8_t { None, OneCharacter, Table, TableBehindPair, RequiredTextsAlone };
 
 class FlatProgram {
     WTF_MAKE_TZONE_ALLOCATED(FlatProgram);
@@ -152,10 +152,11 @@ public:
     FlatProgram() = default;
 
     JS_EXPORT_PRIVATE size_t estimatedSizeInBytes() const;
+    bool hasStartTable() const { return startScan == FlatStartScan::Table || startScan == FlatStartScan::TableBehindPair; }
     // Whether the tables of where a match can begin say as much.
     bool startScanCovers(const RequiredText& required) const
     {
-        unsigned depth = startScan == FlatStartScan::OneCharacter ? 1 : startScan == FlatStartScan::Table ? startTableDepth : 0;
+        unsigned depth = startScan == FlatStartScan::OneCharacter ? 1 : hasStartTable() ? startTableDepth : 0;
         if (required.isAllThatMatchesAtEndHold || required.greatestDistance >= depth)
             return false;
         return required.greatestDistance + (required.text.isEmpty() ? 1 : required.text.size() - required.indexInText) <= depth;
@@ -171,7 +172,7 @@ public:
                 asciiMembers[onlyStartCharacter >> 6] |= 1ull << (onlyStartCharacter & 63);
             else
                 matchesNonASCII = true;
-        } else if (startScan == FlatStartScan::Table) {
+        } else if (hasStartTable()) {
             for (unsigned character = 0; character < startTable.size(); ++character) {
                 if (!(startTable[character] & 1))
                     continue;
@@ -192,7 +193,7 @@ public:
             return;
         // A text at a fixed distance names the one place to try, and the attempt there fails as soon as the table would.
         bool isTextAtFixedDistance = texts.size() == 1 && !texts[0].text.isEmpty() && texts[0].leastDistance == texts[0].greatestDistance;
-        if (startScan == FlatStartScan::None || isTextAtFixedDistance)
+        if (startScan == FlatStartScan::None || isTextAtFixedDistance || (mayMatchOnlyAtInputEnd && texts[0].isAllThatMatchesAtEndHold))
             startScan = FlatStartScan::RequiredTextsAlone;
         // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
         if (std::exchange(skipsStartsBehindFailedRuns, false))
@@ -225,6 +226,8 @@ public:
     uint8_t startTableDepth { 0 };
     // Some matches begin with a ^ that holds at the start of the input alone. The tables say nothing about them.
     bool mayMatchOnlyAtInputStart { false };
+    // Some matches begin with a $ that holds at the end of the input alone. The tables say nothing about them, and they are shorter than startTableDepth.
+    bool mayMatchOnlyAtInputEnd { false };
     // In front of this place there is more to ask than the tables. 1: mayMatchOnlyAtInputStart. The greatest number: skipsStartsBehindFailedRuns.
     unsigned firstStartFoundByTablesAlone { 0 };
     bool skipsStartsBehindFailedRuns { false };
@@ -250,6 +253,17 @@ public:
     // The bits of the places from startTableDepth on are set everywhere.
     alignas(16) std::array<uint8_t, 16> startTableOfLowBits { };
     alignas(16) std::array<uint8_t, 16> startTableOfHighBits { };
+    // FlatStartScan::TableBehindPair: two places of the table that each take one unit, or one letter in both cases. In a long subject the table is asked only where such a pair stands.
+    struct StartPair {
+        Latin1Character first { 0 };
+        Latin1Character second { 0 };
+        uint8_t firstCaseMask { 0 };
+        uint8_t secondCaseMask { 0 };
+        uint8_t firstPlace { 0 };
+        uint8_t secondPlace { 0 };
+    };
+    StartPair startPair;
+    static constexpr unsigned leastLengthSearchedByStartPair = 64;
     FlatStartScan startScan { FlatStartScan::None };
     // No attempt is made where these rule a match out.
     RequiredTexts requiredTexts;

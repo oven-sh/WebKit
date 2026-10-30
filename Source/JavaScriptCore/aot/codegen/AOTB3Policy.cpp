@@ -223,6 +223,7 @@ static B3::Air::LiveRangeSplitPolicy liveRangeSplitPolicy()
     B3::Air::LiveRangeSplitPolicy splitting;
     splitting.splitsAroundClobbersEarly = true;
     splitting.spansStretchesOfClobbers = true;
+    splitting.limitsClobberSitesPerSplit = true;
     splitting.splitsIntoClustersOverBlocks = true;
     splitting.splitsAroundFrame = true;
     return splitting;

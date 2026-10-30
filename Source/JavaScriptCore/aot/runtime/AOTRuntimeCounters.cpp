@@ -368,9 +368,9 @@ const String& AllocationCounts::wordsAtAllocatingFrame(VM& vm, FunctionID constr
     std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
     // A call site lies in one function, inlined or not.
     uint64_t site = frame ? (static_cast<uint64_t>(frame->code.index()) + 1) << 32 | frame->callSite.bits() : 0;
-    ASSERT(!(detail >> 48));
-    uint64_t counted = static_cast<uint64_t>(kind) << 56 | static_cast<uint64_t>(imageOf(vm, frame).position()) << 48 | detail;
-    return m_wordsOfLines.ensure({ site, counted }, [&] {
+    ASSERT(!(detail >> 56));
+    uint64_t counted = static_cast<uint64_t>(kind) << 56 | detail;
+    return m_wordsOfLines.ensure({ site, counted, imageOf(vm, frame).position() }, [&] {
         return makeString(describePlace(vm, frame), ' ', describeCounted());
     }).iterator->value;
 }

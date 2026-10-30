@@ -1636,7 +1636,11 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
             for (const VM::SynchronousModuleTask& step : outer->tasks) {
                 if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
                     continue;
-                auto* load = dynamicDowncast<ModuleGraphLoadingState>(uncheckedDowncast<ModuleLoadingContext>(step.arg2)->payload());
+                auto* context = uncheckedDowncast<ModuleLoadingContext>(step.arg2);
+                // The step in which the root itself asks for what it imports.
+                if (context->entry() == entry)
+                    return false;
+                auto* load = dynamicDowncast<ModuleGraphLoadingState>(context->payload());
                 if (load && load->containsVisited(entry->record()))
                     return false;
             }

@@ -3274,6 +3274,20 @@ void openProxiesThatMemberAnswers(ValueFlowRuleContext& context, BuiltinID membe
     }
 }
 
+void exposeNativeCellsReturnedBy(ValueFlowRuleContext& context, BuiltinID member)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    ClimbingSet global = only(context, context.universe().objectOf(Builtins::GlobalThis));
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(member))) {
+        for (const BuiltinTransfer& transfer : overload.flow.transfers) {
+            if (transfer.from.kind != BuiltinPlaceKind::NativeCell || transfer.to.kind != BuiltinPlaceKind::Result)
+                continue;
+            ValueFlowNodeID cell = context.read(global, nameOfNativeCell(context, transfer.from.nativeCell));
+            context.connect(context.masked(cell, ValueSets::complement(context.universe().builtinObjects())), ValueFlowProgramNodes::escaped());
+        }
+    }
+}
+
 static void applyEntryDescribing(ValueFlowObjectID closure, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 
 static bool applyValueFromLibrary(BuiltinID builtin, const ValueFlowBuiltinCall& call, ValueFlowRuleContext& context)
