@@ -6298,7 +6298,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
     addFunction(vm, alwaysAllow, "functionsSignReturnAddress"_s, functionFunctionsSignReturnAddress, 0);
     addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
-    addFunction(vm, alwaysAllow, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
+    addFunction(vm, allowIfNotFuzz, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);
