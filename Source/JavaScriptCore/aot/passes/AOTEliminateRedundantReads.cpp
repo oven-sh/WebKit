@@ -1584,6 +1584,10 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
         ProgramPoint point;
         ValueID first;
     };
+    struct NarrowingBranch {
+        ValueID test;
+        BlockID block;
+    };
     Function& function = context.function;
     size_t numberOfComparisons = 0;
     for (const Block& block : function.blocks) {
@@ -1594,8 +1598,38 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
     if (numberOfComparisons < 2)
         return PassOutcome::Unchanged;
 
+    // A branch hands operands of its test to its arms, and names them by their positions in the test.
+    Vector<NarrowingBranch, 8> narrowingBranches;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Terminator& terminator = function.at(BlockID(blockIndex)).terminator;
+        if (!terminator.isConditionalBranch() || !questions.contains(function.at(terminator.conditionOperand()).opcode))
+            continue;
+        if (!terminator.taken().proofs.isEmpty() || !terminator.notTaken().proofs.isEmpty())
+            narrowingBranches.append({ terminator.conditionOperand(), BlockID(blockIndex) });
+    }
+    auto indexOfTest = [](const NarrowingBranch& branch) { return branch.test.index(); };
+    AOT::sort(narrowingBranches, { }, indexOfTest);
+    // An arm was typed by what its own test says of the operand that it takes: the first test has to say as much of the same operand.
+    auto saysAsMuchToArms = [&](ValueID first, ValueID repeatedTest, bool namesOperandsTheOtherWayRound) {
+        TypingContext typing { context.program, function, context.types };
+        return std::ranges::all_of(std::ranges::equal_range(narrowingBranches, repeatedTest.index(), { }, indexOfTest), [&](const NarrowingBranch& branch) {
+            const Terminator& terminator = function.at(branch.block).terminator;
+            for (EdgeSide side : { EdgeSide::Taken, EdgeSide::NotTaken }) {
+                const Target& target = side == EdgeSide::Taken ? terminator.taken() : terminator.notTaken();
+                for (uint32_t index = 0; index < target.proofs.size(); ++index) {
+                    uint32_t operandIndex = namesOperandsTheOtherWayRound ? 1 - target.proofs[index] : target.proofs[index];
+                    ValueID parameter = function.at(target.block).parameters[target.arguments.size() + index];
+                    if (!narrowOperandByTest(typing, function.at(first), operandIndex, side).isSubsetOf(context.program.typeOf(function, parameter), context.program))
+                        return false;
+                }
+            }
+            return true;
+        });
+    };
+
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
     const Dominators& dominators = context.analyses.dominators();
+    Vector<BlockID, 4> branchesOnTestsTheOtherWayRound;
     Vector<Comparison, 16> made;
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> innermost;
     Vector<size_t, 16> numberMadeAtEntry;
@@ -1619,7 +1653,13 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
             while (earlier && made[*earlier].block != block && !dominators.terminatorDominates(made[*earlier].block, block))
                 earlier = made[*earlier].outer;
             // Behind a test the same question may have a narrower answer, and whoever takes it was typed by that.
-            if (earlier && context.program.typeOf(function, made[*earlier].result).isSubsetOf(context.program.typeOf(function, values[index]), context.program)) {
+            bool namesOperandsTheOtherWayRound = earlier && sameObjectThroughCasts(function, function.at(made[*earlier].result).operand(0)).valueInFrontOfFacts().index() != left;
+            if (earlier && context.program.typeOf(function, made[*earlier].result).isSubsetOf(context.program.typeOf(function, values[index]), context.program)
+                && saysAsMuchToArms(made[*earlier].result, values[index], namesOperandsTheOtherWayRound)) {
+                if (namesOperandsTheOtherWayRound) {
+                    for (const NarrowingBranch& branch : std::ranges::equal_range(narrowingBranches, values[index].index(), { }, indexOfTest))
+                        branchesOnTestsTheOtherWayRound.append(branch.block);
+                }
                 substitution.replace(values[index], made[*earlier].result);
                 repeated.append({ { block, index }, made[*earlier].result });
                 continue;
@@ -1638,6 +1678,12 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
     if (repeated.isEmpty())
         return PassOutcome::Unchanged;
     substitution.apply(function, &context.analyses);
+    for (BlockID block : branchesOnTestsTheOtherWayRound) {
+        for (Target& target : function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets) {
+            for (uint32_t& operandIndex : target.proofs)
+                operandIndex = 1 - operandIndex;
+        }
+    }
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     if (context.build.validates()) {
         // The repeated comparison stays, and its answer is held against the first one's.

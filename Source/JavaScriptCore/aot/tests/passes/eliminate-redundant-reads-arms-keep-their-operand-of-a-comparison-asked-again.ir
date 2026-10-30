@@ -1,0 +1,84 @@
+# A branch hands operands of its comparison to its arms, narrowed by the answer, and names them by their positions in the comparison. Where the comparison goes because the same two values were compared before, each arm still takes the operand that it took: the other position where the first comparison has the two the other way round. Where the first comparison says less of that operand than the arm was typed by, the second one stays.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="theOtherWayRound" parameters=[{type=undefined|number}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = StrictEq v2, v0
+    v4 = Call v1, v3
+    v5 = StrictEq v0, v2
+    Branch v5 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v4
+  b2(v6: number):
+    Return v6
+# CHECK: v3: boolean = StrictEq v2, v0
+# CHECK-NOT: StrictEq
+# CHECK: Branch v3 -> taken b1(), notTaken b2(| 1)
+# CHECK: b2(v6: number):
+}
+
+function f1 name="bothOperands" parameters=[{type=undefined|number}, {type=number|string}, {type=anything}] results=[{type=anything}] {
+    v3 = StrictEq v1, v0
+    v4 = Call v2, v3
+    v5 = StrictEq v0, v1
+    Branch v5 -> taken b1(| 0, 1), notTaken b2()
+  b1(v6: number, v7: number):
+    v8 = Call v2, v6, v7
+    Return v8
+  b2():
+    Return v4
+# CHECK: v3: boolean = StrictEq v1, v0
+# CHECK-NOT: StrictEq
+# CHECK: Branch v3 -> taken b1(| 1, 0), notTaken b2()
+}
+
+function f2 name="theSameWayRound" parameters=[{type=undefined|number}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = StrictEq v0, v2
+    v4 = Call v1, v3
+    v5 = StrictEq v0, v2
+    Branch v5 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v4
+  b2(v6: number):
+    Return v6
+# CHECK: v3: boolean = StrictEq v0, v2
+# CHECK-NOT: StrictEq
+# CHECK: Branch v3 -> taken b1(), notTaken b2(| 0)
+}
+
+function f3 name="branchInALaterBlock" parameters=[{type=null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = Null
+    v4 = StrictEq v3, v0
+    v5 = Call v1, v4
+    v6 = StrictEq v0, v3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Branch v6 -> taken b2(), notTaken b3(| 0)
+  b2():
+    Return v5
+  b3(v7: string):
+    Return v7
+# CHECK: v4: boolean = StrictEq v3, v0
+# CHECK-NOT: StrictEq
+# CHECK: Branch v4 -> taken b2(), notTaken b3(| 1)
+}
+
+function f4 name="knownToBeNarrowerSince" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = StrictEq v0, v2
+    v4 = Call v1, v3
+    v5 = AssumeType v0 provenType=undefined|number
+    v6 = StrictEq v5, v2
+    Branch v6 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v4
+  b2(v7: number):
+    Return v7
+# CHECK: v3: boolean = StrictEq v0, v2
+# CHECK: v6: boolean = StrictEq v5, v2
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
+}
