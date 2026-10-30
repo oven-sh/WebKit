@@ -1372,6 +1372,7 @@ private:
             return maker.uniteAll(parts.span());
         });
         universe.m_objectsMadeAs = universe.m_sureInstancesOfClass;
+        universe.m_objectsThatDefinitionsTellApart = maker.unite(universe.m_closures, universe.m_sureInstancesOfClass[BuiltinClasses::Array.index()]);
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {
             if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
                 universe.m_sureInstancesOfClass[index] = ValueSets::nothing;

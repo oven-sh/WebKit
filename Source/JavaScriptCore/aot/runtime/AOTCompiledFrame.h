@@ -353,7 +353,10 @@ private:
     static void leaveRun(Cursor&, Exit&);
     static bool passOverFrame(Cursor&, Exit&);
     bool passOverMethodReadFrame(Cursor&, Exit&);
-    Instance* findEnclosingAdapterInstance(Cursor) const;
+    Instance* findEnclosingAdapterInstance(Cursor, CallFrame** adapterFrame = nullptr) const;
+public:
+    static Instance* knownInstanceOfRun(const VMState&, CallFrame* framePointer, EntryFrame*);
+private:
     Instance* tryFindInstance() const;
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);
     const CallSiteCache::Entry* findCallerFunctionFrame(Cursor&, Exit&, RunEnd&);

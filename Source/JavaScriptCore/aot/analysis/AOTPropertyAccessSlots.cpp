@@ -257,78 +257,37 @@ static bool isLazilyInitialized(const FieldArmState& state)
     return state.hasConstructor && !state.isRequired && !state.isInContainer && state.admitsUndefined && !state.holdsRawNumberOrBoolean;
 }
 
-static bool passingEdgesReach(const Function& function, BlockID from, BlockID target, unsigned maxBlocks)
-{
-    for (unsigned steps = 0; steps < maxBlocks && from != target; ++steps) {
-        const Terminator& terminator = function.at(from).terminator;
-        if (terminator.isConditionalBranch())
-            from = terminator.taken().block;
-        else if (terminator.kind == TerminatorKind::Jump)
-            from = terminator.targets[0].block;
-        else
-            return false;
-    }
-    return from == target;
-}
-
-// Nothing has stored to an object that the operation in front of the test makes. Others of its layout say nothing about its slot.
-static bool isTestOfObjectJustMade(const Function& function, BlockID block, ValueID testID)
-{
-    const auto& values = function.at(block).values;
-    size_t position = values.find(testID);
-    if (position == notFound || !position || values[position - 1] != function.at(testID).objectOperand())
-        return false;
-    Opcode made = function.at(values[position - 1]).opcode;
-    return made == Opcode::NewObject || made == Opcode::FinishObject;
-}
-
-EmptySlotArm classifyEmptySlotArm(const Function& function, BlockID block, ValueID testID)
+bool asksObjectWhereSlotIsEmpty(const Function& function, BlockID block, ValueID testID)
 {
     const Value& test = function.at(testID);
     const Terminator& branch = function.at(block).terminator;
     if (!branch.isConditionalBranch() || branch.conditionOperand() != testID)
-        return EmptySlotArm::DoesSomethingElse;
+        return false;
     auto object = sameObjectThroughCasts(function, test.objectOperand());
-    EmptySlotArm answers = isTestOfObjectJustMade(function, block, testID) ? EmptySlotArm::TestsObjectJustMade : EmptySlotArm::AnswersByItself;
     AOT_THRESHOLD(unsigned, maxBlocksOfEmptyArm, 16);
     BlockID current = branch.notTaken().block;
-    Vector<ValueID, 8> madeInArm;
     for (unsigned steps = 0; steps < maxBlocksOfEmptyArm; ++steps) {
-        // A store by name has the value that it stores made above it.
-        bool doesSomethingElse = false;
         for (ValueID id : function.at(current).values) {
             const Value& value = function.at(id);
             if (value.opcode == Opcode::HasNoFieldOutsideSlot && sameObjectThroughCasts(function, value.objectOperand()) == object)
-                return EmptySlotArm::AsksObject;
+                return true;
             if (accessClassOf(value.opcode) == AccessClass::ByName && Value::opcodesWithKey.contains(value.opcode) && value.key() == test.key())
-                return EmptySlotArm::AsksObject;
+                return true;
             // The callee begins with the same test.
             if (value.opcode == Opcode::CallDirect && value.isAfterInlinedHead())
-                return EmptySlotArm::AsksObject;
-            // Another test of the object's state may fail for an object with a field outside its slot.
-            constexpr std::array proofsAboutOtherThings { Proof::PrototypeLinkUnchanged, Proof::MemberUnchanged, Proof::Shape, Proof::TestedType, Proof::NotNullish };
-            Proof proof = provesOf(value.opcode);
-            doesSomethingElse |= proof == Proof::None ? !isCast(value.opcode) && !isRematerializable(value) : !std::ranges::contains(proofsAboutOtherThings, proof);
-            madeInArm.append(id);
+                return true;
+            if (provesOf(value.opcode) == Proof::None && !isCast(value.opcode) && !isRematerializable(value))
+                return false;
         }
-        if (doesSomethingElse)
-            return EmptySlotArm::DoesSomethingElse;
         const Terminator& terminator = function.at(current).terminator;
         if (terminator.isConditionalBranch())
             current = terminator.taken().block;
         else if (terminator.kind == TerminatorKind::Jump && terminator.targets[0].arguments.isEmpty())
             current = terminator.targets[0].block;
-        else if (terminator.kind == TerminatorKind::Return)
-            return madeInArm.contains(terminator.valueOperand()) ? answers : EmptySlotArm::DoesSomethingElse;
-        else if (terminator.kind == TerminatorKind::Jump) {
-            // Arms may also hand their operands to a block that accesses by name, which both arms of the test may share.
-            const Target& target = terminator.targets[0];
-            bool handsOnItsOwnValue = std::ranges::any_of(target.arguments, [&](ValueID argument) { return madeInArm.contains(argument); });
-            return handsOnItsOwnValue && passingEdgesReach(function, branch.taken().block, target.block, maxBlocksOfEmptyArm) ? answers : EmptySlotArm::DoesSomethingElse;
-        } else
-            return EmptySlotArm::DoesSomethingElse;
+        else
+            return false;
     }
-    return EmptySlotArm::DoesSomethingElse;
+    return false;
 }
 
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key, OptionSet<OptionKind> kinds)

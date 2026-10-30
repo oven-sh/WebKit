@@ -633,7 +633,9 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         bool staysForGood = isOfBody && (deferredExports == DeferredExports::AreRead || listsAllItsExports(program.at(id)));
         if (!isTiedByThisStatement) {
             // Every use of the namespace may run in one round, and uses times exports is what would reach the edge budget.
-            if (staysForGood && !context.isFirstToTieNamespaceInThisRound(id))
+            // Rules over the whole program ask for every module. Within a round values stand still, so the second to ask would tie the same.
+            bool isTiedWholeInThisRound = staysForGood || (!isOfBody && deferredExports == DeferredExports::AreRead);
+            if (isTiedWholeInThisRound && !context.isFirstToTieNamespaceInThisRound(id))
                 continue;
             if (staysForGood)
                 tiedNow.append(universe.namespaceOf(id));

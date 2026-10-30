@@ -317,7 +317,7 @@ private:
 
     void forEachContainerIn(ValueSetMaker& maker, ValueSetID set, ValueSetID among, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
-        sets().forEachMember(maker.intersect(set, among), [&](ValueFlowObjectID object) {
+        sets().forEachMemberInLine(maker.intersect(set, among), [&](ValueFlowObjectID object) {
             functor(*find(object));
         });
     }
@@ -731,7 +731,7 @@ private:
         const ParallelLoops& loops = m_inputs.loops();
         m_kindsOfBoundedNumbers = maker().of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Integer), ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
         Vector<ValueFlowObjectID> namesOfElements;
-        sets().forEachMember(universe().keys(), [&](ValueFlowObjectID constant) {
+        sets().forEachMemberInLine(universe().keys(), [&](ValueFlowObjectID constant) {
             if (program().isIndexLike(universe().keyOf(constant)))
                 namesOfElements.append(constant);
         });

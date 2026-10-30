@@ -2055,13 +2055,136 @@ static unsigned makeElementsOfAppendsBehindLiterals(FunctionPassContext& context
     return found.size();
 }
 
+// `[...list]` of a list without holes that stays in the storage it has is a copy of it, which the stub of slice() makes in one piece.
+static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
+{
+    static constexpr int64_t maxSteps = 8;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::AppendElements))
+        return PassOutcome::Unchanged;
+    struct Copy {
+        ValueID literal;
+        ValueID cast;
+        ValueID append;
+        ArrayStorage storage;
+        bool testsStorage;
+    };
+    Vector<Copy, 2> copies;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& literal = function.at(values[index]);
+            if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
+                continue;
+            ValueID cast;
+            ValueID append;
+            bool isCopy = true;
+            for (const Use& use : analyses.useLists().usesOf(values[index])) {
+                isCopy &= use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && !cast;
+                if (isCopy)
+                    cast = use.user;
+            }
+            if (!isCopy || !cast)
+                continue;
+            for (uint32_t next = index + 1; next < values.size() && next <= index + maxSteps; ++next) {
+                const Value& value = function.at(values[next]);
+                if (value.opcode == Opcode::AppendElements && value.arrayOperand() == cast) {
+                    append = values[next];
+                    break;
+                }
+                isCopy &= values[next] == cast || !analyses.effectsOf(values[next]).onAnyEdge().mayRunOtherCode();
+            }
+            if (!isCopy || !append)
+                continue;
+            const Type& source = context.program.typeOf(function, function.at(append).sourceOperand());
+            const ClassPart* part = source.singleBuiltinClass();
+            if (!part || part->builtinClass != BuiltinClasses::Array || source.mayBeUndefinedOrNull() || function.at(append).guardOperand())
+                continue;
+            if (!pristineAspectsProvenBy(source, BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names, PristineAspects::Dense }))
+                continue;
+            // The copy has the storage of the source. Who reads the copy asks for one kind of storage: where the source may have another, the copy is made as it was.
+            ArrayStorage expected = literal.arrayStorage();
+            const ClassPart* castPart = context.program.typeOf(function, cast).singleBuiltinClass();
+            if (expected == ArrayStorage::Other && castPart)
+                expected = castPart->arrayStorage;
+            for (const Use& use : analyses.useLists().usesOf(cast)) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = function.at(use.user);
+                if (!Value::opcodesWithArrayStorage.contains(user.opcode) || !hasArrayStorageForm(user.arrayStorage()))
+                    continue;
+                isCopy &= expected == ArrayStorage::Other || expected == user.arrayStorage();
+                expected = user.arrayStorage();
+            }
+            if (isCopy && hasArrayStorageForm(expected))
+                copies.append({ values[index], cast, append, expected, part->arrayStorage != expected });
+        }
+    }
+    if (copies.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (const Copy& copy : copies) {
+        ValueID source = function.at(copy.append).sourceOperand();
+        TypingContext typing { context.program, function, context.types };
+        BuiltinOperandTypes operands = operandTypesOf(typing, source, { });
+        OverloadMatch match = matchOverload({ typing, Builtins::ArrayPrototypeSlice, BuiltinCallMode::Call, operands, operands });
+        if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty())
+            continue;
+        outcome = PassOutcome::Changed;
+        Value literal = function.at(copy.literal);
+        Value cast = function.at(copy.cast);
+        ValueLocation appendAt = analyses.useLists().locationOf(copy.append);
+        IRBuilder::Expansion expansion = builder.beginExpansion({ appendAt.block, appendAt.index });
+        ValueID joined = builder.addParameter(expansion.continuation, cast.type);
+        auto castAnew = [&](ValueID made) {
+            Value again = cast;
+            again.setValueOperand(made);
+            return builder.append(WTF::move(again));
+        };
+        auto makeInOnePiece = [&] {
+            ValueID copied = castAnew(builder.append(makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { source, { } }, { })));
+            builder.emitJump(expansion.continuation, { copied });
+        };
+        if (copy.testsStorage) {
+            IRBuilder::ProvenBranch isOfKind = builder.emitBranchWithProof(builder.append(makeArrayStorageTest(source, copy.storage)), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
+            builder.moveToEndOf(isOfKind.taken);
+            makeInOnePiece();
+            builder.moveToEndOf(isOfKind.notTaken);
+            ValueID made = castAnew(builder.append(Value(literal)));
+            builder.append(Opcode::AppendElements, { made, source });
+            builder.emitJump(expansion.continuation, { made });
+        } else
+            makeInOnePiece();
+
+        ValueSubstitution substitution(function);
+        substitution.replace(copy.cast, joined);
+        substitution.apply(function, &analyses);
+        const BlockValues& front = function.at(appendAt.block).values;
+        BitVector erased;
+        for (uint32_t index = 0; index < front.size(); ++index) {
+            if (front[index] == copy.literal || front[index] == copy.cast)
+                erased.set(index);
+        }
+        builder.eraseValues(appendAt.block, erased);
+    }
+    if (outcome == PassOutcome::Changed)
+        analyses.didChangeValues();
+    return outcome;
+}
+
 PassOutcome planArrayCapacities(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().intersects(arrayCapacityOpcodes))
         return PassOutcome::Unchanged;
 
+    PassOutcome copied = copyListsInOnePiece(context);
     unsigned literalsWithAppends = makeElementsOfAppendsBehindLiterals(context);
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
+    if (copied == PassOutcome::Changed)
+        converted = PassOutcome::Changed;
     if (literalsWithAppends)
         converted = PassOutcome::Changed;
     unsigned constructed = chooseStorageOfConstructedArrays(context);

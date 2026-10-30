@@ -178,6 +178,8 @@ public:
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
+    // A definition of a property that cannot be configured compares with SameValue what it defines with what is there.
+    ValueSetID objectsThatDefinitionsTellApart() const { return m_objectsThatDefinitionsTellApart; }
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
     ValueSetID builtinFunctionsOfProtocols() const { return m_builtinFunctionsOfProtocols; }
     ValueSetID builtinFunctionsThatReadSpecies() const { return m_builtinFunctionsThatReadSpecies; }
@@ -279,6 +281,7 @@ private:
     BitVector m_isAllocatedByProgram;
     Vector<LayoutID> m_recordsThatTypedCodeTakes;
     ValueSetID m_closures;
+    ValueSetID m_objectsThatDefinitionsTellApart;
     ValueSetID m_builtinFunctions;
     ValueSetID m_builtinFunctionsOfProtocols;
     ValueSetID m_builtinFunctionsThatReadSpecies;

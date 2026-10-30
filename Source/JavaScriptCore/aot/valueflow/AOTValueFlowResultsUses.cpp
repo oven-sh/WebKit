@@ -539,7 +539,7 @@ ValueSetID UsesOfObjects::followPrototypeLinks(ValueSetMaker& maker, ValueSetID 
     ValueSetID frontier = objects;
     while (frontier != ValueSets::nothing) {
         ValueSetID above = ValueSets::nothing;
-        m_inputs.sets().forEachMember(frontier, [&](ValueFlowObjectID object) {
+        m_inputs.sets().forEachMemberInLine(frontier, [&](ValueFlowObjectID object) {
             ValueSetID prototypes = m_heap.prototypesOf(maker, maker.of(object));
             above = maker.unite(above, isFullyKnown(prototypes) ? prototypes : m_inputs.universe().builtinObjects());
         });

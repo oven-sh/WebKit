@@ -816,7 +816,7 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
     const BuiltinTable& builtins = inputs.program.builtins();
     BorrowedValueSetMaker maker(inputs.makerPool());
     auto forEachHolderIn = [&](ValueSetID objects, NOESCAPE const Invocable<void(BuiltinID)> auto& functor) {
-        inputs.sets().forEachMember(maker.get().intersect(objects, inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
+        inputs.sets().forEachMemberInLine(maker.get().intersect(objects, inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
             functor(builtins.canonicalID(inputs.universe().builtinOf(object)));
         });
     };

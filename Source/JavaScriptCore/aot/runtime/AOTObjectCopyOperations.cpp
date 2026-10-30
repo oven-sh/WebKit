@@ -363,6 +363,40 @@ static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalOb
     RELEASE_AND_RETURN(scope, defineCollectedProperties(globalObject, vm, target, compiledObjectOrNull(target), names, values));
 }
 
+// A record with plain elements copied into a record of another layout: the names at once, then the elements. No code runs, so the order of the two does not show.
+static NEVER_INLINE std::optional<ASCIILiteral> tryCopyNamesThenElements(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& target, JSObject* from, JSObject* holder)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    IndexingType indexingType = holder->indexingType();
+    if (!hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType))
+        return std::nullopt;
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    auto walked = PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, from, [&](const PropertyWalk::OwnProperty& property) {
+        if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+            return IterationStatus::Continue;
+        if (property.name == vm.propertyNames->underscoreProto.impl())
+            return IterationStatus::Done;
+        names.append(property.name);
+        values.appendWithCrashOnOverflow(property.value);
+        return IterationStatus::Continue;
+    }, PropertyWalk::Elements::AreLeftOut);
+    if (walked != PropertyWalk::Result::Completed)
+        return std::nullopt;
+    if (!names.isEmpty() && !target.tryDefineFields(vm, names.span(), { values.data(), values.size() }) && !tryAssignCollectedProperties(globalObject, vm, target, names, values)) {
+        definePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+        RETURN_IF_EXCEPTION(scope, "threw"_s);
+    }
+    holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
+        if (!tryDefineElementOfCompiledObject(instance, &target, index, value))
+            defineCopiedProperty(globalObject, &target, Identifier::from(vm, index), value);
+        RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+        return IterationStatus::Continue;
+    });
+    RETURN_IF_EXCEPTION(scope, "threw"_s);
+    return "names at once, then elements"_s;
+}
+
 // Answers which way the copy went, for a run that counts.
 static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedKeys& excluded)
 {
@@ -428,6 +462,12 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
             return "into an ordinary object, objectAssignFast"_s;
     }
     bool canDefineDirectly = record ? !(record->orderWord() & orderWordIntegrityBits) : canPutDirectly;
+    if (canDefineDirectly && record && excluded.isEmpty() && hasElements && isCompiledObject(from)) {
+        std::optional<ASCIILiteral> way = tryCopyNamesThenElements(instance, globalObject, vm, *record, from, holderOfElements);
+        RETURN_IF_EXCEPTION(scope, threw);
+        if (way)
+            return *way;
+    }
     if (canDefineDirectly) {
         std::optional<ASCIILiteral> way = tryCopyPropertiesExcluding(globalObject, vm, target, from, excluded);
         RETURN_IF_EXCEPTION(scope, threw);

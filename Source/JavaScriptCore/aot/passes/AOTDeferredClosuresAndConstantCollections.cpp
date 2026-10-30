@@ -923,7 +923,7 @@ struct DeferralAnalysis {
         if (!key || TypeTable::isProvisional(key) || !keysOfCandidates.quickGet(key.index()) || !reachesCandidate(reference, false))
             return std::nullopt;
         if (value.opcode == Opcode::IsSlotFilled)
-            return kindIf(value.accessSite() || (classifyEmptySlotArm(program.at(reference.function), block, reference.value) != EmptySlotArm::AsksObject && !build.isSabotaged(Sabotage::FieldsStayInSlotsThatDeferClosures)), PresenceTest);
+            return kindIf(value.accessSite() || !asksObjectWhereSlotIsEmpty(program.at(reference.function), block, reference.value), PresenceTest);
         if (!Value::opcodesWithFieldAccess.contains(value.opcode))
             return NamedAccess;
         return storedOf(value.opcode) ? SlotStore : SlotRead;

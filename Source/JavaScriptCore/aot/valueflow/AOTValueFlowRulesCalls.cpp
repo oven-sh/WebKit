@@ -278,7 +278,7 @@ static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFl
     Vector<FunctionID, 8> answering;
     bool answer = true;
     bool gainsSomething = false;
-    context.forEachMember(callees, [&](ValueFlowObjectID closure) {
+    context.forEachMemberInLine(callees, [&](ValueFlowObjectID closure) {
         FunctionID function = universe.closureFunction(closure);
         if (!answer || !function || answering.size() >= context.mostMembersToldApart()) {
             answer = false;
@@ -616,7 +616,7 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
 
 static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
 {
-    context.forEachMember(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
+    context.forEachMemberInLine(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
     });
 

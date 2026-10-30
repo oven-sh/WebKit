@@ -189,6 +189,8 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
     Instance* instance = state.onlyInstance;
     if (!instance) [[unlikely]]
+        instance = CompiledFrameIterator::knownInstanceOfRun(state, start.framePointer, entryFrame);
+    if (!instance) [[unlikely]]
         instance = findInstanceOfRun(vm, start, entryFrame);
     ReturnSiteInRun place = start;
     CallFrame* leftFrame = nullptr;

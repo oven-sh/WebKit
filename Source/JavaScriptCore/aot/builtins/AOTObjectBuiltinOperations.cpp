@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAssignmentPlans.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
@@ -457,8 +456,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
-    if (Object* record = compiledObjectOrNull(object))
-        OPERATION_RETURN(scope, tryAssignOrdinaryObjectAsBefore(vm, *record, from) || PropertyWalk::tryAssign(vm, object, from));
+    if (compiledObjectOrNull(object))
+        OPERATION_RETURN(scope, PropertyWalk::tryAssign(vm, object, from));
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);

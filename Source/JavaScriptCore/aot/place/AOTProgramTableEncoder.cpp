@@ -941,7 +941,7 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
         { declaration.flags.contains(FieldFlags::IsBrand) && flowOf(program, reference).location.reads != ReadState::NeverRead, fieldIsBrand },
         { stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
-        { stability.contains(FieldStability::IsNeverStoredWithOtherType) || encoder.slots.isExpectedInItsSlot(declarationOf(program, reference)), fieldIsNeverStoredWithOtherType },
+        { stability.contains(FieldStability::IsNeverStoredWithOtherType), fieldIsNeverStoredWithOtherType },
         { declaration.form.contains(FieldForm::IsReadOnly), fieldIsReadOnly },
         { declaration.form.contains(FieldForm::IsNotEnumerable), fieldIsNotEnumerable },
         { declaration.form.contains(FieldForm::IsNotConfigurable), fieldIsNotConfigurable },

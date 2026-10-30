@@ -6370,7 +6370,7 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
             if (m_input.nodes && m_input.universe) {
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
-                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->objectsThatDefinitionsTellApart());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed), m_input.universe->prototypeObjectsOfLibraryClasses());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::LibraryModulesHandedOut), m_input.universe->holdersOfLibraryExportsThatRaiseNoEvent());

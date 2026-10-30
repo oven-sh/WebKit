@@ -647,7 +647,7 @@ void runValueFlowRule(const ValueFlowStatement& statement, ValueFlowRuleContext&
     if (!instanced || !instanced->find(statement.function))
         return runRuleOnNodesNamed(statement, context);
     context.makeInstanceOfOtherCalls(statement.function);
-    context.forEachMember(context.unite(context.valueOf(context.markersOf(statement.function)), only(context, ValueFlowInstancedFunctions::markerOfOtherCalls())), [&](ValueFlowObjectID marker) {
+    context.forEachMemberInLine(context.unite(context.valueOf(context.markersOf(statement.function)), only(context, ValueFlowInstancedFunctions::markerOfOtherCalls())), [&](ValueFlowObjectID marker) {
         ValueFlowRuleContext::InstanceOfRun instance(context, statement.function, marker);
         runRuleOnNodesNamed(statement, context);
     });

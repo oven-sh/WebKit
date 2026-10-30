@@ -68,7 +68,7 @@ LedgerOfBuiltinObjects::LedgerOfBuiltinObjects(const ValueFlowResultInputs& inpu
 Vector<BuiltinID> LedgerOfBuiltinObjects::holdersIn(ValueSetMaker& maker, ValueSetID set) const
 {
     Vector<BuiltinID> found;
-    m_inputs.sets().forEachMember(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
+    m_inputs.sets().forEachMemberInLine(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
         found.append(m_builtins.canonicalID(m_inputs.universe().builtinOf(object)));
     });
     AOT::sort(found);

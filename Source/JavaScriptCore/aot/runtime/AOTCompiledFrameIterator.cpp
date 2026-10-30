@@ -188,7 +188,7 @@ static bool hasZombieCallee(VM& vm, const CallFrame* callFrame, const void* retu
     return callee && callee->callerFrameOrEntryFrame() == callFrame && removeCodePtrTag(callee->rawReturnPC()) == returnAddress && callee->isZombieFrame();
 }
 
-SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor) const
+SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Cursor cursor, CallFrame** adapterFrame) const
 {
     Exit exit;
     do {
@@ -196,17 +196,38 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
         if (!site)
             return nullptr;
         enterFrame(cursor, *site);
-        if (site->isStubReturnSite() && isAdapterFrame(site->stubFrameKind))
+        if (site->isStubReturnSite() && isAdapterFrame(site->stubFrameKind)) {
+            if (adapterFrame)
+                *adapterFrame = cursor.callFrame;
             return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(cursor.callFrame) + AdapterFrame::offsetOfInstance);
+        }
     } while (passOverFrame(cursor, exit));
+    return nullptr;
+}
+
+Instance* CompiledFrameIterator::knownInstanceOfRun(const VMState& state, CallFrame* framePointer, EntryFrame* entryFrame)
+{
+    const VMState::AdapterOfRun& known = state.adapterOfRecentRun;
+    const char* frame = reinterpret_cast<const char*>(known.frame);
+    if (known.frame && known.entryFrame == entryFrame && known.frame > framePointer && frame < reinterpret_cast<const char*>(entryFrame)
+        && *reinterpret_cast<Instance* const*>(frame + AdapterFrame::offsetOfInstance) == known.instance)
+        return known.instance;
     return nullptr;
 }
 
 Instance* CompiledFrameIterator::tryFindInstance() const
 {
-    const VMState& state = m_vm->aotState();
-    if (state.instances.size() != 1)
-        return findEnclosingAdapterInstance(m_cursor);
+    VMState& state = m_vm->aotState();
+    if (state.instances.size() != 1) {
+        // A file's instance outlives it until a collection. Each rethrow would walk to the adapter again.
+        if (Instance* known = knownInstanceOfRun(state, m_cursor.framePointer, m_cursor.entryFrame))
+            return known;
+        CallFrame* adapterFrame = nullptr;
+        Instance* instance = findEnclosingAdapterInstance(m_cursor, &adapterFrame);
+        if (instance)
+            state.adapterOfRecentRun = { m_cursor.entryFrame, adapterFrame, instance };
+        return instance;
+    }
 #if ASSERT_ENABLED
     // The walk is as long as the stack is deep, and an error that passes a handler in every frame asks at each of them.
     static std::atomic<unsigned> questions;

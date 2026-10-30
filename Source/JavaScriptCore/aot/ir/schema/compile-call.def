@@ -164,7 +164,6 @@ enum Sabotage {
     CallsGiveNoArrayOtherStorage
     CellsThatAreKeptLieInFrames
     ClassesBelowBuiltinsHaveSlots
-    FieldsStayInSlotsThatDeferClosures
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }
