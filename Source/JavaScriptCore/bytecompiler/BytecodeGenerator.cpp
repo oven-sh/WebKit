@@ -55,6 +55,7 @@
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedEvalCodeBlock.h"
 #include "UnlinkedFunctionCodeBlock.h"
+#include "UnlinkedFunctionExecutableInlines.h"
 #include "UnlinkedMetadataTableInlines.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
@@ -3799,7 +3800,7 @@ RegisterID* BytecodeGenerator::emitNewDefaultConstructor(RegisterID* dst, Constr
     const Identifier& ecmaName, const SourceCode& classSource, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
 {
     UnlinkedFunctionExecutable* executable = m_vm.builtinExecutables()->createDefaultConstructor(constructorKind, name, needsClassFieldInitializer, privateBrandRequirement);
-    executable->setEcmaName(ecmaName);
+    executable->setEcmaName(m_vm, ecmaName);
     executable->setClassSource(classSource);
 
     unsigned index = m_codeBlock->addFunctionExpr(executable);
