@@ -5329,7 +5329,8 @@ protected:
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
     // 15: upstream's op_call_varargs_with_spread (325231@main; opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 15;
+    // 16: an anonymous default export has the name "default", not the private name "*default*".
+    static constexpr uint32_t cachedTypesFormatRevision = 16;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

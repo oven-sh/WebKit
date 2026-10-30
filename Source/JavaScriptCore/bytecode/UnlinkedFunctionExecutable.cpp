@@ -40,6 +40,7 @@
 #include "SourceProfiler.h"
 #include "Structure.h"
 #include "UnlinkedFunctionCodeBlock.h"
+#include "UnlinkedFunctionExecutableInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
@@ -122,7 +123,7 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_scalarsAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
-    , m_ecmaName(node->ecmaName())
+    , m_ecmaName(nameFromSyntaxTree(vm, node->ecmaName()))
     , m_members(WTF::move(parentScopeTDZVariables))
 {
     ASSERT(node->ident().isNull() || node->ident() == node->ecmaName());
