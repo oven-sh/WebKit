@@ -33,6 +33,7 @@
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
 #include "ParseInt.h"
+#include "PropertyNameArray.h"
 #include "StackFrame.h"
 #include "VM.h"
 #include <wtf/text/MakeString.h>
@@ -841,11 +842,12 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
 
-void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode mode)
+void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    if (mode == DontEnumPropertiesMode::Include)
+    // The lazy properties are not enumerable and their names are strings: no other listing has them.
+    if (mode == DontEnumPropertiesMode::Include && propertyNames.includeStringProperties())
         thisObject->materializeErrorInfoIfNeeded(vm);
 }
 
