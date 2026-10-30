@@ -47,6 +47,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
 #endif
+#include "UnlinkedFunctionExecutableInlines.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WebAssemblyModuleRecord.h"
 #include <wtf/Scope.h>
@@ -484,11 +485,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-        SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
+        const Identifier& bindingName = unlinkedFunctionExecutable->bindingName(vm);
+        SymbolTableEntry::Fast entry = symbolTable->get(bindingName.impl());
         VarOffset offset = entry.varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
-            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
+            ASSERT(!bindingName.isEmpty());
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
@@ -511,7 +513,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
             bool putResult = false;
-            symbolTablePutTouchWatchpointSet(env, globalObject, unlinkedFunctionExecutable->name(), function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+            symbolTablePutTouchWatchpointSet(env, globalObject, bindingName, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
