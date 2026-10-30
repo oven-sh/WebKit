@@ -135,7 +135,7 @@ ALWAYS_INLINE int interpretFrom(Yarr::BytecodePattern* bytecode, StringView s, u
         return Yarr::interpret(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     else {
         Yarr::JSRegExpResult result { Yarr::JSRegExpResult::ErrorInternal };
-        int matchStart = Yarr::interpret(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector), &result);
+        int matchStart = Yarr::interpretWithResult(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector), result);
         if (result != Yarr::JSRegExpResult::Match && result != Yarr::JSRegExpResult::NoMatch)
             return static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure);
         return matchStart;

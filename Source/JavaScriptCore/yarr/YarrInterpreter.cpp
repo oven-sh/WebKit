@@ -3583,50 +3583,60 @@ static bool hasGivenUp(JSRegExpResult flatResult)
     return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit || flatResult == JSRegExpResult::JITCodeFailure;
 }
 
-// `result` is how the flat program gave the match up, and stays that where nothing here can make the match again.
-static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult& result)
+// What interpret() returns, and how the search ended: Match or NoMatch for an answer, and another value for a search that was given up.
+struct InterpretedSearch {
+    unsigned matchStart;
+    JSRegExpResult result;
+};
+
+static NEVER_INLINE InterpretedSearch interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
 {
-    if (result == JSRegExpResult::JITCodeFailure) {
-        result = matchFlatProgramBehindSurrogate(program, input, start, output);
-        if (!hasGivenUp(result))
-            return result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+    if (flatResult == JSRegExpResult::JITCodeFailure) {
+        flatResult = matchFlatProgramBehindSurrogate(program, input, start, output);
+        if (!hasGivenUp(flatResult))
+            return { flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch, flatResult };
     }
-    if (result == JSRegExpResult::ErrorHitLimit) {
+    if (flatResult == JSRegExpResult::ErrorHitLimit) {
         unsigned remainingTurns { 0 };
-        if (auto counted = matchCountingTurns(bytecode, input, start, output, remainingTurns)) {
-            result = *counted;
-            return result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
-        }
+        if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
+            return { *result == JSRegExpResult::Match ? output[0] : offsetNoMatch, *result };
     }
     if (!bytecode->m_body) {
         if (!bytecode->m_bytecodeBehindFlatProgram) {
             if (bytecode->m_source.isNull())
-                return offsetNoMatch;
+                return { offsetNoMatch, flatResult };
             ErrorCode errorCode { ErrorCode::NoError };
             YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
             if (hasError(errorCode))
-                return offsetNoMatch;
+                return { offsetNoMatch, flatResult };
             bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
             if (!bytecode->m_bytecodeBehindFlatProgram)
-                return offsetNoMatch;
+                return { offsetNoMatch, flatResult };
             bytecode->m_bytecodeBehindFlatProgram->m_requiredTexts = bytecode->m_requiredTexts;
         }
         bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
     }
+    JSRegExpResult result { JSRegExpResult::NoMatch };
     unsigned remainingTurns { 0 };
-    return interpretBytecode(bytecode, input, start, output, result, remainingTurns, program.jitCountsTurns);
+    unsigned matchStart = interpretBytecode(bytecode, input, start, output, result, remainingTurns, program.jitCountsTurns);
+    return { matchStart, result };
 }
 
-static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult& result)
+static ALWAYS_INLINE InterpretedSearch interpretFlatProgramInline(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
-    result = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
+    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
     if (bytecode->m_body) [[unlikely]]
-        validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, result, output);
-    if (result == JSRegExpResult::Match)
-        return output[0];
-    if (hasGivenUp(result)) [[unlikely]]
-        return interpretBehindFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, output, result);
-    return offsetNoMatch;
+        validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, flatResult, output);
+    if (flatResult == JSRegExpResult::Match)
+        return { output[0], flatResult };
+    if (hasGivenUp(flatResult)) [[unlikely]]
+        return interpretBehindFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, output, flatResult);
+    return { offsetNoMatch, flatResult };
+}
+
+static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    return interpretFlatProgramInline(bytecode, input, start, output).matchStart;
 }
 
 // The bytecode's answer without the attempts that the texts rule out, and with them.
@@ -3657,25 +3667,32 @@ static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, u
     CRASH();
 }
 
-NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult* result)
+NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, interpret);
     SuperSamplerScope superSamplerScope(false);
     if (Options::validateRegExpFlatProgram()) [[unlikely]]
         validateRequiredTexts(bytecode, input, start);
-    if (bytecode->m_flatProgram) [[unlikely]] {
-        JSRegExpResult unwantedResult { JSRegExpResult::NoMatch };
-        return interpretFlatProgram(bytecode, input, start, output, result ? *result : unwantedResult);
-    }
-    auto run = [&](auto&& interpreter) ALWAYS_INLINE_LAMBDA {
-        unsigned matchStart = interpreter.interpret();
-        if (result) [[unlikely]]
-            *result = interpreter.result();
-        return matchStart;
-    };
+    if (bytecode->m_flatProgram) [[unlikely]]
+        return interpretFlatProgram(bytecode, input, start, output);
     if (input.is8Bit())
-        return run(Interpreter<Latin1Character>(bytecode, output, input.span8(), start));
-    return run(Interpreter<char16_t>(bytecode, output, input.span16(), start));
+        return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
+    return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
+}
+
+NEVER_INLINE unsigned interpretWithResult(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult& result)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, interpretWithResult);
+    SuperSamplerScope superSamplerScope(false);
+    if (Options::validateRegExpFlatProgram()) [[unlikely]]
+        validateRequiredTexts(bytecode, input, start);
+    if (bytecode->m_flatProgram) [[unlikely]] {
+        InterpretedSearch search = interpretFlatProgramInline(bytecode, input, start, output);
+        result = search.result;
+        return search.matchStart;
+    }
+    unsigned remainingTurns { 0 };
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
 }
 
 // These should be the same for both char16_t & Latin1Character.
