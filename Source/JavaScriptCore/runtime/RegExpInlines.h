@@ -128,18 +128,13 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
 // Yarr::interpret() returns offsetNoMatch for a search that finds no match and for one that it gives up: no memory, no
 // stack, too many steps. A compiler thread must not fold the second kind, because the mutator can have an answer for the
 // same search, from JIT code or with its own stack. JITCodeFailure makes RegExp::matchConcurrently() return false.
-template<Yarr::MatchFrom matchFrom>
-ALWAYS_INLINE int interpretFrom(Yarr::BytecodePattern* bytecode, StringView s, unsigned startOffset, int* offsetVector)
+ALWAYS_INLINE int interpretOnCompilerThread(Yarr::BytecodePattern* bytecode, StringView s, unsigned startOffset, int* offsetVector)
 {
-    if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
-        return Yarr::interpret(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-    else {
-        Yarr::JSRegExpResult result { Yarr::JSRegExpResult::ErrorInternal };
-        int matchStart = Yarr::interpretWithResult(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector), result);
-        if (result != Yarr::JSRegExpResult::Match && result != Yarr::JSRegExpResult::NoMatch)
-            return static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure);
-        return matchStart;
-    }
+    Yarr::JSRegExpResult result { Yarr::JSRegExpResult::ErrorInternal };
+    int matchStart = Yarr::interpretWithResult(bytecode, s, startOffset, reinterpret_cast<unsigned*>(offsetVector), result);
+    if (result != Yarr::JSRegExpResult::Match && result != Yarr::JSRegExpResult::NoMatch)
+        return static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure);
+    return matchStart;
 }
 
 template<Yarr::MatchFrom matchFrom>
@@ -238,7 +233,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
             }
             {
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-                result = interpretFrom<matchFrom>(m_regExpBytecode.get(), s, startOffset, offsetVector);
+                if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+                    result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+                else
+                    result = interpretOnCompilerThread(m_regExpBytecode.get(), s, startOffset, offsetVector);
             }
         }
 
@@ -263,7 +261,10 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
             countInterpretedMatch(vm);
 #endif
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = interpretFrom<matchFrom>(m_regExpBytecode.get(), s, startOffset, offsetVector);
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+        else
+            result = interpretOnCompilerThread(m_regExpBytecode.get(), s, startOffset, offsetVector);
     }
 
     if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
@@ -428,7 +429,10 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
             countInterpretedMatch(vm);
 #endif
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        result = interpretFrom<matchFrom>(m_regExpBytecode.get(), s, startOffset, offsetVector);
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
+        else
+            result = interpretOnCompilerThread(m_regExpBytecode.get(), s, startOffset, offsetVector);
     }
 
     if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {

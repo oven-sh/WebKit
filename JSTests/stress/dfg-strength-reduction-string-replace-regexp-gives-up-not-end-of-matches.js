@@ -1,4 +1,5 @@
 //@ requireOptions("--maxRegExpStackSize=65536")
+//@ defaultRun; run("flat-program-behind-jit-code", "--validateRegExpFlatProgram=true")
 
 // The fold of a global replace makes one match after the other on the compiler thread, and builds the string
 // as it goes. Each turn of the group takes a ParenContext from the stack. The first match ("abc") takes 2,
@@ -7,6 +8,8 @@
 // because one replace below runs where the mutator has no room either, and with --maxRegExpStackSize=65536
 // the interpreter gives the second match up and reports no match. DFG strength reduction must not take that
 // for the end of the matches: the string it folded had the first match replaced and the second left in.
+// (The second run gives the bytecode a flat program and keeps the JIT: there the flat program gives the
+// match up.)
 const regExp = new RegExp("(" + "(x)?".repeat(20) + "[ab])*c", "g");
 const subject = "abc-" + "ab".repeat(600) + "c";
 const subjects = [subject];
