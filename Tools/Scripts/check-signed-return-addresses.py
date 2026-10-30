@@ -30,8 +30,12 @@ unsigned_by_nature = re.compile('|'.join([
     r'__do_global_dtors_aux', r'__libc_csu_init', r'init_have_lse_atomics', r'_init', r'_fini', r'\.plt', r'.*@plt.*',
 ]))
 head = re.compile(r'^[0-9a-f]+ <(.*)>:$')
-saves = re.compile(r'\t(?:stp|str)\t.*\bx30, \[sp')
-not_a_hint = re.compile(r'\t(?:reta[ab]|ereta[ab]|bl?ra[ab]z?|ldra[ab]|(?:pac|aut)[id][ab]|(?:pac|aut)[id]z[ab]|pacga|xpac[id])\b')
+# Either operand of an STP: without a frame pointer the compiler saves it as `stp x30, x19, [sp, #-16]!`.
+saves = re.compile(r'\t(?:stp|str)\t(?:x\d+, )?x30, (?:x\d+, )?\[sp')
+signs = re.compile(r'\tpaciasp$')
+pointer_authentication = re.compile(r'\t((?:pac|aut|xpac|e?reta|bl?ra[ab]|ldra[ab])\w*)')
+# All there are. Whatever else the pattern above finds is taken for undefined before ARMv8.3, also what is newer than this list.
+hints = {'paciasp', 'pacibsp', 'paciaz', 'pacibz', 'pacia1716', 'pacib1716', 'autiasp', 'autibsp', 'autiaz', 'autibz', 'autia1716', 'autib1716', 'xpaclri', 'pacm'}
 
 functions = 0
 by_nature = 0
@@ -62,15 +66,17 @@ for line in process.stdout:
         finish()
         name = m.group(1)
         has_saved = has_signed = has_saved_unsigned = False
-    elif '\tpaciasp' in line:
+    elif signs.search(line):
         has_signed = True
     elif saves.search(line):
         has_saved = True
         # Signing behind the save is of no use to the word that was saved.
         if not has_signed:
             has_saved_unsigned = True
-    elif not_a_hint.search(line):
-        undefined.append(f'{name}: {line.strip()}')
+    else:
+        m = pointer_authentication.search(line)
+        if m and m.group(1) not in hints:
+            undefined.append(f'{name}: {line.strip()}')
 finish()
 
 errors = []
