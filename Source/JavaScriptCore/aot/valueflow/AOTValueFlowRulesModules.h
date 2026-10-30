@@ -145,6 +145,8 @@ void requireModule(const ValueFlowStatement&, ValueFlowRuleContext&, ModuleID);
 bool mayAnswerToName(const Program&, ModuleID);
 // A file that is no entry point is found by name only where the program itself loads files by name.
 bool answersOnlyToLoadsOfProgram(const Program&, ModuleID);
+// Where the host runs files that the build has not seen: such a file reads each export of the module by its name, and the run time refuses what is closed. A CommonJS file hands out one object with all of it.
+inline bool showsOutsideOnlyWhatIsOpen(const Module& module) { return module.kind == ModuleKind::SourceText && module.exportRule == SyntheticExportRule::None; }
 bool isAskedOfHostByName(const Module&);
 void enterLoaderOfHost(ValueFlowRuleContext&);
 

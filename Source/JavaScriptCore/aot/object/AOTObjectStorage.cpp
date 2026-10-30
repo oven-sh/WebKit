@@ -78,10 +78,13 @@ Object* Object::createWithBody(VM& vm, Structure* structure, std::span<const uin
 
 Instance& Object::instance() const
 {
-    Instance* first = structure()->realm()->aotInstance();
-    if (!first->above) [[likely]]
-        return *first;
-    return first->instanceWithShape(shape());
+    Instance* instance = structure()->realm()->aotInstance();
+    if (!instance->above) [[likely]]
+        return *instance;
+    uint32_t shape = this->shape();
+    while (shape > instance->lastShape)
+        instance = instance->above;
+    return *instance;
 }
 
 State& Object::state() const
@@ -398,8 +401,10 @@ bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field
     return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
 }
 
-bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field, JSValue value)
+bool tryCreateField(VM& vm, State& stateAtHand, Object& object, const FieldData& field, JSValue value)
 {
+    // As in Object::fieldNamed(): the state may be the caller's, and the object of another image.
+    State& state = stateAtHand.sharesRealm ? object.state() : stateAtHand;
     ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
     // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);

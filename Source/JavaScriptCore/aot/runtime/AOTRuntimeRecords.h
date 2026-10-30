@@ -157,6 +157,12 @@ struct alignas(16) Slot {
         SlotData slot;
         uint32_t type;
     };
+    // The type is an offset in the tables of the image that runs. Of a field of another image of the realm, whose types those tables do not have, it is these bits instead:
+    // the first, which no offset of a record has, then the primitives that the type accepts whatever their value, then whether it accepts every object.
+    // What the bits do not accept goes to the lookup, which asks the type.
+    static constexpr uint32_t typeIsGivenByBits = 1;
+    static constexpr unsigned shiftOfPrimitivesInType = 1;
+    static constexpr uint32_t typeAcceptsEveryObject = 1u << 17;
     // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is.
     struct FieldAndHolderPayload {
         SlotData slot;

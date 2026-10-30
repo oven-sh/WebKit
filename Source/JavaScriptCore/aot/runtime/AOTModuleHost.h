@@ -112,6 +112,8 @@ JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 // Of what findModule() answers: the host makes the module, and the image holds its number alone.
 JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
+// A mock stands in place of a module of the library, and the loader of the host has it.
+JS_EXPORT_PRIVATE bool hostAnswersInPlaceOf(JSGlobalObject*, ModuleID, LoadByName);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 // A file that the host starts by itself, as a test runner starts a test file, stays compiled whatever it imports.
 enum class StartedBy : uint8_t { Code, Host };
@@ -159,13 +161,18 @@ JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool mayExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name);
 // The referrer is the file of the image whose require() the host answers.
 JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
+// In front of requireModule(), where the host has the module object of the file that requires. The engine keeps it where that file is no module of the image that holds the required one.
+JS_EXPORT_PRIVATE void willRequireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer, JSObject* moduleObjectOfReferrer);
+// Behind a require() that has returned. Both numbers are the host's.
+JS_EXPORT_PRIVATE void didRequireModule(JSGlobalObject*, ModuleID, ModuleID referrer);
 
 // A module of the image runs at most once and is in no module cache, and the code calls the module that each constant name stood for in the build.
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
 // The host admits code from disk, and the program has given it something that loads the file in another way than the build did. A file that has run stays.
-JS_EXPORT_PRIVATE void willLoadFileInAnotherWay(JSGlobalObject*, ModuleID);
+// False: the code that imports the file was compiled for the file as the build read it.
+JS_EXPORT_PRIVATE bool willLoadFileInAnotherWay(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isEvaluatedFile(JSGlobalObject*, ModuleID);
 // The module object that require.cache shows for a file that isEvaluatedFile().
 JS_EXPORT_PRIVATE JSObject* requireCacheEntry(JSGlobalObject*, ModuleID);

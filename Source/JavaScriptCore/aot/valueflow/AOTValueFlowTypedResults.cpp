@@ -495,7 +495,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
     forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
         uint32_t index = functions[task];
         const Function& function = program.functions[index];
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        CompactList<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
         size_t numberOfOtherStamps = stamps.size();
         uint32_t nextSite = firstSiteOfFunction[task];
         ValueID operation;

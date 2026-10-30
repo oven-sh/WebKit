@@ -62,8 +62,9 @@ std::span<const uint16_t> Object::keyOrder(State& state, KeyOrderStorage& storag
     return state.objects->keyOrders.entriesInOrder(layout, orderOf(word)).first(countOf(word));
 }
 
-bool Object::isInKeyOrder(State& state, const FieldData& field) const
+bool Object::isInKeyOrder(State& stateAtHand, const FieldData& field) const
 {
+    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
     if (layout().keysAreNeverEnumerated)
         return isPresent(vm(), *this, field);
     KeyOrderStorage storage;
@@ -504,8 +505,9 @@ void Object::willCreateField(State&, const FieldData& field)
         ensureStorageFor(vm(), field);
 }
 
-void Object::didCreateField(State& state, const FieldData& field, bool withStorage)
+void Object::didCreateField(State& stateAtHand, const FieldData& field, bool withStorage)
 {
+    State& state = stateAtHand.sharesRealm ? this->state() : stateAtHand;
     if (withStorage)
         willCreateField(state, field);
     const LayoutData& layout = this->layout();

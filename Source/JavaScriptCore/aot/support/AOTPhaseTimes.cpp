@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCompile.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <mutex>
@@ -213,6 +214,11 @@ PhaseTimes::PeakResidentMegabytes PhaseTimes::takePeakResidentMegabytes()
     size_t ofProcess = std::max({ sinceLastTaken, peakResidentMegabytes(), peakOfProcess.load(std::memory_order_relaxed) });
     peakOfProcess.store(ofProcess, std::memory_order_relaxed);
     return { ofProcess, sinceLastTaken };
+}
+
+size_t peakResidentMegabytesOfProcess()
+{
+    return PhaseTimes::takePeakResidentMegabytes().ofProcess;
 }
 
 size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()

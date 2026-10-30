@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTCompactList.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
@@ -62,6 +63,8 @@ struct ValueFlowSolverInput {
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
     bool leavesOutWhatIsCovered { false };
+    // Counts, limits that were met, errors of validation, and the lines of the rounds in the log: whoever counts those counts builds.
+    bool reportsToBuild { true };
     uint32_t mostRounds { UINT32_MAX };
     // With a seed, nodes of the bodies that are reached are given more than the program brings them: whatIsGivenTo() says which and what.
     std::optional<uint32_t> seedOfWidening;
@@ -444,6 +447,8 @@ public:
     bool isAtRest(ValueFlowStatementID) const;
     // For whoever has copied them.
     void letGoOfRecordsAskedFor();
+    // Behind this numberOfUsesOfMadeNodesAt() is not to be asked.
+    void letGoOfNumbersOfUsers();
     void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const auto& functor) const
     {
         RELEASE_ASSERT(m_knowsRecordsAskedFor);
@@ -485,7 +490,11 @@ public:
     uint32_t indexOfMadeNodes(const ValueFlowNodeKey& key) const { return static_cast<uint32_t>(reinterpret_cast<const MadeNodes*>(&key) - m_madeNodes.span().data()); }
     const ValueFlowNodeKey& keyOfMadeNodesAt(uint32_t index) const LIFETIME_BOUND { return m_madeNodes[index].key; }
     ValueFlowNodeID firstOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].first; }
-    uint32_t numberOfUsesOfMadeNodesAt(uint32_t index) const { return index < m_numberOfUsers.size() ? m_numberOfUsers[index] : 0; }
+    uint32_t numberOfUsesOfMadeNodesAt(uint32_t index) const
+    {
+        RELEASE_ASSERT(m_knowsNumbersOfUsers);
+        return index < m_numberOfUsers.size() ? m_numberOfUsers[index] : 0;
+    }
     ValueFlowStatementID statementOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].statement(); }
     uint32_t numberOfRecordsOfMadeNodes() const { return m_madeNodes.size(); }
 
@@ -507,9 +516,9 @@ private:
             HasParts = 1 << 7,
         };
         // Threads that look after different things write to different flags of one record at a time.
-        bool has(Flag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&flags), std::memory_order_relaxed) & flag; }
-        bool set(Flag flag) { return WTF::atomicExchangeOr(&flags, static_cast<uint8_t>(flag), std::memory_order_relaxed) & flag; }
-        bool clear(Flag flag) { return WTF::atomicExchangeAnd(&flags, static_cast<uint8_t>(~flag), std::memory_order_relaxed) & flag; }
+        bool has(Flag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&key.flagsOfRecord), std::memory_order_relaxed) & flag; }
+        bool set(Flag flag) { return WTF::atomicExchangeOr(&key.flagsOfRecord, static_cast<uint8_t>(flag), std::memory_order_relaxed) & flag; }
+        bool clear(Flag flag) { return WTF::atomicExchangeAnd(&key.flagsOfRecord, static_cast<uint8_t>(~flag), std::memory_order_relaxed) & flag; }
         void setTo(Flag flag, bool value) { value ? set(flag) : clear(flag); }
 
         // A record has a statement or parts, never both.
@@ -534,12 +543,12 @@ private:
         ValueFlowNodeKey key;
         ValueFlowNodeID first;
         uint32_t statementOrFirstPart { UINT32_MAX };
-        uint8_t flags { 0 };
         // Of a union of two blocks: one more than the higher rank of the two. A record that is no such union is a block of rank 0.
         static constexpr uint8_t partsAreBlocksOfFallingRank = UINT8_MAX;
-        uint8_t rank { 0 };
+        uint8_t rank() const { return key.rankOfRecord; }
+        void setRank(uint8_t rank) { key.rankOfRecord = rank; }
     };
-    static_assert(sizeof(MadeNodes) == 24);
+    static_assert(sizeof(MadeNodes) == 20);
     // The parts of a record stand side by side. The last of them has this bit.
     static constexpr uint32_t isLastPart = 1u << 31;
     static void forEachPartFrom(const uint32_t* part, NOESCAPE const Invocable<void(uint32_t madeNodes)> auto& functor)
@@ -958,6 +967,10 @@ private:
     ListWithRoomToFill<uint32_t> m_usesOfStatement;
     ListThatStaysInPlace<uint32_t> m_uses;
     bool m_knowsRecordsAskedFor { true };
+    bool m_knowsNumbersOfUsers { true };
+    // Filled behind the rounds.
+    BitVector m_isStatementMadeByRuleAtRest;
+    bool m_areRoundsOver { false };
     uint32_t m_numberOfNodesBeforeRound { 0 };
     uint32_t m_turnsOfRound { 0 };
 
@@ -1018,7 +1031,7 @@ private:
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     Vector<ValueFlowStatementID> m_statementsThatRunOften;
     Vector<uint8_t> m_timesRunOfStatement;
-    Vector<uint32_t> m_roundOfNextRun;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_roundOfNextRun;
     void findStatementsWithLongRowsBehindThem();
     void letLongRowsGoFirst();
     bool hasLongRowBehindIt(ValueFlowStatementID statement) const { return m_hasLongRows && statement.index() < m_input.statements.size() && m_hasLongRowBehindIt.quickGet(statement.index()); }
@@ -1033,7 +1046,6 @@ private:
     mutable Vector<ValueFlowStatementID> m_dueLast;
 
     ListWithRoomToFill<uint32_t> m_readersOfNode;
-    ListWithRoomToFill<ValueSetID> m_seenByReadersOfNode;
     enum ListenerOfNode : uint8_t {
         WaitsForNodeToHoldSomething = 1 << 0,
         ReadsNode = 1 << 1,
@@ -1070,8 +1082,8 @@ private:
     struct WatchedNode {
         ValueFlowNodeID node;
         ValueSetID seen;
-        ShortList<uint32_t> watches;
-        ShortList<uint32_t> watchesOfManyObjects;
+        CompactList<uint32_t> watches;
+        CompactList<uint32_t> watchesOfManyObjects;
         bool holdsWhatPlaceholderCovers { false };
         bool hasChainsByMember { false };
     };

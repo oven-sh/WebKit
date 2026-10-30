@@ -327,7 +327,7 @@ void generateStoreSlot(StubAssembler& jit)
             remembersNothing.link(&jit);
         }
         Label hasAddress = jit.label();
-        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
+        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmittedForSlot, nullptr, exits);
 
         isOutOfLine.link(&jit);
         slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);

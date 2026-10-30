@@ -98,7 +98,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     forEachIndexInParallel(inputs.loops(), functionsWithInstances.size(), [&](unsigned position) {
         uint32_t index = functionsWithInstances[position];
         const Function& function = program.functions[index];
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        CompactList<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
         uint32_t nextSite = firstSiteOfFunction[position];
         for (const Instance& instance : instancesOfFunction[index]) {
             ValueID operation = instance.operation;
@@ -352,11 +352,20 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
-    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
-        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
+    auto solve = [&](ValueFlowSolver::Rounds rounds, ValueFlowSolution::Reports reports) {
+        return makeUnique<ValueFlowSolution>(program, build, rounds, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
+            showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut, reports);
+    };
+    // The rounds of the check run every rule again without what it remembers, and leave other requests behind than a build has. So the check has a solution of its own,
+    // and what is built is what is built without the check.
+    if (runsEveryRuleOnceMore) {
+        auto checked = solve(ValueFlowSolver::Rounds::Due, ValueFlowSolution::Reports::AreLeftOut);
+        if (build.options().checksFlowFixpoint)
+            reportRulesThatWereNotDue(checked->solver(), build);
+        times.didFinish("solve: the check that every rule is at rest"_s);
+    }
+    auto solution = solve(ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Reports::GoToBuild);
     times.didFinish("solve"_s);
-    if (build.options().checksFlowFixpoint)
-        reportRulesThatWereNotDue(solution->solver(), build);
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
@@ -507,8 +516,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
+        // From here on the ledger is asked about variables and fields alone.
+        ledger.remove(LedgerPartKind::ClassesAndClosures);
+        inputs.classesAndClosures = nullptr;
+        build.destroyLater(WTF::move(classesAndClosures));
+        ledger.remove(LedgerPartKind::BuiltinLocations);
+        build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
+        solution->letGoOfNumbersOfUsers();
         findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
+        build.destroyLater(WTF::move(constructions));
         ledger.install(LedgerPartKind::Fields, ledgerOfFieldsIn(*usesOfHeap));
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
             return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;

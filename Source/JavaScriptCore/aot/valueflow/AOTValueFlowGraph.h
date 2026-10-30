@@ -49,6 +49,9 @@ public:
     uint32_t numberOfNodes() const { return m_numberOfNodes; }
     size_t numberOfEdges() const { return m_numberOfEdges; }
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_hasReleasedRows ? m_value[node.index()] : ValueSetID(m_rows[node.index()].value); }
+    // For the solver, which asks outside solve() alone. The rows are the place for it: whoever asks for it has asked for the value, or is about to.
+    ValueSetID seenByReadersOf(ValueFlowNodeID node) const { return ValueSetID(m_rows[node.index()].seenOrFirstArrivalPlusOne); }
+    void setSeenByReadersOf(ValueFlowNodeID node, ValueSetID seen) { m_rows[node.index()].seenOrFirstArrivalPlusOne = seen.index(); }
     void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value)
     {
         RELEASE_ASSERT(m_hasReleasedRows);
@@ -219,7 +222,12 @@ private:
     struct Row {
         uint64_t low;
         uint32_t value;
-        uint32_t firstArrivalPlusOne;
+        // Of a node with HasArrivals, which is so inside a wave alone: its first arrival. What its readers have seen waits in the list of nodes with arrivals.
+        uint32_t seenOrFirstArrivalPlusOne;
+    };
+    enum StateInSolve : uint8_t {
+        HasMoved = 1 << 0,
+        HasArrivals = 1 << 1,
     };
     struct Worker;
     // What a message carries beside the low members: nothing where all members are low, else the value.
@@ -274,8 +282,12 @@ private:
         uint32_t set;
         uint32_t nextPlusOne;
     };
+    struct NodeWithArrivals {
+        uint32_t node;
+        uint32_t seen;
+    };
     struct Arrivals {
-        Vector<uint32_t> nodes;
+        Vector<NodeWithArrivals> nodes;
         Vector<Arrival> list;
     };
     struct alignas(128) Shard {
@@ -296,7 +308,7 @@ private:
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other, Worker&);
     void takeArrival(Arrivals&, const Message&);
     void takeArrivals(Arrivals&, std::span<const Message>);
-    void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
+    void evaluate(NodeWithArrivals, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
     using ShardsInOrder = std::array<uint8_t, numberOfShards>;

@@ -178,7 +178,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
         }
 
         tables.application->bodies[index].keysOfMembers = findKeysOfMembers(inputs, FunctionID(index), maker);
-        const Vector<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
+        const CompactList<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
         CFG cfg(function);
         std::optional<UseLists> useLists;
         std::optional<BlockCycles> cycles;

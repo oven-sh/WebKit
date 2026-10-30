@@ -1043,6 +1043,9 @@ void Heap::pruneDeadReferences()
     auto scopeExit = makeScopeExit([&] {
         Thread::currentSingleton().setCurrentAtomStringTable(previous);
     });
+#if ENABLE(AOT)
+    AOT::HeapHooks::WorkForStoppedVMScope workForStoppedVM(vm());
+#endif
 
     if (vm().typeProfiler())
         vm().typeProfiler()->invalidateTypeSetCache(vm());

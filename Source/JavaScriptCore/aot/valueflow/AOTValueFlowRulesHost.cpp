@@ -24,6 +24,40 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// The walk over all modules is cut into parts, each a statement of its own: a part runs again only when one of its own modules changes, and the parts run side by side.
+AOT_THRESHOLD(uint32_t, modulesOfPartLoadedByName, 1024);
+
+static uint32_t numberOfPartsLoadedByName(const Program& program)
+{
+    return std::max<uint32_t>(1, (program.modules.size() + modulesOfPartLoadedByName - 1) / modulesOfPartLoadedByName);
+}
+
+// Where the walk has parts, what is said of the copies of files stands in two statements in front of them: which files the copies reach, once, and where that goes on to.
+static constexpr uint32_t numberOfStatementsOnCopiesOfFiles = 2;
+
+// A layer that test files share has thousands of entry points. None where one statement takes them all.
+AOT_THRESHOLD(uint32_t, entriesOfPartOfHostRoots, 256);
+
+static uint32_t numberOfPartsOfEntries(const Program& program)
+{
+    if (program.entries.size() <= entriesOfPartOfHostRoots)
+        return 0;
+    return (program.entries.size() + entriesOfPartOfHostRoots - 1) / entriesOfPartOfHostRoots;
+}
+
+// The host has no operands: the word for their guards says which part a statement is. A site would be taken for a value of a function.
+static void appendPart(ValueFlowBody& body, ValueFlowStatementKind kind, uint32_t part)
+{
+    ValueFlowBody::Statement statement { { }, { }, 0, 0, { }, { }, kind };
+    statement.guardsOfOperands = part;
+    body.statements.append(statement);
+}
+
+static uint32_t partOf(const ValueFlowStatement& statement)
+{
+    return statement.guardsOfOperands;
+}
+
 void describeHost(const Program& program, ValueFlowBody& body)
 {
     RELEASE_ASSERT(body.nodes.size() == body.thrown() + 1);
@@ -39,8 +73,13 @@ void describeHost(const Program& program, ValueFlowBody& body)
     if (!moduleObjects.isEmpty())
         body.constants.append(WTF::move(moduleObjects));
 
-    for (ValueFlowStatementKind kind : { ValueFlowStatementKind::HostRoots, ValueFlowStatementKind::UsedBuiltins, ValueFlowStatementKind::UnseenCode, ValueFlowStatementKind::ModulesLoadedByName })
+    for (uint32_t part = 0; part <= numberOfPartsOfEntries(program); ++part)
+        appendPart(body, ValueFlowStatementKind::HostRoots, part);
+    for (ValueFlowStatementKind kind : { ValueFlowStatementKind::UsedBuiltins, ValueFlowStatementKind::UnseenCode })
         body.statements.append({ { }, { }, 0, 0, { }, { }, kind });
+    uint32_t parts = numberOfPartsLoadedByName(program);
+    for (uint32_t part = 0; part < (parts == 1 ? 1 : numberOfStatementsOnCopiesOfFiles + parts); ++part)
+        appendPart(body, ValueFlowStatementKind::ModulesLoadedByName, part);
 }
 
 static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID function, const Function& callee, unsigned index, NativeCaller caller, ValueSetID unknown)
@@ -209,7 +248,7 @@ void letModulesBeLoadedByName(ValueFlowRuleContext& context, ValueFlowHostNode a
         return;
     raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
     letUnseenCodeRun(context, UnseenCodeReach::Loader);
-    context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+    context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     context.add(context.nodes().ofHost(answers), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
 }
 
@@ -579,7 +618,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
     });
 }
 
-void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
+static void followFunctionsOfSeenCode(ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
@@ -605,8 +644,24 @@ void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
             context.add(functionsOfSeenCode, only(context, called));
         });
     });
+}
 
-    for (const Entry& entry : program.entries) {
+// The first statement runs again each time seen code calls one more function of the library. The entry points are left to the others.
+void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    std::span<const Entry> entries = program.entries.span();
+    if (!numberOfPartsOfEntries(program))
+        followFunctionsOfSeenCode(context);
+    else if (uint32_t index = partOf(statement))
+        entries = entries.subspan((index - 1) * entriesOfPartOfHostRoots).first(std::min<size_t>(entriesOfPartOfHostRoots, entries.size() - (index - 1) * entriesOfPartOfHostRoots));
+    else {
+        followFunctionsOfSeenCode(context);
+        return;
+    }
+
+    for (const Entry& entry : entries) {
         context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(entry.module)));
         evaluateModule(context, entry.module);
         if (program.at(entry.module).kind == ModuleKind::CommonJs)
@@ -737,11 +792,11 @@ bool isAskedOfHostByName(const Module& module)
     return module.kind == ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLoadedByImportOnly);
 }
 
-static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
+static void forEachModuleLoadableByName(ValueFlowRuleContext& context, uint32_t first, uint32_t end, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
 {
     const Program& program = context.program();
     const ValueFlowHeapTables& tables = context.universe().builtinTables().heap();
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+    for (uint32_t index = first; index < end; ++index) {
         const Module& module = program.modules[index];
         if (!tables.mayAnswerToName(ModuleID(index)))
             continue;
@@ -771,11 +826,11 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesOfProgramAreLoadedByName)
 {
     handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
-    forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
+    forEachModuleLoadableByName(context, 0, context.program().modules.size(), [&](ModuleID module, bool isOfProgram) {
         if (!isOfProgram || (answersOnlyToLoadsOfProgram(context.program(), module) && !filesOfProgramAreLoadedByName))
             return;
         // The files that the host runs name what they use, and a file of the build hands them that.
-        if (context.refusedCode().hostRunsFilesOutsideImage && context.program().at(module).kind != ModuleKind::Data)
+        if (context.refusedCode().hostRunsFilesOutsideImage && showsOutsideOnlyWhatIsOpen(context.program().at(module)))
             return;
         connect(context, requiredValueOf(context, module), ValueFlowProgramNodes::escaped());
         connect(context, namespaceOf(context, module), ValueFlowProgramNodes::escaped());
@@ -1072,8 +1127,11 @@ void applyEventsOfStore(const ValueFlowStatement& statement, ValueFlowRuleContex
 
 void applyEventsOfRead(ValueFlowRuleContext& context, ClimbingSet receivers)
 {
-    if (context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
-        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+    // Where the host runs files of its own the run time refuses the entry of a module that the build has closed.
+    if (context.refusedCode().hostRunsFilesOutsideImage || !context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
+        return;
+    raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+    raiseHostFlag(context, ValueFlowHostNode::EntriesOfModuleCacheAreRead);
 }
 
 // In a test run a file taken out of require.cache loads again, through the loader of the host.
@@ -1222,7 +1280,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         callBuiltinsThatReadSpecies(context, context.restrict(escaped, universe.builtinFunctionsThatReadSpecies()));
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
-    if (ValueFlowObjectID moduleCache = universe.objectOf(Builtins::ModuleCache); context.contains(used, moduleCache) || context.contains(handedOut, moduleCache))
+    if (ValueFlowObjectID moduleCache = universe.objectOf(Builtins::ModuleCache); !context.refusedCode().hostRunsFilesOutsideImage && (context.contains(used, moduleCache) || context.contains(handedOut, moduleCache)))
         raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
     run = context.unite(run, callsWhateverHasEscaped ? escapedOfLanguage : context.valueWithin(escapedOfLanguage, context.nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName)));
     run = context.unite(run, ClimbingSet(context.maker().of(calledFunctionsOfHost.span())));
@@ -1280,7 +1338,7 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
     if (context.refusedCode().hostRunsFilesOutsideImage) {
         raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
         letUnseenCodeRun(context, UnseenCodeReach::Loader);
-        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     }
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns))
         return;
@@ -1317,8 +1375,96 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         exposeModuleObjectOf(context, ModuleID(index));
 }
 
-void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& context)
+// In a test run require.cache lists the files that have run, each with what require() answers for it. A file that is taken out of it, or loaded under a query,
+// runs again as code that nobody has seen, and imports what its text names.
+static bool copiesOfFilesMayRun(ValueFlowRuleContext& context)
 {
+    return context.holdsAnything(context.nodes().ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun));
+}
+
+// Goes by the flags and requests of the modules, which stay as they are.
+static void connectWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    // A file that has not run yet and imports one that was taken out, itself or through others, is left to the loader of the host as well.
+    BitVector mayRunAsCopy(program.modules.size());
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::MayBeEvicted))
+            mayRunAsCopy.quickSet(index);
+    }
+    for (bool hasFoundMore = true; hasFoundMore;) {
+        hasFoundMore = false;
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            const Module& module = program.modules[index];
+            if (mayRunAsCopy.quickGet(index) || !isWrittenByProgram(program, module))
+                continue;
+            if (std::ranges::any_of(module.requests, [&](const ModuleRequest& request) { return mayRunAsCopy.quickGet(request.target.index()); })) {
+                mayRunAsCopy.quickSet(index);
+                hasFoundMore = true;
+            }
+        }
+    }
+    BitVector isReached = mayRunAsCopy;
+    for (size_t index : mayRunAsCopy) {
+        for (const ModuleRequest& request : program.modules[index].requests) {
+            if (isWrittenByProgram(program, program.at(request.target)))
+                isReached.quickSet(request.target.index());
+        }
+    }
+    // What the text of a copy names in a call, import() or require(), is no request of its module. The front end marks it.
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName) && isWrittenByProgram(program, program.modules[index]))
+            isReached.quickSet(index);
+    }
+    ValueFlowNodeID reached = nodes.ofHost(ValueFlowHostNode::ReachedByUnseenCopiesOfFiles);
+    for (size_t index : isReached) {
+        ModuleID id(static_cast<uint32_t>(index));
+        // The host begins a file that nothing has run yet, and perhaps no compiled code ever runs it.
+        if (program.at(id).kind != ModuleKind::External)
+            evaluateModule(context, id);
+        connect(context, requiredValueOf(context, id), reached);
+    }
+}
+
+static void handOnWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
+{
+    const Program& program = context.program();
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    ValueFlowNodeID reached = nodes.ofHost(ValueFlowHostNode::ReachedByUnseenCopiesOfFiles);
+    // A copy links to the names of a namespace object and takes what they hold. It shows the object itself to nobody, so no spy that is out of sight gets hold of it.
+    ValueSetID namespaceObjects = context.universe().namespaces();
+    if (context.holdsAnything(nodes.ofHost(ValueFlowHostNode::EntriesOfModuleCacheAreRead))) {
+        context.connect(reached, ValueFlowProgramNodes::escaped());
+        // The table has an entry for every file of the program that has run, whether or not anything takes the file out.
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            if (program.modules[index].flags.contains(ModuleFlags::IsListedInCache))
+                connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+        }
+    } else {
+        ClimbingSet linkedTo = context.restrict(context.valueOf(reached), namespaceObjects);
+        context.connect(context.masked(reached, ValueSets::complement(namespaceObjects)), ValueFlowProgramNodes::escaped());
+        context.connect(context.readWhatWasWritten(linkedTo, { ValueFlowNameKind::EveryProperty, 0 }), ValueFlowProgramNodes::escaped());
+        context.mark(linkedTo, ObjectMutation::ReachNativeCode);
+    }
+}
+
+void runModulesLoadedByName(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    uint32_t numberOfParts = numberOfPartsLoadedByName(context.program());
+    bool isWhole = numberOfParts == 1;
+    if (!isWhole && partOf(statement) < numberOfStatementsOnCopiesOfFiles) {
+        if (!copiesOfFilesMayRun(context))
+            return;
+        if (!partOf(statement))
+            connectWhatCopiesOfFilesReach(context);
+        else
+            handOnWhatCopiesOfFilesReach(context);
+        return;
+    }
+    // What else is not said of one module stands behind the walk, in the last part.
+    uint32_t part = isWhole ? 0 : partOf(statement) - numberOfStatementsOnCopiesOfFiles;
+    bool isLastPart = part + 1 == numberOfParts;
     bool areRequired = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
     bool areImported = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
     bool libraryIsRequired = isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
@@ -1326,17 +1472,12 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
     const ValueFlowProgramNodes& nodes = context.nodes();
     // Native code gets the modules also where a source of unknown values is left out and no flag counts as raised.
     bool areHandedToNativeCode = context.holdsAnything(nodes.ofHost(ValueFlowHostNode::LoadedModulesAreHandedToNativeCode));
-    // In a test run require.cache lists the files that have run, each with what require() answers for it. A file that is taken out of it, or loaded under a query,
-    // runs again as code that nobody has seen, and imports what its text names.
-    if (context.holdsAnything(nodes.ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun))) {
-        const Program& program = context.program();
-        for (uint32_t index = 0; index < program.modules.size(); ++index) {
-            if (program.modules[index].flags.contains(ModuleFlags::MayBeEvicted))
-                connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
-        }
+    if (isWhole && copiesOfFilesMayRun(context)) {
+        connectWhatCopiesOfFilesReach(context);
+        handOnWhatCopiesOfFilesReach(context);
     }
     auto enterLoaderForSpelledNames = [&] {
-        if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames))
+        if (isLastPart && isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames))
             enterLoaderOfHost(context);
     };
     if (!areLoaded && !areHandedToNativeCode) {
@@ -1344,7 +1485,9 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
         return;
     }
 
-    forEachModuleLoadableByName(context, [&](ModuleID id, bool isOfProgram) {
+    uint32_t first = part * modulesOfPartLoadedByName;
+    uint32_t end = std::min<uint32_t>(first + modulesOfPartLoadedByName, context.program().modules.size());
+    forEachModuleLoadableByName(context, first, end, [&](ModuleID id, bool isOfProgram) {
         bool isLoaded = areLoaded && (!isOfProgram || areRequired || areImported);
         if (isLoaded) {
             context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
@@ -1379,6 +1522,8 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
         enterLoaderForSpelledNames();
         return;
     }
+    if (!isLastPart)
+        return;
 
     ClimbingSet nativeModules = publicNativeModules(context);
     if (areRequired)

@@ -4951,6 +4951,9 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
             continue;
         if (!beginsWithTestThatLeavesForGenericCopy(context, loop.header()))
             continue;
+        // Behind a failed test each parameter of the header is defined again, by an Upcast, which takes no environment and no iterator state.
+        if (!std::ranges::all_of(header.parameters, [&](ValueID parameter) { return typeOf(parameter).isJavaScriptValue(); }))
+            continue;
         for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
             std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
             if (!test)

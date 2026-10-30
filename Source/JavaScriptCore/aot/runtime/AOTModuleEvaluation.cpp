@@ -2639,7 +2639,7 @@ JSValue Modules::execute(ModuleID module)
         value = callBody(module);
         // Bun's registry keeps nothing of a module whose body threw: the next request runs the body again. A body that was compiled to be entered once is not entered again: the next request gets the error, as for a file of the program.
         if (Exception* exception = scope.exception()) [[unlikely]] {
-            if (moduleData.bodyRunsAtMostOnce && !vm.isTerminationException(exception))
+            if (moduleData.bodyRunsAtMostOnce() && !vm.isTerminationException(exception))
                 setFailed(module, exception->value());
             else
                 setStatus(module, ModuleStatus::Linked);
@@ -2675,11 +2675,11 @@ JSValue Modules::require(ModuleID target, ModuleID referrer)
 {
     // Only a program that names a way from one module object to another can tell.
     if (!referrer || !m_showsWaysBetweenModuleObjects) [[likely]]
-        return answerRequire(target);
+        return answerRequire(target, referrer);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     recordRequire(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue required = answerRequire(target);
+    JSValue required = answerRequire(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
     recordRequire(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
@@ -2727,7 +2727,7 @@ JSValue Modules::loadEvictedFile(ModuleID file)
     return value;
 }
 
-JSValue Modules::answerRequire(ModuleID target)
+JSValue Modules::answerRequire(ModuleID target, ModuleID referrer)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2736,11 +2736,18 @@ JSValue Modules::answerRequire(ModuleID target)
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
+    // The library gets its own modules from the registry, where no mock stands.
+    if (referrer && targetData.isOfLibrary() && !data(referrer).isOfLibrary() && hostAnswersInPlaceOf(target, LoadByName::Require)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), referrer, true));
+    if (referrer && targetData.isOfLibrary() && !data(referrer).isOfLibrary() && requireAnswersNamespaceWithMock(target)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, moduleNamespace(target, ModulePhase::Evaluation));
     if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
         m_state.statics->fillVariablesOfAllFiles();
 
-    if (targetData.isUncompiledCode())
+    if (targetData.isUncompiledCode()) {
+        m_runsCopyFromDisk |= m_table.pathText(target).contains('?');
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));
+    }
     if (!targetData.hasExportTable()) {
         if (LoadedModule* loaded = targetData.mayBeImportedWhileItRuns() ? loadedIfExists(target) : nullptr; loaded && loaded->isAnsweredWithNamespace) [[unlikely]] {
             JSObject* namespaceObject = moduleNamespace(target, ModulePhase::Evaluation, false);
@@ -2909,6 +2916,9 @@ void Modules::lookForMainCommonJSModule()
         return;
     // Nothing of the program runs before the loader has come to the first file below the entry point.
     if (m_firstModuleRequestedByHost && !std::exchange(m_didSearchBelowEntryPoint, true)) {
+        // A require() in another image has asked for it, so a file has a module object before the loader comes to one.
+        if (LoadedModule* first = loadedIfExists(*m_firstModuleRequestedByHost); first && first->firstRequirerOfOtherImage)
+            return decideMainCommonJSModule(std::nullopt);
         if (std::optional<ModuleID> file = firstFileThatLoaderFindsBelow(*m_firstModuleRequestedByHost))
             return decideMainCommonJSModule(file);
     }
@@ -2990,7 +3000,14 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
 
 JSObject* Modules::mainModuleObject()
 {
-    if (!m_firstModuleRequestedByHost || data(*m_firstModuleRequestedByHost).kind != ModuleKind::CommonJs || !mayHandOutModuleObject(*m_firstModuleRequestedByHost))
+    Modules* modules = modulesWithEntryPointOfRealm();
+    if (!modules)
+        return nullptr;
+    if (modules != this) [[unlikely]] {
+        RunningImageScope scope(m_instance.vm->aotState(), modules->m_instance.program);
+        return modules->mainModuleObject();
+    }
+    if (data(*m_firstModuleRequestedByHost).kind != ModuleKind::CommonJs || !mayHandOutModuleObject(*m_firstModuleRequestedByHost))
         return nullptr;
     return moduleObject(*m_firstModuleRequestedByHost);
 }
@@ -3015,7 +3032,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
     if (recorded.isNewEntry) {
         lookForMainCommonJSModule();
         LoadedModule& required = ensureLoaded(target);
-        if (required.firstRequirer || (isCommonJSFile && wasRequestedByLoader(target)))
+        if (required.firstRequirer || required.firstRequirerOfOtherImage || (isCommonJSFile && wasRequestedByLoader(target)))
             return;
         required.firstRequirer = referrer;
         if (targetData.kind == ModuleKind::SourceText)
@@ -3143,9 +3160,52 @@ bool Modules::hasReachedLevelOf(FilesBeingRun& load, ModuleID file)
     return distance != UINT32_MAX && distance <= load.distanceOfFiles[running->index()];
 }
 
+// The numbers of modules are those of one image. Of a file of another one the host has the module object.
+void Modules::recordRequireFromOtherImage(ModuleID target, JSObject* moduleObjectOfReferrer)
+{
+    bool isCommonJSFile = data(target).kind == ModuleKind::CommonJs;
+    if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || data(target).kind == ModuleKind::Data) || !mayHandOutModuleObject(target))
+        return;
+    LoadedModule& required = ensureLoaded(target);
+    if (required.firstRequirer || required.firstRequirerOfOtherImage || (isCommonJSFile && wasRequestedByLoader(target)))
+        return;
+    required.firstRequirerOfOtherImage.set(*this, moduleObjectOfReferrer);
+}
+
+void Modules::recordRequireOfOtherImage(ModuleID referrer, ModuleID required)
+{
+    if (!m_showsWaysBetweenModuleObjects || !mayHandOutModuleObject(referrer))
+        return;
+    auto [modules, module] = ownerOfRequiredModule(required);
+    const ModuleData& requiredData = modules->data(module);
+    // As in recordRequire(). The require() that makes the module object of an ES module does not list it: that one is left out here for good.
+    if (!(requiredData.kind == ModuleKind::CommonJs || requiredData.kind == ModuleKind::Data) || requiredData.isOfLibrary() || !modules->mayHandOutModuleObject(module))
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule& requirer = ensureLoaded(referrer);
+    if (!requirer.requiredModules.contains(required)) {
+        requirer.requiredModules.append(required);
+        if (requirer.requirer && host().showChildren)
+            RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer.requirer, nullptr));
+        return;
+    }
+    // Code that holds the module object may have taken the file out of the list. A require() that returns puts it back.
+    if (!requirer.requirer || !host().showChildren)
+        return;
+    JSObject* objectOfRequired;
+    {
+        RunningImageScope imageOfRequired(m_instance.vm->aotState(), modules->m_instance.program);
+        objectOfRequired = modules->moduleObjectMadeByRequire(module);
+    }
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, host().showChildren(m_instance.globalObject, requirer.requirer, objectOfRequired));
+}
+
 JSObject* Modules::parentModuleObject(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
+    if (loaded && loaded->firstRequirerOfOtherImage && mainCommonJSModule() != module)
+        return loaded->firstRequirerOfOtherImage;
     if (!loaded || !loaded->firstRequirer || mainCommonJSModule() == module || !mayHandOutModuleObject(*loaded->firstRequirer))
         return nullptr;
     return moduleObject(*loaded->firstRequirer);
@@ -3158,12 +3218,18 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     if (!loaded)
         return true;
     for (ModuleID child : loaded->requiredModules) {
-        if (!mayHandOutModuleObject(child))
+        auto [modules, module] = ownerOfRequiredModule(child);
+        if (!modules->mayHandOutModuleObject(module))
             return false;
     }
     // The functor may run code of the program, which may require more.
     while (loaded->numberOfChildrenShown < loaded->requiredModules.size()) {
-        JSObject* childObject = moduleObjectMadeByRequire(loaded->requiredModules[loaded->numberOfChildrenShown++]);
+        auto [modules, module] = ownerOfRequiredModule(loaded->requiredModules[loaded->numberOfChildrenShown++]);
+        JSObject* childObject;
+        {
+            RunningImageScope imageOfChild(m_instance.vm->aotState(), modules->m_instance.program);
+            childObject = modules->moduleObjectMadeByRequire(module);
+        }
         RETURN_IF_EXCEPTION(scope, true);
         functor(childObject);
         RETURN_IF_EXCEPTION(scope, true);

@@ -137,6 +137,27 @@ static constexpr unsigned bytesPushedInAdapter(unsigned extraBytes)
     return (isX86_64() ? sizeof(CPURegister) : 2 * sizeof(CPURegister)) + AdapterFrame::saveAreaSize + extraBytes;
 }
 
+static Address addressInVMState(GPRReg vm, ptrdiff_t offset)
+{
+    return Address(vm, static_cast<int32_t>(VM::offsetOfAOTState() + offset));
+}
+
+// VMState::run(). It leaves nothing in `parts`.
+static void emitRunImage(StubAssembler& jit, GPRReg vm, GPRReg parts, GPRReg scratch)
+{
+    ASSERT(noOverlap(vm, parts, scratch));
+    constexpr size_t sizeOfPair = 2 * sizeof(void*);
+    static_assert(!(VMState::sizeOfWordsOfImageThatRuns() % sizeOfPair));
+    jit.storePtr(parts, addressInVMState(vm, VMState::offsetOfPartsOfImageThatRuns()));
+    for (size_t offset = 0; offset < VMState::sizeOfWordsOfImageThatRuns(); offset += sizeOfPair) {
+        jit.loadVector(Address(parts, static_cast<int32_t>(offset)), CCallHelpers::fpTempRegister);
+        jit.storeVector(CCallHelpers::fpTempRegister, addressInVMState(vm, VMState::offsetOfImage() + offset));
+    }
+    jit.loadPtr(Address(parts, OBJECT_OFFSETOF(VMState::PartsOfImage, image)), scratch);
+    jit.loadPtr(addressInVMState(vm, VMState::offsetOfCurrentImageOfThread()), parts);
+    jit.storePtr(scratch, Address(parts));
+}
+
 void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBytes)
 {
     const GPRReg instance = jit.reuseScratch(StubRegister::EntryT12);
@@ -185,17 +206,39 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
     if (jit.options().sharesRealms) {
         // Whoever jumps here may be code of another image of the realm, or of the engine on its behalf.
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-        jit.loadPtr(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfImage()), scratch);
-        Jump otherImageRuns = jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(program)));
+        const GPRReg vm = operationArgumentGPR(0);
+        const GPRReg partsBelow = scratch;
+        const GPRReg end = operationArgumentGPR(1);
+        const GPRReg parts = operationArgumentGPR(2);
+        RELEASE_ASSERT(noOverlap(vm, partsBelow, end, parts) && noOverlap(instanceGPR, cellCageBaseGPR, vm, partsBelow) && noOverlap(instanceGPR, cellCageBaseGPR, end, parts));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), partsBelow);
+        jit.loadPtr(addressInVMState(partsBelow, VMState::offsetOfPartsOfImageThatRuns()), partsBelow);
+        Jump otherImageRuns = jit.branchPtr(CCallHelpers::NotEqual, partsBelow, Address(instanceGPR, AOT_INSTANCE_OFFSET(partsOfImageInVM)));
         Label thisImageRuns = jit.label();
         jit.addOutOfLinePart([=](StubAssembler& jit) {
             otherImageRuns.link(&jit);
+            // VMState::runImageOfAdapter().
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+            jit.loadPtr(addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()), end);
+            JumpList isLeftToRunTime;
+            isLeftToRunTime.append(jit.branchPtr(CCallHelpers::Equal, end, addressInVMState(vm, VMState::offsetOfEndOfRoomForImagesBelowAdapters())));
+            isLeftToRunTime.append(jit.branchPtr(CCallHelpers::BelowOrEqual, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()), fp));
+            jit.storePtr(fp, Address(end, OBJECT_OFFSETOF(VMState::ImageBelowAdapter, adapterFrame)));
+            jit.storePtr(partsBelow, Address(end, OBJECT_OFFSETOF(VMState::ImageBelowAdapter, parts)));
+            jit.addPtr(TrustedImm32(sizeof(VMState::ImageBelowAdapter)), end);
+            jit.storePtr(end, addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()));
+            jit.storePtr(fp, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()));
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(partsOfImageInVM)), parts);
+            emitRunImage(jit, vm, parts, end);
+            Label runsImage = jit.label();
+            jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), callee);
+            jit.jump().linkTo(thisImageRuns, &jit);
+
+            isLeftToRunTime.link(&jit);
             jit.move(instanceGPR, operationArgumentGPR(0));
             jit.move(fp, operationArgumentGPR(1));
             jit.callLeaf(Entry::operationAOTRunImageOfAdapter, bytesPushedInAdapter(extraBytes));
-            jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), callee);
-            jit.jump().linkTo(thisImageRuns, &jit);
+            jit.jump().linkTo(runsImage, &jit);
         });
     }
 }
@@ -218,19 +261,24 @@ void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 void emitAdapterEpilogue(StubAssembler& jit)
 {
     if (jit.options().sharesRealms) {
-        const GPRReg scratch = jit.reuseScratch(StubRegister::T9);
-        RELEASE_ASSERT(scratch != GPRInfo::returnValueGPR);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-        Jump restoresImage = jit.branchPtr(CCallHelpers::Equal, Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfAdapterFrameThatRestoresImage()), fp);
+        const GPRReg vm = jit.reuseScratch(StubRegister::T9);
+        const GPRReg end = operationArgumentGPR(1);
+        const GPRReg parts = operationArgumentGPR(2);
+        RELEASE_ASSERT(noOverlap(vm, end, parts, GPRInfo::returnValueGPR));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        Jump restoresImage = jit.branchPtr(CCallHelpers::Equal, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()), fp);
         Label hasRestoredImage = jit.label();
         jit.addOutOfLinePart([=](StubAssembler& jit) {
             restoresImage.link(&jit);
-            // Nothing below the saved registers is read any more.
-            jit.store64(GPRInfo::returnValueGPR, Address(fp, AdapterFrame::offsetOfNewTarget));
-            jit.addPtr(TrustedImm32(-static_cast<int32_t>(AdapterFrame::saveAreaSize)), fp, sp);
-            jit.move(instanceGPR, operationArgumentGPR(0));
-            jit.callLeaf(Entry::operationAOTRestoreImageBelowAdapter, bytesPushedInAdapter(0));
-            jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), GPRInfo::returnValueGPR);
+            // VMState::restoreImageBelowAdapter().
+            constexpr int32_t sizeOfEntry = sizeof(VMState::ImageBelowAdapter);
+            jit.loadPtr(addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()), end);
+            jit.subPtr(TrustedImm32(sizeOfEntry), end);
+            jit.storePtr(end, addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()));
+            jit.loadPtr(Address(end, OBJECT_OFFSETOF(VMState::ImageBelowAdapter, parts)), parts);
+            jit.loadPtr(Address(end, static_cast<int32_t>(OBJECT_OFFSETOF(VMState::ImageBelowAdapter, adapterFrame)) - sizeOfEntry), end);
+            jit.storePtr(end, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()));
+            emitRunImage(jit, vm, parts, end);
             jit.jump().linkTo(hasRestoredImage, &jit);
         });
     }
@@ -369,6 +417,14 @@ static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall
     jit.store64(TrustedImm32(numberOfRegisters + 1), CCallHelpers::addressFor(CallFrameSlot::argumentCountIncludingThis));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), copy.value);
     jit.storePtr(fp, Address(copy.value, VM::offsetOfTopCallFrame()));
+    if (jit.options().sharesRealms) {
+        // Whoever leaves the frame finds it by its address. Every other adapter frame that is noted lies above the caller, so a note below the frame is of the frame as it lay before.
+        Jump hasNotChangedImage = jit.branchPtr(CCallHelpers::AboveOrEqual, addressInVMState(copy.value, VMState::offsetOfAdapterFrameThatRestoresImage()), fp);
+        jit.storePtr(fp, addressInVMState(copy.value, VMState::offsetOfAdapterFrameThatRestoresImage()));
+        jit.loadPtr(addressInVMState(copy.value, VMState::offsetOfEndOfImagesBelowAdapters()), copy.index);
+        jit.storePtr(fp, Address(copy.index, static_cast<int32_t>(OBJECT_OFFSETOF(VMState::ImageBelowAdapter, adapterFrame)) - static_cast<int32_t>(sizeof(VMState::ImageBelowAdapter))));
+        hasNotChangedImage.link(&jit);
+    }
 }
 
 static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)

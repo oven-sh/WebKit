@@ -170,6 +170,9 @@ public:
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
     ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    // What code that nobody has seen gets at by a name. A name written outside the library finds only its public modules. A module of the library that the image
+    // lacks runs from its text, which names the others too: where one may, these are all holders.
+    ValueSetID holdersOfPublicLibraryExports() const { return m_holdersOfPublicLibraryExports; }
     ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
     ValueSetID holdersOfLibraryExportsThatRaiseNoEvent() const { return m_holdersOfLibraryExportsThatRaiseNoEvent; }
     ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
@@ -314,6 +317,7 @@ private:
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    ValueSetID m_holdersOfPublicLibraryExports;
     Vector<ValueSetID> m_holdersOfExportsOfModule;
     ValueSetID m_holdersOfLibraryExportsThatRaiseNoEvent;
     ValueSetID m_eventRaisingLibraryExportHolders;
@@ -423,10 +427,12 @@ enum class ValueFlowHostNode : uint8_t {
     ReceiversOfMembersNobodyKnows,
     LoadedModulesAreHandedToNativeCode,
     UnseenCopiesOfFilesMayRun,
+    ReachedByUnseenCopiesOfFiles,
+    EntriesOfModuleCacheAreRead,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 81;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::UnseenCopiesOfFilesMayRun) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 83;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::EntriesOfModuleCacheAreRead) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -598,6 +604,7 @@ struct ValueFlowBody {
         uint32_t firstSite { none };
         bool isOnlyCalledOnItsHolder { false };
         bool isOnlyReceiverOfCalls { false };
+        bool isOnlyTested { false };
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
         uint32_t guardsOfOperands { 0 };
@@ -759,6 +766,12 @@ public:
     const ValueFlowUniverse& universe() const LIFETIME_BOUND { return m_universe; }
     const ValueFlowProgramNodes& nodes() const LIFETIME_BOUND { return m_nodes; }
 
+    // Behind the last solve.
+    void letGoOfEdgesAndMasks()
+    {
+        m_edges = { };
+        m_masks = { };
+    }
     std::span<const ValueFlowEdge> edges() const LIFETIME_BOUND { return m_edges.span(); }
     std::span<const ValueFlowNodeMask> masks() const LIFETIME_BOUND { return m_masks.span(); }
     std::span<const ValueFlowStatement> statements() const LIFETIME_BOUND { return m_statements.span(); }

@@ -60,6 +60,15 @@ constexpr std::optional<ValueFlowRareWrite> rareWriteFoundUnder(ValueFlowNameKin
 }
 
 struct ValueFlowNodeKey {
+    ValueFlowNodeKey() = default;
+    ValueFlowNodeKey(ValueFlowMadeNodeKind kind, uint8_t detail, uint32_t payload, ValueSetID set)
+        : kind(kind)
+        , detail(detail)
+        , payload(payload)
+        , set(set)
+    {
+    }
+
     static ValueFlowNodeKey constant(ValueSetID set) { return { ValueFlowMadeNodeKind::Constant, 0, 0, set }; }
     static ValueFlowNodeKey constant(ValueSetID set, ValueFlowUnknownSource source) { return { ValueFlowMadeNodeKind::Constant, static_cast<uint8_t>(static_cast<uint8_t>(source) + 1), 0, set }; }
     static ValueFlowNodeKey named(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowName name) { return { kind, static_cast<uint8_t>(name.kind), name.payload, set }; }
@@ -100,7 +109,7 @@ struct ValueFlowNodeKey {
         return static_cast<uint32_t>(hash >> 32);
     }
 
-    friend bool operator==(const ValueFlowNodeKey&, const ValueFlowNodeKey&) = default;
+    friend bool operator==(const ValueFlowNodeKey& a, const ValueFlowNodeKey& b) { return a.payload == b.payload && a.set == b.set && a.kind == b.kind && a.detail == b.detail; }
 
     static constexpr unsigned numberOfNodesOfCallGroup = 6 + numberOfGroupedArguments;
     static constexpr uint8_t isForCall = 0x80;
@@ -108,9 +117,13 @@ struct ValueFlowNodeKey {
 
     ValueFlowMadeNodeKind kind { ValueFlowMadeNodeKind::Constant };
     uint8_t detail { 0 };
+    // No part of the key. The solver's record of the key keeps its flags and its rank where there would be padding.
+    uint8_t flagsOfRecord { 0 };
+    uint8_t rankOfRecord { 0 };
     uint32_t payload { 0 };
     ValueSetID set;
 };
+static_assert(sizeof(ValueFlowNodeKey) == 12);
 
 static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isForCall);
 

@@ -206,6 +206,8 @@ static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) &&
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Instance*, void* address, uint32_t sizeAndIsStore, void* const* stackPointer));
 #endif
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));
+// Stands in its place in the table of an image that shares realms.
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandlerAmongImages, UGPRPair, (VM*, Instance*));
 // How far the stack pointer at the stack check of a frame without a record is below the return address of the frame. Zero for a frame that has a record.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGPRPair, (Instance*, const void* returnAddress));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance*, void* returnAddress, EncodedJSValue misfit));

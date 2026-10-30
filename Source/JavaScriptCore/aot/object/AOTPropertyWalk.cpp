@@ -362,7 +362,7 @@ bool hasGetterToCall(JSObject* object)
 
 namespace {
 
-// What says where the properties of a compiled object lie. A dictionary changes without a new Structure.
+// What says where the properties of a compiled object lie. A dictionary changes without a new Structure, and so does a key order that belongs to one object.
 struct PlacesOfProperties {
     explicit PlacesOfProperties(const Object& object)
         : structure(object.structureID())
@@ -375,7 +375,7 @@ struct PlacesOfProperties {
     bool areStill(const Object& object) const
     {
         JSObject* now = object.extraProperties();
-        return object.structureID() == structure && object.orderWord() == orderWord && now == extra && (!now || (now->structureID() == structureOfExtra && !now->structure()->isDictionary()));
+        return object.structureID() == structure && object.orderWord() == orderWord && !object.hasKeyOrderOfItsOwn() && now == extra && (!now || (now->structureID() == structureOfExtra && !now->structure()->isDictionary()));
     }
 
     StructureID structure;
@@ -420,7 +420,7 @@ static Result readFieldsCallingGetters(JSGlobalObject* globalObject, Object& typ
                     continue;
                 value = typed.read(field);
                 ASSERT(value);
-                if (field.isAccessor()) {
+                if (value && field.isAccessor()) {
                     if (hooks.willRunCode)
                         (*hooks.willRunCode)();
                     RETURN_IF_EXCEPTION(scope, Result::Stopped);
@@ -428,7 +428,10 @@ static Result readFieldsCallingGetters(JSGlobalObject* globalObject, Object& typ
                     RETURN_IF_EXCEPTION(scope, Result::Stopped);
                     isAsListed = places.areStill(typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
                 }
-            } else {
+            }
+            // Nothing lies where the list says: the object is asked.
+            if (!value) {
+                isAsListed = false;
                 if (hooks.willRunCode)
                     (*hooks.willRunCode)();
                 RETURN_IF_EXCEPTION(scope, Result::Stopped);
@@ -493,6 +496,7 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
                 if (key.attributes & PropertyAttribute::DontEnum)
                     continue;
                 value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+                ASSERT(value);
             } else if (isAsListed && key.attributes & PropertyAttribute::Accessor) {
                 if (key.attributes & PropertyAttribute::DontEnum)
                     continue;
@@ -500,10 +504,15 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
                     (*hooks.willRunCode)();
                 RETURN_IF_EXCEPTION(scope, Result::Stopped);
                 JSValue accessor = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
-                value = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
-                RETURN_IF_EXCEPTION(scope, Result::Stopped);
-                isAsListed = places.areStill(*typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
-            } else {
+                ASSERT(accessor);
+                if (accessor) {
+                    value = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    isAsListed = places.areStill(*typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
+                }
+            }
+            // It is not as listed, or nothing lies where the list says: the object is asked.
+            if (!value) {
                 if (hooks.willRunCode)
                     (*hooks.willRunCode)();
                 RETURN_IF_EXCEPTION(scope, Result::Stopped);
@@ -642,6 +651,9 @@ JSObject* tryCopyCallingGetters(JSGlobalObject* globalObject, JSObject* object, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     Object& typed = *uncheckedDowncast<Object>(object);
     if (typed.structure()->realm() != globalObject || (takes == NewObjectTakes::Stores && !newObjectsTakeStoresAsDefinitions(globalObject)))
+        return nullptr;
+    // Nothing that the lists go by says what such an object holds now.
+    if (typed.hasKeyOrderOfItsOwn())
         return nullptr;
     JSObject* extra = typed.extraProperties();
     PlacesOfProperties places(typed);

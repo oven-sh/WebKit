@@ -3023,8 +3023,64 @@ static constexpr OperandUses usesOfMatching {
     OperandUse::PassesToUserCode,
 };
 
+// One evaluation of the literal gets to one of the blocks at most: none of them leads to another, or back to itself, except through the block of the literal.
+static bool excludeOneAnother(const CFG& cfg, BlockID blockOfLiteral, std::span<const BlockID> blocks)
+{
+    BitVector isReached;
+    Vector<BlockID, 16> worklist(blocks);
+    while (!worklist.isEmpty()) {
+        for (BlockID target : cfg.successors(worklist.takeLast())) {
+            if (target != blockOfLiteral && isReached.add(target.index()))
+                worklist.append(target);
+        }
+    }
+    return std::ranges::none_of(blocks, [&](BlockID block) { return isReached.get(block.index()); });
+}
+
+// `/x/.test(text)` in a test run that may replace RegExp.prototype.test: the literal stands ahead of the test of the member, the built-in takes it on one arm and a call does on the other.
+// Each of the blocks makes its own object, and the one that only the built-in sees can be shared.
+static PassOutcome createLiteralsInBlocksThatUseThem(FunctionPassContext& context)
+{
+    if (context.function.blocks.size() < 2)
+        return PassOutcome::Unchanged;
+    Rewrite rewrite(context);
+    const UseLists& useLists = rewrite.uses();
+    Vector<BlockID, 4> userBlocks;
+    for (BlockID block : rewrite.blocks()) {
+        for (ValueID id : rewrite.at(block).values) {
+            const Value& literal = rewrite.at(id);
+            std::span<const Use> uses = literal.opcode == Opcode::NewRegExp ? useLists.usesOf(id) : std::span<const Use> { };
+            if (uses.empty() || !std::ranges::all_of(uses, [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block != block; }))
+                continue;
+            // Where the pattern may fail to compile, the error is thrown at the place of the literal.
+            const RegExpSummary& summary = regExpSummaryOf(context, literal.pattern(), literal.regExpFlags());
+            if (!summary.isValid() || summary.metadata != RegExpMetadata::Known)
+                continue;
+            userBlocks.shrink(0);
+            for (const Use& use : uses) {
+                if (userBlocks.isEmpty() || userBlocks.last() != use.block)
+                    userBlocks.append(use.block);
+            }
+            if (!excludeOneAnother(rewrite.cfg(), block, userBlocks.span()))
+                continue;
+            rewrite.later([&rewrite, &useLists, block, id, uses = rewrite.keep(uses)]() mutable {
+                while (!uses.empty()) {
+                    size_t numberOfUses = std::ranges::find_if(uses, [&](const Use& use) { return use.block != uses.front().block; }) - uses.begin();
+                    ValueID copy = rewrite.insertBefore(useLists.pointOf(uses.front()), rewrite.at(id).origin(), Value(rewrite.at(id)));
+                    for (const Use& use : uses.first(numberOfUses))
+                        rewrite.replaceUse(use, copy);
+                    uses = uses.subspan(numberOfUses);
+                }
+                rewrite.erase(block, id);
+            });
+        }
+    }
+    return rewrite.commit();
+}
+
 PassOutcome shareRegExpLiterals(FunctionPassContext& context)
 {
+    PassOutcome outcomeOfCopying = createLiteralsInBlocksThatUseThem(context);
     const Program& program = context.program;
     Function& function = context.function;
     const BuildContext& build = context.build;
@@ -3036,7 +3092,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         }
     }
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     const EscapeAnalysis& escape = context.analyses.escape();
     const ValueIdentities& identities = context.analyses.identities();
@@ -3117,7 +3173,7 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
     };
     literals.removeAllMatching([&](ValueID literal) { return !canShare(literal); });
     if (literals.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeOfCopying;
 
     for (ValueID literal : literals) {
         Value& value = function.edit(literal);

@@ -173,7 +173,7 @@ static bool isUsedByReturnCall(const Function& function, std::span<const Use> us
 }
 
 template<typename Entry>
-static void insertBehindDefinitions(const FlowCastInsertion& insertion, const Vector<Entry>& entries, ValueID Entry::* definitionOf, NOESCAPE const Invocable<bool(const Entry&)> auto& isNeededWithoutUses, NOESCAPE const Invocable<Value(const Entry&)> auto& makeValue)
+static void insertBehindDefinitions(const FlowCastInsertion& insertion, const CompactList<Entry>& entries, ValueID Entry::* definitionOf, NOESCAPE const Invocable<bool(const Entry&)> auto& isNeededWithoutUses, NOESCAPE const Invocable<Value(const Entry&)> auto& makeValue)
 {
     struct Redirection {
         const Entry* entry;

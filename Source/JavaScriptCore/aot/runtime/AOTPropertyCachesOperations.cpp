@@ -386,13 +386,19 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The tables of the image that runs say nothing of a cell of another image, and its caches hold nothing about one.
     if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, cell)) [[unlikely]] {
-        ImageOfCellScope imageOfCell(vm, cell);
         PutPropertySlot slot(cell, mode != PutMode::Sloppy, PutPropertySlot::PutById);
-        scope.release();
-        if (mode == PutMode::Define && cell->isObject())
-            defineDataProperty(Instance::owning(cell), asObject(cell), access.ident, value, slot);
-        else
-            JSValue(cell).putInline(globalObject, access.ident, value, slot);
+        bool shouldFile = cell->isObject() && access.caches().shouldFile(cell->structureID(), access.ident.impl(), accessFor(mode));
+        Structure* structureBefore = WTF::opaque(cell->structure());
+        {
+            ImageOfCellScope imageOfCell(vm, cell);
+            if (mode == PutMode::Define && cell->isObject())
+                defineDataProperty(Instance::owning(cell), asObject(cell), access.ident, value, slot);
+            else
+                JSValue(cell).putInline(globalObject, access.ident, value, slot);
+        }
+        RETURN_IF_EXCEPTION(scope, void());
+        if (shouldFile)
+            fileStore(access.instance, asObject(cell), structureBefore, access.name(), slot, mode, access.site);
         return;
     }
     if (cell->type() == SlimClosureType && mode != PutMode::Define)
@@ -988,7 +994,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByIdAndCache, size_t, (Instance* instance
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByIdAndCache);
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
-        throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
+        throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, hasAndCache(instance, asObject(base), instance->state->propertyCaches->nameOf(key), true));
@@ -999,7 +1005,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTInByValAndCache);
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject()) {
-        throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
+        throwException(globalObject, scope, createKeyTestOfNonObjectError(globalObject, base));
         OPERATION_RETURN(scope, 0);
     }
     OPERATION_RETURN(scope, hasByValAndCache(instance, asObject(base), JSValue::decode(encodedProperty), true));

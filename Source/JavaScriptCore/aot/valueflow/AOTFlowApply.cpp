@@ -699,7 +699,7 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
     Vector<FunctionID> functions = collectBodiesLargestFirst(context.program, context.application.bodies.size(), context.build.parallelLoops());
     Vector<FlowBodyCounts> countsByTask(functions.size());
     bool provesEverything = context.build.recordedOptions().has(TestingSwitch::ProveEverything);
-    editFunctionsInParallel(editor, context.build, BehindEdit::Nothing, functions.span(), [&](unsigned task, FunctionID id, Function& function, TaskArenas& arenas) {
+    editFunctionsInParallel(editor, context.build, BehindEdit::Fit, functions.span(), [&](unsigned task, FunctionID id, Function& function, TaskArenas& arenas) {
         FlowBodyApplication body { context.program, context.results, context.application, id, function, arenas.types, context.build, fieldsExpectedAsRead, firstRunMarks[id.index()], &firstTimeMarks };
         body.provesEverything = provesEverything && !isOfRuntimeModule(context.program, function.module);
         body.isOnlyConstructed = onlyConstructed.quickGet(id.index());
@@ -724,7 +724,7 @@ static void applyUnknownResults(Program& program, const FlowResults& results, Bu
     });
     ProgramEditor editor(program);
     Vector<FunctionID> functions = collectBodiesLargestFirst(program, program.functions.size(), build.parallelLoops());
-    editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+    editFunctionsInParallel(editor, build, BehindEdit::Fit, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         demoteTailCallsWithChecks(program, id, function, arenas.types, build);
         initializeMembersOfListedHolders(program, results, id, function, arenas.types, build);
         nameSymbolsCreatedByLibraryModule(program, id, function, arenas.types, build);

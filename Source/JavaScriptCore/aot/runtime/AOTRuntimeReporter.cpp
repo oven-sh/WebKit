@@ -42,6 +42,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -465,29 +466,28 @@ static String symbolNameOf(const Image& image, uint32_t function)
     return makeString(name, ' ', ModuleTable(image.programTables()).pathTextForLineColumns(position->source), ':', position->lineColumn.line);
 }
 
-void writePerfMap()
+void writePerfMap(const Image& image)
 {
-    const Image* image = Image::current();
-    if (!image)
-        return;
-    // Each entry point of an executable has an image of its own, and a thread that starts one adds its functions to the file.
+    // Each entry point of an executable has an image of its own, and so has each layer of a test run. Whoever starts one adds its functions to the file.
     static Lock lock;
     static bool hasWrittenInThisProcess;
     Locker locker { lock };
     auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
     if (!file)
         return;
-    const uint8_t* code = image->code().data();
+    // A function is described by the image that runs, and the one that was just added does not run yet.
+    SetForScope runningImage(*Image::addressOfCurrentOfThread(), &image);
+    const uint8_t* code = image.code().data();
     Vector<std::pair<size_t, String>> symbols;
-    for (uint32_t function = 0; function < image->header().counts.functions; ++function) {
-        if (image->sizeOfCodeOf(function))
-            symbols.append({ static_cast<size_t>(image->codeOf(function) - code), symbolNameOf(*image, function) });
+    for (uint32_t function = 0; function < image.header().counts.functions; ++function) {
+        if (image.sizeOfCodeOf(function))
+            symbols.append({ static_cast<size_t>(image.codeOf(function) - code), symbolNameOf(image, function) });
     }
-    for (unsigned copy = 0; copy < image->sharedCodeCopies().size(); ++copy)
-        symbols.append({ static_cast<size_t>(image->sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
+    for (unsigned copy = 0; copy < image.sharedCodeCopies().size(); ++copy)
+        symbols.append({ static_cast<size_t>(image.sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
     AOT::sort(symbols, { }, &std::pair<size_t, String>::first);
     for (size_t i = 0; i < symbols.size(); ++i) {
-        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image->header().code.functionsEnd;
+        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image.header().code.functionsEnd;
         file->println(hex(reinterpret_cast<uintptr_t>(code) + symbols[i].first, Lowercase), " ", hex(end - symbols[i].first, Lowercase), " ", symbols[i].second);
     }
 }

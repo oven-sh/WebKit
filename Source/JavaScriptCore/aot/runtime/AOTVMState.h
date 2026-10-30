@@ -9,6 +9,7 @@
 
 #include "AOTVector.h"
 #include <JavaScriptCore/CollectionScope.h>
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/Box.h>
@@ -88,13 +89,24 @@ public:
         std::unique_ptr<RegExpLiterals> regExpLiterals;
         // The sets of mocked modules that the last realm went through, in that order.
         Vector<Box<MockedModules>> mockedModules;
+        // By the number of a module of the image that stands for a file of an image below: Modules::resolvedKey(). Images do not change, and each realm would make the keys anew.
+        Vector<Identifier> keysOfFilesInImagesBelow;
     };
 
     void attachImage(VM&);
     JS_EXPORT_PRIVATE void run(const Image&);
     // The engine jumps to an adapter from many places. Where images share realms, the adapter itself sees to it that its image runs, and that the one before runs again when its frame is left.
+    // It does both in place, and calls only for room to note one more frame.
     void runImageOfAdapter(const Image&, const void* adapterFrame);
     void restoreImageBelowAdapter();
+    // A throw leaves the frame: whatever lies below it is gone, the frames of adapters too, by whichever way the walk has passed them. Where images share realms.
+    ALWAYS_INLINE void didLeaveFramesBelow(const void* frame)
+    {
+        if (adapterFrameThatRestoresImage < frame) [[unlikely]]
+            restoreImagesBelowAdaptersBelow(frame);
+    }
+    void restoreImagesBelowAdaptersBelow(const void* frame);
+    void makeRoomForImagesBelowAdapters();
     PartsOfImage& partsOfRunningImage();
     void willShutDownHeap();
     void releaseImage(VM&);
@@ -102,14 +114,20 @@ public:
 
     void didChangeInstances()
     {
-        onlyInstance = instances.size() == 1 ? instances.first() : nullptr;
+        // Never in a VM that runs several images: whoever finds none asks which image it is about.
+        onlyInstance = instances.size() == 1 && !hasSeveralImages ? instances.first() : nullptr;
         instanceOfRecentRun = { };
     }
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfImage() { return OBJECT_OFFSETOF(VMState, image); }
+    static constexpr ptrdiff_t offsetOfPartsOfImageThatRuns() { return OBJECT_OFFSETOF(VMState, partsOfImageThatRuns); }
+    static constexpr size_t sizeOfWordsOfImageThatRuns() { return OBJECT_OFFSETOF(VMState, partsOfImageThatRuns) - OBJECT_OFFSETOF(VMState, image); }
+    static constexpr ptrdiff_t offsetOfCurrentImageOfThread() { return OBJECT_OFFSETOF(VMState, currentImageOfThread); }
     static constexpr ptrdiff_t offsetOfAdapterFrameThatRestoresImage() { return OBJECT_OFFSETOF(VMState, adapterFrameThatRestoresImage); }
+    static constexpr ptrdiff_t offsetOfEndOfImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfImagesBelowAdapters); }
+    static constexpr ptrdiff_t offsetOfEndOfRoomForImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfRoomForImagesBelowAdapters); }
     static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
@@ -122,16 +140,29 @@ public:
         Vector<Instance*, 1> instances WTF_GUARDED_BY_LOCK(lock);
     };
 
+    // The words of the PartsOfImage that runs, in its order: an adapter copies them.
     const Image* image { nullptr };
+    PartOfRunningImage<RuntimeTable> runtimeTable;
+    PartOfRunningImage<VMPropertyCaches> propertyCaches;
+    PartOfRunningImage<CallSiteCache> callSiteCache;
+    PartOfRunningImage<FunctionTables> functionTables;
+    PartOfRunningImage<RegExpLiterals> regExpLiterals;
+    const PartsOfImage* partsOfImageThatRuns { nullptr };
+    // Where Image::currentOfThread() reads, on the thread of the VM.
+    const Image** currentImageOfThread { nullptr };
     bool hasCompiledCode { false };
     bool hasSeveralImages { false };
     struct ImageBelowAdapter {
         const void* adapterFrame;
-        const Image* image;
+        const PartsOfImage* parts;
     };
-    // The innermost adapter frame that changed which image runs.
+    // The innermost adapter frame that changed which image runs. Where images share realms and there is none: aboveEveryAdapterFrame().
     const void* adapterFrameThatRestoresImage { nullptr };
-    Vector<ImageBelowAdapter, 8> imagesBelowAdapters;
+    static const void* aboveEveryAdapterFrame() { return reinterpret_cast<const void*>(std::numeric_limits<uintptr_t>::max()); }
+    // A stack with one entry for each such frame, on top of an entry for aboveEveryAdapterFrame().
+    ImageBelowAdapter* endOfImagesBelowAdapters { nullptr };
+    ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
+    UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
     bool validatesRuntime { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
@@ -164,15 +195,10 @@ public:
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
     std::unique_ptr<PagesOfVM> pages;
-    PartOfRunningImage<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
-    PartOfRunningImage<VMPropertyCaches> propertyCaches;
     std::unique_ptr<RuntimeCounters> counters;
     std::unique_ptr<RuntimeReporter> reporter;
-    PartOfRunningImage<CallSiteCache> callSiteCache;
-    PartOfRunningImage<FunctionTables> functionTables;
-    PartOfRunningImage<RegExpLiterals> regExpLiterals;
     // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
     Vector<PartsOfImage, 1> parts;
     UniqueArray<int> regExpMatchOutput;
@@ -188,6 +214,15 @@ public:
 };
 
 static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));
+#define AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(part) static_assert(OBJECT_OFFSETOF(VMState, part) - OBJECT_OFFSETOF(VMState, image) == OBJECT_OFFSETOF(VMState::PartsOfImage, part))
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(image);
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(runtimeTable);
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(propertyCaches);
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(callSiteCache);
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(functionTables);
+AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE(regExpLiterals);
+#undef AOT_ASSERT_PART_LIES_AS_IN_PARTS_OF_IMAGE
+static_assert(!OBJECT_OFFSETOF(VMState::PartsOfImage, image) && OBJECT_OFFSETOF(VMState::PartsOfImage, regExpLiterals) + sizeof(void*) == VMState::sizeOfWordsOfImageThatRuns());
 
 bool belongsToOtherImageSlow(VM&, const JSCell*);
 // For whoever has no VM at hand: in the VM of this thread, if it has one that runs compiled code.

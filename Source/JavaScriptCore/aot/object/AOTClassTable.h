@@ -62,11 +62,13 @@ public:
     }
     // The proven base, else the expected one, which holds only while the class's link guards are set.
     const LayoutData* assumedBaseOf(const LayoutData& layout) const { return layout.assumedBase() == LayoutData::noBase ? nullptr : classWithIndex(layout.assumedBase()); }
-    static bool hasOneClassObject(const LayoutData& classLayout)
+    // A class is asked about by whoever holds one of its objects, under whichever image runs then: the table answers from its own.
+    bool hasOneClassObject(const LayoutData& classLayout) const
     {
         FunctionID constructor(classLayout.classData().classConstructor);
-        return constructor && classLayout.evaluation() == EvaluationState::ProvenOnce && !captureCountsOf(constructor).captures;
+        return constructor && classLayout.evaluation() == EvaluationState::ProvenOnce && !m_tables.captureCountsOf(constructor.index()).captures;
     }
+    FunctionID functionOfOwnClosure(const Closure&) const;
     bool keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData&) const;
     static bool hasComputedMemberNames(const LayoutData& classLayout)
     {
@@ -81,12 +83,12 @@ public:
         bool recordNamesParent = !classLayout.hasUntypedBase || classLayout.classData().builtinBase != LayoutData::noBase;
         return recordNamesParent && !hasComputedMemberNames(classLayout);
     }
-    static bool isDefinedByClass(const LayoutData& layout)
+    bool isDefinedByClass(const LayoutData& layout) const
     {
         if (!layout.isClass())
             return false;
         FunctionID constructor(layout.classData().classConstructor);
-        return constructor && functionKindData(constructor).isConstructor;
+        return constructor && m_tables.kindOfFunction(constructor.index()).isConstructor;
     }
     static bool isClassOfCreatedObjects(const LayoutData& layout) { return layout.isClass() && !FunctionID(layout.classData().classConstructor); }
     bool awaitsPrototypeOfCreatedObjects(const LayoutData&) const;
@@ -212,6 +214,8 @@ public:
         return prototype.isObject() ? asObject(prototype) : nullptr;
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
+    // Of a class of another image of the realm, which this table knows nothing else of. The `prototype` of a class is neither written nor redefined.
+    void rememberPrototypeOfClassOfOtherImage(VM&, JSObject* newTarget, JSValue prototype);
     Object* createInstanceOfClassBelow(VM&, size_t indexOfRecord);
     // What an allocation makes for a prototype is remembered under its number.
     JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false, std::optional<uint32_t> allocation = std::nullopt);

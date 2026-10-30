@@ -15,6 +15,7 @@
 #include "AOTCompiledCallee.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTLayoutData.h"
 #include "AOTModuleTable.h"
 #include "AOTObject.h"
@@ -75,6 +76,7 @@ static String functionName(JSObject* function)
 static String constructorName(JSObject* prototype)
 {
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype)) {
+        ImageOfCellScope imageOfPrototype(prototype);
         const ClassTable& classes = (*Instance::owning(prototype)->state).objects->classes;
         return initialNameProperty(FunctionID(classes.classWithIndex(lazyPrototype->classIndex())->classData().classConstructor));
     }
@@ -582,6 +584,43 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
     }
 }
 
+// `new K(a).b`: `new` takes the first call of the path, so it belongs to what stands in front of `.b`. In `new a.b.K()` it does not belong to `a.b`.
+static size_t startWithNew(std::span<const Latin1Character> text, size_t start, size_t end)
+{
+    bool followsNew = start >= 4 && text[start - 4] == 'n' && text[start - 3] == 'e' && text[start - 2] == 'w' && text[start - 1] == ' ' && (start == 4 || !isPartOfName(text[start - 5]));
+    return followsNew && WTF::find(text.subspan(start, end - start), static_cast<Latin1Character>('(')) != notFound ? start - 4 : start;
+}
+
+// Where the path that begins at `start` ends: names, dots, and what stands in brackets behind them. `start` where there is no path.
+static size_t endOfPathFrom(std::span<const Latin1Character> text, size_t start)
+{
+    size_t at = start;
+    while (at < text.size()) {
+        Latin1Character character = text[at];
+        Latin1Character next = at + 1 < text.size() ? text[at + 1] : Latin1Character(0);
+        if (isPartOfName(character) || character == '#' || character == '.')
+            ++at;
+        else if ((character == '?' && next == '.') || (character == '!' && (next == '.' || next == '[')))
+            ++at;
+        else if (character == '(' || character == '[') {
+            std::optional<size_t> close = findClosingBracket(text, at);
+            if (!close)
+                return start;
+            at = *close + 1;
+        } else
+            break;
+    }
+    return at;
+}
+
+static size_t skipQuoted(std::span<const Latin1Character> text, size_t at, size_t to)
+{
+    Latin1Character quote = text[at];
+    for (++at; at < to && text[at] != quote; ++at)
+        at += text[at] == '\\';
+    return at;
+}
+
 enum class WrittenReads : uint8_t { None, Same, Differ };
 
 // `a.b = c + 1` where `end` is behind `a.b`: a store is quoted with the value. Otherwise `end`.
@@ -633,6 +672,7 @@ static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size
         std::optional<size_t> start = startOfPathInFrontOf(text, dot);
         if (!start)
             return WrittenReads::Differ;
+        start = startWithNew(text, *start, dot);
         if (within && (*within < *start || *within >= at + member.length()))
             continue;
         std::span<const Latin1Character> read = text.subspan(*start, endWithStoredValue(text, at + member.length()) - *start);
@@ -667,6 +707,7 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
                 continue;
             return WrittenReads::Differ;
         }
+        start = startWithNew(text, *start, at);
         if (within && (*within < *start || *within >= at))
             continue;
         std::span<const Latin1Character> read = text.subspan(*start, endWithStoredValue(text, *close + 1) - *start);
@@ -746,6 +787,135 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
         if (!takesValues)
             return WrittenReads::None;
         found = text.subspan(at, *close + 1 - at);
+        return WrittenReads::Same;
+    }
+    return WrittenReads::None;
+}
+
+// Each place in `text[from, to)` that asks whether an object has a key: `k in a.b`. What `for (k in a)` walks may be anything, and `#k in a` is not quoted.
+static WrittenReads findWrittenKeyTests(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    auto isBlank = [](Latin1Character character) {
+        return character == ' ' || character == '\n' || character == '\r' || character == '\t';
+    };
+    for (size_t at = from + 1; at + 3 < to; ++at) {
+        if (isQuote(text[at])) {
+            at = skipQuoted(text, at, to);
+            continue;
+        }
+        if (text[at] != ' ' || text[at + 1] != 'i' || text[at + 2] != 'n' || !isBlank(text[at + 3]))
+            continue;
+        size_t endOfKey = at;
+        while (endOfKey > from && text[endOfKey - 1] == ' ')
+            --endOfKey;
+        std::optional<size_t> start;
+        if (endOfKey > from && isQuote(text[endOfKey - 1])) {
+            for (size_t opening = endOfKey - 1; opening > from && !start; --opening) {
+                if (text[opening - 1] == text[endOfKey - 1] && (opening - 1 == from || text[opening - 2] != '\\'))
+                    start = opening - 1;
+            }
+        } else
+            start = startOfPathInFrontOf(text, endOfKey);
+        size_t object = at + 3;
+        while (object < text.size() && isBlank(text[object]))
+            ++object;
+        size_t end = endOfPathFrom(text, object);
+
+        // Only where nothing around it binds more tightly than `in` is this all of the expression.
+        size_t inFront = start.value_or(from);
+        while (inFront > from && text[inFront - 1] == ' ')
+            --inFront;
+        Latin1Character before = inFront > from ? text[inFront - 1] : Latin1Character('(');
+        size_t wordInFront = inFront;
+        while (wordInFront > from && isPartOfName(text[wordInFront - 1]))
+            --wordInFront;
+        std::span<const Latin1Character> word = text.subspan(wordInFront, inFront - wordInFront);
+        bool isWalked = equalSpans(word, byteCast<Latin1Character>("const"_span)) || equalSpans(word, byteCast<Latin1Character>("let"_span)) || equalSpans(word, byteCast<Latin1Character>("var"_span));
+        if (before == '(') {
+            size_t keyword = inFront - (inFront > from);
+            while (keyword > from && text[keyword - 1] == ' ')
+                --keyword;
+            isWalked |= keyword >= from + 3 && text[keyword - 3] == 'f' && text[keyword - 2] == 'o' && text[keyword - 1] == 'r' && (keyword == from + 3 || !isPartOfName(text[keyword - 4]));
+        }
+        if (isWalked)
+            continue;
+        bool beginsHere = before == '(' || before == '[' || before == '{' || before == ',' || before == ';' || before == ':' || before == '?' || before == '&' || before == '|' || before == '=' || before == '\n'
+            || (before == '>' && inFront >= from + 2 && text[inFront - 2] == '=') || equalSpans(word, byteCast<Latin1Character>("return"_span));
+        size_t behind = end;
+        while (behind < text.size() && text[behind] == ' ')
+            ++behind;
+        Latin1Character after = behind < text.size() ? text[behind] : Latin1Character(')');
+        bool endsHere = after == ')' || after == ']' || after == '}' || after == ',' || after == ';' || after == ':' || after == '?' || after == '&' || after == '|' || after == '=' || after == '!' || after == '\n' || after == '\r';
+        if (!start || end == object || !beginsHere || !endsHere) {
+            if (within)
+                continue;
+            return WrittenReads::Differ;
+        }
+        // The place may be the one behind the last character.
+        if (within && (*within < *start || *within > end))
+            continue;
+        std::span<const Latin1Character> test = text.subspan(*start, end - *start);
+        if (found.data() && !equalSpans(found, test))
+            return WrittenReads::Differ;
+        found = test;
+    }
+    return found.data() ? WrittenReads::Same : WrittenReads::None;
+}
+
+// Each place in `text[from, to)` that deletes a member: `delete a.b[k]`.
+static WrittenReads findWrittenDeletions(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    constexpr auto keyword = "delete "_span;
+    for (size_t at = from; at + keyword.size() < to; ++at) {
+        if (isQuote(text[at])) {
+            at = skipQuoted(text, at, to);
+            continue;
+        }
+        if (!equalSpans(text.subspan(at, keyword.size()), byteCast<Latin1Character>(keyword)) || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '.')))
+            continue;
+        size_t path = at + keyword.size();
+        while (path < to && text[path] == ' ')
+            ++path;
+        size_t end = endOfPathFrom(text, path);
+        if (end == path) {
+            if (within)
+                continue;
+            return WrittenReads::Differ;
+        }
+        if (within && (*within < at || *within > end))
+            continue;
+        std::span<const Latin1Character> deletion = text.subspan(at, end - at);
+        if (found.data() && !equalSpans(found, deletion))
+            return WrittenReads::Differ;
+        found = deletion;
+    }
+    return found.data() ? WrittenReads::Same : WrittenReads::None;
+}
+
+// `a.b[k](c)`, a call of an element. There is no name to go by, so only a file says which it is. Of several that hold the place the first is meant.
+static WrittenReads findWrittenCallsOfElements(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    if (!within)
+        return WrittenReads::None;
+    for (size_t at = from + 1; at < to; ++at) {
+        if (isQuote(text[at])) {
+            at = skipQuoted(text, at, to);
+            continue;
+        }
+        if (text[at] != '[' || !(isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']' || text[at - 1] == '!'))
+            continue;
+        std::optional<size_t> start = startOfPathInFrontOf(text, at);
+        std::optional<size_t> closeOfKey = findClosingBracket(text, at);
+        if (!start || !closeOfKey)
+            continue;
+        size_t open = *closeOfKey + 1 + (*closeOfKey + 1 < text.size() && text[*closeOfKey + 1] == '!');
+        std::optional<size_t> close = open < text.size() && text[open] == '(' ? findClosingBracket(text, open) : std::nullopt;
+        if (!close)
+            continue;
+        start = startWithNew(text, *start, at);
+        if (*within < *start || *within > *close)
+            continue;
+        found = text.subspan(*start, *close + 1 - *start);
         return WrittenReads::Same;
     }
     return WrittenReads::None;
@@ -953,6 +1123,16 @@ static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::spa
                 at = *close;
                 continue;
             }
+            // `(new K()).b` and `(new K).b` are printed `new K().b`.
+            bool constructs = inside.size() > 4 && inside[0] == 'n' && inside[1] == 'e' && inside[2] == 'w' && inside[3] == ' ' && startOfPathInFrontOf(inside, inside.size()) == std::optional<size_t>(4);
+            bool isReadFrom = *close + 1 < text.size() && (text[*close + 1] == '.' || text[*close + 1] == '[');
+            if (constructs && isReadFrom && !isConstructed && WTF::find(inside, static_cast<Latin1Character>('?')) == notFound) {
+                appendWithoutIdleBrackets(printed, inside);
+                if (inside.back() != ')')
+                    printed.append("()"_span);
+                at = *close;
+                continue;
+            }
         }
         printed.append(text[at]);
     }
@@ -1157,6 +1337,8 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
         return createNotAnObjectErrorQuoting(findOnTop(globalObject->vm(), "#"_s, findWrittenPrivateNames), globalObject, base);
     if (!member.isSymbol())
         return createNotAnObjectError(globalObject, base, StringView(member.impl()));
+    if (String written = findOnTop(globalObject->vm(), "[]"_s, findWrittenElements); !written.isNull())
+        return createNotAnObjectErrorQuoting(written, globalObject, base);
     String source;
     if (String description = describe(globalObject, base); !description.isNull())
         source = tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s);
@@ -1187,6 +1369,16 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSV
     return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
+JSObject* createKeyTestOfNonObjectError(JSGlobalObject* globalObject, JSValue base)
+{
+    return createQuoting(findOnTop(globalObject->vm(), "in"_s, findWrittenKeyTests), createInvalidInParameterError, globalObject, base);
+}
+
+JSObject* createDeletionFromNullishError(JSGlobalObject* globalObject, JSValue base)
+{
+    return createNotAnObjectErrorQuoting(findOnTop(globalObject->vm(), "delete"_s, findWrittenDeletions), globalObject, base);
+}
+
 JSObject* createIterationOfNullishError(JSGlobalObject* globalObject, JSValue iterated)
 {
     return createNotAnObjectErrorQuoting(findOnTop(globalObject->vm(), "of"_s, findWrittenIterations), globalObject, iterated);
@@ -1205,10 +1397,20 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
     return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
+// `new a.K(b)` and `new K`, but not `new K(b).c()`, which calls.
+static bool isConstruction(const String& source)
+{
+    if (!source.startsWith("new "_s))
+        return false;
+    std::span<const Latin1Character> text = source.span8();
+    std::optional<size_t> open = text.back() == ')' ? findOpeningBracket(text, text.size() - 1) : std::nullopt;
+    return !open || WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
+}
+
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = findOnTop(globalObject->vm(), name, findWrittenCalls);
-    if (source.isNull() || source.startsWith("new "_s))
+    String source = name.isEmpty() ? findOnTop(globalObject->vm(), "[]"_s, findWrittenCallsOfElements) : findOnTop(globalObject->vm(), name, findWrittenCalls);
+    if (source.isNull() || isConstruction(source))
         source = name.isNull() ? String() : tryMakeString(name, "()"_s);
     return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
 }
@@ -1217,9 +1419,21 @@ static String quoteConstruction(VM& vm, StringView name)
 {
     String source = findOnTop(vm, name, findWrittenCalls);
     // Bun's transpiler prints `new K()` as `new K`.
-    if (source.isNull() || !source.startsWith("new "_s) || source.endsWith("()"_s))
+    if (source.isNull() || !isConstruction(source) || source.endsWith("()"_s))
         source = name.isNull() ? String() : tryMakeString("new "_s, name);
     return source;
+}
+
+// A constructor that nobody wrote passes on what it is given.
+static String quoteCallOfParent(VM& vm)
+{
+    String source = findOnTop(vm, "super"_s, findWrittenCalls);
+    return source.isNull() ? String("super(...args)"_s) : source;
+}
+
+JSObject* createParentNotAConstructorError(JSGlobalObject* globalObject, JSValue parent)
+{
+    return createQuoting(quoteCallOfParent(globalObject->vm()), JSC::createNotAConstructorError, globalObject, parent);
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
@@ -1228,9 +1442,9 @@ JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue calle
     return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
 }
 
-void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name)
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name, bool isParent)
 {
-    String source = quoteConstruction(globalObject->vm(), name);
+    String source = isParent ? quoteCallOfParent(globalObject->vm()) : quoteConstruction(globalObject->vm(), name);
     SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
     CallData constructData;
     constructData.type = CallData::Type::Native;
@@ -1327,6 +1541,9 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
 
 JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
+    // Only a test run takes files out, and only those that its build saw taken out.
+    if (change == LoaderChange::TakeOutOfRequireCache)
+        return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
 }

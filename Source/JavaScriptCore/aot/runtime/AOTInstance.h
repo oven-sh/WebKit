@@ -352,8 +352,10 @@ struct Instance : InstanceHeader {
     uintptr_t pollIsDue;
     Instance* above;
     const Image* program;
-    uintptr_t endOfClosureNumbers;
-    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) + sizeof(Instance*) + sizeof(const Image*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    const void* partsOfImageInVM;
+    uint32_t endOfClosureNumbers;
+    uint32_t lastShape;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) + sizeof(Instance*) + sizeof(const Image*) + sizeof(const void*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
     void** runtimeTable;
     SlotHandlers handlers;
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
@@ -367,8 +369,11 @@ struct Instance : InstanceHeader {
     // A realm has an instance for each image that its VM runs, in the order of the images. The realm points at the first.
     Instance* above;
     const Image* program;
-    // The closure numbers of the images ascend with the instances: the first instance whose end lies above the number of a closure is its own.
-    uintptr_t endOfClosureNumbers;
+    // The VMState::PartsOfImage of the program.
+    const void* partsOfImageInVM;
+    // The closure numbers of the images ascend with the instances: the first instance whose end lies above the number of a closure is its own. So do the shapes.
+    uint32_t endOfClosureNumbers;
+    uint32_t lastShape;
 #endif
 #undef AOT_DECLARE_INSTANCE_PART
 

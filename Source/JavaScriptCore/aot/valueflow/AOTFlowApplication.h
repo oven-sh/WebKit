@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompactList.h"
 #include "AOTFlowResults.h"
 #include "AOTTypeArena.h"
 #include <wtf/FastMalloc.h>
@@ -26,8 +27,8 @@ struct FlowPositionUpdate {
 
 struct FlowAccessorField {
     OptionSet<FieldForm> form;
-    Vector<FunctionID, 1> getters;
-    Vector<FunctionID, 1> setters;
+    CompactList<FunctionID> getters;
+    CompactList<FunctionID> setters;
 
     bool isAccessor() const { return form.contains(FieldForm::IsAccessor); }
 };
@@ -144,20 +145,21 @@ struct FlowMemberKey {
 };
 
 struct FlowBodyUpdate {
-    Vector<FlowValueProof> proofs;
-    Vector<FlowValueExpectation> expectations;
-    Vector<ValueID> readsAfterInitialization;
-    Vector<ValueID> opensOfUndecidedStorage;
-    Vector<FlowClaimUpdate> claims;
-    Vector<FlowAccessStamp> accesses;
-    Vector<FlowCallStamp> calls;
-    Vector<FlowTailCallUpdate> tailCalls;
-    Vector<FlowAllocationStamp> allocations;
-    Vector<FlowSymbolConstant> symbolConstants;
+    CompactList<FlowValueProof> proofs;
+    CompactList<FlowValueExpectation> expectations;
+    CompactList<ValueID> readsAfterInitialization;
+    CompactList<ValueID> opensOfUndecidedStorage;
+    CompactList<FlowClaimUpdate> claims;
+    CompactList<FlowAccessStamp> accesses;
+    CompactList<FlowCallStamp> calls;
+    CompactList<FlowTailCallUpdate> tailCalls;
+    CompactList<FlowAllocationStamp> allocations;
+    CompactList<FlowSymbolConstant> symbolConstants;
+    CompactList<FlowMemberKey> keysOfMembers;
+    CompactList<ValueID> namesTakenFromOneKey;
     Vector<FlowDefinedValue> definedValues;
-    Vector<FlowMemberKey> keysOfMembers;
-    Vector<ValueID> namesTakenFromOneKey;
 };
+static_assert(sizeof(FlowBodyUpdate) <= 112);
 
 template<typename Entry, typename Member>
 const Entry* findByValue(std::span<const Entry> ascendingEntries, ValueID value, Member Entry::* member)

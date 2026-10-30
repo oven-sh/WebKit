@@ -1664,6 +1664,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
 
 uint64_t maxValuesOfOrdinaryProgram(const BuildContext& build)
 {
+    // A part of a program that is built by itself: how its functions rank among themselves says nothing.
+    if (build.recordedOptions().heat() == HeatOverride::ReadOffStructure)
+        return 0;
     return static_cast<uint64_t>(HeatModel::warmCodeLimitsInVeryLargeProgram) * build.limit(LimitID::MaxWarmCodeValues);
 }
 

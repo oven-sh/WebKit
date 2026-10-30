@@ -117,7 +117,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
         JSObject* prototype = classes.prototypeForInstancesOf(vm, closure);
         classes.rememberPlaceOfPrototypeProperty(vm, closure, prototype);
         // The first construction defines the class of a constructor function, which arms the guards that its stores are compiled under.
-        if (const LayoutData* classLayout = classes.classConstructedBy(closure->function()); classLayout && !ClassTable::isDefinedByClass(*classLayout)) {
+        if (const LayoutData* classLayout = classes.classConstructedBy(classes.functionOfOwnClosure(*closure)); classLayout && !classes.isDefinedByClass(*classLayout)) {
             DeferGCForAWhile deferGC(vm);
             classes.classPrototypeOfInstances(vm, *classLayout);
         }
@@ -125,6 +125,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
     }
     JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    instance->state->objects->classes.rememberPrototypeOfClassOfOtherImage(vm, target, prototype);
     if (prototype.isObject())
         OPERATION_RETURN(scope, asObject(prototype));
     JSGlobalObject* realm = getFunctionRealm(globalObject, target);

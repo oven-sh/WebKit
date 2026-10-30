@@ -48,12 +48,13 @@ inline FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionW
 JS_EXPORT_PRIVATE const Image& imageWithClosureNumber(uint32_t number);
 // Of the image that gave the number out. Where a realm runs several images, a closure says by its number which of them it is of, and any thread may ask.
 // A process with one image pays nothing for that: it takes the road of Image::current().
-ALWAYS_INLINE const ProgramTables& programTablesWithClosureNumber(uint32_t number)
+ALWAYS_INLINE const Image& imageOfClosureNumber(uint32_t number)
 {
     if (const Image* image = Image::sharedByAllThreads()) [[likely]]
-        return image->programTables();
-    return imageWithClosureNumber(number).programTables();
+        return *image;
+    return imageWithClosureNumber(number);
 }
+ALWAYS_INLINE const ProgramTables& programTablesWithClosureNumber(uint32_t number) { return imageOfClosureNumber(number).programTables(); }
 ALWAYS_INLINE FunctionKindData kindOfClosureNumber(uint32_t number) { return programTablesWithClosureNumber(number).kindOfClosureNumber(number); }
 ALWAYS_INLINE CaptureCounts captureCountsOfClosureNumber(uint32_t number) { return programTablesWithClosureNumber(number).captureCountsOfClosureNumber(number); }
 

@@ -73,6 +73,8 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    // Slot::typeIsGivenByBits, of a store to a field of another image.
+    uint32_t bitsOfType { 0 };
     bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };

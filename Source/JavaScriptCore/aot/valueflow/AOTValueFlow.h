@@ -333,6 +333,8 @@ struct ValueFlowStatement {
     bool isOnlyCalledOnItsHolder { false };
     // Of a ModuleNamespace: the object is tested, or is the receiver of a call, and goes nowhere else.
     bool isOnlyReceiverOfCalls { false };
+    // Of a PropGet or an ElemGet: what it reads is tested, or a member is read off it of which the same holds, and nothing else is done with it.
+    bool isOnlyTested { false };
     // What the tests in front of its block let through. Where one of these holds nothing the statement never runs.
     uint8_t guardCount { 0 };
     uint32_t firstGuard { 0 };

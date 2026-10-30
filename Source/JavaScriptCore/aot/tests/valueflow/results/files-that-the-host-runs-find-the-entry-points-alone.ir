@@ -8,6 +8,8 @@
 # CHECK: function f2 name="outer" {{*}}parameters=[{type=anything
 # CHECK: function f3 name="inner" {{*}}parameters=[{type=1
 # RUN(RECORDS): valueflow-results
+# A hardened engine runs only the code of the image, whatever the options say: there the option does nothing.
+# REQUIRES(RECORDS): code-outside-image
 # RECORDS: function f2 cause=ReachesNativeCode
 # RECORDS: function f3 callers=AllKnown
 # RECORDS-NOT: function f5 cause=ReachesNativeCode

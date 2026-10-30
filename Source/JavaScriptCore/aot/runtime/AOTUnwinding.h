@@ -72,6 +72,9 @@ ALWAYS_INLINE bool needsExceptionForEveryThrow(const Instance& instance)
 CompiledUnwindResult unwindCompiledFrames(VM&, const CompiledFrameIterator&, VMEntryRecord&, bool isTermination);
 // Leaves the frames of the run from the site up to the nearest handler.
 CompiledUnwindResult unwindRun(VM&, const ReturnSiteInRun&, EntryFrame*, VMEntryRecord&, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft = nullptr);
+// The same for a throw in a VM that runs several images, from the operation of the throw. It goes on where compiled code of another image has called the run: no frame of the engine
+// lies between the two, so they are as good as one run. `instance` is that of the code that throws, and afterwards that of the last run, which has the handler if there is one.
+CompiledUnwindResult unwindRunsOfImages(VM&, const ReturnSiteInRun&, EntryFrame*, VMEntryRecord&, Instance*& instance);
 // For a throw in compiled code, after unwindRun() has found no handler in the callers of the stub that asks. The exception is pending.
 void unwindBeyondCompiledFrames(VM&, CallFrame* frameRecord, CompiledUnwindStatus);
 bool isCaughtByCompiledCode(VM&, CompiledFrameIterator);

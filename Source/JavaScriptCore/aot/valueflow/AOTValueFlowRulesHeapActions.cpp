@@ -348,13 +348,19 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         }, &value);
         return;
     case BuiltinPropertyActionKind::DefinesGetter:
-    case BuiltinPropertyActionKind::DefinesSetter:
-        forEachKey([&](const HeapKey& key) {
-            define(object, key, action.kind == BuiltinPropertyActionKind::DefinesGetter ? HeapPropertyPart::Getter : HeapPropertyPart::Setter, value);
-            noteNameDefinedThroughObjectsNobodyFollows(object, key);
-        }, &value);
+    case BuiltinPropertyActionKind::DefinesSetter: {
+        // A namespace object takes no accessor: the language refuses the definition, and a spy replaces the export instead. An accessor is called with its holder, so this
+        // is what keeps a namespace object that is spied on to itself.
+        ValueFlowOperand holder = object;
+        if (holder.maskKind == ValueFlowMaskKind::Plain)
+            holder.mask = m_context.maker().intersect(holder.mask ? holder.mask : ValueSets::anything, ValueSets::complement(m_universe.namespaces()));
+        forEachKeyOfAction(action.key, operands.key, [&](const HeapKey& key) {
+            define(holder, key, action.kind == BuiltinPropertyActionKind::DefinesGetter ? HeapPropertyPart::Getter : HeapPropertyPart::Setter, value);
+            noteNameDefinedThroughObjectsNobodyFollows(holder, key);
+        }, { &holder, &value, false, false });
         compareWithPropertyThatIsThere(value);
         return;
+    }
     case BuiltinPropertyActionKind::DeletesByKey:
         forEachKey([&](const HeapKey& key) {
             remove(object, key);

@@ -3239,6 +3239,9 @@ bool listKeysAsObjectKeysDoes(ValueFlowRuleContext& context, ClimbingSet values,
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext& context, BuiltinName cell)
 {
     const ValueFlowUniverse& universe = context.universe();
+    // `process.stderr`: native code has the library of the lowest image make it, once for the realm. Its closures are that image's, whatever this program's copy of the same code would make.
+    if (context.refusedCode().hasImagesBelow)
+        context.add(nodeWrittenToNativeCell(context, cell), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
     std::span<const BuiltinHostObject> records = context.program().builtins().hostObjects();
     for (uint32_t index = 0; index < records.size(); ++index) {
         const BuiltinHostObject& record = records[index];

@@ -792,6 +792,7 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
                 return;
             application.builtin = universe.builtinOf(callee);
             application.kind = isFunction && isAccessorCall ? ValueFlowCallKind::Call : kind;
+            application.isCalleeListed = inputs.sets().contains(key.set, callee);
             functor(application);
         });
     }

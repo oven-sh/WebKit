@@ -1452,6 +1452,8 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
         m_state.instance.propertyCaches.booleanStructureID = structure->id().bits();
     ensureChangesAreReported(answer.changeableObjects.span());
     Slot slot = slotFor(answer, structure);
+    if (validatesRuntime(*m_state.instance.vm)) [[unlikely]]
+        m_tables.validateImageOfSlot(*m_state.instance.vm, slot, access.access, access.name.uid);
     m_tables.set(structure, belongsToOneObject(structure) ? CachedName { access.name.uid, std::nullopt } : access.name, access.access, slot);
     if (slot.has(Slot::dependsOnChain))
         m_state.chainDependents->add(answer.changeableObjects.span(), { access.name.uid, structure->id().bits(), m_tablesOwnerID });
@@ -2074,6 +2076,52 @@ bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedS
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The stubs read a row in the numbers of their own image: orders of keys, types, extra properties. Under the Structure of a compiled object of another image
+// a row says only what the slot of a field says by itself, where an extra property lies, or what stands above the object.
+static bool mayStandUnderStructureOfOtherImage(const Slot& slot, SlotAccess access)
+{
+    switch (slot.kind) {
+    case Slot::Kind::Field:
+        return access == SlotAccess::Read || (access == SlotAccess::Store && (slot.field.type & Slot::typeIsGivenByBits));
+    case Slot::Kind::FieldOrInherited:
+        return access == SlotAccess::Read && !slot.has(Slot::inheritsGetter);
+    case Slot::Kind::ExtraProperty:
+        return access == SlotAccess::Read;
+    case Slot::Kind::FieldGetter:
+    case Slot::Kind::FieldCreation:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::FieldOrInheritedField:
+    case Slot::Kind::ExtraGetter:
+    case Slot::Kind::ExtraSetter:
+    case Slot::Kind::ExtraPropertyAddition:
+    case Slot::Kind::ExtraPropertyRemoval:
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool VMPropertyCaches::describesObjectOfOtherImage(Structure* structure) const
+{
+    if (!structure->isCompiledStructure())
+        return false;
+    auto& compiled = *uncheckedDowncast<CompiledStructure>(structure);
+    if (!compiled.describesObject())
+        return false;
+    std::span<const uint8_t> bytes = m_image->bytes();
+    return std::bit_cast<uintptr_t>(&compiled.layout()) - std::bit_cast<uintptr_t>(bytes.data()) >= bytes.size();
+}
+
+void VMPropertyCaches::validateImageOfSlot(VM& vm, const Slot& slot, SlotAccess access, UniquedStringImpl* uid) const
+{
+    Structure* structure = slot.structureID.decode();
+    if (!describesObjectOfOtherImage(structure) || mayStandUnderStructureOfOtherImage(slot, access))
+        return;
+    dataLogLn("AOT validation: a row of the property caches of one image is filed under the Structure of a compiled object of another in the numbers of its own: name ", uid ? String(uid) : "(none)"_str, ", kind of row ", static_cast<unsigned>(slot.kind), ", access ", static_cast<unsigned>(access));
+    crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
+}
+
 static void validateSlotLiveness(VM& vm, const CustomAccessorTable& customAccessors, const Slot& slot)
 {
     if (!customAccessors.namesOnlyWhatIsLive(vm, slot))
@@ -2122,6 +2170,7 @@ static void validateSlotAnswer(VM& vm, const Slot& slot, SlotAccess access, Uniq
     Structure* structure = slot.structureID.decode();
     if (!structure->isObject())
         return;
+    vm.aotState().propertyCaches->validateImageOfSlot(vm, slot, access, uid);
     if (slot.has(Slot::dependsOnChain) && vm.aotState().propertyCaches->isBelowUnreportedChange(structure))
         return;
     if (!slotAgreesWithStructures(vm, slot, access, uid)) {
@@ -2160,6 +2209,15 @@ void VMPropertyCaches::validate(VM& vm) const
     });
 }
 
+static bool isFirstInstanceOfItsImage(VM& vm, const Instance& instance)
+{
+    for (Instance* other : vm.aotState().instances) {
+        if (other->program == instance.program)
+            return other == &instance;
+    }
+    return false;
+}
+
 void PropertyCaches::didFinishCollection(VM& vm, CollectionScope)
 {
     {
@@ -2169,7 +2227,9 @@ void PropertyCaches::didFinishCollection(VM& vm, CollectionScope)
     m_shouldForgetMisses.store(true, std::memory_order_relaxed);
     if (!validatesRuntime(vm))
         return;
-    if (vm.aotState().instances.first() == &m_state.instance)
+    // Whichever image ran when the collection began, what the checks ask answers for the image that runs: Instance::of(), the caches of the VM.
+    RunningImageScope runsImageOfCaches(vm.aotState(), m_state.instance.program);
+    if (isFirstInstanceOfItsImage(vm, m_state.instance))
         m_tables.validate(vm);
     m_siteCaches.forEachValidatedSite([&](const Slot& slot, UniquedStringImpl* uid, SlotAccess access) {
         validateSlotLiveness(vm, m_tables.customAccessors(), slot);

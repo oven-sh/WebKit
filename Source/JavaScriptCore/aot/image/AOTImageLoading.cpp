@@ -555,13 +555,23 @@ static void didPublishImage(const Image& image)
     activateSignalHandlersFor(Signal::AccessFault);
 #if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
-        writePerfMap();
+        writePerfMap(image);
 #endif
 }
 
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
 extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
 #endif
+
+bool takesImagesAboveOthers()
+{
+    // The string headers of a position-independent image are made at run time, each image's by itself: nothing numbers them across images yet.
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    return false;
+#else
+    return true;
+#endif
+}
 
 Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity, std::span<const uint8_t> allImages)
 {
@@ -615,7 +625,6 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     image->setPositionInFile(positionInFile);
     if (first) {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-        // The headers of such an image are made at run time, each image's by itself: nothing numbers them across images yet.
         return ImageVerdict::CannotMapCode;
 #else
         if (!copyStringHeadersBehind(first->bytes(), bytes.first(header.size)))
@@ -643,6 +652,11 @@ namespace JSC { namespace AOT {
 Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&, std::span<const uint8_t>)
 {
     return Wire::ImageVerdict::Unsupported;
+}
+
+bool takesImagesAboveOthers()
+{
+    return false;
 }
 
 } } // namespace JSC::AOT

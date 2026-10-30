@@ -2010,7 +2010,7 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         return { };
 
     FlowAccessorField accessor { *form, { }, { } };
-    auto listClosures = [&](ValueSetID functions, Vector<FunctionID, 1>& list) {
+    auto listClosures = [&](ValueSetID functions, CompactList<FunctionID>& list) {
         if (ValueSets::isComplement(functions) || sets.size(functions) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             return;
         sets.forEachMember(functions, [&](ValueFlowObjectID member) {

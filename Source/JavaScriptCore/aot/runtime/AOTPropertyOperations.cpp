@@ -13,6 +13,7 @@
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -205,6 +206,10 @@ static size_t deleteFromValue(JSGlobalObject* globalObject, JSValue base, const 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (base.isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createDeletionFromNullishError(globalObject, base));
+        return 0;
+    }
     JSObject* object = base.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
     if (uint32_t index; !name && key.getUInt32(index)) {
@@ -464,6 +469,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instan
     constexpr Entry entry = Entry::operationAOTReadField;
     AOT_OPERATION_BEGIN(instance, entry);
     auto [object, field] = fieldLeftByStub(instance, cell, header, payload, reason, entry, "stub could not read field"_s);
+    ImageOfCellScope imageOfObject(vm, object);
     if (field.slot.representation() == SlotRepresentation::DeferredClosure) {
         if (!object->isInSlot(field)) [[unlikely]]
             crashOnWrongOperand(entry);
@@ -478,6 +484,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStoreField, void, (Instance* instance, JSCe
     constexpr Entry entry = Entry::operationAOTStoreField;
     AOT_OPERATION_BEGIN(instance, entry);
     auto [object, field] = fieldLeftByStub(instance, cell, header, payload, reason, entry, "stub could not store field"_s);
+    ImageOfCellScope imageOfObject(vm, object);
     if (!findFieldProperty(vm, *object, field).isInSlot) [[unlikely]]
         crashOnWrongOperand(entry);
     storeInPresentField(vm, object, field, JSValue::decode(value));
@@ -508,6 +515,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateField, void, (Instance* instance, JSC
     if (field.attributes() || !tryCreateField(vm, *instance->state, *object, field, value))
         object->putDirectFromNativeCode(vm, identifierAt(instance, field.name), value, 0);
     OPERATION_RETURN(scope);
+}
+
+// A class may extend a class of another image, whose constructor makes the object: the fields that this image's code then creates are listed in the tables of that image.
+static ALWAYS_INLINE State& stateDescribing(Instance* instance, Object* object)
+{
+    State& state = *instance->state;
+    return state.sharesRealm ? object->state() : state;
 }
 
 static const FieldData& namedField(Instance* instance, Object* object, uint32_t key)
@@ -542,7 +556,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* i
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateField);
     const FieldData& field = namedField(instance, object, key);
     didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Add, identifierAt(instance, key).impl());
-    object->didCreateField(*instance->state, field, !(field.flags & fieldMayExistWithoutStorage));
+    object->didCreateField(stateDescribing(instance, object), field, !(field.flags & fieldMayExistWithoutStorage));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* instance, JSCell* cell))
@@ -558,7 +572,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance*
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldAt);
     vm.writeBarrier(object);
-    listCreatedField(*instance->state, object, offset);
+    listCreatedField(stateDescribing(instance, object), object, offset);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
@@ -566,7 +580,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldOutOfLineAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldOutOfLineAt);
     vm.writeBarrier(object);
-    ensureGranules(vm, object, granuleBitOf(listCreatedField(*instance->state, object, offset | outOfLineSlotKey).slot.offset));
+    ensureGranules(vm, object, granuleBitOf(listCreatedField(stateDescribing(instance, object), object, offset | outOfLineSlotKey).slot.offset));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance* instance, JSCell* cell, uint64_t offsets))
@@ -575,7 +589,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldsAt);
     vm.writeBarrier(object);
     for (uint64_t rest = offsets; static_cast<uint32_t>(rest) & slotKeyMask; rest >>= bitsPerSlotKey)
-        listCreatedField(*instance->state, object, static_cast<uint32_t>(rest) & slotKeyMask);
+        listCreatedField(stateDescribing(instance, object), object, static_cast<uint32_t>(rest) & slotKeyMask);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranules, void, (Instance* instance, JSCell* cell, uint64_t granuleBits))

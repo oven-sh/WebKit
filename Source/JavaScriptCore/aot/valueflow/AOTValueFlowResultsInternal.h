@@ -818,6 +818,8 @@ struct ValueFlowBuiltinApplication {
     FunctionID function;
     ValueID site;
     const ValueFlowStatement* statement { nullptr };
+    // Not listed: a value that nobody knows is called, and the built-in has escaped.
+    bool isCalleeListed { true };
     ValueSetID thisValue { ValueSets::nothing };
     Vector<ValueSetID, numberOfGroupedArguments> arguments;
     ValueSetID otherArguments { ValueSets::nothing };

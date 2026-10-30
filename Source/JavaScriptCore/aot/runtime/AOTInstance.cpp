@@ -440,7 +440,9 @@ static Instance* reserveInstanceOfRunningImage(VM& vm, JSGlobalObject* realm)
 
     Instance* instance = reserveMemory(*vmState.pages, image);
     instance->program = &image;
+    instance->partsOfImageInVM = vmState.partsOfImageThatRuns;
     instance->endOfClosureNumbers = image.header().numbers.endOfClosureNumbers;
+    instance->lastShape = image.header().numbers.lastShape;
     fillHeaderAndPrefix(*instance, vm, realm);
     fillImageWords(*instance, vm, image);
     fillNumberWords(*instance);
@@ -562,8 +564,9 @@ Instance* Instance::owning(const JSCell* cell)
 
 Instance& Instance::instanceWithClosureNumber(uint32_t number)
 {
+    // The images of a realm hand the numbers out one behind the other.
     Instance* instance = globalObject->aotInstance();
-    while (!instance->tables().hasClosureNumber(number)) {
+    while (number >= instance->endOfClosureNumbers) {
         instance = instance->above;
         RELEASE_ASSERT(instance);
     }
@@ -573,7 +576,7 @@ Instance& Instance::instanceWithClosureNumber(uint32_t number)
 Instance& Instance::instanceWithShape(uint32_t shape)
 {
     Instance* instance = globalObject->aotInstance();
-    while (shape > instance->program->header().numbers.lastShape) {
+    while (shape > instance->lastShape) {
         instance = instance->above;
         RELEASE_ASSERT(instance);
     }
@@ -1014,6 +1017,10 @@ RuntimeTable::RuntimeTable(VM& vm)
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
+    if (image.sharesRealms()) {
+        constexpr Entry entry = Entry::operationAOTLookupExceptionHandler;
+        m_entries[static_cast<unsigned>(entry)] = m_countsCalls ? operationAddress<entry, CountedCallInTable<entry, &operationAOTLookupExceptionHandlerAmongImages>::call>() : operationAddress<entry, functionInTable<entry, &operationAOTLookupExceptionHandlerAmongImages>>();
+    }
     fillThunkAndPointers(m_entries, image);
     installOperationFrontEnds(m_entries, image);
     trapUnusedEntries(m_entries, image);
@@ -1104,6 +1111,24 @@ void runImageOnThisThread(const Image& image)
         Image::setCurrentOfThread(&image);
 }
 
+HeapHooks::WorkForStoppedVMScope::WorkForStoppedVMScope(VM& vm)
+    : m_hasSeveralImages(vm.aotState().hasSeveralImages)
+{
+    if (!m_hasSeveralImages) [[likely]]
+        return;
+    m_stateOfThread = std::exchange(stateOfVMOnThisThread(), &vm.aotState());
+    m_imageOfThread = Image::current();
+    Image::setCurrentOfThread(vm.aotState().image);
+}
+
+HeapHooks::WorkForStoppedVMScope::~WorkForStoppedVMScope()
+{
+    if (!m_hasSeveralImages) [[likely]]
+        return;
+    stateOfVMOnThisThread() = m_stateOfThread;
+    Image::setCurrentOfThread(m_imageOfThread);
+}
+
 VMState::PartsOfImage& VMState::partsOfRunningImage()
 {
     return parts[image->position()];
@@ -1113,6 +1138,7 @@ void VMState::run(const Image& next)
 {
     PartsOfImage& partsOfNext = parts[next.position()];
     RELEASE_ASSERT(partsOfNext.image == &next);
+    partsOfImageThatRuns = &partsOfNext;
     image = &next;
     runtimeTable = partsOfNext.runtimeTable.get();
     propertyCaches = partsOfNext.propertyCaches.get();
@@ -1122,30 +1148,64 @@ void VMState::run(const Image& next)
     Image::setCurrentOfThread(&next);
 }
 
+void VMState::makeRoomForImagesBelowAdapters()
+{
+    size_t size = endOfImagesBelowAdapters - imagesBelowAdapters.get();
+    size_t room = std::max<size_t>(64, 2 * size);
+    auto larger = makeUniqueArray<ImageBelowAdapter>(room);
+    if (size)
+        std::copy_n(imagesBelowAdapters.get(), size, larger.get());
+    else {
+        larger[size++] = { aboveEveryAdapterFrame(), nullptr };
+        adapterFrameThatRestoresImage = aboveEveryAdapterFrame();
+    }
+    imagesBelowAdapters = WTF::move(larger);
+    endOfImagesBelowAdapters = imagesBelowAdapters.get() + size;
+    endOfRoomForImagesBelowAdapters = imagesBelowAdapters.get() + room;
+}
+
+// emitEnterAdapter() does the same where there is room and every frame that is noted is still there.
 void VMState::runImageOfAdapter(const Image& next, const void* adapterFrame)
 {
-    // The stack grows down: a frame that is still there lies above the new one.
-    RELEASE_ASSERT(imagesBelowAdapters.isEmpty() || imagesBelowAdapters.last().adapterFrame > adapterFrame);
-    imagesBelowAdapters.append({ adapterFrame, image });
+    // The stack grows down: a frame that is still there lies above the new one. A frame that was left by no way that restores (none is known) would leave the image of it
+    // running in its caller for good: what ran below the outermost of such frames runs now.
+    const PartsOfImage* below = partsOfImageThatRuns;
+    while (endOfImagesBelowAdapters[-1].adapterFrame <= adapterFrame) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        below = (--endOfImagesBelowAdapters)->parts;
+    }
+    if (endOfImagesBelowAdapters == endOfRoomForImagesBelowAdapters)
+        makeRoomForImagesBelowAdapters();
+    *endOfImagesBelowAdapters++ = { adapterFrame, below };
     adapterFrameThatRestoresImage = adapterFrame;
     run(next);
 }
 
+// As emitAdapterEpilogue() does.
 void VMState::restoreImageBelowAdapter()
 {
-    run(*imagesBelowAdapters.takeLast().image);
-    adapterFrameThatRestoresImage = imagesBelowAdapters.isEmpty() ? nullptr : imagesBelowAdapters.last().adapterFrame;
+    run(*(--endOfImagesBelowAdapters)->parts->image);
+    adapterFrameThatRestoresImage = endOfImagesBelowAdapters[-1].adapterFrame;
+}
+
+void VMState::restoreImagesBelowAdaptersBelow(const void* frame)
+{
+    // No adapter has changed the image yet.
+    if (!endOfImagesBelowAdapters)
+        return;
+    while (endOfImagesBelowAdapters[-1].adapterFrame < frame) {
+        if (ASSERT_ENABLED) {
+            dataLogLn("AOT: a throw passed the adapter's frame ", RawPointer(endOfImagesBelowAdapters[-1].adapterFrame), " without restoring the image below it; it lands at ", RawPointer(frame));
+            WTFReportBacktrace();
+        }
+        restoreImageBelowAdapter();
+    }
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRunImageOfAdapter, void, (void* instance, void* adapterFrame))
 {
     auto* entered = static_cast<Instance*>(instance);
     entered->vm->aotState().runImageOfAdapter(*entered->program, adapterFrame);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRestoreImageBelowAdapter, void, (void* instance))
-{
-    static_cast<Instance*>(instance)->vm->aotState().restoreImageBelowAdapter();
 }
 
 VMState::~VMState()
@@ -1168,8 +1228,11 @@ void VMState::attachImage(VM& vm)
         sizeOfRegExpMatchOutput = std::max<size_t>(sizeOfRegExpMatchOutput, each->header().counts.maxRegExpOutputSize);
     }
     hasSeveralImages = parts.size() > 1;
-    if (hasSeveralImages)
+    if (hasSeveralImages) {
         stateOfVMOnThisThread() = this;
+        currentImageOfThread = Image::addressOfCurrentOfThread();
+        makeRoomForImagesBelowAdapters();
+    }
     RELEASE_ASSERT(vm.structureStructure && !vm.structureRareDataStructure);
 
     structureIDBase = JSC::structureIDBase();
@@ -1245,9 +1308,15 @@ void VMState::releaseImage(VM& vm)
     identifiers = nullptr;
     Image::setCurrentOfThread(&image->first());
     parts.clear();
+    partsOfImageThatRuns = nullptr;
     if (hasSeveralImages && stateOfVMOnThisThread() == this)
         stateOfVMOnThisThread() = nullptr;
     hasSeveralImages = false;
+    currentImageOfThread = nullptr;
+    adapterFrameThatRestoresImage = nullptr;
+    endOfImagesBelowAdapters = nullptr;
+    endOfRoomForImagesBelowAdapters = nullptr;
+    imagesBelowAdapters = nullptr;
     reporter = nullptr;
     counters = nullptr;
     caches = nullptr;

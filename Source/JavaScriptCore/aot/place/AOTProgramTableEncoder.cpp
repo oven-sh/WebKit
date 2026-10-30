@@ -2461,7 +2461,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : ModuleFlags::IsImportedAsNamespace);
-    entry.bodyRunsAtMostOnce = module.kind == ModuleKind::RuntimeSource && module.body && encoder.flow.runsAtMostOnce(program, module.body);
+    entry.bodyRunsAtMostOnceOrMayBeEvicted = module.kind == ModuleKind::RuntimeSource ? module.body && encoder.flow.runsAtMostOnce(program, module.body) : module.flags.contains(ModuleFlags::MayBeEvicted);
     entry.kind = module.kind;
     entry.externalKind = module.kind != ModuleKind::External && module.flags.contains(ModuleFlags::MayBeMocked) ? ModuleData::mayBeMockedBit : module.externalKind;
     entry.exportRule = module.exportRule;
@@ -2561,7 +2561,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         entry.isFromStarExport = moduleExport.isFromStarExport;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
-            entry.variable = isDescribed ? placedVariableSlot(encoder, moduleExport.variable) : SlotData { };
+            entry.variable = isDescribed ? placedVariableSlot(encoder, moduleExport.variable) : ModuleExportData::noSlot;
             entry.isReplaceable = encoder.program.at(moduleExport.variable).flags.contains(VariableFlags::IsReplaceable);
             entry.isClosedToOutside = !isDescribed || std::ranges::binary_search(encoder.flow.module(id).exportsClosedToOutside, moduleExport.variable);
             break;
@@ -2796,7 +2796,9 @@ void encodeModuleTables(TableEncoder& encoder)
                 continue;
             const ModuleData& target = lists.modules[request.target()];
             uint32_t file = target.isFaceOfFile() ? lists.requests[target.firstRequest].target() : request.target();
-            if (lists.modules[file].requireResult == RequireResult::NamespaceIfImported || lists.modules[file].mayBeImportedWhileItRuns())
+            // A mock replaces a module of the library that no import has loaded.
+            bool isOfLibraryAndMayBeMocked = (lists.modules[file].kind == ModuleKind::RuntimeSource || lists.modules[file].kind == ModuleKind::Runtime) && lists.modules[file].mayBeMocked();
+            if (lists.modules[file].requireResult == RequireResult::NamespaceIfImported || lists.modules[file].mayBeImportedWhileItRuns() || isOfLibraryAndMayBeMocked)
                 importsOfHeldFiles.append({ file, importer });
         }
     }

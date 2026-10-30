@@ -11,6 +11,7 @@
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
@@ -149,7 +150,7 @@ void ClosureTable::createStructures(VM& vm)
 
 Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function)
 {
-    FunctionKindData kind = functionKindData(function);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     bool isAsync = kind.isAsync;
     bool isBound = kind.callable() == CallableKind::Bound;
     bool hasPrototypeProperty = FunctionTables::hasPrototypePropertyAtCreation(kind);
@@ -191,7 +192,7 @@ Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function
 
 Structure* ClosureTable::boundClosureStructure(VM& vm, FunctionID function)
 {
-    bool isAsync = functionKindData(function).isAsync;
+    bool isAsync = m_tables.kindOfFunction(function.index()).isAsync;
     Structure*& structure = m_boundClosureStructures[isAsync];
     if (!structure) {
         JSGlobalObject* globalObject = m_state.instance.globalObject;
@@ -209,7 +210,8 @@ Structure* ClosureTable::closureStructure(VM&, unsigned index)
 
 JSObject* ClosureTable::createClosure(VM& vm, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
-    FunctionKindData kind = functionKindData(function);
+    ImageOfInstanceScope ownImage(m_state.instance);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     ASSERT(!kind.isConstructor);
     if (hasSingletonClosure(function))
         return asObject(closure(vm, function));
@@ -230,8 +232,9 @@ JSObject* ClosureTable::createClosureOver(VM& vm, FunctionID function, JSValue c
 
 JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
 {
-    FunctionKindData kind = functionKindData(function);
-    ASSERT(!kind.isConstructor && !captureCountsOf(function).captures);
+    ImageOfInstanceScope ownImage(m_state.instance);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
+    ASSERT(!kind.isConstructor && !m_tables.captureCountsOf(function.index()).captures);
     if (!kind.isInRuntimeModule)
         m_state.statics->ensureProgramStaticsInitialized();
     if (kind.isSlim)
@@ -268,12 +271,12 @@ bool ClosureTable::hasCellFor(FunctionID function) const
 bool ClosureTable::hasSingletonClosure(FunctionID function) const
 {
     const LayoutData* constructed = m_state.objects->classes.classConstructedBy(function);
-    return constructed && ClassTable::hasOneClassObject(*constructed);
+    return constructed && m_state.objects->classes.hasOneClassObject(*constructed);
 }
 
 void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 {
-    if (!functionKindData(function).isInRuntimeModule) {
+    if (!m_tables.kindOfFunction(function.index()).isInRuntimeModule) {
         m_state.statics->ensureProgramStaticsInitialized();
         m_state.instance.closureTable.cards = m_writtenRegions.cards();
     }
@@ -290,7 +293,7 @@ void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 
 void ClosureTable::registerClassObject(Closure* closure)
 {
-    FunctionID function = closure->function();
+    FunctionID function = m_state.objects->classes.functionOfOwnClosure(*closure);
     if (!closureIfCreated(function))
         didCreateClosureFor(function, closure);
 }
@@ -305,8 +308,9 @@ JSCell* ClosureTable::closure(VM& vm, FunctionID function)
 {
     if (JSCell* cell = closureIfCreated(function))
         return cell;
-    ASSERT(!captureCountsOf(function).captures);
-    FunctionKindData kind = functionKindData(function);
+    ImageOfInstanceScope ownImage(m_state.instance);
+    ASSERT(!m_tables.captureCountsOf(function.index()).captures);
+    FunctionKindData kind = m_tables.kindOfFunction(function.index());
     if (kind.isSlim) {
         JSCell* cell = SlimClosure::create(vm, slimClosureStructure(vm, function), function);
         didCreateClosureFor(function, cell);

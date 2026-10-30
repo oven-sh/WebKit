@@ -685,7 +685,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     if (module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode) {
         letUnseenCodeRun(context, UnseenCodeReach::Loader);
         raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
-        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     }
     if (module.kind == ModuleKind::External)
         enterLoaderOfHost(context);
@@ -943,6 +943,14 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     connect(context, requiredValueOf(context, module), statement.result);
     if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    if (requireMayAnswerWithMock(context.program(), context.program().at(module)) && isWrittenInProgram(context.program().at(statement.function))) {
+        enterLoaderOfHost(context);
+        if (statement.result) {
+            context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            // Modules::requireAnswersNamespaceWithMock()
+            connect(context, namespaceOf(context, module), statement.result);
+        }
+    }
     const BuiltinTable& builtins = context.program().builtins();
     RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
     if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
@@ -998,6 +1006,8 @@ static void importModule(const ValueFlowStatement& statement, ValueFlowRuleConte
     connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
     if (context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
         context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+    if (importMayAnswerWithMock(context.program().at(module)))
+        context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
 static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const Value& load)

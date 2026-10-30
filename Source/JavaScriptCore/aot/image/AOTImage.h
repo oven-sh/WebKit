@@ -96,6 +96,8 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
+    // Where setCurrentOfThread() writes on this thread.
+    static const Image** addressOfCurrentOfThread();
     // For a thread whose VM runs no compiled program.
     JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
@@ -336,6 +338,7 @@ JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
 JS_EXPORT_PRIVATE std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress);
+JS_EXPORT_PRIVATE bool isInStubOfImage(const void* address);
 
 } } // namespace JSC::AOT
 

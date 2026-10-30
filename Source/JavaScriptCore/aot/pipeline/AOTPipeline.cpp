@@ -1315,6 +1315,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         m_analyses.bodyIndex().letGoOfRows(m_build);
         // What typing has found out about pairs of types is a memo: whoever asks again behind flow finds it out again.
         m_build.destroyLater(m_program.types.takeSavedSharedMemo());
+        // Flow's tables are large and fit into no hole that reading and typing have left.
+        m_build.giveFreedMemoryBack();
         *output.flow = read(id, [&] {
             return analyzeValueFlow(m_program, m_program.types, m_build, nullptr, std::exchange(m_goesOnBehindFlowAnalysis, nullptr));
         });

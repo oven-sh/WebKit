@@ -795,7 +795,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     }
     // A mock marks a CommonJS file as evaluated before anything has run it, and require.cache lists what has run, so the file has a status.
     for (size_t index = 0; index < modules.size(); ++index) {
-        if (modules[index].kind == ModuleKind::CommonJs && (modules[index].flags.contains(ModuleFlags::MayBeMocked) || modules[index].flags.contains(ModuleFlags::MayBeEvicted)))
+        if (modules[index].kind == ModuleKind::CommonJs && (modules[index].flags.contains(ModuleFlags::MayBeMocked) || modules[index].flags.contains(ModuleFlags::IsListedInCache)))
             isStart.quickSet(index);
     }
     BitVector isAskedForByHost = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName(), flow.hostRunsFilesOutsideImage());

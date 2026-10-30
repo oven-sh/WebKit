@@ -172,7 +172,8 @@ struct FieldStoreExits {
 };
 
 enum class FieldStoreEnd : uint8_t { ReturnAfterBarrier, JoinList };
-enum class FieldTypeTest : bool { IsEmitted, HasPassed };
+// IsEmittedForSlot: the type is the word of a Slot, which may be bits (Slot::typeIsGivenByBits).
+enum class FieldTypeTest : uint8_t { IsEmitted, IsEmittedForSlot, HasPassed };
 
 struct TypeTestRegisters {
     GPRReg value;

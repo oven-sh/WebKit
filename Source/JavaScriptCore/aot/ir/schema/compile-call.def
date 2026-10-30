@@ -128,7 +128,7 @@ enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
-enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled }
+enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled ReadOffStructure }
 enum FlowOverride { None Widened }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
@@ -169,7 +169,7 @@ enum Sabotage {
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector ReplacedBuiltins FilesRunByHost }
-flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText }
 flags OutputOptions { Obfuscate SharesRealms }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }

@@ -40,6 +40,7 @@
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
+#include "JSModuleNamespaceObject.h"
 #include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleRegistryEntry.h"
@@ -147,6 +148,22 @@ Modules* modulesOf(JSGlobalObject* realm)
     return instance ? instance->state->modules.get() : nullptr;
 }
 
+Modules* Modules::modulesWithEntryPointOfRealm()
+{
+    for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+        Modules* modules = instance->state->modules.get();
+        if (modules && modules->m_firstModuleRequestedByHost && !modules->m_otherImageHoldsEntryPointOfRealm)
+            return modules;
+    }
+    return nullptr;
+}
+
+void Modules::noteFirstRequestFromHost(ModuleID module)
+{
+    m_otherImageHoldsEntryPointOfRealm = !!modulesWithEntryPointOfRealm();
+    m_firstModuleRequestedByHost = module;
+}
+
 const ModuleHost& Modules::host() const
 {
     return moduleHostOf(m_instance.globalObject);
@@ -173,10 +190,16 @@ ModuleStatus Modules::statusInRecord(ModuleID module) const
 }
 
 // Code that requires a file reads its stored status, and asks the run time where that says the status is kept elsewhere.
+bool Modules::wouldBeEvicted(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    return status(file) == ModuleStatus::Evaluating || hasRun(file);
+}
+
 void Modules::evict(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    if (status(file) != ModuleStatus::Evaluating && !hasRun(file))
+    if (!wouldBeEvicted(file))
         return;
     leaveToHost(file);
     m_admitsCodeOutsideImage = true;
@@ -212,6 +235,8 @@ bool Modules::importsEvictedFile(ModuleID module, BitVector& seen)
     ModuleID file = fileOf(module);
     if (m_evictedFiles.get(file.index()))
         return true;
+    if (m_otherImageHasEvictedFiles && data(file).isUncompiledCode() && namesFileEvictedFromOtherImage(file))
+        return true;
     if (seen.set(file.index()) || !isLoadedWithRequests(file) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
         return false;
     return std::ranges::any_of(m_table.imports(file), [&](const ModuleRequestData& request) {
@@ -219,10 +244,33 @@ bool Modules::importsEvictedFile(ModuleID module, BitVector& seen)
     });
 }
 
+// To the build of this image a file of another image is code that it has not seen, under the path that the other image has it under.
+bool Modules::namesFileEvictedFromOtherImage(ModuleID external)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    Identifier key = resolvedKey(external);
+    // Whoever loads the module hears that the name stands for nothing.
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return false;
+    }
+    for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+        Modules* modules = instance->state->modules.get();
+        if (!modules || modules == this || modules->m_evictedFiles.isEmpty())
+            continue;
+        if (std::optional<ModuleID> found = modules->m_table.findByPath(key.string()); found && modules->isEvicted(*found))
+            return true;
+    }
+    return false;
+}
+
 // A module that has not run yet is bound to what its imports name when it runs. Behind an eviction that is an instance from disk, which only code from disk imports.
 bool Modules::isLeftToHost(ModuleID module)
 {
-    if (m_evictedFiles.isEmpty())
+    if (m_evictedFiles.isEmpty() && !m_otherImageHasEvictedFiles)
+        return false;
+    // The host has it anyway.
+    if (data(module).isUncompiledCode())
         return false;
     BitVector seen;
     if (!importsEvictedFile(module, seen))
@@ -330,8 +378,18 @@ void Modules::retireRecordsOfSettledLoads()
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
         return;
-    if (m_loadsInFlight.containsIf([](const LoadInFlight& load) { return load.promise->status() == JSPromise::Status::Pending; }))
+    auto hasLoadInFlight = [](const Modules& modules) {
+        return modules.m_loadsInFlight.containsIf([](const LoadInFlight& load) { return load.promise->status() == JSPromise::Status::Pending; });
+    };
+    if (hasLoadInFlight(*this))
         return;
+    // A load of another image of the realm looks for the records of this one in the registry of the loader, and a record that is retired leaves the registry.
+    if (m_instance.program->sharesRealms()) [[unlikely]] {
+        for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+            if (Modules* modules = instance->state->modules.get(); modules && modules != this && hasLoadInFlight(*modules))
+                return;
+        }
+    }
     m_loadsInFlight.clear();
     for (ModuleID module : std::exchange(m_modulesWhoseRecordsLoaderHolds, { })) {
         ModuleRecord* record = m_records.get(module);
@@ -353,7 +411,16 @@ void Modules::retireRecordsOfSettledLoads()
 
 void didSettleLoad(JSPromise* settled)
 {
-    if (Modules* modules = modulesOf(settled->realm()))
+    JSGlobalObject* realm = settled->realm();
+    // Whichever image runs now, the load may be of another, and may be what the others waited for.
+    if (Instance* first = realm->aotInstance(); first && first->above) [[unlikely]] {
+        Instance::forEachOf(realm, [](Instance& instance) {
+            if (Modules* modules = instance.state->modules.get())
+                modules->retireRecordsOfSettledLoads();
+        });
+        return;
+    }
+    if (Modules* modules = modulesOf(realm))
         modules->retireRecordsOfSettledLoads();
 }
 
@@ -476,6 +543,20 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// For whoever is not compiled code of the image: a binding of a file from disk, a read off the namespace object.
+JSValue Modules::readExportFromOutside(ModuleID module, unsigned index)
+{
+    const ModuleExportData& moduleExport = m_table.exports(module)[index];
+    // Compiled code reads an export off the object too, where the build did not bind the read: `require("./list.js").LIST`.
+    if (moduleExport.isClosedToOutside && (moduleExport.variable == ModuleExportData::noSlot || !isTopFrameCompiled(*m_instance.vm))) [[unlikely]] {
+        JSGlobalObject* realm = m_instance.globalObject;
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        throwException(realm, scope, createExportClosedToOutsideError(realm, identifier(moduleExport.name).string(), modulePath(module), askerOfModule()));
+        return { };
+    }
+    return readExport(module, index);
+}
+
 JSValue Modules::readExport(ModuleID module, unsigned index)
 {
     VM& vm = *m_instance.vm;
@@ -484,10 +565,6 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     std::span<const ModuleExportData> exports = m_table.exports(module);
     RELEASE_ASSERT(index < exports.size());
     const ModuleExportData& moduleExport = exports[index];
-    if (moduleExport.isClosedToOutside) [[unlikely]] {
-        throwException(realm, scope, createExportClosedToOutsideError(realm, identifier(moduleExport.name).string(), modulePath(module), askerOfModule()));
-        return { };
-    }
     // The caches answer for the namespace object of an evaluated module only.
     if (status(module) == ModuleStatus::Linked) [[unlikely]]
         recordEvaluationIfNothingIsLeftToRun(module);
@@ -514,11 +591,25 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
 
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value)
 {
+    BitVector seenBehindStars;
+    return tryReplaceExport(module, name, value, seenBehindStars);
+}
+
+bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
+{
     // A chain of re-exports ends at the module that declares the variable. A ring of them names nothing.
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
+        if (m_instance.state->sharesRealm && data(module).isUncompiledCode()) [[unlikely]] {
+            if (std::optional<bool> isReplaced = tryReplaceExportInImageBelow(module, name, value))
+                return *isReplaced;
+            return tryReplaceExportOfUncompiledModule(module, name, value);
+        }
         std::optional<unsigned> index = m_table.findExport(module, name);
-        if (!index)
+        if (!index) {
+            if (data(module).hasDynamicStarExport() && tryReplaceExportBehindStars(module, name, value, seenBehindStars))
+                return true;
             return tryReplaceCapturedExport(module, name, value);
+        }
         const ModuleExportData& moduleExport = m_table.exports(module)[*index];
         switch (moduleExport.kind()) {
         case ModuleExportKind::Variable:
@@ -537,6 +628,48 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
     }
     return false;
+}
+
+// `export * from` a module whose names the build did not see, as a package of an image below. The table of the module that says so lists none of them.
+bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
+{
+    if (name == m_instance.vm->propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
+        return false;
+    for (const ModuleRequestData& request : m_table.requests(module)) {
+        if (request.isDynamicStarExport && tryReplaceExport(request.targetModule(), name, value, seenBehindStars))
+            return true;
+    }
+    return false;
+}
+
+// The chain goes on in the image that holds the file. Nothing where the module stands for no file of an image below.
+std::optional<bool> Modules::tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue value)
+{
+    String path = m_table.pathText(external);
+    for (Instance* below = m_instance.globalObject->aotInstance(); below != &m_instance; below = below->above) {
+        std::optional<ModuleID> file = ModuleTable(below->tables()).findByPath(path);
+        if (!file)
+            continue;
+        RunningImageScope imageOfFile(m_instance.vm->aotState(), below->program);
+        return below->state->modules->tryReplaceExport(*file, name, value);
+    }
+    return std::nullopt;
+}
+
+// A module of the library, which the first image holds and the loader hands out, or code that no image holds. Every image reads its exports off the record of the engine, as plain Bun does.
+bool Modules::tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStringImpl* name, JSValue value)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* namespaceObject = uncompiledNamespace(external, ModulePhase::Evaluation);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (auto* ofImage = dynamicDowncast<ModuleNamespace>(namespaceObject))
+        RELEASE_AND_RETURN(scope, AOT::tryReplaceExport(ofImage, name, value));
+    auto* ofEngine = dynamicDowncast<JSModuleNamespaceObject>(namespaceObject);
+    if (!ofEngine)
+        return false;
+    RELEASE_AND_RETURN(scope, ofEngine->overrideExportValue(realm, Identifier::fromUid(vm, name), value));
 }
 
 bool Modules::hasBegunToLoad(ModuleID module) const
@@ -569,9 +702,20 @@ std::optional<ModuleID> Modules::formThatMockFinds(StringView path, std::optiona
     return forms[0];
 }
 
+// What the loader holds when the first mock of the module is made decides. The mock itself makes the namespace object of the image.
+void Modules::willMockLibraryModule(ModuleID module)
+{
+    if (m_libraryModulesWithMock.get(module.index()))
+        return;
+    m_libraryModulesWithMock.set(module.index());
+    m_libraryModulesThatMockReplaces.set(module.index(), !isHeldForImport(module));
+}
+
 void Modules::deferMock(ModuleID module)
 {
     m_modulesWithMockToRun.set(module.index());
+    if (data(module).isOfLibrary())
+        willMockLibraryModule(module);
     if (!data(module).isOfLibrary() && m_table.hasFilePath(module))
         willMock(module);
 }
@@ -579,6 +723,13 @@ void Modules::deferMock(ModuleID module)
 void Modules::runMocksBelow(ModuleID root)
 {
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
+        return;
+    // The walk does nothing where it comes to none of them.
+    MocksBelowRoot mocks = mocksBelow(root);
+    bool mayComeToOne = false;
+    for (size_t module : m_modulesWithMockToRun)
+        mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
+    if (!mayComeToOne)
         return;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     BitVector reached(m_table.size());
@@ -906,6 +1057,12 @@ JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
     JSString* specifier = pathString(module);
     if (data(module).kind != ModuleKind::External)
         return specifier;
+    // A package may name one file for require() and another for an import. `require.resolve` goes by the first, and the loader below by the second.
+    if (!isURL && data(module).isUncompiledCode()) {
+        JSValue resolved = resolveDynamic(specifier, *data(module).referrerModule(), form);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return resolved.isString() ? asString(resolved) : specifier;
+    }
 
     Identifier key;
     {
@@ -1088,7 +1245,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         return fetchParameters.error();
     if (isLeftToHost(module)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importUncompiled(keyWithoutForm(fileOf(module)), referrer, WTF::move(*fetchParameters)));
-    if (isNativeModuleThatHostReplaces(module, m_table.pathText(module))) [[unlikely]]
+    if (hostAnswersInPlaceOf(module, LoadByName::Import)) [[unlikely]]
         RELEASE_AND_RETURN(scope, importUncompiled(moduleKey(module), referrer, WTF::move(*fetchParameters)));
     if (!data(module).isUncompiledCode()) {
         // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
@@ -1111,15 +1268,36 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 }
 
 // `mock.module("node:util/types", factory)`: the image holds no code of the module, and the loader of the host has what stands in its place.
-bool Modules::isNativeModuleThatHostReplaces(ModuleID module, const String& name)
+// `mock.module("undici", factory)`: the image holds the code. As under `bun run`, the mock stands in place of a module that no import has loaded, with its own names alone, and is laid over one that an import has.
+// There require() takes a name that starts with `node:` to the registry and asks no loader (overridableRequire in CommonJS.ts), so a mock of `node:os` is nothing to it.
+bool Modules::hostAnswersInPlaceOf(ModuleID module, LoadByName way)
 {
-    return data(module).kind == ModuleKind::Runtime && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, name);
+    const ModuleData& replaced = data(module);
+    bool isNative = replaced.kind == ModuleKind::Runtime;
+    if (!isNative && (replaced.kind != ModuleKind::RuntimeSource || !replaced.mayBeMocked()))
+        return false;
+    String name = m_table.pathText(module);
+    if (!host().replacesNativeModule || !host().replacesNativeModule(m_instance.globalObject, name))
+        return false;
+    // And its transpiler writes the global `Bun` for `require("bun")`.
+    if (way == LoadByName::Require && (name.startsWith("node:"_s) || name == "bun"_s))
+        return false;
+    return (isNative && way == LoadByName::Import) || m_libraryModulesThatMockReplaces.get(module.index());
+}
+
+// An import had loaded the module when it was mocked. There the loader holds it as an ES module, so a require() that asks the loader gets the namespace object, with the mock in it.
+bool Modules::requireAnswersNamespaceWithMock(ModuleID module)
+{
+    if (!m_libraryModulesWithMock.get(module.index()) || m_libraryModulesThatMockReplaces.get(module.index()))
+        return false;
+    String name = m_table.pathText(module);
+    return !name.startsWith("node:"_s) && name != "bun"_s && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, name);
 }
 
 std::optional<ModuleID> Modules::findByName(const Identifier& key)
 {
     std::optional<ModuleID> found = m_table.findByPath(key.string());
-    if (found && isNativeModuleThatHostReplaces(*found, key.string()))
+    if (found && hostAnswersInPlaceOf(*found, LoadByName::Import))
         return std::nullopt;
     return found;
 }
@@ -1314,7 +1492,7 @@ void Modules::resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded)
         }
         // A failed load skips ModuleLoadingContext::Step::Requested and DynamicImportEvaluateSettled.
         uint8_t skippedJobs = error ? 2 : 0;
-        queueStepOfImport(import.promise.get(), jsNumber(file.index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, error);
+        queueStepOfImport(import.promise.get(), jsNumber(moduleIDForHost(*m_instance.program, file).index()), jobsUntilLoaded + std::size(jobsOfImportOfEvaluatedModule) - 1 - skippedJobs, error);
         return true;
     });
 }
@@ -1898,18 +2076,29 @@ const Identifier& Modules::resolvedKey(ModuleID external)
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_runsUncompiledCode = true;
     m_buildHasSeenWhoNamesModules = false;
-    if (!isText(m_table.pathText(external)))
+    // What the build found in an image below its own it names by the path that the image has it under. Nothing is left to resolve.
+    Identifier* keyOfFileBelow = nullptr;
+    if (VMState& state = m_instance.vm->aotState(); state.hasSeveralImages) [[unlikely]] {
+        Vector<Identifier>& keys = state.parts[m_instance.program->position()].keysOfFilesInImagesBelow;
+        if (keys.isEmpty())
+            keys.grow(m_table.size());
+        keyOfFileBelow = &keys[external.index()];
+        if (!keyOfFileBelow->isNull()) {
+            m_admitsCodeOutsideImage = true;
+            return *keyOfFileBelow;
+        }
+    }
+    if (!m_admitsCodeOutsideImage && !isText(m_table.pathText(external)))
         m_admitsCodeOutsideImage = true;
     LoadedModule& loaded = ensureLoaded(external);
     if (!loaded.resolvedKey.isNull())
         return loaded.resolvedKey;
-    // What the build found in an image below its own it names by the path that the image has it under. Nothing is left to resolve, and every realm would ask anew.
-    if (m_instance.vm->aotState().hasSeveralImages) [[unlikely]] {
+    if (keyOfFileBelow) [[unlikely]] {
         String path = m_table.pathText(external);
         for (const Image* image = &m_instance.program->first(); image != m_instance.program; image = image->above()) {
             if (ModuleTable(image->programTables()).findByPath(path)) {
-                loaded.resolvedKey = Identifier::fromString(*m_instance.vm, path);
-                return loaded.resolvedKey;
+                *keyOfFileBelow = Identifier::fromString(*m_instance.vm, path);
+                return *keyOfFileBelow;
             }
         }
     }
@@ -1973,7 +2162,7 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     if (data(root).isLoadedByLoader() || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead == root || m_rootKnownToBeWatched == root)
         return true;
     // No code of the program has run when the host asks for the module that it starts with.
-    if (m_firstModuleRequestedByHost == root)
+    if (isEntryPointOfRealm(root))
         return false;
     if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
@@ -2484,14 +2673,51 @@ static void forEachImageOfThread(const Invocable<IterationStatus(const Image&)> 
     }
 }
 
+// Where images share realms, each realm asks for the same files anew, and a search goes through the tables of one image after the other.
+// What is kept is checked against the image when it is read: another image may stand at that position by then.
+namespace {
+struct ModulesFoundInSeveralImages {
+    Lock lock;
+    UncheckedKeyHashMap<String, ModuleID> byPath WTF_GUARDED_BY_LOCK(lock);
+};
+}
+
 std::optional<ModuleID> findModule(StringView publicPath)
 {
+    static NeverDestroyed<ModulesFoundInSeveralImages> modulesFound;
+    const Image* running = Image::current();
+    bool keepsWhatIsFound = running && running->sharesRealms();
+    if (keepsWhatIsFound) {
+        std::optional<ModuleID> kept;
+        {
+            Locker locker { modulesFound->lock };
+            if (auto entry = modulesFound->byPath.find<StringViewHashTranslator>(publicPath); entry != modulesFound->byPath.end())
+                kept = entry->value;
+        }
+        if (kept) {
+            const Image* image = running->atPosition((kept->index() >> shiftOfImageInModuleID) - 1);
+            ModuleID module(kept->index() & ((1u << shiftOfImageInModuleID) - 1));
+            if (image) {
+                ModuleTable table(image->programTables());
+                if (module.index() < table.size()) {
+                    table.willBeAskedForPath(module, publicPath.hash());
+                    if (table.findByPath(publicPath) == module)
+                        return kept;
+                }
+            }
+        }
+    }
     std::optional<ModuleID> found;
     forEachImageOfThread([&](const Image& image) {
         if (std::optional<ModuleID> module = findModuleInRunningImage(publicPath))
             found = moduleIDForHost(image, *module);
         return found ? IterationStatus::Done : IterationStatus::Continue;
     });
+    if (found && keepsWhatIsFound && found->index() >> shiftOfImageInModuleID) {
+        String copy = publicPath.toString().isolatedCopy();
+        Locker locker { modulesFound->lock };
+        modulesFound->byPath.set(WTF::move(copy), *found);
+    }
     return found;
 }
 
@@ -2561,8 +2787,8 @@ String sourceProviderURL(ModuleID moduleOfHost)
 bool entryPointIsCommonJS(JSGlobalObject* realm)
 {
     Modules* modules = modulesOf(realm);
-    std::optional<ModuleID> entryPoint = modules ? modules->firstModuleRequestedByHost() : std::nullopt;
-    return entryPoint && modules->data(*entryPoint).kind == ModuleKind::CommonJs;
+    modules = modules ? modules->modulesWithEntryPointOfRealm() : nullptr;
+    return modules && modules->data(*modules->firstModuleRequestedByHost()).kind == ModuleKind::CommonJs;
 }
 
 bool isESModule(ModuleID moduleOfHost)
@@ -2579,22 +2805,65 @@ bool isNativeModule(ModuleID moduleOfHost)
     return table && table->data(module).kind == ModuleKind::Runtime;
 }
 
-void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+static void throwLoaderChangeRefused(JSGlobalObject* realm, LoaderChange change, StringView changed)
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    throwException(realm, scope, createLoaderChangeRefusedError(realm, change, changed));
+}
+
+static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
     if (!modules || modules->data(module).isOfLibrary())
         return;
+    if (!modules->mayBeEvicted(module)) {
+        if (modules->wouldBeEvicted(module))
+            throwLoaderChangeRefused(realm, LoaderChange::TakeOutOfRequireCache, modules->table().pathText(module));
+        return;
+    }
     modules->forgetFormAnsweredFirst(module);
     modules->evict(module);
 }
 
-void willLoadFileInAnotherWay(JSGlobalObject* realm, ModuleID moduleOfHost)
+// The cache knows a file by its path. Several images may hold the file, the image of a test file and one that it shares with others, and the copy that has run may be in any of them.
+void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    const Image* running = Image::current();
+    if (!running || !running->sharesRealms()) [[likely]]
+        return evictFromItsImage(realm, moduleOfHost);
+    String path;
+    {
+        ModuleFromHost module(moduleOfHost);
+        path = currentModuleTable()->pathText(module);
+    }
+    Vector<ModuleID, 4> copies;
+    forEachImageOfThread([&](const Image& image) {
+        if (std::optional<ModuleID> copy = findModuleInRunningImage(path))
+            copies.append(moduleIDForHost(image, *copy));
+        return IterationStatus::Continue;
+    });
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    for (ModuleID copy : copies) {
+        evictFromItsImage(realm, copy);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (Modules* modules = instance->state->modules.get())
+            modules->didEvictFromOtherImage();
+    }
+}
+
+bool willLoadFileInAnotherWay(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesOf(realm);
-    if (modules && !modules->data(module).isOfLibrary())
-        modules->leaveToHostUnlessItHasRun(module);
+    if (!modules || modules->data(module).isOfLibrary())
+        return true;
+    if (!modules->mayBeEvicted(module))
+        return false;
+    modules->leaveToHostUnlessItHasRun(module);
+    return true;
 }
 
 // A module with nothing to run keeps no state, and neither does one that compiled code runs as a part of the only module that imports it.
@@ -2633,11 +2902,19 @@ bool isEvaluatedFile(JSGlobalObject* realm, ModuleID moduleOfHost)
     return !data.isOfLibrary() && !data.isFaceOfFile() && modules->table().hasFilePath(module) && !modules->isEvicted(module) && modules->hasRun(module);
 }
 
+static void throwLoadByNameRefused(JSGlobalObject*, StringView name, LoadByName);
+
 JSObject* requireCacheEntry(JSGlobalObject* realm, ModuleID moduleOfHost)
 {
     ModuleFromHost module(realm, moduleOfHost);
     ASSERT(isEvaluatedFile(realm, module));
-    return modulesOf(realm)->requireCacheEntry(module);
+    Modules* modules = modulesOf(realm);
+    // The entry of a CommonJS file hands out `module.exports` in one piece, and a build for files that the host runs has closed what is no entry point. An ES module shows its exports one by one: readExportFromOutside().
+    if (modules->data(module).kind == ModuleKind::CommonJs && hasFlag(Image::current()->header().options.admitted(), AdmittedCode::FilesRunByHost) && modules->refusesRequestFromHost(module)) [[unlikely]] {
+        throwLoadByNameRefused(realm, modulePath(module), LoadByName::Require);
+        return nullptr;
+    }
+    return modules->requireCacheEntry(module);
 }
 
 void forEachEvaluatedFile(JSGlobalObject* realm, const WTF::Function<void(const String&)>& functor)
@@ -2654,6 +2931,13 @@ void forEachEvaluatedFile(JSGlobalObject* realm, const WTF::Function<void(const 
                 functor(table.pathText(ModuleID(index)));
         }
     });
+}
+
+bool hostAnswersInPlaceOf(JSGlobalObject* realm, ModuleID moduleOfHost, LoadByName way)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hostAnswersInPlaceOf(module, way);
 }
 
 bool leavesModuleToHost(JSGlobalObject* realm, ModuleID moduleOfHost, StartedBy startedBy)
@@ -2880,13 +3164,41 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optiona
 {
     ModuleFromHost module(realm, moduleOfHost);
     Modules* modules = modulesForEvaluation(realm, module);
-    return modules ? modules->require(module, moduleOfImage(*Image::current(), referrer).value_or(ModuleID())) : JSValue();
+    if (!modules)
+        return { };
+    // The loader asks for code of the program, which may lie in another image or on disk. The library gets its own modules from the registry.
+    if (modules->requireAnswersNamespaceWithMock(module)) [[unlikely]]
+        return modules->moduleNamespace(module, ModulePhase::Evaluation);
+    return modules->require(module, moduleOfImage(*Image::current(), referrer).value_or(ModuleID()));
 }
 
-static void throwLoaderChangeRefused(JSGlobalObject* realm, LoaderChange change, StringView changed)
+void willRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<ModuleID> referrer, JSObject* moduleObjectOfReferrer)
 {
-    auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    throwException(realm, scope, createLoaderChangeRefusedError(realm, change, changed));
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    if (modules && !moduleOfImage(*Image::current(), referrer))
+        modules->recordRequireFromOtherImage(module, moduleObjectOfReferrer);
+}
+
+void didRequireModule(JSGlobalObject* realm, ModuleID moduleOfHost, ModuleID referrerOfHost)
+{
+    if (moduleOfHost.index() >> shiftOfImageInModuleID == referrerOfHost.index() >> shiftOfImageInModuleID) [[likely]]
+        return;
+    ModuleFromHost referrer(realm, referrerOfHost);
+    if (Modules* modules = modulesOf(realm))
+        modules->recordRequireOfOtherImage(referrer, moduleOfHost);
+}
+
+std::pair<Modules*, ModuleID> Modules::ownerOfRequiredModule(ModuleID required)
+{
+    unsigned positionAndOne = required.index() >> shiftOfImageInModuleID;
+    if (!positionAndOne) [[likely]]
+        return { this, required };
+    for (Instance* instance = m_instance.globalObject->aotInstance(); instance; instance = instance->above) {
+        if (instance->program->position() == positionAndOne - 1)
+            return { instance->state->modules.get(), ModuleID(required.index() & ((1u << shiftOfImageInModuleID) - 1)) };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // The host's require() takes no entry that is falsy.
@@ -2960,8 +3272,16 @@ std::optional<ModuleID> formThatMockFinds(JSGlobalObject* realm, StringView path
 
 Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView path)
 {
-    Modules* modules = modulesOf(realm);
-    return modules ? modules->table().formsThatAttributesAskFor(path) : Vector<ModuleID, 2>();
+    // Whoever asks may be code of the library, which runs in the first image, about a file of the last.
+    Vector<ModuleID, 2> forms;
+    if (!modulesOf(realm))
+        return forms;
+    forEachImageOfThread([&](const Image& image) {
+        for (ModuleID form : ModuleTable(image.programTables()).formsThatAttributesAskFor(path))
+            forms.append(moduleIDForHost(image, form));
+        return IterationStatus::Continue;
+    });
+    return forms;
 }
 
 void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost)
@@ -2988,6 +3308,7 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
     Modules& modules = *found;
     // Compiled code names objects of a module of the library, so its body runs: the mock stands under its names alone. The body runs now, or it would store over them.
     if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module)) {
+        modules.willMockLibraryModule(module);
         modules.evaluateSynchronously(module, SynchronousEvaluationReason::Require);
         return;
     }
@@ -3345,11 +3666,6 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
     }
     if (!entry)
         return absent;
-    if (entry->isClosedToOutside) [[unlikely]] {
-        throwException(globalObject, scope, createExportClosedToOutsideError(globalObject, exportName.string(), modulePath(m_module), modules.askerOfModule()));
-        return Resolution::error();
-    }
-
     // A Resolution has no phase, and its readers take *namespace* as the namespace object of phase Evaluation.
     if (entry->kind() == ModuleExportKind::Variable || (entry->kind() == ModuleExportKind::Namespace && entry->isDeferred))
         return { Resolution::Type::Resolved, this, exportName, *index };
@@ -3394,7 +3710,7 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (exportIndex)
-        RELEASE_AND_RETURN(scope, modules().readExport(m_module, *exportIndex));
+        RELEASE_AND_RETURN(scope, modules().readExportFromOutside(m_module, *exportIndex));
     // The namespace object holds the same value, and to make it reads every deferred export.
     if (takesNamesFromValue(modules().data(m_module))) {
         JSValue value = modules().capturedValue(m_module, exportName);
@@ -3548,7 +3864,7 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
     for (unsigned index = 0; index < entries.size(); ++index) {
         if (isAmbiguousExport(index))
             continue;
-        JSValue value = modules.readExport(m_module, index);
+        JSValue value = modules.readExportFromOutside(m_module, index);
         RETURN_IF_EXCEPTION(scope, true);
         names.append(modules.identifier(entries[index].name).impl());
         values.appendWithCrashOnOverflow(value);
@@ -3585,6 +3901,33 @@ void ModuleNamespace::replaceCapturedValue(JSGlobalObject* globalObject, const I
 {
     if (JSObject* capturedValues = m_capturedValues.get())
         capturedValues->putDirectMayBeIndex(globalObject, name, value);
+    if (!m_hasOwnStructure)
+        return;
+    // The caches of every image file what they know of this object under its Structure: classifyNamespaceRead(). It never has that one again.
+    // A property that is deleted may bring an earlier Structure back. A dictionary has no earlier one, and nothing of the kind is filed under it.
+    VM& vm = globalObject->vm();
+    if (isValidOffset(structure()->maxOffset()))
+        convertToDictionary(vm);
+    else
+        setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype(), !structure()->isStructureExtensible()));
+}
+
+JSValue ModuleNamespace::capturedValueWithoutAllocating(UniquedStringImpl* name) const
+{
+    JSObject* table = m_capturedValues.get();
+    if (!table || m_mayNeedEvaluation || parseIndex(*name) || !isDynamicExport(name))
+        return { };
+    unsigned attributes;
+    auto offsetIn = [&](JSObject* object) {
+        return object->structure()->getWithoutMaterializing(name, attributes);
+    };
+    // readDynamicExport() asks the live sources first.
+    if (JSObject* liveSources = m_liveSources.get()) {
+        if (std::optional<PropertyOffset> offset = offsetIn(liveSources); !offset || isValidOffset(*offset))
+            return { };
+    }
+    std::optional<PropertyOffset> offset = offsetIn(table);
+    return offset && isValidOffset(*offset) ? table->getDirect(*offset) : JSValue();
 }
 
 bool ModuleNamespace::isDynamicExport(UniquedStringImpl* name) const
@@ -3620,7 +3963,12 @@ JSValue ModuleNamespace::readDynamicExport(JSGlobalObject* globalObject, Propert
     if (JSValue captured = Modules::storedValue(globalObject, m_capturedValues.get(), identifier))
         return captured;
     // A deferred export: the host makes the value when somebody first asks for it, as it does in plain Bun, and the module keeps it from then on.
-    RELEASE_AND_RETURN(scope, modules().capturedValue(m_module, identifier));
+    // So does this object: the next read finds it above, and capturedValueWithoutAllocating() finds it for the caches.
+    JSValue made = modules().capturedValue(m_module, identifier);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (made)
+        m_capturedValues->putDirectMayBeIndex(globalObject, identifier, made);
+    return made;
 }
 
 bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
@@ -3651,7 +3999,7 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     }
     JSValue value = jsUndefined();
     if (method != InternalMethodType::HasProperty) {
-        value = index ? thisObject->modules().readExport(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
+        value = index ? thisObject->modules().readExportFromOutside(thisObject->m_module, *index) : thisObject->readDynamicExport(globalObject, name);
         RETURN_IF_EXCEPTION(scope, false);
     }
     slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontDelete), value);

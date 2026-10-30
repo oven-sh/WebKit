@@ -395,6 +395,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance*
 static LeafAnswer putToCompiledObject(Instance* instance, Object* object, UniquedStringImpl* uid, JSValue value)
 {
     VM& vm = *instance->vm;
+    // What is filed below says where a field lies and what it takes in the numbers of the object's image, and the stubs of this image would read it in their own.
+    // The caching operation stores under the object's image and knows what may be filed about such an object.
+    if (instance->state->sharesRealm && !object->isDescribedBy(*instance->state)) [[unlikely]]
+        return LeafAnswer::TakeSlowPath;
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
     // Every field has a name that the program spells.

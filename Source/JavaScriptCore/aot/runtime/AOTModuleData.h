@@ -93,7 +93,8 @@ struct ModuleData {
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
     // For a library module with a body: the code was compiled for a body that is entered once.
-    uint8_t bodyRunsAtMostOnce : 1;
+    // For a file of the program: the code that asks for it was compiled for a file that may be taken out of require.cache and load again.
+    uint8_t bodyRunsAtMostOnceOrMayBeEvicted : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -116,6 +117,8 @@ struct ModuleData {
     // Its first request is the CommonJS file that it stands for where ES modules import the file.
     bool isFaceOfFile() const { return faceOfFile; }
     bool hasFace() const { return shownByFace; }
+    bool bodyRunsAtMostOnce() const { return kind == ModuleKind::RuntimeSource && bodyRunsAtMostOnceOrMayBeEvicted; }
+    bool mayBeEvicted() const { return kind != ModuleKind::RuntimeSource && bodyRunsAtMostOnceOrMayBeEvicted; }
     // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
     bool isImportedByModule() const { return importedByModule; }
     // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().
@@ -328,6 +331,9 @@ struct ModuleExportData {
         uint32_t module;
         uint32_t indirectExport;
     };
+
+    // Of a variable that the build let go of. The entry is there for its name, and isClosedToOutside.
+    static constexpr SlotData noSlot { SlotData::maxOffset, 0 };
 
     ModuleExportKind kind() const { return static_cast<ModuleExportKind>(kindBits); }
     ModuleID targetModule() const { return ModuleID(module); }

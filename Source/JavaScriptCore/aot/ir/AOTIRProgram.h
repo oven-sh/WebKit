@@ -278,7 +278,7 @@ const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionI
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
-// The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName.
+// The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName, and for those that a copy from disk may import: MayBeEvicted.
 BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName, bool beginsModulesOfData = false);
 // A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
 bool answersToPath(const Program&, const Module&);
@@ -289,6 +289,10 @@ Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);
 // `require` hands the module to this function of the host, so a stack trace lists it between what the module runs and the code that called `require`.
 BuiltinID functionOfHostThatRequireCallsFor(const Module&);
+// Modules::hostAnswersInPlaceOf(): the loader of the host answers with what the factory of a mock made, and not with an object of the image.
+bool importMayAnswerWithMock(const Module&);
+// `require` takes a name that starts with `node:` to the registry, where no mock stands, and `require("bun")` is the global `Bun`.
+bool requireMayAnswerWithMock(const Program&, const Module&);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

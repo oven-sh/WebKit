@@ -310,7 +310,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     askProxiesByTheirTrap(key, BuiltinNames::get, m_statement.result);
     ClimbingSet receivers = m_context.valueOf(object);
-    applyEventsOfRead(m_context, receivers);
+    // `if (require.cache[path])` and `require.cache[path].exports === made` take nothing out of the table.
+    if (!m_statement.isOnlyTested)
+        applyEventsOfRead(m_context, receivers);
     // In the library a receiver shows a holder of exports until the unknown object covers it, and a key nobody knows finds every export. Whether it still shows it is known once all else is at rest.
     if (key.keyClass == HeapKeyClass::Unknown && !isInProgramCode() && m_context.meet(receivers, m_universe.holdersOfLibraryExports()) && !isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
         receivers = m_context.restrict(receivers, ValueSets::complement(m_universe.holdersOfLibraryExports()));

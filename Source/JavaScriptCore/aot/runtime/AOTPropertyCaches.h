@@ -264,6 +264,8 @@ public:
 
     size_t removeDeadEntries(VM&, CollectionScope);
     void validate(VM&) const;
+    bool describesObjectOfOtherImage(Structure*) const;
+    void validateImageOfSlot(VM&, const Slot&, SlotAccess, UniquedStringImpl*) const;
 
     // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
     class UnreportedChange {

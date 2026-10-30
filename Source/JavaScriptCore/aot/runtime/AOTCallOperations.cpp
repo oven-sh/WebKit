@@ -286,10 +286,10 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         StringView name = isParent ? StringView() : nameOfCalleeAtCallSite(vm);
         if (auto* function = dynamicDowncast<JSFunction>(callee); function && function->isHostFunction()) {
             scope.release();
-            throwNotAConstructorErrorInFrameOf(globalObject, function, name);
+            throwNotAConstructorErrorInFrameOf(globalObject, function, name, isParent);
             return { };
         }
-        throwException(globalObject, scope, isParent ? createNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, name));
+        throwException(globalObject, scope, isParent ? createParentNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, name));
         return { };
     }
     if (auto* errorConstructor = isParent ? dynamicDowncast<ErrorConstructor>(callee) : nullptr; errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
@@ -695,10 +695,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Insta
     return const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM* vmPointer, Instance* instance))
+// `amongImages`: in a VM that runs several images, where the handler may be in a frame of another image than the throw. A program of one image pays nothing for that.
+template<bool amongImages>
+static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance, CallerFrameAndPC* frameRecord)
 {
-    VM& vm = *vmPointer;
-    CallerFrameAndPC* frameRecord = AOT_OPERATION_FRAME_RECORD();
     CallFrame* callFrame = frameRecord->callerFrame;
     ExceptionWords& exceptions = instance->runtime.exceptions;
     Exception* exception = vm.exceptionForInspection();
@@ -713,18 +713,33 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             rethrownException = uncheckedDowncast<Exception>(thrown.asCell());
     }
     bool isTermination = exception && vm.isTerminationException(exception);
-    CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwindRun(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), false);
+    Instance* instanceOfHandler = instance;
+    auto unwind = [&]() ALWAYS_INLINE_LAMBDA {
+        if constexpr (amongImages)
+            return unwindRunsOfImages(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), instanceOfHandler);
+        else
+            return unwindRun(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), false);
+    };
+    CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwind();
     bool isHandled = found.status == CompiledUnwindStatus::FoundHandler;
     RELEASE_ASSERT(!isHandled || found.handler.code);
     bool takesException = found.handler.kind == CompiledHandlerKind::Finally;
-    UGPRPair handlerCodeAndFrame = makeUGPRPair(std::bit_cast<UCPURegister>(found.handler.code), std::bit_cast<UCPURegister>(found.handler.framePointer));
+    UGPRPair codeAndFrame = makeUGPRPair(std::bit_cast<UCPURegister>(found.handler.code), std::bit_cast<UCPURegister>(found.handler.framePointer));
+    // The handler reads the word of its own instance.
+    auto handlerCodeAndFrame = [&]() ALWAYS_INLINE_LAMBDA {
+        if constexpr (amongImages) {
+            if (instanceOfHandler != instance)
+                instanceOfHandler->runtime.exceptions.thrownValue = std::exchange(exceptions.thrownValue, 0);
+        }
+        return codeAndFrame;
+    };
     if (rethrownException && isHandled && !needsException) {
         if (!takesException)
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
-        return handlerCodeAndFrame;
+        return handlerCodeAndFrame();
     }
     if (isHandled && (exception || !(takesException || needsException))) [[likely]]
-        return handlerCodeAndFrame;
+        return handlerCodeAndFrame();
     bool stackIsUnobserved = false;
     if (!exception && !rethrownException) {
         if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
@@ -735,11 +750,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             exceptions.thrownValue = JSValue::encode(rethrownException);
         if (isHandled && !needsException) {
             if (rethrownException)
-                return handlerCodeAndFrame;
+                return handlerCodeAndFrame();
             stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
             // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
             if (stackIsUnobserved)
-                return handlerCodeAndFrame;
+                return handlerCodeAndFrame();
         }
     }
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecord);
@@ -758,9 +773,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         }
     }
     if (isHandled)
-        return handlerCodeAndFrame;
+        return handlerCodeAndFrame();
     unwindBeyondCompiledFrames(vm, std::bit_cast<CallFrame*>(frameRecord), found.status);
     return makeUGPRPair(0, 0);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM* vm, Instance* instance))
+{
+    return lookupExceptionHandler<false>(*vm, instance, AOT_OPERATION_FRAME_RECORD());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandlerAmongImages, UGPRPair, (VM* vm, Instance* instance))
+{
+    return lookupExceptionHandler<true>(*vm, instance, AOT_OPERATION_FRAME_RECORD());
 }
 
 // First what the function has allocated below its return address, zero if it has a frame record. Second what its entry has put above its return address.

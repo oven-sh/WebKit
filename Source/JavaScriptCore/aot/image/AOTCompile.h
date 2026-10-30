@@ -108,6 +108,8 @@ struct ProgramOwner {
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program>, BuildContext&);
 JS_EXPORT_PRIVATE size_t imageAlignment();
+// The most memory that the process has had resident. The log of phases resets the system's own mark at every line, and getrusage() reads that mark.
+JS_EXPORT_PRIVATE size_t peakResidentMegabytesOfProcess();
 
 // For a program that holds expected results and nothing else: the plan of each, in their order, each behind its length in four bytes, the low one first. Empty where the bytes are no program.
 JS_EXPORT_PRIVATE Vector<uint8_t> writeValidationPlans(std::span<const uint8_t> program, const Wire::CompileOptions&);

@@ -716,6 +716,23 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
 
             BodyIndex& bodyIndex = analyses.bodyIndex();
             std::atomic<uint64_t> numberOfRemovedBodies { 0 };
+            // A thread that frees what another thread has allocated cannot use that room. So the bodies from before the loop go first, and each thread takes in what was freed of its own.
+            forEachIndexInParallel(loops, count, [&](unsigned index) {
+                FunctionID id(index);
+                if (queue.wasConfirmed(id)) {
+                    if (optimized[index] && finished[index]->body) {
+                        programToEdit.functions[index].storageOfBlocks() = { };
+                        programToEdit.functions[index].storageOfValues() = { };
+                    }
+                    return;
+                }
+                if (!removesUnreachedBodies || !program.functions[index].hasBody())
+                    return;
+                editor.removeBody(id);
+                numberOfRemovedBodies.fetch_add(1, std::memory_order_relaxed);
+            });
+            if (removesUnreachedBodies)
+                build.giveFreedMemoryBack();
             forEachIndexInParallel(loops, count, [&](unsigned index) {
                 FunctionID id(index);
                 if (queue.wasConfirmed(id)) {
@@ -729,16 +746,10 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                         }
                         std::swap(editor.at(id), *copy);
                         bodyIndex.write(id, WTF::move(finishedCopy.row));
-                        // The body from before the loop goes as the new one comes.
                         copy = nullptr;
                     } else if (areValuesTypedAsDefined[index])
                         programToEdit.functions[index].setValuesAreTypedAsDefined();
-                    return;
                 }
-                if (!removesUnreachedBodies || !program.functions[index].hasBody())
-                    return;
-                editor.removeBody(id);
-                numberOfRemovedBodies.fetch_add(1, std::memory_order_relaxed);
             });
             forEachIndexInParallel(loops, commit.functions.size(), [&](unsigned position) {
                 Function& function = programToEdit.functions[count + position];

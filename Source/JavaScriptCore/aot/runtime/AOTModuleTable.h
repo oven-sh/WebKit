@@ -91,6 +91,8 @@ public:
     bool hasFileWithExtension(StringView) const;
     // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
+    // A file with code or with data, as it is loaded where no attribute asks for another form.
+    bool holdsFileAt(StringView path) const;
     // False: no module that is listed by path has a path that starts so.
     bool mayHoldPathStartingWith(StringView start) const;
 

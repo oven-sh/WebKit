@@ -84,13 +84,16 @@ static CallData nativeCallData(TaggedNativeFunction function)
 
 static CallData constructDataOf(JSCell* cell, uint32_t closureNumber)
 {
-    ImageOfClosureNumberScope scope(closureNumber);
-    FunctionKindData kind = kindOfClosureNumber(closureNumber);
-    if (kind.isBound())
+    // Every `new` of a class of another image of the realm comes here: the image is looked for once, and the thread goes on with its own.
+    const Image& image = imageOfClosureNumber(closureNumber);
+    FunctionKindData kind = image.programTables().kindOfClosureNumber(closureNumber);
+    if (kind.isBound()) {
+        ImageOfClosureNumberScope scope(closureNumber);
         return boundFunctionData(closureFunctionWithNumber(closureNumber)).constructs ? nativeCallData(constructBoundClosure) : CallData();
+    }
     if (!FunctionTables::canConstruct(kind))
         return CallData();
-    return CallData::forCompiledCode(constructEntrypoint().taggedPtr(), cell->structure()->realm());
+    return CallData::forCompiledCode(constructEntrypointOf(image).taggedPtr(), cell->structure()->realm());
 }
 
 Structure* Closure::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, bool isBound)
@@ -156,10 +159,8 @@ CallData Closure::getCallData(JSCell* cell)
 {
     // The word of the closure says it as well as the record of its function, and lies in the cell.
     ASSERT(uncheckedDowncast<Closure>(cell)->kind().isConstructor == !!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit));
-    if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit)) {
-        ImageOfClosureNumberScope scope(uncheckedDowncast<Closure>(cell)->closureNumber());
-        return CallData::forCompiledCode(closureEntrypoint().taggedPtr(), cell->structure()->realm());
-    }
+    if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit))
+        return CallData::forCompiledCode(closureEntrypointOf(imageOfClosureNumber(uncheckedDowncast<Closure>(cell)->closureNumber())).taggedPtr(), cell->structure()->realm());
     return nativeCallData(callClassConstructor);
 }
 
@@ -540,10 +541,10 @@ static void didChangePrototypeProperty(Closure* closure)
     if (FunctionRareData* rareData = closure->rareData())
         rareData->clear("Store to prototype property of a function");
     ClassTable& classes = closure->state().objects->classes;
-    if (const LayoutData* constructed = classes.classConstructedBy(closure->function())) {
+    if (const LayoutData* constructed = classes.classConstructedBy(classes.functionOfOwnClosure(*closure))) {
         classes.didChangeMember(*constructed, ClassSide::Static, vm.propertyNames->prototype.impl());
         // The class of a constructor function is defined with the prototype object that the function has then, and its guards speak of that object.
-        JSObject* prototypeOfClass = ClassTable::isDefinedByClass(*constructed) ? nullptr : classes.classPrototypeIfExists(*constructed);
+        JSObject* prototypeOfClass = classes.isDefinedByClass(*constructed) ? nullptr : classes.classPrototypeIfExists(*constructed);
         if (prototypeOfClass && closure->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototypeOfClass))
             classes.disarmMemberGuards(*constructed);
     }
@@ -930,14 +931,12 @@ size_t SlimClosure::estimatedSize(JSCell* cell, VM&)
 
 CallData SlimClosure::getCallData(JSCell* cell)
 {
-    ImageOfClosureNumberScope scope(uncheckedDowncast<SlimClosure>(cell)->closureNumber());
-    return CallData::forCompiledCode(slimClosureEntrypoint().taggedPtr(), cell->structure()->realm());
+    return CallData::forCompiledCode(slimClosureEntrypointOf(imageOfClosureNumber(uncheckedDowncast<SlimClosure>(cell)->closureNumber())).taggedPtr(), cell->structure()->realm());
 }
 
 CallData ReifiedSlimClosure::getCallData(JSCell* cell)
 {
-    ImageOfClosureNumberScope scope(uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber());
-    return CallData::forCompiledCode(slimClosureEntrypoint().taggedPtr(), cell->structure()->realm());
+    return CallData::forCompiledCode(slimClosureEntrypointOf(imageOfClosureNumber(uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber())).taggedPtr(), cell->structure()->realm());
 }
 
 CallData SlimClosure::getConstructData(JSCell* cell)

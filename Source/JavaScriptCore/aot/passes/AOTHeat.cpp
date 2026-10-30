@@ -830,6 +830,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
 
     switch (build.recordedOptions().heat()) {
     case HeatOverride::None:
+    case HeatOverride::ReadOffStructure:
         break;
     case HeatOverride::OnlyLoopsAreHot:
         for (uint32_t i : functionsWithBody)
@@ -908,6 +909,7 @@ Expected<HeatClass> heatClassOf(const Heat& heat, FunctionAnalyses& analyses, Bl
     case HeatOverride::None:
     case HeatOverride::OnlyLoopsAreHot:
     case HeatOverride::NothingIsHottest:
+    case HeatOverride::ReadOffStructure:
         break;
     }
     if (analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
@@ -948,6 +950,7 @@ Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext& context, BlockID bl
     case HeatOverride::None:
     case HeatOverride::OnlyLoopsAreHot:
     case HeatOverride::NothingIsHottest:
+    case HeatOverride::ReadOffStructure:
         break;
     }
     if (context.analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
@@ -983,7 +986,7 @@ struct OutliningSite {
     BlockID entryBlock { };
     uint32_t firstIndex { 0 };
     uint32_t numberOfEntryValues { 0 };
-    Vector<BlockID, 2> interiorBlocks { };
+    InlineList<BlockID, 3> interiorBlocks { };
     BlockID exitBlock { };
     std::optional<uint32_t> exitArgument { };
     ValueID root { };
@@ -996,12 +999,13 @@ struct OutliningSite {
     bool rootIsUsed { false };
     bool canPayOff { false };
     uint32_t orderOfEntryBlock { 0 };
-    Vector<ValueID, 6> liveIns { };
+    InlineList<ValueID, 4> liveIns { };
     TypeID resultType { };
     uint32_t codeBytes { 0 };
     uint32_t callBytes { 0 };
     unsigned hash { 0 };
 };
+static_assert(sizeof(OutliningSite) <= 104);
 
 static std::span<const ValueID> entryValuesOf(const Function& function, const OutliningSite& site)
 {
@@ -1241,7 +1245,7 @@ static bool areEqualSites(const Program& program, const OutliningSite& first, co
         return false;
     OutliningNormalForm firstForm(program, program.at(first.function), first, first.liveIns.size());
     OutliningNormalForm secondForm(program, program.at(second.function), second, second.liveIns.size());
-    ASSERT(firstForm.liveIns == first.liveIns && secondForm.liveIns == second.liveIns);
+    ASSERT(std::ranges::equal(firstForm.liveIns, first.liveIns) && std::ranges::equal(secondForm.liveIns, second.liveIns));
     return firstForm.words == secondForm.words && firstForm.payloadWords() == secondForm.payloadWords();
 }
 
@@ -2243,6 +2247,7 @@ static bool usesExecutionCounts(HeatOverride heat)
     case HeatOverride::None:
     case HeatOverride::OnlyLoopsAreHot:
     case HeatOverride::NothingIsHottest:
+    case HeatOverride::ReadOffStructure:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -156,6 +156,13 @@ static Vector<uint32_t, 16> fieldsFilledBy(const Program& program, const Layout&
     return fields;
 }
 
+static void insertInUniquedSortedList(CompactList<FunctionID>& list, FunctionID function)
+{
+    size_t position = std::ranges::lower_bound(list.span(), function) - list.span().begin();
+    if (position == list.size() || list.at(position) != function)
+        list.insert(position, function);
+}
+
 static void uniteAccessors(FlowAccessorField& known, FlowAccessorField&& other, bool isFirst)
 {
     if (isFirst) {
@@ -167,12 +174,12 @@ static void uniteAccessors(FlowAccessorField& known, FlowAccessorField&& other, 
         return;
     }
     for (FunctionID setter : other.setters)
-        insertInUniquedSortedVector(known.setters, setter);
+        insertInUniquedSortedList(known.setters, setter);
     if (known.getters.isEmpty() || other.getters.isEmpty())
         known.getters.clear();
     else {
         for (FunctionID getter : other.getters)
-            insertInUniquedSortedVector(known.getters, getter);
+            insertInUniquedSortedList(known.getters, getter);
     }
 }
 

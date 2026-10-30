@@ -116,6 +116,12 @@ void ClassTable::askEveryClassForItsPrototype(VM& vm)
     }
 }
 
+FunctionID ClassTable::functionOfOwnClosure(const Closure& closure) const
+{
+    RELEASE_ASSERT(m_tables.hasClosureNumber(closure.closureNumber()));
+    return FunctionID(m_tables.closureFunctionWithNumber(closure.closureNumber()));
+}
+
 const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
 {
     auto& recentLookup = m_recentClassLookups[function.index() % m_recentClassLookups.size()];
@@ -192,6 +198,7 @@ Structure* ClassTable::classObjectStructureInheritingFrom(VM& vm, JSObject* pare
 
 Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
 {
+    ImageOfInstanceScope ownImage(m_state.instance);
     ClosureTable& closures = m_state.objects->closures;
     FunctionID constructor(classLayout.classData().classConstructor);
     bool isCreatedOnChange = classLayout.createsClassObjectOnMutation && classLayout.createsPrototypeBeforeClassObject;
@@ -229,7 +236,7 @@ JSObject* ClassTable::createClassPrototype(VM& vm, const LayoutData& classLayout
         m_state.immortalCells->add(structure);
     }
     uint32_t memberRow = hasOneClassObject(classLayout) ? m_tables.classMemberRows()[m_tables.rankOfClass(classLayout.index)] : ClassRowEntry::noRow;
-    JSObject* prototype = ClassPrototype::create(vm, structure, classLayout.index, memberRow);
+    JSObject* prototype = ClassPrototype::create(vm, structure, classLayout.index, memberRow, m_state.instance.program->position());
     registerClassPrototype(classLayout, prototype);
     return prototype;
 }
@@ -241,6 +248,7 @@ JSObject* ClassTable::classPrototypeIfExists(const LayoutData& classLayout) cons
 
 JSObject* ClassTable::classPrototypeOfInstances(VM& vm, const LayoutData& classLayout)
 {
+    ImageOfInstanceScope ownImage(m_state.instance);
     JSObject* prototype = classPrototype(vm, classLayout);
     if (!m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index)) [[unlikely]] {
         MemberGuardWatchpoints::MethodTableUpdate update(m_state);
@@ -266,6 +274,7 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
         return prototype;
     if (isClassOfCreatedObjects(classLayout))
         return nullptr;
+    ImageOfInstanceScope ownImage(m_state.instance);
     if (classLayout.evaluation() == EvaluationState::PredictedOnce) {
         if (!isDefinedByClass(classLayout))
             return defineClassOfConstructorFunction(vm, classLayout, UseOfFunction::MakesObjects);
@@ -300,13 +309,14 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
 
 void ClassTable::didCreatePrototypePropertyOf(Closure* function)
 {
-    const LayoutData* classLayout = classConstructedBy(function->function());
+    FunctionID constructor = functionOfOwnClosure(*function);
+    const LayoutData* classLayout = classConstructedBy(constructor);
     if (!classLayout || isDefinedByClass(*classLayout) || classLayout->evaluation() != EvaluationState::PredictedOnce)
         return;
     ClosureTable& closures = m_state.objects->closures;
-    if (function->function() != FunctionID(classLayout->classData().classConstructor) || !closures.hasCellFor(function->function()))
+    if (constructor != FunctionID(classLayout->classData().classConstructor) || !closures.hasCellFor(constructor))
         return;
-    JSCell* registered = closures.closureIfCreated(function->function());
+    JSCell* registered = closures.closureIfCreated(constructor);
     if (!registered || registered == function) {
         closures.registerClassObject(function);
         return;
@@ -317,6 +327,7 @@ void ClassTable::didCreatePrototypePropertyOf(Closure* function)
 
 JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData& classLayout, UseOfFunction use)
 {
+    ImageOfInstanceScope ownImage(m_state.instance);
     if (m_constructorFunctionsWithoutClass.contains(classLayout.index))
         return nullptr;
     auto* classObject = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(FunctionID(classLayout.classData().classConstructor)));
@@ -501,7 +512,8 @@ Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Str
 {
     VMState& vmState = vm.aotState();
     vmState.newTargetOfSuperCall = nullptr;
-    Instance* instance = Instance::of(newTarget->realm());
+    // The brand of a class is in the tables of the image that the class is of, whichever image calls the parent.
+    Instance* instance = Instance::owning(newTarget);
     State* state = instance ? instance->state : nullptr;
     return state && state->objects ? state->objects->classes.structureWithInstanceBrand(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
 }
@@ -511,7 +523,7 @@ bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, co
     ASSERT(&classLayout == classObject.classData());
     if (classLayout.evaluation() == EvaluationState::ProvenOnce)
         return false;
-    if (m_state.objects->closures.closureIfCreated(classObject.function()) != &classObject)
+    if (m_state.objects->closures.closureIfCreated(functionOfOwnClosure(classObject)) != &classObject)
         return true;
     auto isCreatedAtDefinition = [](const MethodData& method) {
         return !!(method.flags & methodIsCreatedAtDefinition);
@@ -559,9 +571,9 @@ void ClassTable::DeclaredMember::define(const MethodData& definition)
     }
 }
 
-static std::optional<ClassTable::DeclaredMember> findOwnDeclaredMember(const LayoutData& classLayout, std::optional<uint32_t> key)
+static std::optional<ClassTable::DeclaredMember> findOwnDeclaredMember(const ClassTable& classes, const LayoutData& classLayout, std::optional<uint32_t> key)
 {
-    if (!ClassTable::hasOneClassObject(classLayout))
+    if (!classes.hasOneClassObject(classLayout))
         return std::nullopt;
     ClassTable::DeclaredMember member;
     for (auto& method : classLayout.methods()) {
@@ -581,7 +593,7 @@ bool ClassTable::declaresOwnMember(const LayoutData& classLayout, UniquedStringI
 
 std::optional<JSObject*> ClassTable::findDeclaredMethod(VM& vm, const LayoutData& classLayout, UniquedStringImpl* name)
 {
-    auto member = findOwnDeclaredMember(classLayout, keyOf(vm, name));
+    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
     if (!member || member->isAccessor())
         return std::nullopt;
     if (!member->method && name != vm.propertyNames->constructor.impl())
@@ -617,7 +629,7 @@ std::optional<ClassTable::LazyPrototypeLookupResult> ClassTable::findThroughLazy
             return owner->state->objects->classes.findThroughLazyPrototypes(vm, below, name, true, creation);
         }
         const LayoutData& classLayout = *classWithIndex(uncheckedDowncast<ClassPrototype>(prototype)->classIndex());
-        auto member = findOwnDeclaredMember(classLayout, keyOf(vm, name));
+        auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
         if (!member)
             return std::nullopt;
         if (member->method)
@@ -658,7 +670,7 @@ std::optional<ClassTable::DeclaredMemberLocation> ClassTable::declaredMemberLoca
 
 GetterSetter* ClassTable::createDeclaredAccessor(VM& vm, const LayoutData& classLayout, UniquedStringImpl* name)
 {
-    auto member = findOwnDeclaredMember(classLayout, keyOf(vm, name));
+    auto member = findOwnDeclaredMember(*this, classLayout, keyOf(vm, name));
     if (!member || !member->isAccessor())
         return nullptr;
     return createGetterSetter(vm, m_state, *member);
@@ -874,7 +886,7 @@ Closure* ClassDefinition::findBaseClassObject(const LayoutData& baseClass, JSVal
 {
     ClosureTable& closures = m_state.objects->closures;
     FunctionID constructor(baseClass.classData().classConstructor);
-    if (ClassTable::hasOneClassObject(baseClass))
+    if (m_classes.hasOneClassObject(baseClass))
         return uncheckedDowncast<Closure>(closures.closure(m_vm, constructor));
     Closure* baseClassObject = heritage ? dynamicDowncast<Closure>(heritage) : nullptr;
     if (!baseClassObject && baseClass.evaluation() == EvaluationState::ProvenOnce)
@@ -896,7 +908,7 @@ ClassDefinition::ParentResolution ClassDefinition::resolveParents(JSValue herita
         Closure* baseClassObject = findBaseClassObject(*baseClass, heritage);
         if (!baseClassObject && isDefinedBeforeEvaluation)
             return ParentResolution::BaseNotDefined;
-        RELEASE_ASSERT(baseClassObject && m_classes.classConstructedBy(baseClassObject->function()) == baseClass);
+        RELEASE_ASSERT(baseClassObject && m_classes.classConstructedBy(m_classes.functionOfOwnClosure(*baseClassObject)) == baseClass);
         m_classObjectParent = baseClassObject;
         m_prototypeParent = baseClassObject->prototypeProperty(m_vm);
         if (!m_prototypeParent && isDefinedBeforeEvaluation)
@@ -1160,7 +1172,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     if (JSObject* prototype = classPrototypeIfExists(classLayout); prototype && (!classLayout.createsPrototypeBeforeClassObject || prototype->classInfo() != ClassPrototype::info()))
         return false;
     ClosureTable& closures = m_state.objects->closures;
-    FunctionID constructor = classObject->function();
+    FunctionID constructor = functionOfOwnClosure(*classObject);
     JSCell* registered = closures.closureIfCreated(constructor);
     if (registered && registered != classObject)
         return false;
@@ -1250,12 +1262,13 @@ Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutDa
 {
     if (!hasOneClassObject(classLayout))
         return allocated;
-    auto* registered = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(allocated->function()));
+    auto* registered = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(functionOfOwnClosure(*allocated)));
     return registered ? registered : allocated;
 }
 
 void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue parent, JSValue prototypeParent)
 {
+    ImageOfInstanceScope ownImage(m_state.instance);
     VM& vm = globalObject->vm();
     if (tryLeaveDefinitionToRecord(vm, classObject, classLayout, parent, prototypeParent))
         return;
@@ -1263,7 +1276,7 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
     ClosureTable& closures = m_state.objects->closures;
     if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && classPrototypeIfExists(classLayout))))
         return;
-    JSCell* registered = closures.closureIfCreated(classObject->function());
+    JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
     if (registered && registered != classObject) {
         RELEASE_ASSERT(!isProvenOnce);
         didEvaluateClassAgain(m_state, classLayout);
@@ -1317,9 +1330,9 @@ Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject,
     return structure;
 }
 
-ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow)
+ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow, unsigned imagePosition)
 {
-    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow, vm.aotState().image->position());
+    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow, imagePosition);
     object->finishCreation(vm);
     return object;
 }
@@ -1501,8 +1514,7 @@ bool ownsVariables(const Closure& classObject)
     if (!classObject.kind().isConstructor)
         return false;
     State& state = classObject.state();
-    RunningImageScope imageOfClass(state.instance.vm->aotState(), state.instance.program);
-    return state.objects->closures.closureIfCreated(classObject.function()) == &classObject;
+    return state.objects->closures.closureIfCreated(state.objects->classes.functionOfOwnClosure(classObject)) == &classObject;
 }
 
 const FieldData* findOwnField(const Closure& classObject, UniquedStringImpl* uid)

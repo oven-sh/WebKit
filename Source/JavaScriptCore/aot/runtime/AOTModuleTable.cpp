@@ -343,6 +343,20 @@ IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const
     return IterationStatus::Continue;
 }
 
+bool ModuleTable::holdsFileAt(StringView path) const
+{
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), path) < 0;
+    }) - places.begin());
+    if (place == byPath.size() || comparePath(ModuleID(byPath[place]), path) != 0)
+        return false;
+    const ModuleData& found = data(ModuleID(byPath[place]));
+    bool isFile = found.kind == ModuleKind::SourceText || found.kind == ModuleKind::CommonJs || found.kind == ModuleKind::Data;
+    return isFile && !found.registryID() && !found.evaluatorModule();
+}
+
 bool ModuleTable::hasFileWithExtension(StringView extension) const
 {
     return std::ranges::any_of(modulesByPath(), [&](uint32_t module) {

@@ -118,7 +118,7 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
         options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
     };
-    bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module);
+    bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module) && !requireMayAnswerWithMock(m_program, target);
     if (!isAnsweredByValueWord || value.shape() == CodeShape::Compact) {
         define(value, requireInSlowPath({ }));
         return;

@@ -836,7 +836,7 @@ struct AccessesThroughHolders {
             if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::External || !inputs.build.isEnabled(FlowResultKind::ObjectUses, index))
                 continue;
             // A file that the host runs gets the object of a file with code too, and the run time lets it read only what is not closed: listExportsClosedToOutside().
-            bool showsOnlyWhatIsOpen = solver.input().refusedCode.hostRunsFilesOutsideImage && module.kind != ModuleKind::Data;
+            bool showsOnlyWhatIsOpen = solver.input().refusedCode.hostRunsFilesOutsideImage && showsOutsideOnlyWhatIsOpen(module);
             if ((answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)) && !showsOnlyWhatIsOpen)
                 continue;
             LedgerOfVariables::NamespaceObject& entry = locations.namespaceOf(ModuleID(index));

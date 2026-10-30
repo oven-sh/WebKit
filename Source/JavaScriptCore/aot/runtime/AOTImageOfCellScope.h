@@ -41,6 +41,22 @@ private:
     std::optional<RunningImageScope> m_scope;
 };
 
+// The tables of an instance create what they hand out under their own image, whichever image runs when they are asked.
+class ImageOfInstanceScope {
+    WTF_MAKE_NONCOPYABLE(ImageOfInstanceScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE explicit ImageOfInstanceScope(const Instance& instance)
+    {
+        VMState& state = instance.vm->aotState();
+        if (state.hasSeveralImages) [[unlikely]]
+            m_scope.emplace(state, instance.program);
+    }
+
+private:
+    std::optional<RunningImageScope> m_scope;
+};
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

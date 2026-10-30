@@ -26,7 +26,7 @@ public:
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     // memberRow: where the row of the class begins in the field table, or ClassRowEntry::noRow.
-    static ClassPrototype* create(VM&, Structure*, uint32_t classIndex, uint32_t memberRow);
+    static ClassPrototype* create(VM&, Structure*, uint32_t classIndex, uint32_t memberRow, unsigned imagePosition);
 
     DECLARE_INFO;
 

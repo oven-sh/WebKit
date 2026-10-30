@@ -624,7 +624,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers, Reports reports)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -653,9 +653,10 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
+        .reportsToBuild = reports == Reports::GoToBuild,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
-        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost() },
+        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost(), .hasImagesBelow = !!build.imagesBelow() },
         .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);
@@ -679,8 +680,9 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
     m_solver->solve();
+    m_bodies.letGoOfEdgesAndMasks();
     times.didFinish("solve: rounds"_s);
-    if (build.options().logging.logsPhaseTimes) {
+    if (build.options().logging.logsPhaseTimes && m_input.reportsToBuild) {
         ValueFlowBytesByTable bytes;
         m_bodies.addBytesTo(bytes);
         bytes.dump("all of the bodies"_s);

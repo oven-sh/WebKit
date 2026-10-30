@@ -2078,7 +2078,7 @@ op(llint_aot_virtual_call_trampoline, macro ()
     loadi (constexpr (AOT::offsetOfSlimClosureWord + 4))[t0], t3
     andi (constexpr AOT::ClosureWord::functionMask), t3
 .findInstanceOfSlimClosure:
-    bpb t3, InstanceEndOfClosureNumbers[t5], .slimClosureOfInstance
+    bib t3, InstanceEndOfClosureNumbers[t5], .slimClosureOfInstance
     loadp InstanceAbove[t5], t5
     btpnz t5, .findInstanceOfSlimClosure
     jmp .ordinary
@@ -2094,7 +2094,7 @@ op(llint_aot_virtual_call_trampoline, macro ()
     loadi (constexpr (AOT::offsetOfClosureEntry + 4))[t0], t3
     andi (constexpr AOT::ClosureWord::functionMask), t3
 .findInstanceOfClosure:
-    bpb t3, InstanceEndOfClosureNumbers[t5], .closureOfInstance
+    bib t3, InstanceEndOfClosureNumbers[t5], .closureOfInstance
     loadp InstanceAbove[t5], t5
     btpnz t5, .findInstanceOfClosure
     jmp .ordinary

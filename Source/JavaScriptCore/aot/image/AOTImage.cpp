@@ -10,6 +10,7 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
+#include "AOTTraceFrame.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
@@ -53,6 +54,11 @@ const Image* Image::currentOfThread()
 void Image::setCurrentOfThread(const Image* image)
 {
     t_currentImage = image;
+}
+
+const Image** Image::addressOfCurrentOfThread()
+{
+    return &t_currentImage;
 }
 
 void Image::useNoneOnThisThread()
@@ -311,6 +317,7 @@ void Image::publishAbove(const Image& first, std::unique_ptr<Image>&& unpublishe
     image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
     s_lastPublished.store(image.get(), std::memory_order_release);
     // Which of the images a thread runs changes as calls go from one to the other.
+    g_imagesShareRealms = true;
     s_current.store(differsByThread(), std::memory_order_release);
     below.m_above.store(image.get(), std::memory_order_release);
     images.append(image.release());
@@ -488,11 +495,18 @@ bool isCompiledCodePC(const void* pc)
     return !!imageCodeOffset(pc);
 }
 
-std::optional<uint32_t> imageCodeOffset(const void* address)
+// Asked by a process that is crashing too, on any of its threads: where images share realms the word of the thread may name another image, or none.
+static const Image* imageWithCodeAt(const void* address)
 {
     const Image* image = Image::current();
-    if (image && image->sharesRealms()) [[unlikely]]
-        image = image->findInListByCodeAddress(address);
+    if (!image || image->sharesRealms()) [[unlikely]]
+        return Image::findByCodeAddress(address);
+    return image;
+}
+
+std::optional<uint32_t> imageCodeOffset(const void* address)
+{
+    const Image* image = imageWithCodeAt(address);
     if (!image)
         return std::nullopt;
     uintptr_t offset = std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->code().data());
@@ -501,11 +515,15 @@ std::optional<uint32_t> imageCodeOffset(const void* address)
     return static_cast<uint32_t>(offset);
 }
 
+bool isInStubOfImage(const void* address)
+{
+    const Image* image = imageWithCodeAt(address);
+    return image && image->locate(address).kind == CodeKind::Stub;
+}
+
 std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress)
 {
-    const Image* image = Image::current();
-    if (image && image->sharesRealms()) [[unlikely]]
-        image = image->findInListByCodeAddress(returnAddress);
+    const Image* image = imageWithCodeAt(returnAddress);
     if (!image)
         return std::nullopt;
     CodeLocation code = image->locate(returnAddress);

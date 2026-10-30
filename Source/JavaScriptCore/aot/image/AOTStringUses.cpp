@@ -519,15 +519,7 @@ bool ImagesBelow::holdsFile(StringView path) const
         };
         ModuleTable::TextOfString text(viewInImage);
         ModuleTable table(m_images[position]->programTables(), text);
-        if (!table.mayHoldPathStartingWith(path))
-            continue;
-        bool holds = false;
-        // The paths come in their order, so the path itself comes in front of all that it begins. A file that only an attribute asks for stands under its path, a question mark and the name of the form.
-        table.forEachFilePathStartingWith(path, [&](const String& first) {
-            holds = first.length() == path.length() || first[path.length()] == '?';
-            return IterationStatus::Done;
-        });
-        if (holds)
+        if (table.mayHoldPathStartingWith(path) && table.holdsFileAt(path))
             return true;
     }
     return false;

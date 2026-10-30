@@ -164,8 +164,11 @@ static void finishAtEndOfRun(VM& vm, CompiledUnwindResult& result, Instance* ins
     }
 
     if (result.runEnd.adapterFrame) {
-        if (VMState& state = vm.aotState(); state.adapterFrameThatRestoresImage == result.runEnd.adapterFrame) [[unlikely]]
-            state.restoreImageBelowAdapter();
+        if (VMState& state = vm.aotState(); state.hasSeveralImages) [[unlikely]] {
+            state.didLeaveFramesBelow(result.runEnd.adapterFrame);
+            if (state.adapterFrameThatRestoresImage == result.runEnd.adapterFrame)
+                state.restoreImageBelowAdapter();
+        }
         copyStubSavedRegisters(record, bufferSlots, result.runEnd.adapterFrame, AdapterFrame::savedRegisters);
         // The return label of the adapter, which clears the word, is not run.
         if (leftFrame)
@@ -180,29 +183,54 @@ static void finishAtEndOfRun(VM& vm, CompiledUnwindResult& result, Instance* ins
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;
 }
 
+// The adapter made its image the one that runs, and the address that it returns to lies in the code of the image that ran before.
+static bool isCalledByCodeOfOtherImage(const VMState& state, CallFrame* adapterFrame, EntryFrame* entryFrame)
+{
+    if (state.adapterFrameThatRestoresImage != adapterFrame || adapterFrame->callerFrameOrEntryFrame() == entryFrame)
+        return false;
+    std::span<const uint8_t> code = state.endOfImagesBelowAdapters[-1].parts->image->code();
+    return std::bit_cast<uintptr_t>(removeCodePtrTag(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
+// Compiled code keeps its instance in a register that its callees save.
+static Instance* instanceOfCompiledCallerOf(CallFrame* adapterFrame)
+{
+    constexpr AdapterFrame::SavedRegister saved = AdapterFrame::savedRegisters[2];
+    static_assert(saved.reg == instanceGPR);
+    return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(adapterFrame) + saved.offset);
+}
+
 // Goes over the machine frames of one run as CompiledFrameIterator does. It reads the frame records and the call site cache, and leaves every frame in front of the handler.
-CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
+// A program of one image pays nothing for the other form: what that adds stands under `if constexpr`.
+template<bool goesOnInOtherImages>
+static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft, Instance*& instance)
 {
     CompiledUnwindResult result;
     if (static_cast<void*>(start.framePointer) == entryFrame)
         return result;
 
-    const VMState& state = vm.aotState();
-    const Image& image = *state.image;
-    CallSiteCache& cache = *state.callSiteCache;
+    VMState& state = vm.aotState();
+    const Image* imageOfRun = state.image;
+    CallSiteCache* cacheOfRun = state.callSiteCache.get();
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
-    Instance* instance = state.onlyInstance;
-    if (!instance) [[unlikely]]
-        instance = findInstanceOfRun(vm, start, entryFrame);
+    if constexpr (!goesOnInOtherImages) {
+        instance = state.onlyInstance;
+        if (!instance) [[unlikely]]
+            instance = findInstanceOfRun(vm, start, entryFrame);
+    }
     ReturnSiteInRun place = start;
     CallFrame* leftFrame = nullptr;
     ImageFrame leftImageFrame { };
+    // Whether anything compiled has called it is not known yet.
+    CallFrame* calleeOfRun = start.callee;
 
     for (;;) {
+        const Image& image = *imageOfRun;
+        CallSiteCache& cache = *cacheOfRun;
         const void* pc = removeCodePtrTag(place.rawPC);
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
-            site = place.callee == start.callee ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
+            site = place.callee == (goesOnInOtherImages ? calleeOfRun : start.callee) ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
         if (!site || (site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::InHostCallFrame)) [[unlikely]] {
             if (place.callee == start.callee)
                 return result;
@@ -257,8 +285,30 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
                 copyStubSavedRegisters(record, bufferSlots, callFrame, EngineCalleeFrame::savedRegisters);
                 break;
             case StubFrameKind::Adapter:
-            case StubFrameKind::HandlerOfJob:
             case StubFrameKind::ConstructAdapter:
+                if constexpr (goesOnInOtherImages) {
+                    if (!asyncGeneratorBodyFrameLeft && isCalledByCodeOfOtherImage(state, callFrame, entryFrame)) {
+                        // What finishAtEndOfRun() does for a run that ends at an adapter.
+                        state.restoreImageBelowAdapter();
+                        copyStubSavedRegisters(record, bufferSlots, callFrame, AdapterFrame::savedRegisters);
+                        if (leftFrame) {
+                            instance->coroutines.frameThatMayContinue = nullptr;
+                            instance->json.didLeaveFramesUpTo(leftFrame);
+                            didLeaveFramesOfCheckedCellsBelow(*instance, leftFrame);
+                        }
+                        imageOfRun = state.image;
+                        cacheOfRun = state.callSiteCache.get();
+                        instance = instanceOfCompiledCallerOf(callFrame);
+                        RELEASE_ASSERT(instance->program == imageOfRun);
+                        leftFrame = nullptr;
+                        leftImageFrame = { };
+                        place = { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame };
+                        calleeOfRun = callFrame;
+                        continue;
+                    }
+                }
+                [[fallthrough]];
+            case StubFrameKind::HandlerOfJob:
             case StubFrameKind::SavedFrameAdapter:
                 result.runEnd = { callFrame, site->stubFrameKind == StubFrameKind::ConstructAdapter, site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
                 result.exit = leaveRunAt(callFrame, entryFrame);
@@ -280,6 +330,17 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
     }
     finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
     return result;
+}
+
+CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
+{
+    Instance* instance;
+    return unwindRunOrRuns<false>(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, instance);
+}
+
+CompiledUnwindResult unwindRunsOfImages(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, Instance*& instance)
+{
+    return unwindRunOrRuns<true>(vm, start, entryFrame, record, false, nullptr, instance);
 }
 
 // The iterator has passed the frames of stubs in front of the frame that it is at.

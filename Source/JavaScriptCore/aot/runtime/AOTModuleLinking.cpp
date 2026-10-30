@@ -327,6 +327,7 @@ void Modules::willMock(ModuleID mocked)
     }
     // Past other mocked modules too.
     reach(m_table, BitVector(m_table.size()), WTF::move(work), below);
+    below.merge(mocks->modules);
     mocks->positionBelow.fill(MockedModules::notBelow, m_table.size());
     for (size_t module : below)
         mocks->positionBelow[module] = mocks->numberBelow++;

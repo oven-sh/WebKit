@@ -657,7 +657,7 @@ BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName, 
     for (const Entry& entry : program.entries)
         modules.quickSet(entry.module.index());
     for (size_t index = 0; findsFilesByName && index < program.modules.size(); ++index) {
-        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName) || (beginsModulesOfData && program.modules[index].kind == ModuleKind::Data))
+        if (program.modules[index].flags.containsAny({ ModuleFlags::IsFoundByName, ModuleFlags::MayBeEvicted }) || (beginsModulesOfData && program.modules[index].kind == ModuleKind::Data))
             modules.quickSet(index);
     }
     return modules;
@@ -734,6 +734,17 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
     if (module.kind == ModuleKind::SourceText && !module.requests.isEmpty() && module.requests[0].kind == ModuleRequestKind::Require)
         visitFormsOf(module.requests[0].target);
     return forms;
+}
+
+bool importMayAnswerWithMock(const Module& module)
+{
+    return module.runtimeModule && module.flags.contains(ModuleFlags::MayBeMocked);
+}
+
+bool requireMayAnswerWithMock(const Program& program, const Module& module)
+{
+    std::span<const uint8_t> name = program.string(module.path);
+    return importMayAnswerWithMock(module) && !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
 }
 
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)

@@ -37,6 +37,7 @@ String nameOf(const ProgramTables&, const LayoutSetData&);
 enum class LoaderChange : uint8_t {
     ReplaceInRequireCache,
     ReplaceLoaderFunction,
+    TakeOutOfRequireCache,
 };
 
 // The engine's own errors, worded by the engine.
@@ -51,6 +52,10 @@ JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
 // `[a] = v` and `for (x of v)`, where `v` is undefined or null.
 JSObject* createIterationOfNullishError(JSGlobalObject*, JSValue iterated);
+// `k in base`
+JSObject* createKeyTestOfNonObjectError(JSGlobalObject*, JSValue base);
+// `delete base.k`
+JSObject* createDeletionFromNullishError(JSGlobalObject*, JSValue base);
 // `o.#x`, where `o` is an object without that name. `create` is the engine's function for the kind of name.
 JSObject* createAbsentPrivateNameError(JSGlobalObject*, JSObject* (*create)(JSGlobalObject*));
 // Without a member: the key is a value.
@@ -75,7 +80,9 @@ JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView na
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);
 // The engine enters a native function that is no constructor, and the function refuses in a frame of its own.
-void throwNotAConstructorErrorInFrameOf(JSGlobalObject*, JSFunction*, StringView name);
+// `super(..)`
+JSObject* createParentNotAConstructorError(JSGlobalObject*, JSValue parent);
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject*, JSFunction*, StringView name, bool isParent);
 JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
 JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
 

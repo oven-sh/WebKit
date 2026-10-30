@@ -207,7 +207,7 @@ static void failIfPrototypeNameIsNotListed(VM& vm, State& state, const LayoutDat
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, JSValue() });
 }
 
-static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)
+static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull, bool isFrozen)
 {
     ClassTable& classes = state.objects->classes;
     ClassSide side;
@@ -221,7 +221,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         return;
     }
     // Freezing is reported without a name, behind the change. It changes neither what a name finds nor the prototype, and nothing of a frozen object changes ever again.
-    if (changed->isFrozen(vm))
+    if (isFrozen)
         return;
     classes.didChangeEveryMember(*layout, side);
     classes.didChangePrototypeLink(*layout, side);
@@ -238,6 +238,7 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
         if (realm && changed == realm->objectPrototype() && realm->aotInstance())
             parts.propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
     }
+    bool isFrozen = !uidOrNull && changed->isFrozen(vm);
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
         if (!state)
@@ -245,7 +246,7 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
         if (state->objects)
-            didChangeClassHolder(vm, *state, changed, uidOrNull);
+            didChangeClassHolder(vm, *state, changed, uidOrNull, isFrozen);
     }
 }
 
@@ -318,6 +319,7 @@ bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structu
 void RuntimeHooks::finishFillingObjects(VM& vm)
 {
     vm.aotState().hasObjectsBeingFilled = false;
+    DeferGC deferGC(vm);
     for (Instance* instance : vm.aotState().instances) {
         if (State* state = instance->state; state && state->firstAdditions)
             state->firstAdditions->finishFilling(vm);

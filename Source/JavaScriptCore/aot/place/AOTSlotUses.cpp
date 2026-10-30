@@ -119,28 +119,43 @@ struct PlaceThatMakes {
 };
 
 // Heat has no upper limit and is added up in the order of the functions: sums of floating-point numbers depend on their order.
-struct FunctionUses {
-    FunctionID function;
-    Vector<SlotUseCreation> creations;
-    Vector<PlaceThatMakes> placesThatMake;
-    Vector<FunctionID> functionsCalledByName;
-    Vector<FunctionID> functionsCalledByNameInLoops;
-    // A call that lists many callees names their set: n calls that each list the same n callees would be n * n entries.
-    Vector<CalleeSetID> calleeSetsCalled;
-    Vector<CalleeSetID> calleeSetsCalledInLoops;
-    Vector<std::pair<SlotRow, SiteHeat>> fills;
-    Vector<FillBesideCreation> fillsBesideCreation;
-    Vector<CopyIntoNewObject> copiesIntoNewObjects;
-    Vector<SourceOfResult, 1> sourcesOfResult;
-    Vector<SlotAccessUse> accesses;
-    Vector<StoreByNameUse> storesByName;
-    Vector<FunctionID> functionsWhoseNewClosuresAreStoredInto;
-    Vector<FunctionID> functionsWithLentClosures;
-    Vector<StoreOfUndefined> storesOfUndefined;
-    Vector<KeysStoredTogether> keysStoredTogether;
-    Vector<VariableID> variablesNamed;
-    Vector<VariableID> variablesWithUncheckedReads;
+struct FillOfRow {
+    SlotRow row { 0 };
+    SiteHeat heat { 0 };
 };
+
+struct FunctionUses {
+    void shrinkToFit()
+    {
+        auto shrink = [](auto&... lists) {
+            (lists.shrinkToFit(), ...);
+        };
+        shrink(creations, placesThatMake, functionsCalledByName, functionsCalledByNameInLoops, calleeSetsCalled, calleeSetsCalledInLoops, fills, fillsBesideCreation, copiesIntoNewObjects, sourcesOfResult,
+            storesByName, functionsWhoseNewClosuresAreStoredInto, functionsWithLentClosures, storesOfUndefined, keysStoredTogether);
+    }
+
+    FunctionID function;
+    CompactList<SlotUseCreation> creations;
+    CompactList<PlaceThatMakes> placesThatMake;
+    CompactList<FunctionID> functionsCalledByName;
+    CompactList<FunctionID> functionsCalledByNameInLoops;
+    // A call that lists many callees names their set: n calls that each list the same n callees would be n * n entries.
+    CompactList<CalleeSetID> calleeSetsCalled;
+    CompactList<CalleeSetID> calleeSetsCalledInLoops;
+    CompactList<FillOfRow> fills;
+    CompactList<FillBesideCreation> fillsBesideCreation;
+    CompactList<CopyIntoNewObject> copiesIntoNewObjects;
+    CompactList<SourceOfResult> sourcesOfResult;
+    CompactList<SlotAccessUse> accesses;
+    CompactList<StoreByNameUse> storesByName;
+    CompactList<FunctionID> functionsWhoseNewClosuresAreStoredInto;
+    CompactList<FunctionID> functionsWithLentClosures;
+    CompactList<StoreOfUndefined> storesOfUndefined;
+    CompactList<KeysStoredTogether> keysStoredTogether;
+    CompactList<VariableID> variablesNamed;
+    CompactList<VariableID> variablesWithUncheckedReads;
+};
+static_assert(sizeof(FunctionUses) <= 160);
 
 } // anonymous namespace
 
@@ -179,7 +194,7 @@ static void foldEntriesOfOnePlace(Vector<T, inlineCapacity>& sorted, const auto&
 }
 
 template<typename T>
-static Vector<T> listsOfAll(std::span<const FunctionUses> functions, Vector<T> FunctionUses::* list)
+static Vector<T> listsOfAll(std::span<const FunctionUses> functions, CompactList<T> FunctionUses::* list)
 {
     size_t count = 0;
     for (const FunctionUses& function : functions)
@@ -187,7 +202,7 @@ static Vector<T> listsOfAll(std::span<const FunctionUses> functions, Vector<T> F
     Vector<T> all;
     all.reserveInitialCapacity(count);
     for (const FunctionUses& function : functions)
-        all.appendVector(function.*list);
+        all.append((function.*list).span());
     return all;
 }
 
@@ -388,12 +403,18 @@ public:
             scanNames(m_function.blocks[i].terminator);
         }
         addFillsBesideAllocations();
-        if (m_readsZeroEncodingCandidate)
-            findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
-        AOT::sortInLine(m_uses.accesses, accessIsOrderedBefore);
-        foldEqualAccesses(m_uses.accesses);
-        AOT::sort(m_uses.variablesNamed);
-        removeRepeatedElements(m_uses.variablesNamed);
+        if (m_readsZeroEncodingCandidate) {
+            Vector<VariableID> uncheckedReads;
+            findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, uncheckedReads);
+            m_uses.variablesWithUncheckedReads = uncheckedReads;
+        }
+        AOT::sortInLine(m_accesses, accessIsOrderedBefore);
+        foldEqualAccesses(m_accesses);
+        m_uses.accesses = m_accesses;
+        AOT::sort(m_variablesNamed);
+        removeRepeatedElements(m_variablesNamed);
+        m_uses.variablesNamed = m_variablesNamed;
+        m_uses.shrinkToFit();
         return WTF::move(m_uses);
     }
 
@@ -604,7 +625,7 @@ private:
             use.storesIntoNewObjects = object.opcode == Opcode::NewObject && receivers.size() == 1 && receivers[0] == object.layout();
             noteStoreBehindStore(objectID, value, use.weight);
         }
-        m_uses.accesses.append(use);
+        m_accesses.append(use);
     }
 
     // In the order of the blocks. The rarer of the two stores says how often both run.
@@ -748,7 +769,7 @@ private:
         }, [&](StringID string) {
             setBit(m_shared.stringsNamed, string.index());
         }, [&](VariableID variable) {
-            m_uses.variablesNamed.append(variable);
+            m_variablesNamed.append(variable);
         }, [](auto) { }));
     }
 
@@ -864,6 +885,8 @@ private:
     FunctionAnalyses m_analyses;
     FunctionSiteWeights m_weights;
     FunctionUses m_uses;
+    Vector<SlotAccessUse> m_accesses;
+    Vector<VariableID> m_variablesNamed;
     Vector<BlockID> m_blockOfValue;
     UncheckedKeyHashMap<uint32_t, LastStore, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lastStoreInto;
     struct FillOfAllocation {

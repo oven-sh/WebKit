@@ -38,9 +38,11 @@ struct ThisPrototype {
 
 static std::optional<FunctionID> functionInInstance(const Instance& instance, const JSCell* callee)
 {
-    if (Instance::owning(callee) != &instance)
+    // Whichever image runs: new.target and the constructor may be of two.
+    std::optional<uint32_t> number = closureNumberOf(callee);
+    if (!number || callee->structure()->realm() != instance.globalObject || !instance.tables().hasClosureNumber(*number))
         return std::nullopt;
-    return functionOf(callee);
+    return FunctionID(instance.tables().closureFunctionWithNumber(*number));
 }
 
 enum class Ancestry : uint8_t { NotBelow, Unknown, SameOrBelow };
@@ -94,8 +96,13 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
             result.layout = targetLayout;
     }
     if (!prototype) {
+        if (JSObject* remembered = classes.tryReadPrototypePropertyAtRememberedPlace(newTarget)) {
+            result.prototype = remembered;
+            return result;
+        }
         prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
+        classes.rememberPrototypeOfClassOfOtherImage(vm, newTarget, prototype);
     }
     if (prototype.isObject()) {
         result.prototype = asObject(prototype);
@@ -149,7 +156,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         return constructEmptyObject(vm, remembered);
     }
 
-    std::optional<FunctionID> function = functionOf(constructor);
+    std::optional<FunctionID> function = functionInInstance(m_state.instance, constructor);
     const LayoutData* constructorLayout = function ? classConstructedBy(*function) : nullptr;
     RELEASE_ASSERT(!constructorLayout || !constructorLayout->hasUntypedBase);
 
@@ -163,7 +170,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
     if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : closureNumberOf(*function));
+        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : m_tables.closureNumberOf(function->index()));
     return object;
 }
 
@@ -187,7 +194,7 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, vm.propertyNames->prototype, attributes);
     if (!isValidOffset(offset)) {
-        const LayoutData* classLayout = classConstructedBy(function->function());
+        const LayoutData* classLayout = classConstructedBy(functionOfOwnClosure(*function));
         if (classLayout && isDefinedByClass(*classLayout))
             m_prototypesOfClassObjects[indexOfClassObject(function)] = { function, prototype };
         return;
@@ -196,6 +203,16 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
         return;
     uint32_t structureID = structure->id().bits();
     m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
+}
+
+void ClassTable::rememberPrototypeOfClassOfOtherImage(VM& vm, JSObject* newTarget, JSValue prototype)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    if (!classObject || !prototype.isObject() || !classObject->kind().isConstructor || vm.aotState().validatesRuntime)
+        return;
+    if (Instance::owning(classObject) == &m_state.instance)
+        return;
+    m_prototypesOfClassObjects[indexOfClassObject(classObject)] = { classObject, asObject(prototype) };
 }
 
 // The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
@@ -359,7 +376,9 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
         allocated->setPrototypeAtCreation(vm, prototype);
-        if (requested && listsNoField && allocation)
+        // A class of another image that extends this one has one prototype object too, and every `new` of it comes here.
+        auto* lazyPrototype = requested ? nullptr : dynamicDowncast<ClassPrototype>(prototype);
+        if ((requested || (lazyPrototype && !hasClassOf(*lazyPrototype))) && listsNoField && allocation)
             rememberInstanceOfOtherEvaluation(vm, *allocated, prototype, *allocation);
         return allocated;
     }

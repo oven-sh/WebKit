@@ -1367,7 +1367,7 @@ struct PositionsProvenByTypes {
 
         std::atomic<uint64_t> numberOfChecks { 0 };
         ProgramEditor editor(program);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, changed.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, changed.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             const Body* body = bodyOfFunction[id.index()];
             bool hasAnsweredCheck = body && applyTo(function, *body, numberOfChecks);
             {
@@ -1895,7 +1895,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
                 found.append(id);
         });
         sortLargestFirst(program, loops, worklist);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             numberOfChecks.fetch_add(insertReadChecks(program, id, function, arenas.types, build, marked.span()), std::memory_order_relaxed);
             if (run == TaintedPositionsRun::AfterFlow)
                 assumeTypesOfPositionsAtStores(program, id, function, arenas.types, build);
@@ -1913,7 +1913,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
                 found.append(FunctionID(index));
         });
         sortLargestFirst(program, loops, functionsWithoutChecks);
-        editFunctionsInParallel(editor, build, BehindEdit::Nothing, functionsWithoutChecks.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
+        editFunctionsInParallel(editor, build, BehindEdit::Fit, functionsWithoutChecks.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             AnalysisContext context { build, program, nullptr, nullptr, id };
             FunctionAnalyses analyses(context, function);
             finishTypedValues(TypePropagationInputs { program, id, function, analyses, arenas.types, build });

@@ -23,6 +23,10 @@ CodePtr<JSEntryPtrTag> closureEntrypoint();
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> slimClosureEntrypoint();
 CodePtr<JSEntryPtrTag> moduleBodyEntrypoint();
 CodePtr<JSEntryPtrTag> constructEntrypoint();
+// Of an image that need not be the one that runs.
+CodePtr<JSEntryPtrTag> closureEntrypointOf(const Image&);
+CodePtr<JSEntryPtrTag> slimClosureEntrypointOf(const Image&);
+CodePtr<JSEntryPtrTag> constructEntrypointOf(const Image&);
 
 void initializeStubWords(Instance&);
 

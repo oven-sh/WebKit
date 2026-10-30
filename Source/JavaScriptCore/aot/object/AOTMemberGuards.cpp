@@ -531,7 +531,7 @@ static bool hasPropertyOrSlot(VM& vm, JSObject* holder, MemberName& name)
 
 static const LayoutData* nextClassOnSide(const ClassTable& classes, const LayoutData& layout, ClassSide side)
 {
-    if (side == ClassSide::Static && !ClassTable::isDefinedByClass(layout))
+    if (side == ClassSide::Static && !classes.isDefinedByClass(layout))
         return nullptr;
     return classes.assumedBaseOf(layout);
 }
@@ -714,7 +714,7 @@ static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, Cla
     if (isLazyHolder(holder, side))
         return true;
     // Nothing can change or remove the prototype property of a class object. Class objects share their Structure, and a watchpoint on it would fire when another class leaves it.
-    if (side == ClassSide::Static && ClassTable::isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key))
+    if (side == ClassSide::Static && state.objects->classes.isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key))
         return true;
     // Whoever stores to the prototype property of a constructor function, defines it or deletes it comes through the functions of the closure, which report it and let no cache remember the store.
     if (side == ClassSide::Static && watchpointsOf(state).implicitMemberKeys().prototype == name.key && !declaresMember(*declarer, side, name.key))
@@ -1112,7 +1112,7 @@ static void watchOwnMember(VM& vm, State& state, const LayoutData& layout, Class
     if (!layout.classData().subclassesOffset && !findGuard(layout, side, MemberGuardKind::Member, key))
         return;
     MemberName name { vm, key };
-    bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && ClassTable::hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
+    bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && state.objects->classes.hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
     ASSERT(isAsDeclared == holdsAsDeclared(vm, state, layout, side, holder, name));
     if (!isAsDeclared || !tryWatchDeclarer(vm, state, layout, side, &layout, holder, name))
         state.objects->classes.didChangeMember(layout, side, name.uid());

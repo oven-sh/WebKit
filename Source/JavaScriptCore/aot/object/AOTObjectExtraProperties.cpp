@@ -278,6 +278,8 @@ static JSObject* makePendingStars(Object& target, InternalFieldTuple* pendingSta
     DeferGCForAWhile deferGC(vm);
     JSGlobalObject* realm = target.structure()->realm();
     Star last = Star::lastOf(pendingStars);
+    // Whoever lists the keys may be code of another image. The getters are closures of the image of the object.
+    RunningImageScope imageOfTarget(vm.aotState(), target.state().instance.program);
     bindStarsUpTo(vm, target.state(), realm, last, target.layout());
 
     Vector<Object::ExtraProperty, 32> properties;

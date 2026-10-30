@@ -71,6 +71,7 @@ struct LinkContext {
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
     macro(JSObject*, objectMadeByRequire) \
+    macro(JSObject*, firstRequirerOfOtherImage) \
     macro(JSValue, requireFunction) \
     macro(JSValue, requiredValue) \
     macro(JSObject*, exportsWhileRequired) \
@@ -93,7 +94,7 @@ struct MockedModules {
     static constexpr uint32_t notBelow = std::numeric_limits<uint32_t>::max();
 
     BitVector modules;
-    // What the mocked modules reach is numbered. A way from a root to any other module passes no mock, so only a question about one of these takes a walk from the root.
+    // The mocked modules and what they reach are numbered. A way from a root to any other module passes no mock, so only a question about one of these takes a walk from the root.
     Vector<uint32_t> positionBelow;
     uint32_t numberBelow { 0 };
     // What no module asks for but in the list of a root, as the file of a module of the library: no walk comes to it.
@@ -128,9 +129,14 @@ public:
     ModuleRecord* ensureRecord(ModuleID);
     JSValue value(ModuleID) const;
     JSValue readExport(ModuleID, unsigned index);
+    JSValue readExportFromOutside(ModuleID, unsigned index);
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue);
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
+    bool tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
     bool mayBeMocked(ModuleID) const;
     ModuleID moduleWithExportsOf(ModuleID) const;
@@ -169,8 +175,11 @@ public:
     };
     MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root }; }
     bool hasBegunToLoad(ModuleID) const;
+    bool hostAnswersInPlaceOf(ModuleID, LoadByName);
+    bool requireAnswersNamespaceWithMock(ModuleID);
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
+    void willMockLibraryModule(ModuleID);
     void runMocksBelow(ModuleID root);
     void loadEvictedFilesBelow(ModuleID root);
     JSObject* capturedExports(ModuleID);
@@ -192,14 +201,23 @@ public:
     void throwFailure(ModuleFailureID, bool isForRequire);
     void throwExportNotFound(const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
-    void didRequestFromHost(ModuleID module) { m_firstModuleRequestedByHost = m_firstModuleRequestedByHost.value_or(module); }
+    void didRequestFromHost(ModuleID module)
+    {
+        if (!m_firstModuleRequestedByHost) [[unlikely]]
+            noteFirstRequestFromHost(module);
+    }
+    // Of this image.
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
+    // The host starts a realm with one module, the entry point, and one image of the realm holds it.
+    bool isEntryPointOfRealm(ModuleID module) const { return m_firstModuleRequestedByHost == module && !m_otherImageHoldsEntryPointOfRealm; }
+    // Those of the image that holds it. Null before the host has asked for a module.
+    Modules* modulesWithEntryPointOfRealm();
     // `bun run` loads the entry point as the one import of the module bun:main: the graph is loaded one step of the loader behind the entry point. Says so once.
-    bool takeStepOfMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !std::exchange(m_didTakeStepOfMainModule, true); }
+    bool takeStepOfMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !std::exchange(m_didTakeStepOfMainModule, true); }
     // An import() that loads the entry point ahead of the program loads it as any other module, and bun:main finds it loaded.
-    void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= m_firstModuleRequestedByHost == module; }
+    void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= isEntryPointOfRealm(module); }
     // Ahead of that step bun:main waits for one promise and whoever else asks for the entry point for another. Says so once.
-    bool takeLoadPromiseBelowMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
+    bool takeLoadPromiseBelowMainModule(ModuleID module) { return isEntryPointOfRealm(module) && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
     // The body of bun:main runs where the body of any importer does: behind the last statement of the entry point, or in the job that ends its evaluation.
     JSPromise* evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation);
     bool mainModuleWaitsForItsImport() const { return !!m_capabilityOfMainModule; }
@@ -209,12 +227,24 @@ public:
     const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void evict(ModuleID);
+    void recordRequireFromOtherImage(ModuleID target, JSObject* moduleObjectOfReferrer);
+    // The other side of it: a require() of `referrer` has returned a file of another image, which `required` names as the host names it.
+    void recordRequireOfOtherImage(ModuleID referrer, ModuleID required);
+    // Whether evict() would do anything: the file runs or has run.
+    bool wouldBeEvicted(ModuleID);
+    // Code is compiled for files that load once, but for those that the build saw taken out of require.cache. What holds no code is read again at any time.
+    bool mayBeEvicted(ModuleID module) const
+    {
+        const ModuleData& file = data(fileOf(module));
+        return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
+    }
     void leaveToHostUnlessItHasRun(ModuleID);
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
     bool hasRun(ModuleID);
     bool isLeftToHost(ModuleID);
+    void didEvictFromOtherImage() { m_otherImageHasEvictedFiles = true; }
     // The text of a data: URL that the program imports under a constant name is part of the program.
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
@@ -381,6 +411,7 @@ private:
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
+        // A file of another image stands here under the number that the host has for it.
         Vector<ModuleID> requiredModules;
         unsigned numberOfChildrenShown { 0 };
         std::optional<ModuleID> firstRequirer;
@@ -477,17 +508,17 @@ private:
     void decideMainCommonJSModule(std::optional<ModuleID>);
     std::optional<ModuleID> firstFileThatLoaderFindsBelow(ModuleID root);
     void lookForMainCommonJSModule();
+    void noteFirstRequestFromHost(ModuleID);
     void noteLoadOfGraph(ModuleID root);
     JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
-    JSValue answerRequire(ModuleID);
+    JSValue answerRequire(ModuleID, ModuleID referrer = { });
     JSValue loadEvictedFile(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
-    bool isNativeModuleThatHostReplaces(ModuleID, const String& name);
     std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     Identifier keyWithoutForm(ModuleID file);
@@ -588,13 +619,18 @@ private:
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
     BitVector m_evictedFiles;
+    // Of the realm. A module of this image may import the file.
+    bool m_otherImageHasEvictedFiles { false };
     bool m_runsCopyFromDisk { false };
     BitVector m_filesToLoadAgain;
     // See hasRun(): the answer, and the states that it was made from.
     BitVector m_modulesThatRanWithImporters;
     Vector<uint8_t> m_statusesWhenImportsWereFollowed;
     BitVector m_modulesWithMockToRun;
+    BitVector m_libraryModulesWithMock;
+    BitVector m_libraryModulesThatMockReplaces;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
+    bool m_otherImageHoldsEntryPointOfRealm { false };
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };
     ModuleID m_importOfMainModule;
@@ -758,6 +794,8 @@ private:
     Vector<DeferredImport> m_deferredImports;
     ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
     bool importsEvictedFile(ModuleID, BitVector& seen);
+    std::pair<Modules*, ModuleID> ownerOfRequiredModule(ModuleID);
+    bool namesFileEvictedFromOtherImage(ModuleID external);
     void leaveToHost(ModuleID file);
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;

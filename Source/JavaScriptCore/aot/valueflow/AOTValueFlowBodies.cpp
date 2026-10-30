@@ -2069,6 +2069,8 @@ private:
     {
         m_readsHandedOn = BitVector(m_function.values.size());
         m_valuesHandedOnOtherwiseThanAsReceivers = BitVector(m_function.values.size());
+        m_valuesThatAreMoreThanTested = BitVector(m_function.values.size());
+        Vector<std::pair<ValueID, ValueID>> readsOfMembers;
         Vector<ValueID> narrowedFrom(m_function.values.size());
         auto definitionOf = [&](ValueID id) {
             for (unsigned steps = 0; steps < 8; ++steps) {
@@ -2079,10 +2081,12 @@ private:
             }
             return id;
         };
-        auto handOn = [&](ValueID used, bool isReceiverOfCall = false) {
+        auto handOn = [&](ValueID used, bool isReceiverOfCall = false, bool isReceiverOfRead = false) {
             if (!used)
                 return;
             m_readsHandedOn.quickSet(definitionOf(used).index());
+            if (!isReceiverOfRead)
+                m_valuesThatAreMoreThanTested.quickSet(definitionOf(used).index());
             if (!isReceiverOfCall)
                 m_valuesHandedOnOtherwiseThanAsReceivers.quickSet(definitionOf(used).index());
         };
@@ -2112,12 +2116,17 @@ private:
                     const OperandInfo& info = operandInfoOf(user.opcode, index);
                     if (info.uses.contains(OperandUse::Calls) && info.uses.containsOnly({ OperandUse::Inspects, OperandUse::Calls }) && (user.opcode == Opcode::Call || user.opcode == Opcode::CallList) && user.thisValueOperand()) {
                         const Value& read = m_function.at(definitionOf(operand));
-                        if (read.opcode != Opcode::PropGet || definitionOf(read.objectOperand()) == definitionOf(user.thisValueOperand()))
+                        if (read.opcode != Opcode::PropGet || definitionOf(read.objectOperand()) == definitionOf(user.thisValueOperand())) {
+                            m_valuesThatAreMoreThanTested.quickSet(definitionOf(operand).index());
                             continue;
+                        }
                     }
                     if (info.uses.containsOnly(OperandUse::Inspects) && info.protocols.isEmpty() && receiverOf(user.opcode) != index)
                         continue;
-                    handOn(operand, user.opcode == Opcode::Call && index == OperandIndex::Call::thisValue);
+                    bool isReceiverOfRead = user.opcode == Opcode::PropGet && receiverOf(user.opcode) == index;
+                    if (isReceiverOfRead)
+                        readsOfMembers.append({ definitionOf(operand), id });
+                    handOn(operand, user.opcode == Opcode::Call && index == OperandIndex::Call::thisValue, isReceiverOfRead);
                 }
             }
             const Terminator& terminator = block.terminator;
@@ -2135,6 +2144,13 @@ private:
                     handOn(argument);
             }
             handOn(block.subject);
+        }
+        for (bool hasFoundMore = true; hasFoundMore;) {
+            hasFoundMore = false;
+            for (auto [holder, read] : readsOfMembers) {
+                if (m_valuesThatAreMoreThanTested.quickGet(read.index()) && !m_valuesThatAreMoreThanTested.quickSet(holder.index()))
+                    hasFoundMore = true;
+            }
         }
     }
 
@@ -2171,9 +2187,10 @@ private:
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
         statement.key = keyOfStatement(value);
-        if (value.opcode == Opcode::PropGet || value.opcode == Opcode::ModuleNamespace) {
+        if (value.opcode == Opcode::PropGet || value.opcode == Opcode::ElemGet || value.opcode == Opcode::ModuleNamespace) {
             if (!std::exchange(m_hasFoundReadsHandedOn, true))
                 findReadsHandedOn();
+            statement.isOnlyTested = value.opcode != Opcode::ModuleNamespace && !m_valuesThatAreMoreThanTested.quickGet(pending.site.index());
             statement.isOnlyCalledOnItsHolder = value.opcode == Opcode::PropGet && !m_readsHandedOn.quickGet(pending.site.index());
             statement.isOnlyReceiverOfCalls = value.opcode == Opcode::ModuleNamespace && !m_valuesHandedOnOtherwiseThanAsReceivers.quickGet(pending.site.index());
         }
@@ -2269,6 +2286,7 @@ private:
     const UnobservedFieldDefinitions* m_unobservedDefinitions;
     BitVector m_readsHandedOn;
     BitVector m_valuesHandedOnOtherwiseThanAsReceivers;
+    BitVector m_valuesThatAreMoreThanTested;
     bool m_hasFoundReadsHandedOn { false };
     FunctionID m_id;
     const Function& m_function;

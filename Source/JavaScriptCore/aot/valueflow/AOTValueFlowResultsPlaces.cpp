@@ -1023,6 +1023,10 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
     Vector<SpiedHolders> spiedHolders;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionOfHolders;
     forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
+        // Once code runs that nobody has seen the spies are out of sight, and every call of a value that nobody knows might be a spy on any export of any namespace
+        // object that has escaped. The run time refuses by name a spy on an export that the build has closed, so only the spies in sight count.
+        if (!application.isCalleeListed)
+            return;
         ValueSetID holders = application.valueAt(BuiltinOperand::argument(0), maker);
         ValueSetID keys = application.valueAt(BuiltinOperand::argument(1), maker);
         bool mayBeAnyKey = holdsPlaceholder(keys) || inputs.sets().contains(keys, ValueFlowUniverse::primitive(PrimitiveSet::String));
@@ -1042,12 +1046,6 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
             keysOutOfSight.add(maker, spied.keys);
     }
 
-    // A spy that has gone out of sight may be called with any namespace object that has, under any key.
-    Vector<ValueFlowObjectID, 32> objectsOfSpies;
-    for (size_t index : spies)
-        universe.appendObjectsOf(BuiltinID(static_cast<uint32_t>(index)), objectsOfSpies);
-    if (std::ranges::any_of(objectsOfSpies, [&](ValueFlowObjectID spy) { return inputs.hasEscaped(spy) || inputs.isLost(spy); }))
-        keysOutOfSight.add(maker, ValueSets::nothing, true);
     if (keysOutOfSight.isSpiedOn) {
         for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
             forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {

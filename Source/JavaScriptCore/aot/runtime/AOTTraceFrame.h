@@ -15,7 +15,17 @@ namespace JSC::AOT {
 class CompiledFrameIterator;
 class Image;
 
-JS_EXPORT_PRIVATE unsigned positionOfRunningImage();
+// Whether a second image has been loaded into the realms of a first. Written while the images of the process are loaded, before any of their code runs.
+JS_EXPORT_PRIVATE extern bool g_imagesShareRealms;
+
+JS_EXPORT_PRIVATE unsigned positionOfRunningImageAmongSeveral();
+
+ALWAYS_INLINE unsigned positionOfRunningImage()
+{
+    if (!g_imagesShareRealms) [[likely]]
+        return 0;
+    return positionOfRunningImageAmongSeveral();
+}
 
 struct TraceFrame {
     CompiledFunctionID code;
@@ -43,10 +53,21 @@ class ImageOfTraceFrameScope {
     WTF_MAKE_NONCOPYABLE(ImageOfTraceFrameScope);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    JS_EXPORT_PRIVATE explicit ImageOfTraceFrameScope(const TraceFrame&);
-    JS_EXPORT_PRIVATE ~ImageOfTraceFrameScope();
+    ALWAYS_INLINE explicit ImageOfTraceFrameScope(const TraceFrame& frame)
+    {
+        if (g_imagesShareRealms) [[unlikely]]
+            runImageOf(frame);
+    }
+    ALWAYS_INLINE ~ImageOfTraceFrameScope()
+    {
+        if (m_previous) [[unlikely]]
+            restore();
+    }
 
 private:
+    JS_EXPORT_PRIVATE void runImageOf(const TraceFrame&);
+    JS_EXPORT_PRIVATE void restore();
+
     const Image* m_previous { nullptr };
 };
 

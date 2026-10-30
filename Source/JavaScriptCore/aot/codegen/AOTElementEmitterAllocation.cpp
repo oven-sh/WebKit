@@ -428,7 +428,8 @@ bool ArrayAllocationEmitter::storesElementsBehindAllocation(std::span<const Valu
     if (elements.size() <= maxArrayElementsInRegisters || elements.size() > maxArrayLengthInStubKey || !holdsOnlyNumbers(form.kind))
         return false;
     return std::ranges::all_of(elements, [&](ValueID element) {
-        switch (m_function.at(element).representation) {
+        // In the form in which the operation takes it: Array.of() takes an integer boxed, and a boxed value is tested.
+        switch (representationOf(element)) {
         case Representation::Int32:
             return true;
         case Representation::Double:

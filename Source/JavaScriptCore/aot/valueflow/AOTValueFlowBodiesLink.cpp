@@ -8,6 +8,7 @@
 #include "AOTValueFlowBuiltins.h"
 #include "AOTKnownClosures.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowRulesModules.h"
 
 #if ENABLE(AOT)
 
@@ -1211,6 +1212,7 @@ private:
         universe.m_prototypeObjectsOfLibraryClasses = take();
         universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
         universe.m_holdersOfLibraryExports = ValueSets::nothing;
+        universe.m_holdersOfPublicLibraryExports = ValueSets::nothing;
         universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
         universe.m_eventRaisingLibraryExportHolders = ValueSets::nothing;
         BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
@@ -1220,9 +1222,13 @@ private:
             appendHoldersOfExports(list, ModuleID(index));
             universe.m_holdersOfExportsOfModule[index] = take();
             universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+            if (mayAnswerToName(m_program, ModuleID(index)))
+                universe.m_holdersOfPublicLibraryExports = maker.unite(universe.m_holdersOfPublicLibraryExports, universe.m_holdersOfExportsOfModule[index]);
             ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_eventRaisingLibraryExportHolders : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
             holders = maker.unite(holders, universe.m_holdersOfExportsOfModule[index]);
         }
+        if (!m_build.options().excludesLibraryText())
+            universe.m_holdersOfPublicLibraryExports = universe.m_holdersOfLibraryExports;
         for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
             if (ModuleID module = m_program.functions[index].module; module && mayRaiseEvents.get(module.index()))
                 list.append(universe.closureOf(FunctionID(index)));
@@ -1633,6 +1639,7 @@ private:
                 statement.firstSite == Body::none ? UINT32_MAX : universe.m_firstSiteOfFunction[index] + statement.firstSite,
                 statement.isOnlyCalledOnItsHolder,
                 statement.isOnlyReceiverOfCalls,
+                statement.isOnlyTested,
                 statement.guardCount,
                 first.operand + statement.firstGuard,
                 statement.guardsOfOperands,

@@ -999,36 +999,44 @@ void ValueFlowGraph::connectPredecessorsOfNodesJustRetired()
 ALWAYS_INLINE void ValueFlowGraph::takeArrival(Arrivals& arrivals, const Message& message)
 {
     Row& row = m_rows[message.to];
-    if (!row.firstArrivalPlusOne)
-        arrivals.nodes.append(message.to);
-    else {
-        const Arrival& last = arrivals.list[row.firstArrivalPlusOne - 1];
+    uint8_t& state = m_hasMoved[message.to];
+    uint32_t firstArrivalPlusOne = 0;
+    if (!(state & HasArrivals)) {
+        state |= HasArrivals;
+        arrivals.nodes.append({ message.to, row.seenOrFirstArrivalPlusOne });
+    } else {
+        firstArrivalPlusOne = row.seenOrFirstArrivalPlusOne;
+        const Arrival& last = arrivals.list[firstArrivalPlusOne - 1];
         if (last.set == message.set && last.low == message.low)
             return;
     }
-    arrivals.list.append(Arrival { message.low, message.set, row.firstArrivalPlusOne });
-    row.firstArrivalPlusOne = arrivals.list.size();
+    arrivals.list.append(Arrival { message.low, message.set, firstArrivalPlusOne });
+    row.seenOrFirstArrivalPlusOne = arrivals.list.size();
 }
 
 ALWAYS_INLINE void ValueFlowGraph::takeArrivals(Arrivals& arrivals, std::span<const Message> messages)
 {
     constexpr size_t distance = 12;
     for (size_t index = 0; index < messages.size(); ++index) {
-        if (index + distance < messages.size())
+        if (index + distance < messages.size()) {
             __builtin_prefetch(&m_rows[messages[index + distance].to], 1);
+            __builtin_prefetch(&m_hasMoved[messages[index + distance].to], 1);
+        }
         takeArrival(arrivals, messages[index]);
     }
 }
 
-ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, Worker& worker, NOESCAPE const Invocable<void(const Message&)> auto& leave)
+ALWAYS_INLINE void ValueFlowGraph::evaluate(NodeWithArrivals nodeWithArrivals, Arrivals& arrivals, Worker& worker, NOESCAPE const Invocable<void(const Message&)> auto& leave)
 {
+    uint32_t node = nodeWithArrivals.node;
     Row& row = m_rows[node];
+    m_hasMoved[node] &= ~HasArrivals;
     ValueSetMaker& maker = worker.maker;
     uint64_t low = 0;
     uint64_t lowInNoSet = 0;
     Vector<ValueSetID, 16>& setsArrived = worker.setsArrived;
     setsArrived.shrink(0);
-    for (uint32_t index = std::exchange(row.firstArrivalPlusOne, 0u); index; index = arrivals.list[index - 1].nextPlusOne) {
+    for (uint32_t index = std::exchange(row.seenOrFirstArrivalPlusOne, nodeWithArrivals.seen); index; index = arrivals.list[index - 1].nextPlusOne) {
         const Arrival& arrival = arrivals.list[index - 1];
         low |= arrival.low;
         if (arrival.set)
@@ -1097,8 +1105,10 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     ValueSetID value = after == ValueSets::nothing ? worker.setOfLowMembers(lowAfter) : after;
     row.low = lowAfter;
     row.value = value.index();
-    if (!std::exchange(m_hasMoved[node], 1))
+    if (!(m_hasMoved[node] & HasMoved)) {
+        m_hasMoved[node] |= HasMoved;
         worker.movedNodes.append(node);
+    }
 
     if (!m_successors[node])
         return;
@@ -1133,12 +1143,11 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
 ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worker, NOESCAPE const Invocable<void(const Message&)> auto& leave)
 {
     constexpr size_t distance = 8;
-    const Vector<uint32_t>& nodes = arrivals.nodes;
+    const Vector<NodeWithArrivals>& nodes = arrivals.nodes;
     for (size_t index = 0; index < nodes.size(); ++index) {
         if (index + distance < nodes.size()) {
-            __builtin_prefetch(&m_gates[nodes[index + distance]]);
-            __builtin_prefetch(&m_successors[nodes[index + distance]]);
-            __builtin_prefetch(&m_hasMoved[nodes[index + distance]], 1);
+            __builtin_prefetch(&m_gates[nodes[index + distance].node]);
+            __builtin_prefetch(&m_successors[nodes[index + distance].node]);
         }
         evaluate(nodes[index], arrivals, worker, leave);
     }
@@ -1218,8 +1227,10 @@ void ValueFlowGraph::runWave(Team& team)
                     __builtin_prefetch(&messages[index]);
             });
             forEachList([&](Vector<Message>& messages) {
-                for (const Message& message : messages)
+                for (const Message& message : messages) {
                     __builtin_prefetch(&m_rows[message.to], 1);
+                    __builtin_prefetch(&m_hasMoved[message.to], 1);
+                }
             });
             forEachList([&](Vector<Message>& messages) {
                 for (const Message& message : messages)
@@ -1442,6 +1453,8 @@ void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         giveUp(shard->predecessors, shard->listedEdgesOutOfConstants, shard->arrivals, shard->messages);
     }
+    for (Covering& covering : m_coverings)
+        giveUp(covering.isRetired, covering.hasStoppedAt);
     m_workers.clear();
 }
 
@@ -1487,6 +1500,7 @@ void ValueFlowGraph::keepSetsHeld(ValueSets& sets)
     m_team->run((m_numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned) {
         for (uint32_t node = share * nodesPerShare; node < std::min<uint64_t>(m_numberOfNodes, static_cast<uint64_t>(share + 1) * nodesPerShare); ++node) {
             sets.keep(ValueSetID(m_rows[node].value));
+            sets.keep(ValueSetID(m_rows[node].seenOrFirstArrivalPlusOne));
         }
     });
     for (const Mask& mask : m_masks) {
