@@ -6870,7 +6870,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
         ++row.byObjects[objects <= 1 ? 0 : objects <= 16 ? 1 : objects <= 1024 ? 2 : 3];
         row.holdingNothing += made.first && m_graph.valueOf(made.first) == ValueSets::nothing;
         row.withStatement += !!made.statement();
-        bool isAtRest = !WTF::atomicLoad(&m_numberOfUsers[index], std::memory_order_relaxed);
+        bool isAtRest = !WTF::atomicLoad(const_cast<unsigned*>(&m_numberOfUsers[index]), std::memory_order_relaxed);
         uint64_t edges = 0;
         // Constants, marks and instances are not counted by their users, and a constant may have very many successors.
         bool isCountedByUsers = made.key.kind != ValueFlowMadeNodeKind::Constant && made.key.kind != ValueFlowMadeNodeKind::Marked && made.key.kind != ValueFlowMadeNodeKind::Instance;
