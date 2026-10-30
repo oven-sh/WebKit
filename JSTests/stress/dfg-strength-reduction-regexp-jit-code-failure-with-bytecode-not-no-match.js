@@ -1,4 +1,4 @@
-//@ requireOptions("--maxRegExpStackSize=65536")
+//@ requireOptions("--maxRegExpStackSize=65536", "--useExecutableAllocationFuzz=false")
 
 // The Yarr JIT frame for this pattern (480 KB) fits the stack of the mutator and not the stack of
 // a DFG compiler thread, where the JIT code fails its stack check. The RegExp also has bytecode:
@@ -7,6 +7,9 @@
 // DFG strength reduction must treat the failure on the compiler thread as "give up folding" whether
 // the RegExp has bytecode or not. It must not fold the interpreter's answer: the mutator's JIT code
 // matches this subject.
+//
+// No executable allocation fuzzer: when the JIT code of the RegExp cannot be allocated, the mutator
+// is left with the interpreter, and its own answer changes.
 const termCount = 30000;
 const regExp = new RegExp("^" + "a?".repeat(termCount) + "(b)?$");
 const subject = "a";
