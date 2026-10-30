@@ -2738,6 +2738,7 @@ struct TestPlacer {
         BlockID failed;
         ValueID provenWhenPassed;
         ValueID provenWhenFailed;
+        ValueID test;
     };
 
     FunctionPassContext& context;
@@ -2814,7 +2815,14 @@ struct TestPlacer {
         enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
-        narrowValueTypes(TypePropagationInputs { context.program, context.id, function, analyses, types, context.build, &context.typingMemo }, changedValues.span());
+        Renumbering renumbering;
+        TypePropagationInputs typing { context.program, context.id, function, analyses, types, context.build, &context.typingMemo };
+        typing.renumbering = &renumbering;
+        narrowValueTypes(typing, changedValues.span());
+        if (!renumbering.values.isEmpty()) {
+            for (EmittedTest& emitted : emittedTests)
+                emitted.test = renumbering.newIDOf(emitted.test);
+        }
         return PassOutcome::Changed;
     }
 
@@ -3606,7 +3614,7 @@ struct TestPlacer {
             if (!entersPassedTarget)
                 builder.moveToEndOf(branch.taken);
 
-            emittedTests.append(EmittedTest { plannedTest, blockOfTest, branch.taken, branch.notTaken, branch.provenOnTaken, branch.provenOnNotTaken });
+            emittedTests.append(EmittedTest { plannedTest, blockOfTest, branch.taken, branch.notTaken, branch.provenOnTaken, branch.provenOnNotTaken, test });
             addDefinition(planned.condition, branch.provenOnTaken);
         }
         if (!isOnlyWayToPassedTarget)
@@ -4359,7 +4367,7 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
     }
 }
 
-static PassOutcome placePlannedTests(FunctionPassContext& context, const ExpectedTypesByUse& expectations)
+static PassOutcome placePlannedTests(FunctionPassContext& context, const ExpectedTypesByUse& expectations, BitVector& placedTests)
 {
     TestPlacementPlan plan = planTestPlacement(context);
     if (!plan.hasGuardedStretch())
@@ -4372,6 +4380,10 @@ static PassOutcome placePlannedTests(FunctionPassContext& context, const Expecte
     statistics.count(StatisticID::StretchesNotClonable, placer.unclonableStretches.bitCount());
     statistics.count(StatisticID::WaysBackFromStretchCopies, placer.copy ? placer.copy->numberOfWaysBack() : 0);
     statistics.count(StatisticID::TypeTestsPlaced, placer.emittedTests.size());
+    for (const auto& emitted : placer.emittedTests) {
+        if (emitted.test)
+            placedTests.set(emitted.test.index());
+    }
     return outcome;
 }
 
@@ -4875,6 +4887,7 @@ struct TestInFrontOfLoop {
     uint32_t parameterIndex;
     TypeID testedType;
     Origin origin;
+    bool isQuestionOfHeader;
 };
 
 } // anonymous namespace
@@ -4920,7 +4933,8 @@ static std::optional<TestInFrontOfLoop> findTestOfLoopParameter(FunctionPassCont
                 continue;
             if (found && found->testedType != user.testedType())
                 return std::nullopt;
-            found = TestInFrontOfLoop { parameterIndex, user.testedType(), user.origin() };
+            bool isQuestionOfHeader = (found && found->isQuestionOfHeader) || use.user == function.at(loop.header()).terminator.conditionOperand();
+            found = TestInFrontOfLoop { parameterIndex, user.testedType(), user.origin(), isQuestionOfHeader };
         }
     }
     return found;
@@ -4928,7 +4942,7 @@ static std::optional<TestInFrontOfLoop> findTestOfLoopParameter(FunctionPassCont
 
 // `while (--n >= 0) { .. c = Math.floor(v / base); }` with n and c parameters of the function: what comes around the loop is a number, and what enters it may be anything.
 // So the variable is any value all the way around: each turn tests it, and boxes the number that the turn before has made. Tested where the loop is entered, it is a number in the loop.
-static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context)
+static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context, const BitVector& testsPlacedInThisRun)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -4956,9 +4970,11 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         // Behind a failed test each parameter of the header is defined again, by an Upcast, which takes no environment and no iterator state.
         if (!std::ranges::all_of(header.parameters, [&](ValueID parameter) { return typeOf(parameter).isJavaScriptValue(); }))
             continue;
+        // Other passes fold what follows from the failed question into its arm: from then on the arm is the generic turn only for values that fail that question.
+        bool isArmAsPlaced = testsPlacedInThisRun.get(header.terminator.conditionOperand().index());
         for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
             std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
-            if (!test)
+            if (!test || !(isArmAsPlaced || test->isQuestionOfHeader))
                 continue;
             const Type& tested = context.types.at(test->testedType);
             auto needsNoTest = [&](Edge edge) {
@@ -5087,13 +5103,19 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
         if (!expectations.isEmpty())
             context.analyses.didChangeTypes();
     }
-    outcome |= placePlannedTests(context, expectations);
+    BitVector placedTests;
+    outcome |= placePlannedTests(context, expectations, placedTests);
+    // The next step that types values may renumber them.
+    const bool hasPlacedTests = !placedTests.isEmpty();
+    if (hasPlacedTests)
+        outcome |= testLoopParametersInFrontOfLoops(context, placedTests);
     outcome |= addEmptySlotCases(context);
     if (outcome == PassOutcome::Unchanged && !expectations.isEmpty()) {
         expectations.takeBack();
         context.analyses.didChangeTypes();
     }
-    outcome |= testLoopParametersInFrontOfLoops(context);
+    if (!hasPlacedTests)
+        outcome |= testLoopParametersInFrontOfLoops(context, placedTests);
     // Whoever edits blocks, operands or edges here drops what that makes stale.
     context.keptAnalyses = outcome == PassOutcome::Unchanged ? allAnalyses - FunctionAnalysis::Effects : controlFlowAnalyses | analysesThatReadNoTypes;
     return outcome | marked;

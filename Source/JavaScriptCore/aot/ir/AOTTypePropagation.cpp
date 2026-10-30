@@ -882,7 +882,7 @@ TypePropagationOutcome TypePropagation::finish()
     Vector<ValueID> parametersBehindRemovedEdges;
     finishWithoutCompacting(parametersBehindRemovedEdges);
     if (m_outcome.cutBlocks) {
-        compactFunction(m_inputs.function);
+        compactFunction(m_inputs.function, m_inputs.renumbering);
         m_inputs.analyses.didChangeControlFlow();
     }
     return m_outcome;
@@ -1498,9 +1498,9 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
 
     if (total.cutBlocks) {
         if (pending)
-            pending->compact(inputs.function);
+            pending->compact(inputs.function, inputs.renumbering);
         else
-            compactFunction(inputs.function);
+            compactFunction(inputs.function, inputs.renumbering);
         inputs.analyses.didChangeControlFlow();
     }
     if (pending && total.didLookForCodeToCut)
