@@ -5686,20 +5686,23 @@ public:
 
     ALWAYS_INLINE void tagPtr(RegisterID tag, RegisterID target)
     {
-        if (target == ARM64Registers::lr && tag == ARM64Registers::sp) {
-            tagReturnAddress();
-            return;
-        }
         signOrAuthenticateWithRegisters(tag, target, 10); // PACIB1716
     }
 
     ALWAYS_INLINE void untagPtr(RegisterID tag, RegisterID target)
     {
-        if (target == ARM64Registers::lr && tag == ARM64Registers::sp) {
-            untagReturnAddress();
-            return;
-        }
         signOrAuthenticateWithRegisters(tag, target, 14); // AUTIB1716
+    }
+
+    // The only hints that take a modifier other than sp or zero have the pointer in x17 and the modifier in x16.
+    void signOrAuthenticateWithRegisters(RegisterID modifier, RegisterID pointer, int hint)
+    {
+        static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
+        RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
+        move(modifier, getCachedDataTempRegisterIDAndInvalidate());
+        move(pointer, getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.hint(hint);
+        move(memoryTempRegister, pointer);
     }
 
     ALWAYS_INLINE void removePtrTag(RegisterID target)
@@ -5720,18 +5723,15 @@ public:
     {
         m_assembler.ldrb(ARM64Registers::zr, target, 0);
     }
+#endif
 
     ALWAYS_INLINE void ret()
     {
+#if ENABLE(RETURN_ADDRESS_SIGNING)
         m_assembler.hint(31); // AUTIBSP
-        m_assembler.ret();
-    }
-#else
-    ALWAYS_INLINE void ret()
-    {
-        m_assembler.ret();
-    }
 #endif
+        m_assembler.ret();
+    }
 
     // Comparisons operations
 
@@ -7994,24 +7994,6 @@ protected:
     }
     
 public:
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-    // The only hints that take a modifier other than sp or zero have the pointer in x17 and the modifier in x16.
-    void signOrAuthenticateWithRegisters(RegisterID modifier, RegisterID pointer, int hint)
-    {
-        static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
-        RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
-        RegisterID modifierGPR = getCachedDataTempRegisterIDAndInvalidate();
-        RegisterID pointerGPR = getCachedMemoryTempRegisterIDAndInvalidate();
-        if (modifier != modifierGPR)
-            move(modifier, modifierGPR);
-        if (pointer != pointerGPR)
-            move(pointer, pointerGPR);
-        m_assembler.hint(hint);
-        if (pointer != pointerGPR)
-            move(pointerGPR, pointer);
-    }
-#endif
-
     ALWAYS_INLINE RegisterID getCachedDataTempRegisterIDAndInvalidate()
     {
         RELEASE_ASSERT(m_allowScratchRegister);

@@ -231,7 +231,7 @@ inline constexpr PtrType removeCodePtrTag(PtrType ptr)
 #endif
 }
 
-// Native code may sign the return addresses that it holds, in the link register and on the stack, where CPU(ARM64E) is false too:
+// Bun: native code may sign the return addresses that it holds, in the link register and on the stack, where CPU(ARM64E) is false too:
 // -mbranch-protection=pac-ret makes every function do so. An address without a signature stays as it is.
 // Not only where WebKit is compiled that way: what saved the word may be the C library, which distributions do compile that way, or
 // the program that links these libraries.

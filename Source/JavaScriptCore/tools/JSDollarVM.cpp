@@ -122,7 +122,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-#include "JSCPtrTag.h"
 #include <sys/auxv.h>
 #endif
 
@@ -4947,14 +4946,12 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsBoolean(Options::useFTLJIT()));
 }
 
-// Returns true if LLInt and the JITs are to sign the return address that a function saves, and the processor does so.
+// Returns true with ENABLE(RETURN_ADDRESS_SIGNING) on a processor that has pointer authentication.
 // Usage: $vm.functionsSignReturnAddress()
 JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
-#if CPU(ARM64E)
-    return JSValue::encode(jsBoolean(true));
-#elif ENABLE(RETURN_ADDRESS_SIGNING)
+#if ENABLE(RETURN_ADDRESS_SIGNING)
     // Not by signing something: a signature has few bits, and all of them may be zero.
     constexpr unsigned long hwcapPACA = 1UL << 30;
     return JSValue::encode(jsBoolean(getauxval(AT_HWCAP) & hwcapPACA));
@@ -4964,17 +4961,18 @@ JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, C
 }
 
 // Returns true if the return address that the calling function saved in its frame has the signature that belongs there.
-// Without pointer authentication that is none, and the answer is true.
+// Only where $vm.functionsSignReturnAddress().
 // Usage: $vm.returnAddressOfCallerIsSigned()
 JSC_DEFINE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
-    CallFrame* caller = callFrame->callerFrame();
 #if ENABLE(RETURN_ADDRESS_SIGNING)
+    CallFrame* caller = callFrame->callerFrame();
     const void* stackPointerAtEntry = reinterpret_cast<const CallerFrameAndPC*>(caller) + 1;
     return JSValue::encode(jsBoolean(caller->rawReturnPC() == signReturnAddress(caller->returnPCForInspection(), stackPointerAtEntry)));
 #else
-    return JSValue::encode(jsBoolean(caller->rawReturnPC() != caller->returnPCForInspection()));
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
 #endif
 }
 

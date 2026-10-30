@@ -58,20 +58,18 @@ const HARDENING =
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
   " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
   " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
-// On top of HARDENING for arm64, which alone has it (clang refuses it for x86-64): a function signs the return address that
-// it saves and checks it before it returns. At -march=armv8-a the instructions are hints, which a processor without pointer
+// On top of HARDENING for arm64, which alone has it (clang refuses the flag for x86-64): a function signs the return address
+// that it saves and checks it before it returns. The flag is for what the compiler generates, the definition for LLInt and
+// what the JITs generate (wtf/PlatformEnable.h). The instructions are hints, which a processor without pointer
 // authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
 //
 // Not with the compiler: the run time of compiled programs reads that word in the frame record of its operations
 // (AOT_OPERATION_FRAME_RECORD) as it is, and then finds no handler for what an operation throws.
 //
-// Code with and without it runs together. But LLVM inlines no function into one that differs in it, so LTO inlines nothing
-// between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what walks
-// the frame pointers there, as bun's crash handler does, has to take the signatures off too.
-const SIGNED_RETURN_ADDRESSES_IN_COMPILED_CODE = " -mbranch-protection=pac-ret";
-// That is what the compiler generates. With this, LLInt and what the JITs generate do the same (wtf/PlatformEnable.h).
-const SIGNED_RETURN_ADDRESSES_IN_GENERATED_CODE = " -DENABLE_RETURN_ADDRESS_SIGNING=1";
-const SIGNED_RETURN_ADDRESSES = SIGNED_RETURN_ADDRESSES_IN_COMPILED_CODE + SIGNED_RETURN_ADDRESSES_IN_GENERATED_CODE;
+// Code with and without the flag runs together. But LLVM inlines no function into one that differs in it, so LTO inlines
+// nothing between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what
+// walks the frame pointers there, as bun's crash handler does, has to take the signatures off too.
+const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_ADDRESS_SIGNING=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -478,7 +476,7 @@ if (command === "build") {
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1"), webassembly: lane.build_args.ENABLE_WEBASSEMBLY !== "OFF" })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

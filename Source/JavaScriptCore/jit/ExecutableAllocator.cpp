@@ -672,6 +672,7 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+// Bun: upstream zeroes in ~ExecutableMemoryHandle alone, so only with the libpas JIT heap, and leaves the instruction cache as it is.
 static void zeroExecutableMemoryOnFreeIfNeeded(void* start, size_t sizeInBytes)
 {
     if (!Options::zeroExecutableMemoryOnFree()) [[likely]]

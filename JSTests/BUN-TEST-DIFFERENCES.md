@@ -141,7 +141,8 @@ Rules for an edit to an upstream test:
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
-| `stress/link-polymorphic-call-can-gc.js`, `stress/map-forEach.js`, `stress/resizable-array-constant-folding.js`, `stress/structured-clone.js` | `skip if !$isWasmPlatform` | they use `WebAssembly`, and neither their names nor a directive say so. A lane with `ENABLE_WEBASSEMBLY=0` has no such global |
+| `stress/link-polymorphic-call-can-gc.js`, `stress/map-forEach.js`, `stress/resizable-array-constant-folding.js` | `skip if !$webAssembly` | they use `WebAssembly`, and neither their names nor a directive say so. A lane with `ENABLE_WEBASSEMBLY=0` has no such global |
+| `stress/structured-clone.js` | none; its one block that uses `WebAssembly` runs only where there is such a global | the same |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
@@ -177,7 +178,7 @@ Upstream's too, and run by the `test` job.
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
-- Both: `--without-webassembly`, for a lane with `ENABLE_WEBASSEMBLY=0`. `$isWasmPlatform` is false, as on a platform that has none.
+- Both: `--without-webassembly`, for a lane with `ENABLE_WEBASSEMBLY=0`. `$webAssembly` is false, for `//@ skip if !$webAssembly`, and so is `$isWasmPlatform`, as on a platform that has none.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 
@@ -206,8 +207,8 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/intl-timezone-posix-style.js` | `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` stay aliases of their `America/*` zones (tc39/ecma402#1103) on every ICU, including those where CLDR treats them as canonical zones (45 and earlier, 49 and later): accepted, kept as written, not in `supportedValuesOf`, same offsets and names as the primary zone, and resolved to it when they are the host's zone |
 | `stress/temporal-calendar-gregory-near-min-date.js` | the `gregory` calendar agrees with the ISO calendar in the first years of Temporal's range: reading fields, building from fields and formatting (`prolepticGregorianChangeDate`, `runtime/JSDateMath.h`) |
 | `stress/inline-cache-stub-freed-during-call-to-custom-setter.js` | an inline cache stub that has called native code stays until the call returns, also when the callee signed the return address that it saved (`JITStubRoutineSet::mark`). The setter of `$vm`'s `customAccessor` is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
-| `stress/return-address-of-function-is-signed.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function signs the return address that it saves in LLInt, Baseline, the DFG and the FTL alike: `$vm.returnAddressOfCallerIsSigned()` signs the address again and compares. Elsewhere, and on a processor without pointer authentication (`$vm.functionsSignReturnAddress()`), the test ends at once |
-| `stress/return-address-with-wrong-signature-is-not-returned-to.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function does not return once a bit of the signature of its saved return address was flipped, in each of the four tiers: the run must crash. Where nothing is signed the test crashes by itself |
+| `stress/bun-return-address-of-function-is-signed.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function signs the return address that it saves in LLInt, Baseline, the DFG and the FTL alike: `$vm.returnAddressOfCallerIsSigned()` signs the address again and compares. Elsewhere, and on a processor without pointer authentication (`$vm.functionsSignReturnAddress()`), the test ends at once |
+| `stress/bun-return-address-with-wrong-signature-is-not-returned-to.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function does not return once a bit of the signature of its saved return address was flipped, in each of the four tiers: the run must crash. Where nothing is signed the test crashes by itself |
 | the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 

@@ -364,6 +364,8 @@ jobs:
     env:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
+      SIGNS_RETURN_ADDRESSES: ${{ matrix.signs_return_addresses }}
+      WEBASSEMBLY: ${{ matrix.webassembly }}
     defaults:
       run:
         # Also on Windows (Git for Windows' bash).
@@ -461,11 +463,9 @@ jobs:
               echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
               # Without it no function signs the return address that it saves, and the tests of what reads such a word
               # (SIGNED_RETURN_ADDRESSES in lanes.mjs) pass whatever the code does.
-              if grep -qw paca /proc/cpuinfo; then echo "pointer authentication"; else
-                case "$LABEL" in
-                  *-arm64-lto-hardened | *-arm64-lto-hardened-no-webassembly) echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication" ;;
-                  *-arm64*) echo "no pointer authentication" ;;
-                esac
+              if grep -qw paca /proc/cpuinfo; then echo "pointer authentication"
+              elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
+              else echo "no pointer authentication"
               fi
               ;;
             macOS) echo "$(sysctl -n hw.ncpu) cores, $(($(sysctl -n hw.memsize) / 1073741824))GB of memory" ;;
@@ -487,7 +487,7 @@ jobs:
           for program in testair testb3 testmasm; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
           # A lane built with ENABLE_AOT=0 ships no testaot (`programs` in lanes.mjs).
           [ -x "$root/bin/testaot" ] || platform+=(--without-aot)
-          case "$LABEL" in *-no-webassembly) platform+=(--without-webassembly) ;; esac
+          [ "$WEBASSEMBLY" = true ] || platform+=(--without-webassembly)
           # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair, testb3 and testmasm where lanes.mjs
           # says so (testPrograms); the others are not built, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
