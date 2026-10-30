@@ -533,7 +533,7 @@ void NumbersOfPositions::collectCalls()
         }
         auto holdsEveryClosureOf = [&](ValueSetID group, ValueSetID set) {
             bool holdsAll = true;
-            sets.forEachMember(set, [&](ValueFlowObjectID member) {
+            sets.forEachMemberInLine(set, [&](ValueFlowObjectID member) {
                 holdsAll &= !universe.closureFunction(member) || sets.contains(group, member);
             });
             return holdsAll;
@@ -1961,6 +1961,15 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         update.fields[index].position = positions.updateFrom(result, asRead);
         if (declared != field.declared && !update.fields[index].position.type)
             update.fields[index].position.type = declared.written();
+        // `{ run: null }` in code without types: only the first value says that this field holds null, and every store is known.
+        bool takesWhatIsStored = false;
+        if (result.proof == ValueFlowProof::OutsideFamily && declared.isExpected() && !declared.site && !field.typeBeforeNarrowing && flow.location.reads == ReadState::OnlyCalled && asRead.hasOnlyPrimitives(Primitive::UndefinedOrNull) && inputs.sets().meet(stored, inputs.universe().closures())) {
+            ValueFlowPositionResult amongAllValues = positions.resultAmongAllValues(startsAbsent ? maker.unite(stored, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : stored);
+            if (amongAllValues.proof == ValueFlowProof::Proven && amongAllValues.narrowed) {
+                update.fields[index].position = { .type = types.intern(*amongAllValues.narrowed), .isProven = true };
+                takesWhatIsStored = true;
+            }
+        }
 
         ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, declared.written());
         bool storesOnlyObjectsOfType = (result.proof == ValueFlowProof::Proven && !positions.holdsObjectThatMayLieOutside(stored, asRead)) || result.proof == ValueFlowProof::NothingArrives
@@ -1972,9 +1981,9 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         if (asRead.primitives & Primitive::Integer && (storedIntegers.isSubsetOf(asRead.integers) || needsNoMarkers))
             surelyInside = maker.unite(surelyInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
         bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(primitivesAmong(stored), surelyInside);
-        if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
+        if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || takesWhatIsStored || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
-        else
+        else if (!takesWhatIsStored)
             noteValuesListedWithOtherTypes(index, asRead, surelyInside, storesOnlyObjectsOfType);
         if (!flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && flow.location.stores == StoreCount::AtMostOnce) {
             flow.location.stores = StoreCount::Unknown;

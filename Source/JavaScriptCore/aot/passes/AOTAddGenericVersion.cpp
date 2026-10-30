@@ -1954,7 +1954,7 @@ static FunctionID findGenericVersionBeside(const Program& program, FunctionID id
     return record && record->body == id && program.at(record->fallback).hasBody() ? record->fallback : FunctionID();
 }
 
-static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
+BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
 {
     const CFG& cfg = pass.analyses.cfg();
     // Nobody can tell that it ran, so nobody can tell that it ran twice.
@@ -2105,22 +2105,38 @@ static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, Blo
     return hasMoved;
 }
 
-// A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
-PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+FunctionID findGenericVersionToRestartIn(FunctionPassContext& pass)
 {
     const Program& program = pass.program;
-    Function& function = pass.function;
+    const Function& function = pass.function;
     FunctionID genericVersion = findGenericVersionBeside(program, pass.id, function);
     if (!genericVersion || function.at(entryBlock).parameters.size() != program.at(genericVersion).at(entryBlock).parameters.size())
-        return PassOutcome::Unchanged;
+        return { };
     const Function& generic = program.at(genericVersion);
     TypingContext typing { program, function, pass.types };
     if (!typing.typeOf(generic.result()).isSubsetOf(typing.typeOf(function.result()), program))
-        return PassOutcome::Unchanged;
+        return { };
     for (unsigned index = 0; index < generic.numberOfEntryParameters(); ++index) {
         if (!program.typeOf(function, function.at(entryBlock).parameters[index]).isSubsetOf(program.at(declaredEntryTypeOf(typing, generic, index)), program))
-            return PassOutcome::Unchanged;
+            return { };
     }
+    return genericVersion;
+}
+
+BlockID ensureCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder, FunctionID genericVersion)
+{
+    if (BlockID restart = findCallOfGenericVersion(pass, genericVersion))
+        return restart;
+    return emitCallOfGenericVersion(builder, genericVersion);
+}
+
+// A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
+PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+{
+    Function& function = pass.function;
+    FunctionID genericVersion = findGenericVersionToRestartIn(pass);
+    if (!genericVersion)
+        return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
     builder.setOrigin({ function.position, 0 });

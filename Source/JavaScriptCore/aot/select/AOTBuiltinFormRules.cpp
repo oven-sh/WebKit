@@ -189,8 +189,13 @@ InlineForm chooseFormOfDateBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
     case InlineBuiltin::DateGetField:
-    case InlineBuiltin::DateToISOString:
         return InlineForm::TwoWay;
+    case InlineBuiltin::DateToISOString: {
+        // The host's toJSON reads valueOf and toISOString by name, and each first read adds its member to Date.prototype. Where the program lists those keys, it sees that order.
+        const BuiltinTable& builtins = site.context.program().builtins();
+        bool addsMembers = builtins.canonicalID(site.overload.builtin) == Builtins::DatePrototypeToJSON && site.context.flow().listsKeysOf(builtins.canonicalID(builtins.at(site.overload.builtin).holder));
+        return callIf(site, addsMembers, InlineForm::TwoWay);
+    }
     case InlineBuiltin::DateNow:
     case InlineBuiltin::DateGetTime:
     case InlineBuiltin::DateGetMilliseconds:

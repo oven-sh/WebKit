@@ -397,7 +397,7 @@ ALWAYS_INLINE void ValueFlowGraph::addLink(Arena& arena, Links& links, uint32_t 
 uint64_t ValueFlowGraph::lowMembersOf(ValueSetID set, ValueSetMaker& maker) const
 {
     uint64_t low = 0;
-    m_sets.forEachMember(maker.intersect(set, m_lowMembers), [&](ValueFlowObjectID member) {
+    m_sets.forEachMemberInLine(maker.intersect(set, m_lowMembers), [&](ValueFlowObjectID member) {
         low |= 1ull << member.index();
     });
     return low;
@@ -515,12 +515,12 @@ void ValueFlowGraph::wake(ValueFlowNodeID first, uint32_t count)
 
 bool ValueFlowGraph::EdgeSet::add(ValueFlowEdge edge)
 {
-    if ((m_size + 1) * 3 > m_slots.span().size() * 2)
+    if ((m_size + 1) * 4 > m_slots.span().size() * 3)
         grow();
     uint64_t key = keyOf(edge);
-    size_t mask = m_slots.span().size() - 1;
+    size_t size = m_slots.span().size();
     size_t position = firstPositionOf(key);
-    for (; m_slots[position]; position = (position + 1) & mask) {
+    for (; m_slots[position]; position = position + 1 == size ? 0 : position + 1) {
         if (m_slots[position] == key)
             return false;
     }
@@ -534,8 +534,8 @@ bool ValueFlowGraph::EdgeSet::contains(ValueFlowEdge edge) const
     if (!m_slots)
         return false;
     uint64_t key = keyOf(edge);
-    size_t mask = m_slots.span().size() - 1;
-    for (size_t position = firstPositionOf(key); m_slots[position]; position = (position + 1) & mask) {
+    size_t size = m_slots.span().size();
+    for (size_t position = firstPositionOf(key); m_slots[position]; position = position + 1 == size ? 0 : position + 1) {
         if (m_slots[position] == key)
             return true;
     }
@@ -550,16 +550,15 @@ void ValueFlowGraph::EdgeSet::prefetch(ValueFlowEdge edge) const
 
 void ValueFlowGraph::EdgeSet::grow()
 {
-    size_t size = std::max<size_t>(m_slots.span().size() * 2, 1024);
+    size_t size = std::max<size_t>(m_slots.span().size() + m_slots.span().size() / 2, 1024);
     MallocSpan<uint64_t> previous = std::exchange(m_slots, MallocSpan<uint64_t>::malloc(size * sizeof(uint64_t)));
     zeroSpan(m_slots.mutableSpan());
-    size_t mask = size - 1;
     for (uint64_t key : previous.span()) {
         if (!key)
             continue;
         size_t position = firstPositionOf(key);
         while (m_slots[position])
-            position = (position + 1) & mask;
+            position = position + 1 == size ? 0 : position + 1;
         m_slots[position] = key;
     }
 }

@@ -254,7 +254,7 @@ void LedgerOfClassesAndClosures::fileWrites(ValueSetMaker& maker)
             }
             if (!setsWithHolders[worker].contains(node.objects))
                 continue;
-            sets.forEachMember(node.objects, [&](ValueFlowObjectID object) {
+            sets.forEachMemberInLine(node.objects, [&](ValueFlowObjectID object) {
                 if (isHolder(object))
                     filedOfStretch[position].append({ object.index(), group, 0, write });
             });
@@ -357,7 +357,7 @@ void LedgerOfClassesAndClosures::findLinks(ValueSetMaker& maker)
                     unite(m_linksOfAllObjects, node.value);
                     continue;
                 }
-                sets.forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                sets.forEachMemberInLine(node.objects, [&](ValueFlowObjectID object) {
                     unite(m_linksByObject.add(object.index(), ValueSets::nothing).iterator->value, node.value);
                 });
                 continue;

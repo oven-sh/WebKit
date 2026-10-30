@@ -559,7 +559,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 auto forEachCalleeThatBringsRow = [&](const auto& functor) {
                     AOT_THRESHOLD(size_t, fewestCalleesAskedOnce, 16);
                     if (sets.size(callees) < fewestCalleesAskedOnce) {
-                        sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                        sets.forEachMemberInLine(callees, [&](ValueFlowObjectID callee) {
                             if (bringsRow(callee))
                                 functor(callee);
                         });
@@ -758,7 +758,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
     entries.mayBeIntoAnyFunction = mayBeIntoAnyFunction.load(std::memory_order_relaxed);
     stampedCalls.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
     auto enterClosuresIn = [&](ValueFlowNodeID covered) {
-        sets.forEachMember(solver.possibleValuesOf(covered), [&](ValueFlowObjectID member) {
+        sets.forEachMemberInLine(solver.possibleValuesOf(covered), [&](ValueFlowObjectID member) {
             if (FunctionID function = universe.closureFunction(member))
                 stampedCalls.functionsEnteredWithoutRecord.quickSet(function.index());
         });

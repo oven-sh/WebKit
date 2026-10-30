@@ -153,7 +153,7 @@ public:
         , m_others(receivers)
     {
         const ValueFlowUniverse& universe = context.universe();
-        context.forEachMember(context.restrict(context.valueOf(receivers), universe.knownObjects()), [&](ValueFlowObjectID receiver) {
+        context.forEachMemberInLine(context.restrict(context.valueOf(receivers), universe.knownObjects()), [&](ValueFlowObjectID receiver) {
             m_known.append({ receiver, find(only(context, receiver)) });
         });
         m_others.mask = context.maker().intersect(m_others.mask, ValueSets::complement(universe.knownObjects()));
@@ -213,7 +213,7 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
     // A built-in is applied to the operands of this call and answers to this call alone, whoever else calls it.
     ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped(), .isFoundOnReceiver = true };
     Vector<ValueFlowObjectID, 4> applied;
-    context.forEachMember(context.restrict(members, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
+    context.forEachMemberInLine(context.restrict(members, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = universe.builtinOf(callee);
         if (raisesEventWhenCalled(context.program().builtins(), builtin))
             return;
@@ -259,7 +259,7 @@ ValueSetID objectsAllocatedByBuiltinsAs(ValueFlowRuleContext& context, ClimbingS
     const ValueFlowUniverse& universe = context.universe();
     ValueSetID others = ValueSets::complement(classes);
     Vector<ValueFlowObjectID, 8> allocated;
-    context.forEachMember(context.restrict(values, context.maker().intersect(universe.objectsThatMayBeAnything(), universe.knownObjects())), [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(context.restrict(values, context.maker().intersect(universe.objectsThatMayBeAnything(), universe.knownObjects())), [&](ValueFlowObjectID object) {
         ClimbingSet named = context.valueOf(context.written(only(context, object), allocatedAsName));
         if (!context.meet(named, ValueSets::anything) || context.meet(named, others))
             return;
@@ -4115,7 +4115,7 @@ static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet rece
 {
     const ValueFlowUniverse& universe = context.universe();
     Vector<ValueFlowObjectID, 4> made;
-    context.forEachMember(context.restrict(receivers, universe.knownObjects()), [&](ValueFlowObjectID receiver) {
+    context.forEachMemberInLine(context.restrict(receivers, universe.knownObjects()), [&](ValueFlowObjectID receiver) {
         const ValueFlowSite* site = universe.siteOf(receiver);
         if (site && site->origin == ValueFlowSiteOrigin::Operation && isCodeThatRecordsDescribe(universe, universe.functionOf(receiver)))
             made.append(receiver);
@@ -4364,7 +4364,7 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     auto find = [&](BuiltinName name) {
         ClimbingSet prototypes(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects);
         ClimbingSet ofClassesWithInstances = context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), context.valueWithin(prototypes, ValueFlowProgramNodes::escaped()));
-        context.forEachMember(ofClassesWithInstances, [&](ValueFlowObjectID prototype) {
+        context.forEachMemberInLine(ofClassesWithInstances, [&](ValueFlowObjectID prototype) {
             BuiltinID method = builtins.findOwnMember(builtins.canonicalID(universe.builtinOf(prototype)), name);
             if (!method)
                 return;
@@ -4414,7 +4414,7 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
     ValueSetID acting = universe.builtinFunctionsThatActOnReceiver();
     forEachNameCalledIn(behavior, [&](BuiltinName name) {
         bool isNameOfOne = false;
-        context.forEachMember(ClimbingSet(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects), [&](ValueFlowObjectID prototype) {
+        context.forEachMemberInLine(ClimbingSet(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects), [&](ValueFlowObjectID prototype) {
             BuiltinID method = builtins.findOwnMember(builtins.canonicalID(universe.builtinOf(prototype)), name);
             isNameOfOne |= method && context.contains(ClimbingSet(acting), universe.objectOf(method));
         });

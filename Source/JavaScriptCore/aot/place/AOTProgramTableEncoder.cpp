@@ -2745,8 +2745,12 @@ void encodeModuleTables(TableEncoder& encoder)
             continue;
         uint32_t firstRequest = lists.modules[importer].firstRequest;
         for (const ModuleRequestData& request : lists.requests.span().subspan(firstRequest, lists.modules[importer + 1].firstRequest - firstRequest)) {
-            if (!request.isRequire && lists.modules[request.target()].requireResult == RequireResult::NamespaceIfImported)
-                importsOfHeldFiles.append({ request.target(), importer });
+            if (request.isRequire)
+                continue;
+            const ModuleData& target = lists.modules[request.target()];
+            uint32_t file = target.isFaceOfFile() ? lists.requests[target.firstRequest].target() : request.target();
+            if (lists.modules[file].requireResult == RequireResult::NamespaceIfImported || lists.modules[file].mayBeImportedWhileItRuns())
+                importsOfHeldFiles.append({ file, importer });
         }
     }
     AOT::sort(importsOfHeldFiles, std::ranges::less { }, &ImportOfHeldFileData::key);

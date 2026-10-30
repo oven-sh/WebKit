@@ -62,6 +62,5 @@ runtime WeakMapSet : EncodedJSValue (JSCell* map, JSCell* lookupKey, EncodedJSVa
 runtime MapDelete, SetDelete : EncodedJSValue (JSCell* collection, EncodedJSValue lookupKey) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime MapClear, SetClear : void (JSCell* collection) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) throws collects
 runtime NewMapIterator, NewSetIterator : JSCell* (JSCell* collection, uint32_t kind) ; reads(all) writes(CollectionStorage, AllocatorState, RuntimeState) collects
-runtime StepMapIterator, StepSetIterator : UGPRPair (JSCell* iterator) ; reads(all) writes(InternalFields, CollectionStorage, AllocatorState, RuntimeState) throws collects
 runtime MapNext, SetNext : UGPRPair (JSCell* collection, EncodedJSValue table, uint32_t entry, EncodedJSValue* results) ; reads(all) writes(CollectionStorage, AllocatorState, RuntimeState)
 runtime TryNewSetFromIterable, TryNewMapFromEntries : JSCell* (EncodedJSValue iterable) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects

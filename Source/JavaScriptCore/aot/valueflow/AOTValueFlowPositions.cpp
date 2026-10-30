@@ -523,7 +523,7 @@ Type ValueFlowPositions::typeOfMembers(ValueSetID set)
     Vector<LayoutID, 8> layouts;
     Vector<StringID, 16> texts;
     bool hasMetInstance = false;
-    m_inputs.sets().forEachMember(set, [&](ValueFlowObjectID member) {
+    m_inputs.sets().forEachMemberInLine(set, [&](ValueFlowObjectID member) {
         if (member == ValueFlowUniverse::untrackedObject())
             return;
         bool isKey = universe.kindOf(member) == ValueFlowObjectKind::Key;
@@ -868,7 +868,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
     Vector<FunctionID> functions;
     Vector<BuiltinID> builtins;
     bool isComplete = !mayBeAnyCallee;
-    m_inputs.sets().forEachMember(listed, [&](ValueFlowObjectID member) {
+    m_inputs.sets().forEachMemberInLine(listed, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
         if (FunctionID function = universe.closureFunction(member)) {

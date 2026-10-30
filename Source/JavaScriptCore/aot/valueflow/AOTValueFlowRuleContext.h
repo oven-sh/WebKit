@@ -107,6 +107,7 @@ public:
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
 
     void forEachMember(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMember(set.m_set, functor); }
+    void forEachMemberInLine(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMemberInLine(set.m_set, functor); }
     bool anyMember(ClimbingSet set, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& functor) const { return sets().anyMember(set.m_set, functor); }
     // For a walk that would take the same step again.
     bool holdSameMembers(ClimbingSet first, ClimbingSet second) const { return first.m_set == second.m_set; }

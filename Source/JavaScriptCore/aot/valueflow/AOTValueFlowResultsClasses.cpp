@@ -868,8 +868,8 @@ static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs
     if (!Claims::isInSeenHandsAlone(ledger.handsOpenOn(closure)))
         return;
     flow.staticLink = Claims::mutabilityOf(ledger.writersOfPrototypeLink(closure));
-    flow.staticNamesAreComplete = followsNames && Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(closure), Claims::Redefinitions::MayAddNames, [](PropertyKeyID) {
-        return false;
+    flow.staticNamesAreComplete = followsNames && Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(closure), Claims::Redefinitions::MayAddNames, [&](PropertyKeyID key) {
+        return key && layout.findStaticField(key).has_value();
     });
 
     ValueFlowObjectID prototype = inputs.universe().prototypeOf(id);
@@ -984,7 +984,7 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
         for (const Write& write : ledger.writersOfPrototypeLink(universe.prototypeOf(derived)).seen().predicted()) {
             if (ValueSets::isComplement(write.seenToArrive))
                 continue;
-            inputs.sets().forEachMember(write.seenToArrive, [&](ValueFlowObjectID linked) {
+            inputs.sets().forEachMemberInLine(write.seenToArrive, [&](ValueFlowObjectID linked) {
                 LayoutID base = classOfPrototypeObject(linked);
                 // A factory that is handed its own result links two functions of the same text.
                 if (!base || base == derived)

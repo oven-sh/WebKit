@@ -81,6 +81,7 @@ export default b.declarations(
   b.intrinsic("nakedConstructor", "Value", { intrinsic: "Directive", directive: "NakedConstructor" }),
 
   b.intrinsic("undefined", "Value", { intrinsic: "Undefined" }),
+  b.intrinsic("arrayProtoValues", "Value", { intrinsic: "Builtin", path: "Array.prototype.values" }),
   b.intrinsic("Infinity", "Value", { intrinsic: "Double", value: Infinity }),
   b.intrinsic("MAX_SAFE_INTEGER", "Value", {
     intrinsic: "Int",

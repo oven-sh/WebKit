@@ -282,14 +282,21 @@ void ObjectInterpreter::executeAllocation(ValueID id)
             build(held, causeOf(id, findOperandIndex(function().at(id), value)));
     }
     // An iterator is born in front of the first element.
-    std::optional<uint32_t> position = description.kind == VirtualObjectKind::ArrayIterator ? family.findField(VirtualField::part(VirtualFieldKind::Position)) : std::nullopt;
-    if (position) {
+    const bool isIterator = description.kind == VirtualObjectKind::ArrayIterator || description.kind == VirtualObjectKind::CollectionIterator;
+    std::optional<uint32_t> position = isIterator ? family.findField(VirtualField::part(VirtualFieldKind::Position)) : std::nullopt;
+    // A Set or Map iterator made here has seen no table: its first step takes the one the collection holds then, which finds what the table of now would find.
+    std::optional<uint32_t> table = description.kind == VirtualObjectKind::CollectionIterator ? family.findField(VirtualField::part(VirtualFieldKind::Table)) : std::nullopt;
+    for (std::optional<uint32_t> born : { position, table }) {
+        if (!born)
+            continue;
         for (ObjectVariant& variant : state.variants)
-            variant.shape = family.intern(shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), *position));
+            variant.shape = family.intern(shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), *born));
     }
     const ObjectState& added = m_state.add(object, WTF::move(state));
     if (position && isRewriting())
         values().ensure(object).setField(*position, cursor().builder().appendInteger(0));
+    if (table && isRewriting())
+        values().ensure(object).setField(*table, cursor().builder().append(Opcode::Null, { }));
     if (description.kind == VirtualObjectKind::Object) {
         for (auto [field, value] : initialFields)
             willStore(m_sinking, object, added, field, { function().at(value).type });
@@ -1363,7 +1370,7 @@ void ObjectInterpreter::executeStore(ValueID id)
     if (typeProvenByFlow && isRewriting())
         stored = cursor().emit(makeAssumeType(stored, Proven::byFlowOfPosition(typeProvenByFlow)));
     storeField(object, *field, stored);
-    if (opcode == Opcode::PutInternalField && isRewriting())
+    if ((opcode == Opcode::PutInternalField || opcode == Opcode::PutCollectionIteratorTable) && isRewriting())
         replaceRead(id, resolve(stored));
     return didFoldStores(object, 1);
 }
@@ -1387,7 +1394,7 @@ std::optional<uint32_t> ObjectInterpreter::fieldFor(VirtualObjectID object, cons
 
 bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t field, ValueID stored) const
 {
-    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::Arguments };
+    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::CollectionIterator, VirtualObjectKind::Arguments };
     const VirtualFamily& family = m_sinking.familyOf(object);
     const VirtualField& virtualField = family.fieldAt(field);
     TypeID storedType = function().at(stored).type;
@@ -2874,6 +2881,8 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     for (const FieldValue& part : parts) {
         if (part.field.kind == VirtualFieldKind::Position)
             cursor().emit(IRBuilder::make(Opcode::PutInternalField, { cell, part.value }));
+        else if (part.field.kind == VirtualFieldKind::Table)
+            cursor().emit(IRBuilder::make(Opcode::PutCollectionIteratorTable, { cell, part.value }));
     }
     if (m_sinking.at(object).needsGuard) {
         Value guard(Opcode::AllGuards);

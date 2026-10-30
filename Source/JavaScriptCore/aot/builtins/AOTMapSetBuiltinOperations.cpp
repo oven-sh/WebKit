@@ -199,29 +199,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
-template<typename Iterator>
-static UGPRPair stepIterator(JSGlobalObject* globalObject, Iterator* iterator, ThrowScope& scope)
-{
-    if (JSCell* storage = iterator->tryGetStorage())
-        moveWalkedTableToHeap(globalObject, iterator->iteratedObject(), storage);
-    JSValue value;
-    bool hasNext = iterator->next(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
-    return makeUGPRPair(!hasNext, JSValue::encode(hasNext ? value : jsUndefined()));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTStepMapIterator, UGPRPair, (Instance* instance, JSCell* iterator))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStepMapIterator);
-    OPERATION_RETURN(scope, stepIterator(globalObject, cellArgument<JSMapIterator>(iterator, Entry::operationAOTStepMapIterator), scope));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTStepSetIterator, UGPRPair, (Instance* instance, JSCell* iterator))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStepSetIterator);
-    OPERATION_RETURN(scope, stepIterator(globalObject, cellArgument<JSSetIterator>(iterator, Entry::operationAOTStepSetIterator), scope));
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveCollectionCapacity, void, (Instance* instance, JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveCollectionCapacity);

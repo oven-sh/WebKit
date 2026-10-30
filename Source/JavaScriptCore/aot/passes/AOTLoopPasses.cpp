@@ -733,6 +733,141 @@ static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& b
     return true;
 }
 
+// `let sum = i; for (..) sum = (sum + x) | 0`: every turn hands on an int32, and only the first value may be no int32, yet that value makes the sum a double in every turn.
+// So the first value is tested once in front of the loop, and the loop gets a copy whose sum is an integer.
+static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    // What an inner loop hands on is its own first value or an int32, and its first value is that of the outer loop.
+    auto isInt32OrComesFrom = [&](ValueID parameter, ValueID start) {
+        BitVector seen(function.values.size());
+        Vector<ValueID, 8> worklist { start };
+        while (!worklist.isEmpty()) {
+            ValueID value = analyses.identityOf(worklist.takeLast());
+            if (value == parameter || program.typeOf(function, value).isInt32() || seen.quickSet(value.index()))
+                continue;
+            ValueLocation location = analyses.useLists().locationOf(value);
+            if (location.placement != ValuePlacement::Parameter || !analyses.isInCycle(location.block))
+                return false;
+            const CompactList<ValueID>& parametersOfBlock = function.at(location.block).parameters;
+            auto found = std::ranges::find(parametersOfBlock, value);
+            if (found == parametersOfBlock.end())
+                return false;
+            uint32_t indexInBlock = found - parametersOfBlock.begin();
+            for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+                if (edge.isHandlerEdge() || hasEdgeResults(function, edge))
+                    return false;
+                worklist.append(targetOf(function, edge).arguments[indexInBlock]);
+            }
+        }
+        return true;
+    };
+    // Outer loops come first: their copy holds a copy of what is inside.
+    Vector<const NaturalLoop*, 8> widestFirst;
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex)
+        widestFirst.append(&loops.loop(loopIndex));
+    AOT::stableSort(widestFirst, std::ranges::greater { }, &NaturalLoop::size);
+    for (const NaturalLoop* candidate : widestFirst) {
+        const NaturalLoop& loop = *candidate;
+        BlockID header = loop.header();
+        if (function.at(header).frequency.predicted() != BlockFrequency::Normal || !isHot(heatClassOf(context, header)).predicted())
+            continue;
+        std::optional<Edge> entry = loops.findSingleEntry(loop);
+        if (!entry || entry->isHandlerEdge())
+            continue;
+        std::optional<uint32_t> parameterIndex;
+        const CompactList<ValueID>& parameters = function.at(header).parameters;
+        for (uint32_t index = 0; index < parameters.size() && !parameterIndex; ++index) {
+            const Type& type = program.typeOf(function, parameters[index]);
+            if (!type.isNumberWithoutFraction() || type.isInteger())
+                continue;
+            bool handsOnInt32 = std::ranges::all_of(analyses.cfg().incomingEdges(header), [&](Edge edge) {
+                return !loops.belongsTo(edge.from, loop) || isInt32OrComesFrom(parameters[index], targetOf(function, edge).arguments[index]);
+            });
+            ValueID first = targetOf(function, *entry).arguments[index];
+            if (!handsOnInt32 || !program.typeOf(function, first).isNumberWithoutFraction())
+                continue;
+            // An outer loop that takes the sum back holds it as a number all the same, so the test in each of its turns gains nothing.
+            auto isTakenBackByOuterLoop = [&] {
+                BitVector seen(function.values.size());
+                Vector<ValueID, 8> worklist { first };
+                while (!worklist.isEmpty()) {
+                    ValueID value = analyses.identityOf(worklist.takeLast());
+                    if (value == parameters[index])
+                        return true;
+                    ValueLocation location = analyses.useLists().locationOf(value);
+                    if (seen.quickSet(value.index()) || location.placement != ValuePlacement::Parameter)
+                        continue;
+                    const CompactList<ValueID>& parametersOfBlock = function.at(location.block).parameters;
+                    auto found = std::ranges::find(parametersOfBlock, value);
+                    if (found == parametersOfBlock.end())
+                        continue;
+                    uint32_t indexInBlock = found - parametersOfBlock.begin();
+                    for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+                        if (!edge.isHandlerEdge() && !hasEdgeResults(function, edge))
+                            worklist.append(targetOf(function, edge).arguments[indexInBlock]);
+                    }
+                }
+                return false;
+            };
+            if (isTakenBackByOuterLoop())
+                continue;
+            // Beside what may be a fraction the integer is converted in every turn.
+            auto isWithoutFraction = [&](ValueID operand) {
+                return !(program.typeOf(function, operand).primitives & Primitive::FractionalNumber);
+            };
+            bool isReckonedWith = std::ranges::any_of(analyses.useLists().usesOf(parameters[index]), [&](const Use& use) {
+                const Value& user = function.at(use.user);
+                if (use.kind != Use::Kind::Operand || !hasOperatorForm(user.opcode) || relationalOperators.contains(user.opcode) || !loops.belongsTo(use.block, loop))
+                    return false;
+                return user.numberOfOperands() != 2 || isWithoutFraction(user.operand(1 - use.operandIndex));
+            });
+            if (isReckonedWith)
+                parameterIndex = index;
+        }
+        if (!parameterIndex || !isExpectedToRun(context, loop).predicted())
+            continue;
+        Vector<BlockID> region;
+        uint64_t bytes = 0;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            region.append(loop.at(index));
+            bytes += estimatedCodeBytes(program, function, function.at(loop.at(index)));
+        }
+        if (context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes) || RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
+            continue;
+
+        IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        builder.setOrigin(function.at(entry->from).terminator.origin());
+        BlockID front = builder.splitEdge(*entry);
+        Expected<BlockFrequency> frequency = function.at(front).frequency;
+        Arguments arguments(function.at(front).terminator.next().arguments);
+        function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(front);
+        ValueID test = builder.appendTypeTest(arguments[*parameterIndex], TypeTable::int32);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
+        RegionCloner cloner(builder, function);
+        cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitJump(header, Arguments(arguments));
+        arguments[*parameterIndex] = branch.provenOnTaken;
+        builder.moveToEndOf(branch.taken);
+        builder.emitJump(cloner.cloneOf(header), WTF::move(arguments));
+        analyses.didChangeControlFlow();
+        cloner.repairSSA(analyses);
+        analyses.didChangeControlFlow();
+        for (BlockID block : region)
+            function.edit(block, BlockEdit::Rest).frequency = BlockFrequency::Rare;
+        analyses.didChangeControlFlow();
+        ValueID narrowed = function.at(cloner.cloneOf(header)).parameters[*parameterIndex];
+        narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, std::span(&narrowed, 1));
+        return true;
+    }
+    return false;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
@@ -782,6 +917,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         context.hasCountersConvertedSinceTestsWerePlaced = true;
     }
     if (expectCarriedNumbersToStayInt32(context, builder)) {
+        context.hasCountersConvertedSinceTestsWerePlaced = true;
+        outcome = PassOutcome::Changed;
+    }
+    while (copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
@@ -901,26 +1040,11 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         });
         return result;
     };
-    // `mode === "fast"`: a constant goes wherever its user goes.
-    auto isConstantOfLoop = [&](ValueID operand) {
-        BlockID block = definingBlock[operand.index()];
-        return block && body.get(block.index()) && familyOf(function.at(operand).opcode) == OperationFamily::Constant;
-    };
-    auto testsInvariantValues = [&](const Value& value) {
-        bool result = true;
-        value.forEachOperand([&](ValueID operand, uint32_t) {
-            BlockID block = definingBlock[operand.index()];
-            result &= block && (!body.get(block.index()) || isConstantOfLoop(operand));
-        });
-        return result;
-    };
     bool hasCandidate = false;
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (testsOfValuesThemselves.contains(value.opcode))
-                return testsInvariantValues(value);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || isCollectionLookup(program, value))
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -961,7 +1085,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         if (testsOfValuesThemselves.contains(value.opcode)) {
             // A comparison is declared to throw where it flattens a rope and memory runs out: it does not leave its handler.
             bool staysUnderItsHandler = function.at(block).handler == function.at(preheader).handler || !context.analyses.effectsOf(id).normal.mayThrow;
-            return staysUnderItsHandler && !keptReads.get(id.index()) && testsInvariantValues(value);
+            return staysUnderItsHandler && !keptReads.get(id.index()) && hasInvariantOperands(value);
         }
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
@@ -1047,22 +1171,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 valuesAroundFact.removeFirst(fact);
                 function.edit(preheader).values.append(fact);
                 definingBlock[fact.index()] = preheader;
-            }
-            if (testsOfValuesThemselves.contains(function.at(id).opcode)) {
-                Vector<std::pair<uint32_t, ValueID>, 2> constants;
-                function.at(id).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                    if (isConstantOfLoop(operand))
-                        constants.append({ operandIndex, operand });
-                });
-                for (auto [operandIndex, constant] : constants) {
-                    Value copy = function.at(constant);
-                    builder.setOrigin(copy.origin());
-                    ValueID copied = builder.addDetached(WTF::move(copy));
-                    function.edit(preheader).values.append(copied);
-                    while (definingBlock.size() < function.values.size())
-                        definingBlock.append(preheader);
-                    function.edit(id).setOperand(operandIndex, copied);
-                }
             }
             if (!hasInvariantOperands(function.at(id))) {
                 function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));

@@ -70,5 +70,6 @@ function f1 name="isAbsolute" module=m0 flags=[IsChecked, HasExplicitName] lengt
 # NONE-NOT: Reads:StringImpl_length
 # NONE-LABEL: end of function
 # CALLS-LABEL: f3: size=
+# CALLS-NEXT: function f4 x1
 # CALLS-NEXT: stub RopeCharacters x1
 # CALLS-NEXT: f4: size=

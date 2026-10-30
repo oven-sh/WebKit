@@ -53,6 +53,7 @@ struct FieldInputs {
     const FieldFlow& flow;
     const Type& type;
     const SlotRowUse& use;
+    bool someCodeReadsByKey;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
     Expected<bool> isNamedSomewhere;
@@ -259,6 +260,11 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
         .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
     });
+    // The object is in hands that nobody knows and no code reads this number by name: it goes to whoever asks for it by key or lists it, as a value. From a double it would be made into one each time.
+    bool isDouble = claim.representation == SlotRepresentation::Double || claim.representation == SlotRepresentation::OptionalDouble;
+    bool isReadByKeyAlone = field.someCodeReadsByKey && isObjectLayout(field.layout.kind) && !field.use.accessSites && field.layout.flow.cause == UnprovenCause::ReachesUnknownJavaScript;
+    if (isDouble && isReadByKeyAlone)
+        claim.representation = SlotRepresentation::JSValue;
     claim.mayBeOutOfLine = mayBeOutOfLine(field, claim);
     if (claim.mayBeOutOfLine)
         claim.outOfLineRepresentation = outOfLineRepresentationFor(context, field.type.withPrimitives(Primitive::Absent), claim.needsWideReference);
@@ -363,6 +369,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, 
         .flow = flowOf(program, reference),
         .type = typeHeldBy(program, declaration),
         .use = use,
+        .someCodeReadsByKey = uses.readsByKeyFoundAtRunTime.at(0),
         .isCreatedByStore = fieldsCreatedByStores.quickGet(declaringRowOf(context, reference)),
         .isInObjectBornWithoutValues = use.initializingSites && !use.sitesInitializingWithValue && isBornWithoutValues(context, uses, reference.layout),
         .isNamedSomewhere = isNamedSomewhere(program, uses, declaration, use),

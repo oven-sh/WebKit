@@ -84,14 +84,18 @@ struct OrderedKey {
     unsigned attributes;
 };
 
-static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
+static bool extraPropertiesAreWalkedDirectly(JSObject* extra, Elements elements)
 {
     Structure* structure = extra->structure();
-    return extra->type() != FinalObjectType
-        || (elements == Elements::AreLeftOut ? extra->canHaveExistingOwnIndexedGetterSetterProperties() : JSC::hasIndexedProperties(extra->indexingType()))
-        || structure->hasAnyKindOfGetterSetterProperties()
-        || structure->isUncacheableDictionary()
-        || extra->hasNonReifiedStaticProperties();
+    return extra->type() == FinalObjectType
+        && (elements == Elements::AreLeftOut ? !extra->canHaveExistingOwnIndexedGetterSetterProperties() : !JSC::hasIndexedProperties(extra->indexingType()))
+        && !structure->hasAnyKindOfGetterSetterProperties()
+        && !extra->hasNonReifiedStaticProperties();
+}
+
+static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
+{
+    return !extraPropertiesAreWalkedDirectly(extra, elements) || extra->structure()->isUncacheableDictionary();
 }
 
 // A walk hands out values, a store that asks nobody writes them, and neither runs code. So they are not for an object that is asked to prepare itself first.
@@ -332,11 +336,68 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         });
         return isStopped ? Result::Stopped : Result::Completed;
     }
-    if (extraPropertiesNeedGenericPath(extra, elements))
+    // A walk runs no code, so a dictionary that has lost a name is as good as any. Only a list kept for its Structure does not last.
+    if (!extraPropertiesAreWalkedDirectly(extra, elements))
         return Result::NeedsGenericPath;
-    if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
-        return *result;
+    if (!extra->structure()->isUncacheableDictionary()) {
+        if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
+            return *result;
+    }
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
+}
+
+Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* typed = compiledObjectOrNull(object);
+    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
+        return Result::NeedsGenericPath;
+    JSObject* extra = typed->extraProperties();
+    if (extra && !extraPropertiesAreWalkedDirectly(extra, Elements::NeedGenericPath))
+        return Result::NeedsGenericPath;
+    State& state = typed->state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    Vector<OrderedKey, 32> ordered;
+    if (extra)
+        ordered = collectKeysInOrder(vm, *typed, extra);
+    else {
+        std::span<const FieldData> fields = typed->layout().fields();
+        typed->forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed->read(field))
+                ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed->attributesOf(field) });
+        });
+    }
+    StructureID structure = typed->structureID();
+    uint32_t orderWord = typed->orderWord();
+    StructureID structureOfExtra = extra ? extra->structureID() : StructureID();
+    // A getter may change the object: what is left is then asked for by name.
+    bool isAsListed = true;
+    for (bool wantsSymbols : { false, true }) {
+        for (const OrderedKey& key : ordered) {
+            if (key.name->isSymbol() != wantsSymbols || PropertyName(key.name).isPrivateName())
+                continue;
+            JSValue value;
+            if (isAsListed && !(key.attributes & PropertyAttribute::Accessor)) {
+                if (key.attributes & PropertyAttribute::DontEnum)
+                    continue;
+                value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+            } else {
+                PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, PropertyName(key.name), slot);
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                    continue;
+                value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, PropertyName(key.name)) : slot.getValue(globalObject, PropertyName(key.name));
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                isAsListed = isAsListed && typed->structureID() == structure && typed->orderWord() == orderWord && (!extra || (typed->extraProperties() == extra && extra->structureID() == structureOfExtra && !extra->structure()->isDictionary()));
+            }
+            names.append(key.name);
+            values.appendWithCrashOnOverflow(value);
+        }
+    }
+    return Result::Completed;
 }
 
 bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)

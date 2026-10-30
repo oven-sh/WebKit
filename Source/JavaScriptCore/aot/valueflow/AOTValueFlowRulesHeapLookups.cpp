@@ -1307,7 +1307,7 @@ bool HeapRule::surelyComesToMember(ClimbingSet start, PropertyKeyID name)
 
         Members atCreation;
         bool mayEndHere = false;
-        m_context.forEachMember(current, [&](ValueFlowObjectID object) {
+        m_context.forEachMemberInLine(current, [&](ValueFlowObjectID object) {
             size_t numberOfOthers = atCreation.size();
             appendPrototypeAtCreation(object, atCreation);
             const ValueFlowSite* site = m_universe.siteOf(object);
@@ -1318,7 +1318,7 @@ bool HeapRule::surelyComesToMember(ClimbingSet start, PropertyKeyID name)
             return false;
 
         bool everyHolderAnswers = true;
-        m_context.forEachMember(m_context.restrict(above, members.holders), [&](ValueFlowObjectID holder) {
+        m_context.forEachMemberInLine(m_context.restrict(above, members.holders), [&](ValueFlowObjectID holder) {
             everyHolderAnswers &= m_context.sets().contains(members.holdersWithLockedLocation, holder) && answersWithMember(holder, name);
         });
         if (!everyHolderAnswers)
@@ -1484,7 +1484,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     if (!mayFindNothing && key.keyClass == HeapKeyClass::Name) {
         ClimbingSet startThatGoesUp = m_context.restrict(chain.start, ValueSets::complement(instancesThatKeepProperty(chain.start, key.name)));
         mayFindNothing = holdsAnything(startThatGoesUp) && !surelyComesToMember(startThatGoesUp, key.name);
-        m_context.forEachMember(m_context.restrict(chain.holdersThatAnswer, m_tables.under(key.name).holders), [&](ValueFlowObjectID holder) {
+        m_context.forEachMemberInLine(m_context.restrict(chain.holdersThatAnswer, m_tables.under(key.name).holders), [&](ValueFlowObjectID holder) {
             mayFindNothing |= !answersWithMember(holder, key.name);
         });
         if (!mayFindNothing && (holdsAnything(startThatGoesUp) || holdsAnything(chain.holdersThatAnswer))) {
@@ -1632,7 +1632,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(result, m_universe.anyPrimitive());
 
     bool undescribedNativeCodeIsOfEngine = !chain.holdsUntrackedObject && !m_context.contains(getters, m_tables.undescribedNativeCode());
-    m_context.forEachMember(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), [&](ValueFlowObjectID holder) {
+    m_context.forEachMemberInLine(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), [&](ValueFlowObjectID holder) {
         BuiltinID builtin = m_universe.builtinOf(holder);
         undescribedNativeCodeIsOfEngine &= builtin && m_builtins.at(builtin).origin == BuiltinOrigin::Engine;
     });
@@ -1756,7 +1756,7 @@ void HeapRule::collectAccessors(BuiltinCallMode mode)
             forEachMemberUnder(objects, key, appendIfAccessor);
             return;
         }
-        m_context.forEachMember(m_context.restrict(objects, m_tables.holdersWithMembers()), [&](ValueFlowObjectID holder) {
+        m_context.forEachMemberInLine(m_context.restrict(objects, m_tables.holdersWithMembers()), [&](ValueFlowObjectID holder) {
             if (ModuleID module = m_universe.moduleOf(holder)) {
                 for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder)))
                     appendIfAccessor(member, module);

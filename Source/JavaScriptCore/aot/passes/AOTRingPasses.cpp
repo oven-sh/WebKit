@@ -46,6 +46,7 @@
 #include "AOTVector.h"
 #include "AOTVirtualObject.h"
 #include "JSArrayIterator.h"
+#include "JSSetIterator.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
 #include "PureNaN.h"
@@ -475,6 +476,15 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
         return left.kind() == KnownValue::Kind::Boolean ? KnownValue::boolean(!left.asBoolean()) : KnownValue();
     case Opcode::TypeTest:
         return toKnownValue(evaluateTypeTest(program, left, program.at(value.testedType())));
+    case Opcode::IsPristine: {
+        const Type& operand = program.typeOf(function, value.valueOperand());
+        return operand.singleBuiltinClass() && operand.singleBuiltinClass()->builtinClass == value.builtinClass() && !operand.mayBeUndefinedOrNull() && pristineAspectsProvenBy(operand, value.builtinClass()).containsAll(value.aspects()) ? KnownValue::boolean(true) : KnownValue();
+    }
+    case Opcode::IsPristineArray: {
+        const Type& list = program.typeOf(function, value.valueOperand());
+        bool isList = list.singleBuiltinClass() && list.singleBuiltinClass()->builtinClass == BuiltinClasses::Array && !list.mayBeUndefinedOrNull();
+        return isList && pristineAspectsProvenBy(list, BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names }) ? KnownValue::boolean(true) : KnownValue();
+    }
     case Opcode::StrictEq:
         return toKnownValue(evaluateEquality(left, right, EqualityKind::Strict));
     case Opcode::Eq:
@@ -1582,19 +1592,56 @@ struct ConstantFolder {
             return foldWalkFromNewObject(id, value);
         case Opcode::GetInternalField:
             return foldFieldOfNewArrayIterator(id, value);
+        case Opcode::IsCollectionIteratorClosedMark: {
+            Opcode held = function.at(value.tableOperand()).opcode;
+            if (held == Opcode::Null)
+                return becomeBoolean(id, KnownBoolean::False);
+            return held == Opcode::CollectionIteratorClosedMark && becomeBoolean(id, KnownBoolean::True);
+        }
         case Opcode::HasJSType:
-            if (!makesArrayIterator(program, function, function.at(sameObjectThroughCasts(function, value.valueOperand()))))
-                return false;
-            return becomeBoolean(id, knownBoolean(toJSType(value.first()) <= JSArrayIteratorType && JSArrayIteratorType <= toJSType(value.last())));
+            return foldKindOfNewIterator(id, value);
         default:
             return false;
         }
+    }
+
+    bool foldKindOfNewIterator(ValueID id, const Value& test)
+    {
+        const Value& made = function.at(sameObjectThroughCasts(function, test.valueOperand()));
+        JSType type;
+        if (makesArrayIterator(program, function, made))
+            type = JSArrayIteratorType;
+        else if (makesCollectionIterator(program, function, made))
+            type = program.typeOf(function, made.receiverOperand()).isSubsetOf(Type::builtinClass(BuiltinClasses::Map), program) ? JSMapIteratorType : JSSetIteratorType;
+        else
+            return false;
+        return becomeBoolean(id, knownBoolean(toJSType(test.first()) <= type && type <= toJSType(test.last())));
+    }
+
+    // `const it = set.values(); it.next()`: a Set or Map iterator gets its collection and its kind when it is made, and nothing stores to either again.
+    bool foldFieldOfNewCollectionIterator(ValueID id, const Value& read, const Value& made)
+    {
+        BuiltinID builtin = program.builtins().at(made.overload()).builtin;
+        IterationKind kind = builtin == Builtins::MapPrototypeKeys ? IterationKind::Keys : builtin == Builtins::MapPrototypeValues || builtin == Builtins::SetPrototypeValues ? IterationKind::Values : IterationKind::Entries;
+        switch (static_cast<JSSetIterator::Field>(read.index())) {
+        case JSSetIterator::Field::Entry:
+        case JSSetIterator::Field::Storage:
+            return false;
+        case JSSetIterator::Field::IteratedObject:
+            becomeUpcast(function, id, made.receiverOperand());
+            return true;
+        case JSSetIterator::Field::Kind:
+            return becomeConstant(id, KnownValue::integer(static_cast<int64_t>(kind)));
+        }
+        return false;
     }
 
     // `const it = list[Symbol.iterator](); it.next()`: an array iterator gets its list and its kind when it is made, and nothing stores to either again.
     bool foldFieldOfNewArrayIterator(ValueID id, const Value& read)
     {
         const Value& made = function.at(sameObjectThroughCasts(function, read.objectOperand()));
+        if (makesCollectionIterator(program, function, made))
+            return foldFieldOfNewCollectionIterator(id, read, made);
         if (!makesArrayIterator(program, function, made))
             return false;
         BuiltinID builtin = program.builtins().at(made.overload()).builtin;

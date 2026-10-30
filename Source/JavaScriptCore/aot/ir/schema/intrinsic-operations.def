@@ -18,6 +18,8 @@ operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boole
 operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; flow = TableProves
 operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects, engine allocationSite?: AllocationSite) -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; removedBy = ResolveBuiltins ; flow = Allocates ; flowRule = Heap
 operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
+operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
+operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
 
 family RuntimeIntrinsic AsRead..Placed ; isIntrinsic = true
 operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unknownCode ; runtime = RequireBuiltinModule ; flow = Copies ; flowRule = Module
@@ -35,7 +37,8 @@ operation ResolvePromise (promise: Object/inspects+writesContents, value: Any/re
 operation RejectPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = RejectPromise ; flow = Copies ; flowRule = Promise
 
 family ArrayIntrinsic AsRead..Placed ; isIntrinsic = true
-operation IsPristineArray (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ArrayStorage) ; proves = Pristine ; branches = May ; flow = TableProves
+# The front end asks it where a program writes Array.from(list).
+operation IsPristineArray (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ArrayStorage) ; proves = Pristine ; branches = May ; hasKnownValueRule = true ; flow = TableProves ; isIntrinsic = false
 operation ArrayStorageKind (array: Array/inspects) -> natural(ArrayStorage) ; reads(ArrayStorage) ; flow = TableProves
 operation HasContiguousIndex (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves
 operation GetContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array]) ; flow = Copies ; flowRule = Heap
@@ -58,7 +61,9 @@ operation TruncateNewArray (array: Array/inspects+returns+writesContents, length
 
 family CollectionIntrinsic AsRead..Placed ; isIntrinsic = true
 operation CollectionTable (collection: Object/inspects) -> unknown ; reads(CollectionStorage) ; flow = Copies
-operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; Allocates reads(InternalFields, CollectionStorage, CollectionEntries) writes(InternalFields, CollectionStorage) throws ; runtime = StepMapIterator ; flow = Copies ; flowRule = StepOfLibrary
-operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; Allocates reads(InternalFields, CollectionStorage, CollectionEntries) writes(InternalFields, CollectionStorage) throws ; runtime = StepSetIterator ; flow = Copies ; flowRule = StepOfLibrary
+operation CollectionIteratorClosedMark () -> unknown ; CreatesConstant ; flow = Unsound
+operation GetCollectionIteratorTable (object: Object/inspects) -> unknown ; reads(InternalFields) ; flow = Unsound ; interpreted = Read
+operation PutCollectionIteratorTable (object: Object/inspects+writesContents, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Unsound ; interpreted = Store
+operation IsCollectionIteratorClosedMark (table: Any/inspects) -> natural(boolean) ; none ; flow = TableProves
 operation MapNext (map: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(MapNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(map), unknown => declared(map)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; runtime = MapNext ; flow = Copies ; flowRule = StepOfLibrary
 operation SetNext (set: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(SetNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(set)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; runtime = SetNext ; flow = Copies ; flowRule = StepOfLibrary

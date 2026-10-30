@@ -247,7 +247,7 @@ public:
     SharedLists forEachLayoutNamedByMembers(ValueSetID objects, Vector<uint32_t, 4>& lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
         SharedLists shared;
-        m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+        m_inputs.sets().forEachMemberInLine(objects, [&](ValueFlowObjectID object) {
             LayoutID named = namedLayoutOf(object);
             if (!named)
                 return;

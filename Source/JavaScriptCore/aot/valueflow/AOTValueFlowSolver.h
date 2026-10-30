@@ -241,8 +241,8 @@ public:
     {
         if (!m_slots)
             return nullptr;
-        size_t mask = m_slots.span().size() - 1;
-        for (size_t position = firstPositionOf(key + 1, mask);; position = (position + 1) & mask) {
+        size_t size = m_slots.span().size();
+        for (size_t position = firstPositionOf(key + 1, size);; position = position + 1 == size ? 0 : position + 1) {
             const Slot& slot = m_slots[position];
             if (slot.keyPlusOne() == key + 1)
                 return &slot.number;
@@ -265,10 +265,10 @@ private:
     };
 
     // The keys of one table may have been picked by the high bits of one product.
-    static size_t firstPositionOf(uint64_t keyPlusOne, size_t mask)
+    static size_t firstPositionOf(uint64_t keyPlusOne, size_t size)
     {
         uint64_t hash = keyPlusOne * 0x9e3779b97f4a7c15ull;
-        return (hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull >> std::countl_zero(mask);
+        return static_cast<UInt128>((hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull) * size >> 64;
     }
     void grow();
 
@@ -657,6 +657,7 @@ private:
     void rememberWhoLoggedTheEdges();
     bool runRules();
     void letSomeDueStatementsWait();
+    void letStatementsThatRunOftenWait();
     void runDueStatements(bool isFirstLapOfTurn);
     bool merge();
     void numberMadeNodes();
@@ -905,6 +906,9 @@ private:
     uint32_t m_seedOfSchedule { 0 };
     uint32_t m_numberOfNodesGivenMore { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
+    Vector<ValueFlowStatementID> m_statementsThatRunOften;
+    Vector<uint8_t> m_timesRunOfStatement;
+    Vector<uint32_t> m_roundOfNextRun;
     void findStatementsWithLongRowsBehindThem();
     void letLongRowsGoFirst();
     bool hasLongRowBehindIt(ValueFlowStatementID statement) const { return m_hasLongRows && statement.index() < m_input.statements.size() && m_hasLongRowBehindIt.quickGet(statement.index()); }

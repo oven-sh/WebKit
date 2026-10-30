@@ -125,7 +125,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     ClimbingSet builtinFunctions = context.restrict(call.callees, universe.builtinFunctionsOfProtocols());
     if (call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName && context.contains(call.callees, ValueFlowUniverse::unknownObject())) {
-        context.forEachMember(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
+        context.forEachMemberInLine(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
             if (context.program().builtins().at(universe.builtinOf(callee)).origin != BuiltinOrigin::Host)
                 noteCallOfBuiltin(universe.builtinOf(callee), ValueFlowCallKind::CallByNativeCode, context);
         });

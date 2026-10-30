@@ -15,6 +15,7 @@
 #include <bit>
 #include <memory>
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -225,7 +226,20 @@ public:
 
     uint64_t hashOfMembers(ValueSetID) const;
 
+    // Hundreds of callers share one walk over the stored form and pay a call for each word of members.
     void forEachMember(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
+    {
+        walkMembers<false>(set, functor);
+    }
+
+    // For the walks that a build runs most, at the price of a copy of the walk for each.
+    void forEachMemberInLine(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
+    {
+        walkMembers<true>(set, functor);
+    }
+
+    template<bool isInLine>
+    ALWAYS_INLINE void walkMembers(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
     {
         if (isComplement(set)) [[unlikely]] {
             auto callForRange = [&](uint32_t begin, uint32_t end) NEVER_INLINE {
@@ -233,14 +247,14 @@ public:
                     functor(ValueFlowObjectID(member));
             };
             uint32_t next = 0;
-            forEachStoredMember(set, [&](uint32_t member) {
+            forEachStoredMember<isInLine>(set, [&](uint32_t member) {
                 callForRange(next, member);
                 next = member + 1;
             });
             callForRange(next, m_sizeOfUniverse);
             return;
         }
-        forEachStoredMember(set, [&](uint32_t member) {
+        forEachStoredMember<isInLine>(set, [&](uint32_t member) {
             functor(ValueFlowObjectID(member));
         });
     }
@@ -623,13 +637,27 @@ private:
         }
     }
 
+    template<bool isInLine = true>
     void forEachStoredMember(ValueSetID set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
-        anyStoredMember(set, [&](uint32_t member) {
-            functor(member);
-            return false;
-        });
+        if constexpr (isInLine) {
+            anyStoredMember(set, [&](uint32_t member) {
+                functor(member);
+                return false;
+            });
+        } else {
+            if (holdsOneMember(storedSetOf(set))) {
+                functor(onlyMemberOf(storedSetOf(set)));
+                return;
+            }
+            forEachWordOfRun(set, [&](uint32_t first, uint64_t bits) {
+                for (; bits; bits &= bits - 1)
+                    functor(first + static_cast<uint32_t>(std::countr_zero(bits)));
+            });
+        }
     }
+
+    void forEachWordOfRun(ValueSetID, const ScopedLambda<void(uint32_t first, uint64_t bits)>&) const;
 
     struct RememberedByAll {
         std::atomic<uint64_t> resultAndCount { 0 };

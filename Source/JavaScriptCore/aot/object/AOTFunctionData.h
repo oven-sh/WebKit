@@ -45,6 +45,8 @@ struct FunctionKindData {
 
     constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
+    // A plain function that the statements of its file store members on: they lie in variables, as static fields of a class do. It shares the bit of a derived constructor, which no plain function is.
+    constexpr bool hasStaticFields() const { return !isConstructor && isDerivedConstructor; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
     constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
     constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }

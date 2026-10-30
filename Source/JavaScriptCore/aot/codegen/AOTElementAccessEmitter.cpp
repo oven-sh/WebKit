@@ -262,7 +262,7 @@ Operand ElementAccessEmitter::convertRawElement(const ArrayStorageForm& form, Op
     if (form.element == Representation::Double && holdsDouble(representation))
         return Operand(representation, rawElement.value);
     if (form.element == Representation::Int32 && holdsUnboxedNumber(representation))
-        return convertInt32Element(unboxInt32(rawElement.as<Boxed>()), representation);
+        return convertInt32Element(unboxInt32Element(rawElement.as<Boxed>()), representation);
     return emitter<ConversionEmitter>().unbox(boxRawElement(form, rawElement), result, representation);
 }
 

@@ -1085,7 +1085,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     objectsHoldingOnlyWhatWasWritten.append(object);
             };
             // An object that no case lists among those that hold what the solve shows is left to its class.
-            maker.sets().forEachMember(knownObjectsOfProgram, [&](ValueFlowObjectID object) {
+            maker.sets().forEachMemberInLine(knownObjectsOfProgram, [&](ValueFlowObjectID object) {
                 switch (universe.kindOf(object)) {
                 case ValueFlowObjectKind::RestArray:
                     arraysThatOperationsAllocate.append(object);
@@ -1152,7 +1152,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_constantsHoldingModules = ConstantsHoldingModules(program);
         },
         [&] {
-            maker.sets().forEachMember(universe.arrays(), [&](ValueFlowObjectID object) {
+            maker.sets().forEachMemberInLine(universe.arrays(), [&](ValueFlowObjectID object) {
                 const ValueFlowSite* site = universe.siteOf(object);
                 if (site && site->origin == ValueFlowSiteOrigin::Operation && program.at(universe.functionOf(object)).at(site->value).opcode == Opcode::NewTemplateObject)
                     templateObjects.append(object);

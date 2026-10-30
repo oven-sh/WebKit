@@ -222,7 +222,7 @@ private:
 
     ValueFlowObjectID objectOfMember(BuiltinID member, ModuleID) const;
     BuiltinID memberUnder(BuiltinID holder, PropertyKeyID) const;
-    void forEachMemberUnder(ClimbingSet objects, const HeapKey&, NOESCAPE const Invocable<void(BuiltinID member, ModuleID)> auto&);
+    void forEachMemberUnder(ClimbingSet objects, const HeapKey&, const ScopedLambda<void(BuiltinID member, ModuleID)>&);
     ClimbingSet holdersFoundThroughUnknownObject(const HeapKey&);
     ClimbingSet prototypeObjectsAboveEscapedEntries(std::span<const ValueFlowClassOfEntries>, ClimbingSet holders);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
@@ -418,7 +418,7 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
     AOT_THRESHOLD(uint32_t, mostNamesOfOneKeyToldApart, 32);
     bool countsNamesOfProgramTogether = m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
     bool hasNameOfProgram = false;
-    m_context.forEachMember(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
+    m_context.forEachMemberInLine(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
         HeapKey key = keyNamed(m_universe.keyOf(constant));
         if (key.keyClass == HeapKeyClass::Index) {
             namesIndex = true;
@@ -505,9 +505,9 @@ void HeapRule::forEachNodeReadByName(ValueFlowName name, NOESCAPE const Invocabl
     functor(m_context.readWhatWasWritten(unknownObjectAlone(), name));
 }
 
-void HeapRule::forEachMemberUnder(ClimbingSet objects, const HeapKey& key, NOESCAPE const Invocable<void(BuiltinID member, ModuleID)> auto& functor)
+inline NEVER_INLINE void HeapRule::forEachMemberUnder(ClimbingSet objects, const HeapKey& key, const ScopedLambda<void(BuiltinID member, ModuleID)>& functor)
 {
-    m_context.forEachMember(m_context.restrict(objects, holdersWithMemberUnder(key)), [&](ValueFlowObjectID holder) {
+    m_context.forEachMemberInLine(m_context.restrict(objects, holdersWithMemberUnder(key)), [&](ValueFlowObjectID holder) {
         ModuleID module = m_universe.moduleOf(holder);
         if (key.keyClass == HeapKeyClass::Name) {
             if (BuiltinID member = memberUnder(m_universe.builtinOf(holder), key.name))

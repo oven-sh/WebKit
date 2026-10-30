@@ -17,6 +17,7 @@
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTAddGenericVersion.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
 #include "AOTInlineBuiltinForms.h"
@@ -1243,7 +1244,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     // A range is copied as one block.
     auto mayRejoinAt = [&](ProgramPoint point) { return !wanted.isAnyProofWantedAt(point) && !stretches.isInsideRange(point); };
 
-    // The copies of a cold function in a very large program hold only their stretches and never rejoin: see TestPlacer::goesOnBehindStretch(). Of these points the placer then only keeps those inside a block
+    // The copies of a cold function in a very large program hold only their stretches and never rejoin: see TestPlacer::findStretchesWhoseCopiesGoOn(). Of these points the placer then only keeps those inside a block
     // that have tests, to give those tests their own block, and ignores the rest. So the rest are not searched for.
     const Heat& heat = context.inputs.heat;
     bool copiesHoldOnlyStretches = heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted();
@@ -2729,9 +2730,12 @@ struct TestPlacer {
     BitVector unclonableStretches { };
     // Cannot be copied alone: a value defined in the stretch must reach a use after it unmerged. A copy that continues after the stretch may take that use along.
     BitVector stretchesCopiedOnlyWithWhatFollows { };
-    // Of a cold function, as it was before the placer changed it.
-    std::optional<BitVector> stretchesInFrontOfLoops { };
+    BitVector stretchesWhoseCopiesGoOn { };
     BitVector stretchesThatGuessLayouts { };
+    // No copy: nothing in front of their tests has done anything, so a failed test begins the function again in its generic version.
+    BitVector stretchesThatRestart { };
+    FunctionID genericVersion { };
+    BlockID callOfGenericVersion { };
     Vector<Cut, 8> cuts { };
     Vector<std::pair<Edge, BlockID>, 4> splitEdges { };
     Vector<PreparedLoop, 2> preparedLoops { };
@@ -2752,10 +2756,7 @@ struct TestPlacer {
 
     PassOutcome run()
     {
-        // In a very large program the copies of the loops of cold functions are megabytes, and no run shows the time that they save. In any other program a kernel that is taken for cold would lose half its speed.
-        const Heat& heat = context.inputs.heat;
-        if (isCold(heat.of(context.program, context.id)).predicted())
-            stretchesInFrontOfLoops = heat.isOfVeryLargeProgram() ? BitVector(plan.stretches.size()) : findStretchesInFrontOfLoops();
+        findStretchesWhoseCopiesGoOn();
         collectSubjectOperands();
         findStretchesThatGuessLayouts();
 
@@ -2770,6 +2771,7 @@ struct TestPlacer {
         findRejoinBlocks(rejoinPoints.span(), isRejoinBlock);
         findRejoinBlocks(rejoinPointsWithoutTests.span(), isRejoinBlockWithoutTests);
         findRejoinBlocks(splitPoints.span(), isSplitBlock);
+        findStretchesThatRestart();
         checkStretches();
         if (!numberOfGuardedStretches()) {
             // Left split, the function would be simplified, planned, split and rejected again in every round of the fixpoint.
@@ -2793,7 +2795,8 @@ struct TestPlacer {
     }
 
     bool isPlaced(unsigned stretch) const { return plan.isGuarded(stretch) && !unclonableStretches.get(stretch); }
-    bool shouldClone(const StretchRange& range) const { return range.isCloned && isPlaced(range.stretch); }
+    bool restarts(unsigned stretch) const { return stretchesThatRestart.get(stretch); }
+    bool shouldClone(const StretchRange& range) const { return range.isCloned && isPlaced(range.stretch) && !restarts(range.stretch); }
     auto clonedRanges() const { return plan.ranges | std::views::filter([this](const StretchRange& range) { return shouldClone(range); }); }
     ValueID useOf(const PlannedTest& test) const { return plan.sites.sites[plan.requirements[test.requirement].site].use; }
 
@@ -2876,8 +2879,7 @@ struct TestPlacer {
     // Behind the stretch the copy keeps apart what the code that passed the test has proven.
     bool goesOnBehindStretch(const StretchRange& range) const
     {
-        bool isColdWithoutLoopBehind = stretchesInFrontOfLoops && !stretchesInFrontOfLoops->quickGet(range.stretch);
-        return shouldClone(range) && !stretchesThatGuessLayouts.quickGet(range.stretch) && !isColdWithoutLoopBehind;
+        return stretchesWhoseCopiesGoOn.quickGet(range.stretch) && shouldClone(range) && !stretchesThatGuessLayouts.quickGet(range.stretch);
     }
 
     bool goesOnBehindSomeStretch() const
@@ -3075,11 +3077,110 @@ struct TestPlacer {
         return cut->blockAfter;
     }
 
+    // Going on keeps what the tested code has proven apart from what failed. It pays in a hot function, in a loop, where a test can fail again and again, and where a value that the stretch makes is used behind it: the two definitions would meet there, and the tested code would lose what it knows of that value. Elsewhere the copy of what follows the stretch is the largest part of the values that this pass makes.
+    void findStretchesWhoseCopiesGoOn()
+    {
+        stretchesWhoseCopiesGoOn.ensureSize(plan.stretches.size());
+        const Heat& heat = context.inputs.heat;
+        if (isCold(heat.of(context.program, context.id)).predicted()) {
+            // In a very large program the copies of the loops of cold functions are megabytes, and no run shows the time that they save. In any other program a kernel that is taken for cold would lose half its speed.
+            if (!heat.isOfVeryLargeProgram())
+                stretchesWhoseCopiesGoOn = findStretchesInFrontOfLoops();
+            return;
+        }
+        bool isHotFunction = isHot(heat.of(context.program, context.id)).predicted();
+        bool hasCycle = analyses.cfg().hasCycle();
+        for (const StretchRange& range : plan.ranges) {
+            if (isHotFunction || (hasCycle && analyses.isInCycle(range.block)) || isValueUsedBehind(range))
+                stretchesWhoseCopiesGoOn.quickSet(range.stretch);
+        }
+    }
+
+    bool isValueUsedBehind(const StretchRange& range)
+    {
+        const UseLists& useLists = analyses.useLists();
+        const BlockValues& values = function.at(range.block).values;
+        for (uint32_t index = range.begin; index < range.end && index < values.size(); ++index) {
+            for (const Use& use : useLists.usesOf(values[index])) {
+                if (use.block != range.block)
+                    return true;
+                if (use.kind == Use::Kind::TerminatorOperand && range.end >= values.size())
+                    continue;
+                if (use.kind != Use::Kind::Operand)
+                    return true;
+                ValueLocation location = useLists.locationOf(use.user);
+                if (location.placement != ValuePlacement::InBlock || location.index >= range.end)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    BlockID blockInFrontOf(const PlannedTest& test)
+    {
+        if (test.position == PlannedTestPosition::OnEdge)
+            return ensureSplit(test.edge);
+        const Cut* cut = findCut(test.point);
+        RELEASE_ASSERT(cut);
+        return cut->blockBefore;
+    }
+
+    // As RestartInGenericVersion asks: a guess at a type may be an ordinary way through the function, which is worth its own code.
+    bool mayRestartOnFailureOf(const PlannedTest& planned) const
+    {
+        const Value& test = plan.sites.tests[plan.requirements[planned.requirement].test];
+        if (constructorFunctionAskedAbout(context.program, test))
+            return false;
+        if (provesForStretch(provesOf(test.opcode)) && provesOf(test.opcode) != Proof::ExactFunction)
+            return true;
+        return test.opcode == Opcode::TypeTest && context.program.expectedOrTypeOf(function, test.valueOperand()).predicted().without(context.program.at(test.testedType()), types).hasOnlyPrimitives(Primitive::UndefinedOrNull);
+    }
+
+    void findStretchesThatRestart()
+    {
+        if (plan.tests.isEmpty())
+            return;
+        genericVersion = findGenericVersionToRestartIn(context);
+        if (!genericVersion)
+            return;
+        BitVector endsBeforeAnyEffect = findBlocksThatEndBeforeAnyEffect(context);
+        BitVector refused(plan.stretches.size());
+        for (const PlannedSlowPath& slowPath : plan.slowPaths)
+            refused.set(slowPath.stretch);
+        for (const PlannedWayBackIntoLoop& way : plan.waysBackIntoLoops)
+            refused.set(way.stretch);
+        BitVector hasTest(plan.stretches.size());
+        for (const PlannedTest& test : plan.tests) {
+            hasTest.set(test.stretch);
+            BlockID block = blockInFrontOf(test);
+            const Block& inFront = function.at(block);
+            if (!endsBeforeAnyEffect.get(block.index()) || inFront.handler || inFront.frequency.predicted() != BlockFrequency::Normal || !mayRestartOnFailureOf(test))
+                refused.set(test.stretch);
+        }
+        // Tests at one position share what they fall into.
+        for (bool changed = true; std::exchange(changed, false);) {
+            for (size_t index = 1; index < plan.tests.size(); ++index) {
+                const PlannedTest& a = plan.tests[index - 1];
+                const PlannedTest& b = plan.tests[index];
+                if (a.position != b.position || a.point != b.point || a.edge != b.edge || refused.get(a.stretch) == refused.get(b.stretch))
+                    continue;
+                refused.set(a.stretch);
+                refused.set(b.stretch);
+                changed = true;
+            }
+        }
+        stretchesThatRestart.ensureSize(plan.stretches.size());
+        for (unsigned stretch = 0; stretch < plan.stretches.size(); ++stretch) {
+            if (hasTest.get(stretch) && !refused.get(stretch) && plan.isGuarded(stretch))
+                stretchesThatRestart.quickSet(stretch);
+        }
+    }
+
     void forEachEntryOfCopy(NOESCAPE const Invocable<void(unsigned stretch, BlockID)> auto& functor)
     {
         BitVector isEntry(function.blocks.size());
         for (const PlannedTest& test : plan.tests) {
-            if (BlockID entry = isPlaced(test.stretch) ? guardedBlockOf(test) : BlockID(); entry && isEntry.add(entry.index()))
+            if (BlockID entry = isPlaced(test.stretch) && !restarts(test.stretch) ? guardedBlockOf(test) : BlockID(); entry && isEntry.add(entry.index()))
                 functor(test.stretch, entry);
         }
         for (const PlannedSlowPath& slowPath : plan.slowPaths) {
@@ -3237,7 +3338,7 @@ struct TestPlacer {
         }
         forEachEntryOfCopy([&](unsigned, BlockID entry) { copy->addEntry(entry); });
         for (const PlannedUse& use : plan.uses) {
-            if (isPlaced(use.stretch))
+            if (isPlaced(use.stretch) && !restarts(use.stretch))
                 copy->addValueToBeNarrowed(plan.sites.sites[use.site].use);
         }
         for (size_t index : isSplitBlock)
@@ -3255,7 +3356,7 @@ struct TestPlacer {
 
         for (const PlannedUse& use : plan.uses) {
             const TestSite& site = plan.sites.sites[use.site];
-            if (isPlaced(use.stretch) && !expectedTypeTellsResultOf(context, site))
+            if (isPlaced(use.stretch) && !restarts(use.stretch) && !expectedTypeTellsResultOf(context, site))
                 copy->addValueNarrowedInUnknownWay(site.use);
         }
         for (ValueID subject : collectSubjectsKnownBeyondTheirTypes(context, plan))
@@ -3380,6 +3481,11 @@ struct TestPlacer {
 
     void emitTests()
     {
+        if (!stretchesThatRestart.isEmpty()) {
+            builder.setHandler(std::nullopt);
+            builder.setOrigin({ function.position, 0 });
+            callOfGenericVersion = ensureCallOfGenericVersion(context, builder, genericVersion);
+        }
         defineAdoptedProofs();
 
         using TestsAtOnePosition = Vector<uint32_t, 4>;
@@ -3422,8 +3528,9 @@ struct TestPlacer {
 
     void emitTestsAtOnePosition(std::span<const uint32_t> plannedTests)
     {
-        RELEASE_ASSERT(copy);
         const PlannedTest& first = plan.tests[plannedTests.front()];
+        bool restartsOnFailure = restarts(first.stretch);
+        RELEASE_ASSERT(copy || restartsOnFailure);
         // Then that block takes the proof of the last test itself.
         bool isOnlyWayToPassedTarget = first.position == PlannedTestPosition::BeforeUse;
         BlockID block;
@@ -3437,9 +3544,11 @@ struct TestPlacer {
             block = ensureSplit(first.edge);
             passedTarget = function.at(block).terminator.next();
         }
-        Target failedTarget { copy->copyOf(passedTarget.block), passedTarget.arguments, { } };
+        Target failedTarget = restartsOnFailure ? Target { callOfGenericVersion, { }, { } } : Target { copy->copyOf(passedTarget.block), passedTarget.arguments, { } };
         Expected<BlockFrequency> frequency = function.at(passedTarget.block).frequency;
         RELEASE_ASSERT(failedTarget.block);
+        if (restartsOnFailure)
+            context.build.statistics().count(StatisticID::RestartsInGenericVersion, plannedTests.size());
 
         Terminator& jump = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         RELEASE_ASSERT(jump.kind == TerminatorKind::Jump && jump.next().block == passedTarget.block);

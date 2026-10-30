@@ -41,7 +41,7 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
     if (key) {
         ClimbingSet all = context.valueOf(context.operandsOf(statement)[1]);
         receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
-        context.forEachMember(context.restrict(all, universe.anyPrimitive()), [&](ValueFlowObjectID kindOfPrimitive) {
+        context.forEachMemberInLine(context.restrict(all, universe.anyPrimitive()), [&](ValueFlowObjectID kindOfPrimitive) {
             receivers.groups.append(context.maker().of(kindOfPrimitive));
         });
         for (ValueSetID group : receivers.groups)
@@ -57,7 +57,7 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
         if (context.contains(all, ValueFlowUniverse::unknownObject()))
             receivers.rest = context.maker().unite(receivers.rest, receiversFollowedBehindUnknownObject);
     }
-    context.forEachMember(builtins, [&](ValueFlowObjectID callee) {
+    context.forEachMemberInLine(builtins, [&](ValueFlowObjectID callee) {
         if (!key) {
             applyBuiltin(universe.builtinOf(callee), kind, statement, context);
             return;
@@ -107,7 +107,7 @@ static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, Climbing
         return numberOfGroupedArguments;
     const ValueFlowUniverse& universe = context.universe();
     unsigned positions = 0;
-    context.forEachMember(closures, [&](ValueFlowObjectID closure) {
+    context.forEachMemberInLine(closures, [&](ValueFlowObjectID closure) {
         if (positions == numberOfGroupedArguments)
             return;
         FunctionID function = universe.closureFunction(closure);
@@ -133,7 +133,7 @@ static ValueFlowObjectsToldApart tellManyObjectsApart(ValueFlowRuleContext& cont
         ValueFlowObjectID object;
     };
     Vector<Member, 64> members;
-    context.forEachMember(knownObjects, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(knownObjects, [&](ValueFlowObjectID object) {
         members.append(Member { 0, object });
     });
 
@@ -200,7 +200,7 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
         return known;
     }
     ValueFlowObjectsToldApart result;
-    context.forEachMember(knownObjects, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(knownObjects, [&](ValueFlowObjectID object) {
         result.groups.append(context.maker().of(object));
     });
     return result;
@@ -814,7 +814,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 
     ValueSetID describedByEntries = kind == ValueFlowCallKind::Call ? universe.builtinTables().closuresThatEntriesDescribe() : ValueSets::nothing;
-    context.forEachMember(context.restrict(callees, describedByEntries), [&](ValueFlowObjectID closure) {
+    context.forEachMemberInLine(context.restrict(callees, describedByEntries), [&](ValueFlowObjectID closure) {
         applyEntryDescribing(closure, kind, statement, context);
     });
     ValueSetID enteredClosures = context.maker().intersect(universe.closures(), ValueSets::complement(describedByEntries));
@@ -1154,7 +1154,7 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     if (callsUnknownObject || context.contains(key, ValueFlowUniverse::untrackedObject()))
         dealtWithOneByOne = context.restrict(callees, ValueSets::complement(context.maker().intersect(universe.otherCallables(), ValueSets::complement(universe.builtinObjects()))));
     bool isAccessorCall = kind == ValueFlowCallKind::Get || kind == ValueFlowCallKind::Set;
-    context.forEachMember(dealtWithOneByOne, [&](ValueFlowObjectID callee) {
+    context.forEachMemberInLine(dealtWithOneByOne, [&](ValueFlowObjectID callee) {
         if (FunctionID function = universe.closureFunction(callee)) {
             if (kind != ValueFlowCallKind::CallByHost && !isConstruction(kind) && context.sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), callee))
                 applyEntryDescribing(callee, isAccessorCall ? ValueFlowCallKind::Call : kind, group, context);

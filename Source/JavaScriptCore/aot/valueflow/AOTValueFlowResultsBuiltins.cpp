@@ -881,7 +881,7 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             }
             // Whatever rule answers a call with the object of the call has noted as what it made the object.
             ASSERT(!call.result || !inputs.sets().contains(inputs.solver().possibleValuesOf(call.result), object) || hasNotedAllocation.get(object.index()));
-            inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
+            inputs.sets().forEachMemberInLine(builtinCallees, [&](ValueFlowObjectID callee) {
                 for (const BuiltinOverload& overload : builtins.overloadsOf(universe.builtinOf(callee))) {
                     if (overload.mode != *mode || !overload.result.type)
                         continue;
@@ -942,7 +942,7 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             for (const ValueFlowHeapIndex::WrittenNode& node : links->nodes) {
                 if (ValueSets::isComplement(node.objects))
                     continue;
-                inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                inputs.sets().forEachMemberInLine(node.objects, [&](ValueFlowObjectID object) {
                     BuiltinClassID made = classMadeAs.get(object.index());
                     if (!made)
                         return;

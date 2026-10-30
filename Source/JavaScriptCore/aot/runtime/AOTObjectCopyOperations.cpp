@@ -322,6 +322,47 @@ static ALWAYS_INLINE bool hasOwnPropertiesToCopy(JSValue source)
     return structure->maxOffset() != invalidOffset || structure->isDictionary() || structure->isCompiledStructure() || hasIndexedProperties(structure->indexingType()) || structure->hasNonReifiedStaticProperties();
 }
 
+// Nothing sees the target before the copy is complete, so what the source runs cannot tell when the properties are defined.
+static NEVER_INLINE ASCIILiteral defineCollectedProperties(JSGlobalObject* globalObject, VM& vm, JSObject* target, Object* record, Vector<UniquedStringImpl*, 8>& copiedNames, MarkedArgumentBuffer& copiedValues)
+{
+    constexpr ASCIILiteral threw = "threw"_s;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (record && record->tryDefineFields(vm, copiedNames.span(), { copiedValues.data(), copiedValues.size() }))
+        return "read by lookups, all are fields"_s;
+    if (record && tryAssignCollectedProperties(globalObject, vm, *record, copiedNames, copiedValues))
+        return "read by lookups, then by a plan"_s;
+    // An element is no property that a definition by name knows.
+    bool hasIndex = std::ranges::any_of(copiedNames, [](UniquedStringImpl* name) {
+        return !!parseIndex(PropertyName(name));
+    });
+    if (record && !hasIndex && !(record->orderWord() & orderWordIntegrityBits)) {
+        definePropertiesInOrder(vm, *record, copiedNames.mutableSpan(), { copiedValues.data(), copiedValues.size() });
+        RETURN_IF_EXCEPTION(scope, threw);
+        return "read by lookups, defined name by name"_s;
+    }
+    for (size_t i = 0; i < copiedNames.size(); ++i) {
+        defineCopiedProperty(globalObject, target, copiedNames[i], copiedValues.at(i));
+        RETURN_IF_EXCEPTION(scope, threw);
+    }
+    return "read by lookups, defined name by name"_s;
+}
+
+// None of the ways that run no code takes a getter, and each would walk the source to find that out.
+static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* from)
+{
+    Object* compiled = compiledObjectOrNull(from);
+    if (!std::ranges::any_of(compiled->layout().fields(), &FieldData::isAccessor))
+        return std::nullopt;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    PropertyWalk::Result result = PropertyWalk::readOwnPropertiesCallingGetters(globalObject, from, names, values);
+    RETURN_IF_EXCEPTION(scope, "threw"_s);
+    if (result != PropertyWalk::Result::Completed)
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, defineCollectedProperties(globalObject, vm, target, compiledObjectOrNull(target), names, values));
+}
+
 // Answers which way the copy went, for a run that counts.
 static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedKeys& excluded)
 {
@@ -356,6 +397,12 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     if (takesPlainPropertiesDirectly(target->structure()) && tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names()))
         return "into an ordinary object, by a plan"_s;
+    if (isCompiledObject(from) && excluded.isEmpty()) {
+        std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, target, from);
+        RETURN_IF_EXCEPTION(scope, threw);
+        if (way)
+            return *way;
+    }
     if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType) {
         if (tryCopyDataProperties(vm, target, from))
             return "final objects, tryCopyDataProperties"_s;
@@ -387,28 +434,10 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
         if (way)
             return *way;
     }
-    // Nothing sees the target before the copy is complete, so what the source runs cannot tell when the properties are defined.
     Vector<UniquedStringImpl*, 8> copiedNames;
     MarkedArgumentBuffer copiedValues;
-    auto defineCopiedProperties = [&]() -> ASCIILiteral {
-        if (record && record->tryDefineFields(vm, copiedNames.span(), { copiedValues.data(), copiedValues.size() }))
-            return "read by lookups, all are fields"_s;
-        if (record && tryAssignCollectedProperties(globalObject, vm, *record, copiedNames, copiedValues))
-            return "read by lookups, then by a plan"_s;
-        // An element is no property that a definition by name knows.
-        bool hasIndex = std::ranges::any_of(copiedNames, [](UniquedStringImpl* name) {
-            return !!parseIndex(PropertyName(name));
-        });
-        if (record && !hasIndex && !(record->orderWord() & orderWordIntegrityBits)) {
-            definePropertiesInOrder(vm, *record, copiedNames.mutableSpan(), { copiedValues.data(), copiedValues.size() });
-            RETURN_IF_EXCEPTION(scope, threw);
-            return "read by lookups, defined name by name"_s;
-        }
-        for (size_t i = 0; i < copiedNames.size(); ++i) {
-            defineCopiedProperty(globalObject, target, copiedNames[i], copiedValues.at(i));
-            RETURN_IF_EXCEPTION(scope, threw);
-        }
-        return "read by lookups, defined name by name"_s;
+    auto defineCopiedProperties = [&] {
+        return defineCollectedProperties(globalObject, vm, target, record, copiedNames, copiedValues);
     };
     if (auto* moduleNamespace = excluded.isEmpty() ? dynamicDowncast<ModuleNamespace>(from) : nullptr) {
         bool didReadExports = moduleNamespace->tryReadExports(globalObject, copiedNames, copiedValues);

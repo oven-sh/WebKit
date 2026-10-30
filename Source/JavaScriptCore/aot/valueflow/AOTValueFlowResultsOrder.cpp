@@ -176,7 +176,7 @@ static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const Fl
                 someCallHasManyCallees.store(true, std::memory_order_relaxed);
                 return;
             }
-            inputs.sets().forEachMember(key.set, [&](ValueFlowObjectID callee) {
+            inputs.sets().forEachMemberInLine(key.set, [&](ValueFlowObjectID callee) {
                 FunctionID function = universe.closureFunction(callee);
                 if (!function)
                     return;

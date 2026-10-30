@@ -81,6 +81,8 @@ struct FunctionInputs {
 };
 
 struct PinnedValues {
+    // An int32 read out of a list's storage, and the word it was read as: the same int32, boxed.
+    UncheckedKeyHashMap<LValue, LValue> wordsOfInt32Elements;
     LValue instance { nullptr };
     LValue instancePrefix { nullptr };
     LValue statics { nullptr };

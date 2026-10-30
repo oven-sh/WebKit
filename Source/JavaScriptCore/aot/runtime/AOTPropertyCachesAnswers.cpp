@@ -87,24 +87,26 @@ bool isPreparedBeforeLookupsSlow(VM& vm, UniquedStringImpl* symbol)
 
 void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
 {
-    VM& vm = globalObject->vm();
-    PropertyCaches* caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
-    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
-    if (!caches || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
-        return;
+    // Each instance registers its own function under the one uid of an engine symbol: the holder's instance answers for it.
+    PropertyCaches* caches = &*uncheckedDowncast<Object>(compiledObject)->state().propertyCaches;
     JSObject* function = caches->preparationBeforeLookupsUnder(uid);
+    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
+    if (!function || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
+        return;
     caches->setIsPreparingHolder(true);
     call(globalObject, function, JSC::getCallData(function), compiledObject, ArgList());
     caches->setIsPreparingHolder(false);
 }
 
-void LookByName::begin(VM& vm, JSValue holder, UniquedStringImpl* symbol)
+void LookByName::begin(VM&, JSValue holder, UniquedStringImpl* symbol)
 {
-    if (!holder.isCell())
+    if (!holder.isObject())
         return;
-    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, symbol);
-    if (m_caches)
-        m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
+    Object* compiled = compiledObjectOrNull(asObject(holder));
+    if (!compiled || !compiled->state().propertyCaches->preparationBeforeLookupsUnder(symbol))
+        return;
+    m_caches = &*compiled->state().propertyCaches;
+    m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
 }
 
 void LookByName::end()
@@ -399,6 +401,25 @@ static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, c
     return returnsLength ? WordOfTypedArray::Length : WordOfTypedArray::None;
 }
 
+static int16_t wordOfInheritedField(JSCell* holder, UniquedStringImpl* uid)
+{
+    if (!isCompiledObject(holder))
+        return 0;
+    Object& object = *uncheckedDowncast<Object>(holder);
+    const FieldData* field = object.fieldNamed(object.state(), uid);
+    if (!field)
+        return 0;
+    FieldTableEntry entry = FieldTableEntry::forField(object.layout(), *field);
+    switch (entry.form()) {
+    case FieldTableEntry::Form::InlineInt32:
+        return static_cast<int16_t>(entry.operand());
+    case FieldTableEntry::Form::InlineNarrowCell:
+        return -static_cast<int16_t>(entry.operand());
+    default:
+        return 0;
+    }
+}
+
 static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
 {
     const PropertySlot& slot = query.slot;
@@ -432,6 +453,8 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
     PropertyAnswer answer = PropertyAnswer::above(kind, SlotAccess::Read, WTF::move(walk));
     answer.readsByteOffset = wordOfTypedArray == WordOfTypedArray::ByteOffset;
+    if (kind == PropertyAnswerKind::InheritedField && answer.dependsOnChain())
+        answer.wordOfInheritedField = wordOfInheritedField(answer.holder, query.uid);
     if (staticField) {
         answer.field = staticField;
         answer.variable = staticField->slot;
@@ -1103,7 +1126,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     case PropertyAnswerKind::FieldOrInheritedField:
         return slotForFieldOrInherited(answer, receiverStructure, flags);
     case PropertyAnswerKind::InheritedField:
-        return Slot::createInheritedField(id, flags, answer.holder);
+        return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
         RELEASE_ASSERT(isRead || answer.field);
         return Slot::createField(id, Kind::Variable, flags, answer.variable, isRead ? 0 : answer.field->type, 0);

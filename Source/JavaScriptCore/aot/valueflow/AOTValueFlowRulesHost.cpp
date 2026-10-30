@@ -849,7 +849,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
     if (context.meet(callees, universe.closures()) && isCalledBySeenCode())
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), context.restrict(callees, universe.closures()));
 
-    context.forEachMember(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
+    context.forEachMemberInLine(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(callee));
         std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusedCode());
         if (!cause && someCallPassesPropertyThatRunsUnseenCode(context, builtin))
@@ -1089,7 +1089,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     Vector<ValueFlowObjectID, 16> calledFunctionsOfHost;
     bool callsLoaderThatHasEscaped = false;
     Attachments attachments { context, builtins };
-    context.forEachMember(escaped, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
@@ -1124,7 +1124,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         passUnknownOperandsTo(context, universe.builtinOf(function));
     }
 
-    context.forEachMember(used, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(used, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
@@ -1132,7 +1132,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (!isObjectKind(builtins.at(builtin).kind) || membersFollowHolders || context.contains(run, object))
             attachments.addCodeOf(builtin);
     });
-    context.forEachMember(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)), [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)), [&](ValueFlowObjectID object) {
         if (BuiltinID builtin = universe.builtinOf(object))
             attachments.addCodeOf(builtin, true);
     });
@@ -1155,7 +1155,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         return context.contains(run, universe.objectOf(entry));
     });
     Vector<BuiltinID, 4> waysBetweenModuleObjectsAnswered;
-    context.forEachMember(escaped, [&](ValueFlowObjectID object) {
+    context.forEachMemberInLine(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;

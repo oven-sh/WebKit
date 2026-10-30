@@ -241,10 +241,11 @@ struct alignas(16) Slot {
     }
     static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
     // The holder is a compiled object above the receiver with a field of this name.
-    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder)
+    // A positive location is the 32-bit word of the holder that holds the integer, a negative one that of the reference: a word that says something else goes to the lookup.
+    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder, int16_t location = 0)
     {
         ASSERT(holder && !(flags & (isOwn | isOutOfLine)));
-        Slot slot = create(structureID, Kind::InheritedField, flags, 0);
+        Slot slot = create(structureID, Kind::InheritedField, flags, static_cast<uint16_t>(location));
         slot.holder = holder;
         return slot;
     }
@@ -549,6 +550,9 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         else {
             if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (Slot::locationOf(kind) == SlotLocation::WordIndex && !packWordIndex(slot.wordIndex())))
                 return std::nullopt;
+            // A word out of reach is only a slower read.
+            if (kind == Slot::Kind::InheritedField)
+                packWordIndex(static_cast<int16_t>(slot.location));
             payload = MarkedBlockCage::encode(cageBase, slot.holder);
         }
         break;
@@ -640,7 +644,7 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
         return Slot::create(structureID, kind, flags, 0);
     case SlotPayload::Holder: {
         if (kind == Slot::Kind::InheritedField)
-            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload));
+            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload), static_cast<int16_t>(shortWordIndex));
         if (flags & Slot::isOwn)
             return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, nullptr, Slot::offsetFor(static_cast<int32_t>(payload)));
         return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, MarkedBlockCage::decode(cageBase, payload), Slot::offsetFor(shortWordIndex));

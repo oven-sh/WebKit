@@ -206,7 +206,7 @@ bool SourcesOfCopies::add(ClimbingSet sources)
 {
     AOT_THRESHOLD(size_t, mostSearchedInOrder, 8);
     size_t numberOfSources = m_sources.size();
-    m_context.forEachMember(sources, [&](ValueFlowObjectID source) {
+    m_context.forEachMemberInLine(sources, [&](ValueFlowObjectID source) {
         if (m_context.contains(m_copies, source))
             return;
         if (m_sources.size() <= mostSearchedInOrder) {

@@ -312,9 +312,29 @@ void generateReadSlot(StubAssembler& jit)
             returnUndefined();
             return;
         }
-        case Slot::Kind::InheritedField:
+        case Slot::Kind::InheritedField: {
+            if (slot.form() == SlotForm::Slot) {
+                const GPRReg word = jit.clobberOperand(headerOperand);
+                jit.rshift64(TrustedImm32(48), word);
+                Jump hasNoWord = jit.branchTest64(CCallHelpers::Zero, word);
+                slot.loadHolder(jit, R0);
+                Jump holdsReference = jit.branch64(CCallHelpers::LessThan, word, TrustedImm32(0));
+                jit.load32(BaseIndex(R0, word, CCallHelpers::TimesFour), T10);
+                Jump isNoInteger = jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(minInlineInt32));
+                returnInt32(T10);
+                holdsReference.link(&jit);
+                jit.neg64(word);
+                jit.load32(BaseIndex(R0, word, CCallHelpers::TimesFour), T10);
+                Jump isNoReference = jit.branch32(CCallHelpers::Below, T10, TrustedImm32(minCell32));
+                decodeCell32(jit, T10, R0);
+                jit.returnToCaller();
+                hasNoWord.link(&jit);
+                isNoInteger.link(&jit);
+                isNoReference.link(&jit);
+            }
             readFromHolder();
             return;
+        }
         case Slot::Kind::Variable: {
             const GPRReg statics = jit.clobberOperand(headerOperand);
             const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);

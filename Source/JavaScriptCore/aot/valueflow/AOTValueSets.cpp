@@ -1833,6 +1833,34 @@ uint32_t ValueSetMaker::uniteAllLists(std::span<const ValueSetID> sets)
     return internList(m_list.span());
 }
 
+NEVER_INLINE void ValueSets::forEachWordOfRun(ValueSetID set, const ScopedLambda<void(uint32_t first, uint64_t bits)>& functor) const
+{
+    const Run& run = m_lists.at(storedSetOf(set));
+    WordOfMembers word { 0, run.lowestMembers };
+    std::span<const uint32_t> highMembers;
+    WordsOfBlocks blocks;
+    bool isStoredAsBlocks = !isShort(run);
+    if (isStoredAsBlocks) {
+        blocks.start(*this, run);
+        word = blocks.next();
+    } else
+        highMembers = highMembersOf(run);
+    for (;;) {
+        if (word.bits)
+            functor(word.first, word.bits);
+        if (!highMembers.empty()) {
+            word = { highMembers.front(), 1 };
+            highMembers = highMembers.subspan(1);
+            continue;
+        }
+        if (!isStoredAsBlocks)
+            return;
+        word = blocks.next();
+        if (!word.bits)
+            return;
+    }
+}
+
 } } } // namespace JSC::AOT::Typed
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

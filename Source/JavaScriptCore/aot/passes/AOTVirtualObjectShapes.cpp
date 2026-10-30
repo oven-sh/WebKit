@@ -99,6 +99,7 @@ std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
     case VirtualFieldKind::Position:
+    case VirtualFieldKind::Table:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -293,6 +294,7 @@ static KnownValue knownValueOf(const VirtualObjectDescription& description)
     case VirtualObjectKind::BuiltinPrefix:
     case VirtualObjectKind::ViewRange:
     case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
         return KnownValue::object();
     case VirtualObjectKind::Opaque:
     case VirtualObjectKind::Environment:
@@ -741,6 +743,8 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::IsPristine:
         // Nothing has been stored by name into an iterator that is not built.
         if (description.kind == VirtualObjectKind::ArrayIterator && test.builtinClass() == BuiltinClasses::ArrayIterator)
+            return KnownBoolean::True;
+        if (description.kind == VirtualObjectKind::CollectionIterator && (test.builtinClass() == BuiltinClasses::MapIterator || test.builtinClass() == BuiltinClasses::SetIterator))
             return KnownBoolean::True;
         return isArray(description) && test.builtinClass() == BuiltinClasses::Array ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasKeyOrder:

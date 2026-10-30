@@ -2178,16 +2178,9 @@ bool Modules::wasImportedWhileItRan(ModuleID file) const
 {
     if (LoadedModule* loaded = loadedIfExists(file); loaded && (loaded->wasLoadedWhileItRan || loaded->wasReachedBySecondLoad))
         return true;
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        ModuleID importer(index);
-        if (data(importer).kind != ModuleKind::SourceText || status(importer) <= ModuleStatus::Linked)
-            continue;
-        for (const ModuleRequestData& request : m_table.imports(importer)) {
-            if (request.targetModule() == file || m_table.fileBehindFace(request.targetModule()) == file)
-                return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(m_table.importsOfHeldFile(file), [&](const ImportOfHeldFileData& import) {
+        return status(ModuleID(import.importer)) > ModuleStatus::Linked;
+    });
 }
 
 // For an entry point, as for an imported file: see evaluateImportedCommonJSFiles().

@@ -1704,7 +1704,7 @@ struct FieldResults {
                             return;
                         Vector<LayoutID, maxLayoutsFollowedToStore + 1> layouts;
                         bool holdsObjectWithoutLayout = false;
-                        sets.forEachMember(seen, [&](ValueFlowObjectID object) {
+                        sets.forEachMemberInLine(seen, [&](ValueFlowObjectID object) {
                             LayoutID layout = inputs.universe().layoutOf(object);
                             holdsObjectWithoutLayout |= !layout && inputs.universe().isObject(object) && object != ValueFlowUniverse::unknownObject() && object != ValueFlowUniverse::untrackedObject();
                             if (layout && layouts.size() <= mostLayouts && !layouts.contains(layout))

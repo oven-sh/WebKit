@@ -64,6 +64,18 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
 }
 
 template<typename T>
+bool GCIncomingRefCountedSet<T>::tryReserveCapacityForNewObject()
+{
+    if (m_vector.size() < m_vector.capacity()) [[likely]]
+        return true;
+    // Grows as append() does.
+    if (!m_vector.tryAppend(static_cast<T*>(nullptr)))
+        return false;
+    m_vector.removeLast();
+    return true;
+}
+
+template<typename T>
 void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
 {
     auto filter = [&](T* object) {

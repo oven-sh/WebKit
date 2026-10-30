@@ -722,6 +722,11 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
     }
 }
 
+bool Heap::tryReserveCapacityForNewArrayBuffer()
+{
+    return m_arrayBuffers.tryReserveCapacityForNewObject();
+}
+
 template<typename CellType, typename CellSet>
 void Heap::reconcileWeakReferencesInMarkedCells(CellSet& cellSet, CollectionScope collectionScope)
 {

@@ -278,7 +278,7 @@ private:
 
     private:
         static uint64_t keyOf(ValueFlowEdge edge) { return static_cast<uint64_t>(edge.from.index()) << 32 | edge.to.index(); }
-        size_t firstPositionOf(uint64_t key) const { return key * 0x9e3779b97f4a7c15ull >> std::countl_zero(m_slots.span().size() - 1); }
+        size_t firstPositionOf(uint64_t key) const { return static_cast<UInt128>(key * 0x9e3779b97f4a7c15ull) * m_slots.span().size() >> 64; }
         void grow();
 
         MallocSpan<uint64_t> m_slots;

@@ -324,6 +324,9 @@ struct JSONTextWriter final : Emission {
         RELEASE_ASSERT(part);
         if (pristineTestOf(builtins, part->builtinClass) == PristineTest::NeverPasses)
             return { };
+        // The host reads toJSON, valueOf and toISOString by name, and each first read adds its member to Date.prototype. Where the program lists those keys, it sees that order.
+        if (part->builtinClass == BuiltinClasses::Date && inputs().flow.listsKeysOf(builtins.canonicalID(builtins.at(BuiltinClasses::Date).prototype)))
+            return { };
         if (part->builtinClass == BuiltinClasses::Date && findGetTimeOfDate())
             return { .kind = ValueKind::Scalar, .row = Opcode::JSONAppendDate, .tested = types.intern(instances.withoutClassProofs()) };
         if (part->builtinClass == BuiltinClasses::Array)

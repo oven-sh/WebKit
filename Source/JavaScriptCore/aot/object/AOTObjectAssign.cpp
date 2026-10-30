@@ -548,8 +548,16 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
     Structure* after = plan.extraPropertiesAfter;
     Structure* before = extra ? extra->structure() : nullptr;
     if (!extra) {
-        Butterfly* butterfly = after->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, after->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
-        extra = JSFinalObject::createWithButterfly(vm, after, butterfly);
+        // Every name of the new object has a store, so all that stays empty is the room behind them.
+        size_t capacity = after->outOfLineCapacity();
+        Butterfly* butterfly = capacity ? Butterfly::createUninitialized(vm, nullptr, 0, capacity, false, 0) : nullptr;
+        for (size_t index = after->outOfLineSize(); index < capacity; ++index)
+            butterfly->propertyStorage()[-static_cast<ptrdiff_t>(index) - 1].clear();
+        std::array<WriteBarrierBase<Unknown>, extraPropertiesInlineCapacity> emptyInlineStorage;
+        for (auto& slot : emptyInlineStorage)
+            slot.clear();
+        RELEASE_ASSERT(after->inlineCapacity() == extraPropertiesInlineCapacity);
+        extra = JSFinalObject::createWithButterflyCopyingInlineStorage(vm, after, butterfly, emptyInlineStorage.data());
     } else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
         if (source.compiledObject && !hasEveryExtraPropertyOfPlan(plan, source))
             return false;
@@ -1514,6 +1522,32 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     if (!plan->isUsable)
         return false;
     assignByPlan(vm, target, state, *plan, extra, *assignmentSource);
+    return true;
+}
+
+// Object.assign(record, ordinary) as the last such assignment between these two Structures went, on a record as fresh as that one was.
+bool tryAssignOrdinaryObjectAsBefore(VM& vm, Object& target, JSObject* source)
+{
+    if (source->type() != FinalObjectType || source->canHaveExistingOwnIndexedProperties())
+        return false;
+    State& state = target.state();
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(target.structureID(), source->structureID(), 0, 0);
+    if (!plan)
+        return false;
+    AssignmentSource assignmentSource { source, nullptr, source, 0, { }, false };
+    if (!plan->isFor(target.structureID(), StructureID(), assignmentSource) || !plan->isUsable || plan->storesNameBehindSymbol || plan->orderWordBeforeRun != target.orderWord() || target.hasExtraProperties())
+        return false;
+    DeferGC deferGC(vm);
+    if (plan->fieldStores.isEmpty()) {
+        if (!storeExtraProperties(vm, target, *plan, nullptr, assignmentSource))
+            return false;
+        target.at<uint32_t>(offsetOfOrderWord) = plan->orderWordAfterRun;
+    } else {
+        FieldStoreRun run(vm, target, state, *plan, nullptr);
+        if (!run.tryRunAsBefore(assignmentSource))
+            return false;
+    }
+    didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
     return true;
 }
 

@@ -1555,13 +1555,8 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
             if (!questions.contains(value.opcode) || keptReads.get(values[index].index()))
                 continue;
             // No value has the last index, so a length is no comparison.
-            // Two literals of one text are one value.
-            auto askedValueOf = [&](ValueID operand) -> uint64_t {
-                ValueID root = sameObjectThroughCasts(function, operand).valueInFrontOfFacts();
-                return function.at(root).opcode == Opcode::String ? 1u << 31 | function.at(root).string().index() : root.index();
-            };
-            uint64_t left = askedValueOf(value.operand(0));
-            uint64_t right = value.opcode == Opcode::StrictEq ? askedValueOf(value.rightOperand()) : std::numeric_limits<uint32_t>::max();
+            uint64_t left = sameObjectThroughCasts(function, value.operand(0)).valueInFrontOfFacts().index();
+            uint64_t right = value.opcode == Opcode::StrictEq ? sameObjectThroughCasts(function, value.rightOperand()).valueInFrontOfFacts().index() : std::numeric_limits<uint32_t>::max();
             uint64_t operands = std::min(left, right) << 32 | std::max(left, right);
             auto found = innermost.find(operands);
             std::optional<uint32_t> outer = found == innermost.end() ? std::nullopt : std::optional(found->value);
@@ -1806,6 +1801,95 @@ static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// `list[k]` behind `list[k]` on a straight way, with nothing between them that writes elements or runs code of the program: `if (list[k] > list[k + 1]) { swap }`. The second takes what the first found.
+static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
+{
+    AOT_THRESHOLD(unsigned, maxValuesBehindElementRead, 64);
+    if (!context.analyses.opcodesOfValues().contains(Opcode::GetArrayElement))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const CFG& cfg = analyses.cfg();
+    auto findEarlierRead = [&](BlockID block, uint32_t index, const Value& read) -> ValueID {
+        ValueID array = analyses.identityOf(read.arrayOperand());
+        ValueID position = analyses.identityOf(read.positionOperand());
+        unsigned budget = maxValuesBehindElementRead;
+        for (;;) {
+            std::span<const ValueID> values = function.at(block).values.span();
+            while (index--) {
+                if (!budget--)
+                    return { };
+                const Value& earlier = function.at(values[index]);
+                Effects effects = analyses.effectsOf(values[index]).onAnyEdge();
+                if (effects.mayRunOtherCode() || effects.writes.containsAny(AbstractHeapSet { AbstractHeap::Elements, AbstractHeap::ArrayStorage }))
+                    return { };
+                if (earlier.opcode == Opcode::GetArrayElement && earlier.type == read.type && earlier.arrayStorage() == read.arrayStorage() && earlier.readsHoleAsNaN() == read.readsHoleAsNaN()
+                    && analyses.identityOf(earlier.arrayOperand()) == array && analyses.identityOf(earlier.positionOperand()) == position)
+                    return values[index];
+            }
+            std::span<const BlockID> predecessors = cfg.predecessors(block);
+            if (predecessors.size() != 1 || function.at(block).isHandlerBlock())
+                return { };
+            block = predecessors.front();
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Jump && !terminator.isConditionalBranch())
+                return { };
+            index = function.at(block).values.size();
+        }
+    };
+
+    struct Repeated {
+        ProgramPoint point;
+        ValueID first;
+    };
+    BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
+    HashMap<ValueID, ValueID> firstOfRepeated;
+    Vector<Repeated, 8> repeated;
+    ValueSubstitution substitution(function);
+    for (BlockID block : cfg.reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::GetArrayElement || keptReads.get(values[index].index()) || analyses.effectsOf(values[index]).onAnyEdge().mayExitSideways())
+                continue;
+            ValueID first = findEarlierRead(block, index, value);
+            if (!first)
+                continue;
+            if (auto found = firstOfRepeated.find(first); found != firstOfRepeated.end())
+                first = found->value;
+            firstOfRepeated.add(values[index], first);
+            substitution.replace(values[index], first);
+            repeated.append({ { block, index }, first });
+        }
+    }
+    if (repeated.isEmpty())
+        return PassOutcome::Unchanged;
+    substitution.apply(function, &analyses);
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    if (context.build.validates()) {
+        // The repeated read stays, and its answer is held against the first one's.
+        for (const Repeated& read : repeated) {
+            auto [block, index] = read.point;
+            ValueID kept = function.at(block).values[index];
+            builder.setOrigin(function.at(kept).origin());
+            builder.insertBefore({ block, index + 1 }, IRBuilder::make(Opcode::ValidateSameValue, { kept, read.first }));
+        }
+        builder.applyInsertions();
+    } else {
+        // The walk enters a block once, so the reads of one block lie side by side.
+        for (size_t next = 0; next < repeated.size();) {
+            BlockID block = repeated[next].point.block;
+            BitVector erased;
+            for (; next < repeated.size() && repeated[next].point.block == block; ++next)
+                erased.set(repeated[next].point.index);
+            builder.eraseValues(block, erased);
+        }
+    }
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
@@ -1873,6 +1957,7 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 {
     // First: reads and tests under one sum are then reads and tests under one key.
     PassOutcome outcome = dropRepeatedIntegerSums(context);
+    outcome |= dropRepeatedElementReads(context);
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome |= RedundantReadElimination { context }.run();
     outcome |= dropRepeatedMapSets(context);

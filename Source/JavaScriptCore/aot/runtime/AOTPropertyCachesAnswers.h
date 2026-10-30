@@ -89,6 +89,7 @@ struct PropertyAnswer {
     JSCell* keyForTrap { nullptr };
     uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
+    int16_t wordOfInheritedField { 0 };
 };
 
 struct ReadQuery {

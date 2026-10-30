@@ -47,6 +47,7 @@
 #include "AOTVirtualObject.h"
 #include "IterationKind.h"
 #include "JSArrayIterator.h"
+#include "JSSetIterator.h"
 #include "TypedArrayType.h"
 #include <algorithm>
 #include <array>
@@ -1816,11 +1817,47 @@ static void emitArrayIteratorStep(IterationExpansion& expansion, ValueID iterato
     expansion.finishStepAsDone();
 }
 
+// %SetIteratorPrototype%.next and %MapIteratorPrototype%.next on the state that the iterator keeps. A step follows a table that was replaced to the one that followed it, and finds what JSSetIterator::next finds.
+static void emitCollectionIteratorStep(IterationExpansion& expansion, ValueID iterator, bool isMap)
+{
+    IRBuilder& builder = expansion.builder;
+    auto appendFieldRead = [&](JSSetIterator::Field field) { return builder.append(makeWith(Opcode::GetInternalField, { iterator }, &Value::setIndex, static_cast<uint32_t>(field))); };
+    auto appendFieldStore = [&](JSSetIterator::Field field, ValueID stored) { builder.append(makeWith(Opcode::PutInternalField, { iterator, stored }, &Value::setIndex, static_cast<uint32_t>(field))); };
+
+    ValueID table = builder.append(Opcode::GetCollectionIteratorTable, { iterator });
+    IRBuilder::BranchBlocks closed = builder.emitBranch(builder.append(Opcode::IsCollectionIteratorClosedMark, { table }));
+    expansion.finishStepAsDone();
+
+    builder.moveToEndOf(closed.notTaken);
+    ValueID iterated = convertTo(builder, appendFieldRead(JSSetIterator::Field::IteratedObject), DeclaredType(Proven::byPosition(TypeTable::object)));
+    ValueID position = convertTo(builder, appendFieldRead(JSSetIterator::Field::Entry), DeclaredType(Proven::byPosition(expansion.types.intern(Type::integer(Range { 0, std::numeric_limits<int32_t>::max() })))));
+    ValueID step = builder.append(isMap ? Opcode::MapNext : Opcode::SetNext, { iterated, table, position });
+    ValueID hasEntry = expansion.appendResultAt(step, MapNextResult::HasEntry);
+    ValueID entry = expansion.appendResultAt(step, MapNextResult::Entry);
+    ValueID key = expansion.appendResultAt(step, MapNextResult::Key);
+    ValueID value = isMap ? expansion.appendResultAt(step, MapNextResult::Value) : key;
+    IRBuilder::BranchBlocks found = builder.emitBranch(hasEntry);
+    appendFieldStore(JSSetIterator::Field::Entry, expansion.appendIncrement(entry, 1));
+    builder.append(Opcode::PutCollectionIteratorTable, { iterator, builder.append(Opcode::CollectionTable, { iterated }) });
+    ValueID kind = appendFieldRead(JSSetIterator::Field::Kind);
+    IRBuilder::BranchBlocks entries = builder.emitBranch(expansion.appendIsEqualToInteger(kind, JSC::IterationKind::Entries));
+    expansion.finishStep(builder.appendBoolean(false), expansion.appendPair(key, value));
+    builder.moveToEndOf(entries.notTaken);
+    IRBuilder::BranchBlocks keys = builder.emitBranch(expansion.appendIsEqualToInteger(kind, JSC::IterationKind::Keys));
+    expansion.finishStep(builder.appendBoolean(false), key);
+    builder.moveToEndOf(keys.notTaken);
+    expansion.finishStep(builder.appendBoolean(false), value);
+
+    builder.moveToEndOf(found.notTaken);
+    builder.append(Opcode::PutCollectionIteratorTable, { iterator, builder.append(Opcode::CollectionIteratorClosedMark, { }) });
+    expansion.finishStepAsDone();
+}
+
 static PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder& builder)
 {
     Vector<ProgramPoint, 1> steps;
     Vector<ValueID, 1> producers;
-    forEachValueSite(pass.analyses, pass.function, { Opcode::StepArrayIterator }, [&](const ValueSite& site) {
+    forEachValueSite(pass.analyses, pass.function, { Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator }, [&](const ValueSite& site) {
         steps.append(ProgramPoint { site.block, site.index });
         producers.append(site.value);
     });
@@ -1836,7 +1873,10 @@ static PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder
         builder.setOrigin(original.origin());
         IRBuilder::Expansion cut = builder.beginExpansion(point, resultReads);
         expansion.operation = &cut;
-        emitArrayIteratorStep(expansion, original.iteratorOperand());
+        if (original.opcode == Opcode::StepArrayIterator)
+            emitArrayIteratorStep(expansion, original.iteratorOperand());
+        else
+            emitCollectionIteratorStep(expansion, original.iteratorOperand(), original.opcode == Opcode::StepMapIterator);
     }
     resultReads.finish();
     builder.setHandler(std::nullopt);

@@ -1065,7 +1065,8 @@ private:
                 continue;
             if (m_facts[index].arrayStorage == ArrayStorage::Other && m_facts[index].contentsAreProven && m_arrayWrites[index].keepsStorageOfLiteral()) {
                 const Type& elements = m_types.at(m_facts[index].contents[m_indexOfElements]);
-                if (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayGetDoubleStorage(ArrayStorage::Contiguous, elements))
+                bool isGivenMoreThanNumbers = m_arrayWrites[index].has(ArrayWrites::IsGivenMoreThanNumbers) && !m_arrayWrites[index].has(ArrayWrites::MeetsObjectThatIsNoArray);
+                if (isGivenMoreThanNumbers || (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayGetDoubleStorage(ArrayStorage::Contiguous, elements)))
                     m_facts[index].arrayStorage = ArrayStorage::Contiguous;
             }
             if (m_facts[index].arrayStorage != ArrayStorage::Other && mayGetDoubleStorage(m_facts[index].arrayStorage, m_types.at(m_facts[index].contents[m_indexOfElements])))

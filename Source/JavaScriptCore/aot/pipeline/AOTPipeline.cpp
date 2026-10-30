@@ -207,7 +207,7 @@ constexpr std::array rows {
     derivingFunctions(readingOtherBodies(functionPass(ResolveCalls, resolveCalls, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     functionPass(ResolveAccesses, resolveAccesses, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SplitUnions, splitUnions, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
-    functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
+    readingOtherBodies(functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
     functionPass(ExpandProvenIterations, expandProvenIterations, Optional, Prepared, { Flow, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),

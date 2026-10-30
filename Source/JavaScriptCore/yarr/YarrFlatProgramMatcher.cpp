@@ -2537,7 +2537,8 @@ static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program,
     };
     unsigned length = input.size();
     for (unsigned from = start; from < length; ++from) {
-        if (program.startScan != FlatStartScan::None) {
+        // RequiredTextsAlone has no tables. The set is cheaper to ask than the texts are to find.
+        if (program.startScan == FlatStartScan::OneCharacter || program.startScan == FlatStartScan::Table) {
             from = findStartByTables<CharType, SkipsStarts::No>(program, input.data(), length, from, search);
             if (from >= length)
                 break;

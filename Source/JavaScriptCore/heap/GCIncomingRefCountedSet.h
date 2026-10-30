@@ -43,6 +43,8 @@ public:
 
     // Returns true if the native object is new to this set.
     ALWAYS_INLINE bool addReference(JSCell*, T*);
+    // After this returns true, adding one object that is new to this set allocates nothing.
+    bool tryReserveCapacityForNewObject();
     
     void sweep(VM&, CollectionScope);
     

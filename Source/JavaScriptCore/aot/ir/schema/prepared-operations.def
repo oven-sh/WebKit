@@ -16,7 +16,7 @@ operation HasBirthFieldsFilled (object: Object/inspects, guard?: Guard/inspects)
 operation IsNotFrozen (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; proves = NotFrozen ; relies = Shape ; guarded = object
 operation HasLayoutPrototype (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(PrototypeLinks) ; proves = PrototypeLinkUnchanged ; relies = Shape ; guarded = object
 operation BelongsToInstance (object: Object/inspects) -> natural(boolean) ; reads(ShapeWords) ; proves = OwnInstance
-operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin
+operation IsPristine (value: Any/inspects, builtinClass: BuiltinClass, aspects: PristineAspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; hasKnownValueRule = true ; proves = Pristine ; replaces = IsPristineArray, CallBuiltin
 operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [isWritable] -> natural(boolean) ; reads(ArrayStorage) ; proves = ArrayStorage
 operation IsInBounds (array: Array/inspects, position: Integer/inspects) [| engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds
 operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array
