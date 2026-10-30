@@ -622,6 +622,9 @@ if WEBASSEMBLY_BBQJIT
         leap _g_config, ws1
         jmp JSCConfigGateMapOffset + (constexpr Gate::wasmOSREntry) * PtrSize[ws1], NativeToJITGatePtrTag # WasmEntryPtrTag
     else
+        if RETURN_ADDRESS_SIGNING
+            untagReturnAddress sp
+        end
         jmp ws0, WasmEntryPtrTag
     end
 
@@ -659,6 +662,9 @@ if WEBASSEMBLY_BBQJIT
         leap _g_config, ws1
         jmp JSCConfigGateMapOffset + (constexpr Gate::wasmOSREntry) * PtrSize[ws1], NativeToJITGatePtrTag # WasmEntryPtrTag
     else
+        if RETURN_ADDRESS_SIGNING
+            untagReturnAddress sp
+        end
         jmp r1, WasmEntryPtrTag
     end
 
@@ -1750,7 +1756,7 @@ if ARM64E
 end
 
 _get_sentinel_frame_return_pc_trampoline:
-if ARM64E
+if ARM64E or RETURN_ADDRESS_SIGNING
     pcrtoaddr _exit_implanted_slice, ws0
     tagCodePtr ws0, a0
     move ws0, r0

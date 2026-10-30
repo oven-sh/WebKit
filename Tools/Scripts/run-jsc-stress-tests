@@ -151,6 +151,7 @@ $jitTests = true
 $memoryLimited = false
 $asan = false # Bun
 $aot = true # Bun
+$webAssembly = true # Bun
 $outputDir = Pathname.new("results")
 $verbosity = 0
 $bundle = nil
@@ -196,6 +197,8 @@ def usage
     puts "                            Skip tests tagged with //@skip if $asan"
     puts "--without-aot               Bun: the JavaScriptCore under test is built with ENABLE_AOT=0."
     puts "                            Skip tests tagged with //@skip if !$aot"
+    puts "--without-webassembly       Bun: the JavaScriptCore under test is built with ENABLE_WEBASSEMBLY=0."
+    puts "                            $isWasmPlatform is false"
     puts "--no-jit                    Do not run JIT specific tests."
     puts "--force-collectContinuously Enable the collectContinuously mode even if disabled on this"
     puts "                            platform."
@@ -248,6 +251,7 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
                ['--memory-limited', GetoptLong::NO_ARGUMENT],
                ['--asan', GetoptLong::NO_ARGUMENT],
                ['--without-aot', GetoptLong::NO_ARGUMENT],
+               ['--without-webassembly', GetoptLong::NO_ARGUMENT],
                ['--no-jit', GetoptLong::NO_ARGUMENT],
                ['--force-collectContinuously', GetoptLong::NO_ARGUMENT],
                ['--output-dir', '-o', GetoptLong::REQUIRED_ARGUMENT],
@@ -302,6 +306,8 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
         $asan = true
     when '--without-aot'
         $aot = false
+    when '--without-webassembly'
+        $webAssembly = false
     when '--no-jit'
         $jitTests = false
     when '--force-collectContinuously'
@@ -631,7 +637,7 @@ $hostOS = determineOS unless $hostOS
 $architecture = determineArchitecture unless $architecture
 $isFTLPlatform = !($architecture == "x86" || $architecture == "mips" || $architecture == "riscv64" || $hostOS == "playstation" || $architecture == "arm")
 # Special case windows, we want to run the wasm tests temporarily without B3/Air support
-$isWasmPlatform = (not $cloop) && $jitTests && ($isFTLPlatform || ($hostOS == "windows" && $architecture == "x86_64"))
+$isWasmPlatform = $webAssembly && (not $cloop) && $jitTests && ($isFTLPlatform || ($hostOS == "windows" && $architecture == "x86_64"))
 $isOMGPlatform = $isFTLPlatform
 $isSIMDPlatform = $isWasmPlatform && ($architecture == "arm64" || $architecture == "x86_64")
 

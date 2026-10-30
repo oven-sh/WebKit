@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# check-signed-return-addresses.py <binary> [--objdump <llvm-objdump>]
+# check-signed-return-addresses.py <binary> [--llint] [--objdump <llvm-objdump>]
 #
 # For a lane that is compiled with -mbranch-protection=pac-ret (SIGNED_RETURN_ADDRESSES in .github/scripts/lanes.mjs). It reads the machine code of a finished ARM64 binary that has its
 # symbols, because the archives of an LTO lane are bitcode, and checks two things.
@@ -7,6 +7,9 @@
 # The flag has reached the code: a function that saves the link register on the stack signs it first (PACIASP). What no compiler emits never does, and `unsigned_by_nature` names it. In the
 # jsc of bun-webkit-linux-arm64-lto-hardened that is 60 functions of the 36,528 that save the link register. Any other function fails the lane: either a part of the build has lost the flag,
 # or the function is new and written in assembly, and belongs on the list.
+#
+# --llint is for a lane that also has ENABLE(RETURN_ADDRESS_SIGNING): there LLInt signs too (PACIBSP), and is not on the list. What the JITs generate is not in the binary:
+# JSTests/stress/return-address-of-function-is-signed.js asks the frames.
 #
 # The binary still starts on ARMv8.0: every pointer authentication instruction in it is a hint, which a processor without pointer authentication ignores. RETAA, BLRAA, PACIA and the like
 # are undefined instructions there. The compiler emits them once -march says ARMv8.3 or later.
@@ -21,10 +24,16 @@ for i, argument in enumerate(arguments):
     if argument == '--objdump':
         objdump = arguments[i + 1]
 
-unsigned_by_nature = re.compile('|'.join([
-    # llint/*.asm, and the inline assembly of MacroAssemblerARM64.cpp. Not llint_\w+: llint_slow_path_* and the like are C++.
+# llint/*.asm. Not llint_\w+: llint_slow_path_* and the like are C++.
+llint = [
     r'vmEntryTo\w+', r'llint_\w*(?:entry|trampoline|prologue|arity_check)', r'llint_get_host_call_return_value', r'ipint_entry', r'wasm_builtin_trampoline__\w+',
     r'(?:js_to_wasm|wasm_to_js)_wrapper_entry', r'relocateJITReturnPC', r'getSentinelFrameReturnPC', r'enterWebAssemblySuspendingFunction', r'pinballHandler(?:Fulfill|Reject)Function',
+]
+if '--llint' in arguments:
+    # Whatever jumps to one of these has signed the link register: jsTrampoline*Prologue and ipint_trampoline, or the thunk that takes their place with the JIT.
+    llint = [r'llint_\w+_(?:prologue|arity_check)', r'ipint_entry']
+unsigned_by_nature = re.compile('|'.join(llint + [
+    # The inline assembly of MacroAssemblerARM64.cpp.
     r'ctiMasmProbeTrampoline',
     # The C library's start-up code, libgcc, and what the linker writes.
     r'__do_global_dtors_aux', r'__libc_csu_init', r'init_have_lse_atomics', r'_init', r'_fini', r'\.plt', r'.*@plt.*',
@@ -32,7 +41,7 @@ unsigned_by_nature = re.compile('|'.join([
 head = re.compile(r'^[0-9a-f]+ <(.*)>:$')
 # Any store, though the compiler saves it with STP and STR alone. Either operand of an STP: without a frame pointer that is `stp x30, x19, [sp, #-16]!`.
 saves = re.compile(r'\tst\w+\t(?:[wx]\d+, )?x30, (?:x\d+, )?\[sp')
-signs = re.compile(r'\tpaciasp$')
+signs = re.compile(r'\tpaci[ab]sp$')
 pointer_authentication = re.compile(r'\t((?:pac|aut|xpac|e?reta|bl?ra[ab]|ldra[ab])\w*)')
 # All there are. Whatever else the pattern above finds is taken for undefined before ARMv8.3, also what is newer than this list.
 hints = {'paciasp', 'pacibsp', 'paciaz', 'pacibz', 'pacia1716', 'pacib1716', 'autiasp', 'autibsp', 'autiaz', 'autibz', 'autia1716', 'autib1716', 'xpaclri', 'pacm'}

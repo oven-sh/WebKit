@@ -4555,7 +4555,7 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const RTT& sign
 
     emitShuffle(resolvedArguments, parameterLocations);
 
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     JIT_COMMENT(m_jit, "Untag our return PC");
     // prologue scratch registers should be free as we already moved the arguments into place.
     GPRReg scratch = callingConvention.prologueScratchGPRs[0];
@@ -4834,7 +4834,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
 
     emitShuffle(resolvedArguments, parameterLocations);
 
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     JIT_COMMENT(m_jit, "Untag our return PC");
     // prologue scratch registers should be free as we already moved the arguments into place.
     GPRReg scratch = callingConvention.prologueScratchGPRs[0];

@@ -5654,10 +5654,84 @@ public:
         return Call(label, Call::LinkableNearTail);
     }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // What MacroAssemblerARM64E does to a return address, in hints. A tag other than NoPtrTag is for the pointers that only
+    // CPU(ARM64E) signs.
+    ALWAYS_INLINE void tagReturnAddress()
+    {
+        m_assembler.hint(27); // PACIBSP
+    }
+
+    ALWAYS_INLINE void untagReturnAddress(RegisterID = InvalidGPRReg)
+    {
+        m_assembler.hint(31); // AUTIBSP
+        validateUntaggedPtr(ARM64Registers::lr);
+    }
+
+    ALWAYS_INLINE void tagPtr(PtrTag tag, RegisterID target)
+    {
+        if (tag)
+            return;
+        RELEASE_ASSERT(target == ARM64Registers::lr);
+        m_assembler.hint(26); // PACIBZ
+    }
+
+    ALWAYS_INLINE void untagPtr(PtrTag tag, RegisterID target)
+    {
+        if (tag)
+            return;
+        RELEASE_ASSERT(target == ARM64Registers::lr);
+        m_assembler.hint(30); // AUTIBZ
+    }
+
+    ALWAYS_INLINE void tagPtr(RegisterID tag, RegisterID target)
+    {
+        if (target == ARM64Registers::lr && tag == ARM64Registers::sp) {
+            tagReturnAddress();
+            return;
+        }
+        signOrAuthenticateWithRegisters(tag, target, 10); // PACIB1716
+    }
+
+    ALWAYS_INLINE void untagPtr(RegisterID tag, RegisterID target)
+    {
+        if (target == ARM64Registers::lr && tag == ARM64Registers::sp) {
+            untagReturnAddress();
+            return;
+        }
+        signOrAuthenticateWithRegisters(tag, target, 14); // AUTIB1716
+    }
+
+    ALWAYS_INLINE void removePtrTag(RegisterID target)
+    {
+        // XPACLRI has its operand in the link register.
+        RELEASE_ASSERT(target != memoryTempRegister && target != ARM64Registers::lr);
+        RegisterID savedLinkRegister = getCachedMemoryTempRegisterIDAndInvalidate();
+        move(ARM64Registers::lr, savedLinkRegister);
+        move(target, ARM64Registers::lr);
+        m_assembler.hint(7);
+        move(ARM64Registers::lr, target);
+        move(savedLinkRegister, ARM64Registers::lr);
+    }
+
+    // Not every processor faults where it fails to authenticate. The others leave an address that nothing is mapped at, and
+    // whoever signs that again gives away most of the signature of the address it was made from. So it is read from first.
+    ALWAYS_INLINE void validateUntaggedPtr(RegisterID target, RegisterID = InvalidGPRReg)
+    {
+        m_assembler.ldrb(ARM64Registers::zr, target, 0);
+    }
+
+    ALWAYS_INLINE void ret()
+    {
+        m_assembler.hint(31); // AUTIBSP
+        m_assembler.ret();
+    }
+#else
     ALWAYS_INLINE void ret()
     {
         m_assembler.ret();
     }
+#endif
 
     // Comparisons operations
 
@@ -7920,6 +7994,24 @@ protected:
     }
     
 public:
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // The only hints that take a modifier other than sp or zero have the pointer in x17 and the modifier in x16.
+    void signOrAuthenticateWithRegisters(RegisterID modifier, RegisterID pointer, int hint)
+    {
+        static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
+        RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
+        RegisterID modifierGPR = getCachedDataTempRegisterIDAndInvalidate();
+        RegisterID pointerGPR = getCachedMemoryTempRegisterIDAndInvalidate();
+        if (modifier != modifierGPR)
+            move(modifier, modifierGPR);
+        if (pointer != pointerGPR)
+            move(pointer, pointerGPR);
+        m_assembler.hint(hint);
+        if (pointer != pointerGPR)
+            move(pointerGPR, pointer);
+    }
+#endif
+
     ALWAYS_INLINE RegisterID getCachedDataTempRegisterIDAndInvalidate()
     {
         RELEASE_ASSERT(m_allowScratchRegister);

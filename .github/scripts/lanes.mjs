@@ -68,7 +68,10 @@ const HARDENING =
 // Code with and without it runs together. But LLVM inlines no function into one that differs in it, so LTO inlines nothing
 // between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what walks
 // the frame pointers there, as bun's crash handler does, has to take the signatures off too.
-const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret";
+const SIGNED_RETURN_ADDRESSES_IN_COMPILED_CODE = " -mbranch-protection=pac-ret";
+// That is what the compiler generates. With this, LLInt and what the JITs generate do the same (wtf/PlatformEnable.h).
+const SIGNED_RETURN_ADDRESSES_IN_GENERATED_CODE = " -DENABLE_RETURN_ADDRESS_SIGNING=1";
+const SIGNED_RETURN_ADDRESSES = SIGNED_RETURN_ADDRESSES_IN_COMPILED_CODE + SIGNED_RETURN_ADDRESSES_IN_GENERATED_CODE;
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -113,6 +116,8 @@ const variants = {
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  // "lto-hardened" with ENABLE_WEBASSEMBLY=0.
+  "lto-hardened-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, webAssembly: false, aot: false },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
   "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
@@ -136,7 +141,7 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
 //                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
-//                   arm64's "lto-hardened", the one lane with SIGNED_RETURN_ADDRESSES. The
+//                   arm64's "lto-hardened" and "lto-hardened-no-webassembly", the lanes with SIGNED_RETURN_ADDRESSES. The
 //                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
 //                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
@@ -154,11 +159,11 @@ const platforms = [
     lanes: {
       amd64: [...ALL, ...FUZZING, ...HARDENED],
       // Nothing asks for the others of FUZZING and HARDENED here.
-      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-no-webassembly", "lto-hardened-aot"],
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-no-webassembly", "lto-hardened-aot"] },
     },
     testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
     // Not "asan-aot" of amd64: it has the objects of testaot, for bun's CI.
@@ -361,8 +366,8 @@ const lanes = platforms.flatMap(platform =>
         test_quick: platform.tested?.[arch]?.quick ?? false,
         programs: programs(platform, arch, variant, test).join(" "),
         aot: v.aot === false ? 0 : 1,
-        // What of HARDENING the headers in the tarball test: they lay classes out by it.
-        defines: v.hardened ? [...HARDENING.matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" ") : "",
+        // What of HARDENING_FLAGS the headers in the tarball test: they lay classes out by it, and generate code by it.
+        defines: [...(buildArgs.HARDENING_FLAGS ?? "").matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" "),
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };

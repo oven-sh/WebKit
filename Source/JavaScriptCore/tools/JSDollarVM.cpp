@@ -2325,6 +2325,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
+static JSC_DECLARE_HOST_FUNCTION(functionFunctionsSignReturnAddress);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned);
+static JSC_DECLARE_HOST_FUNCTION(functionRemoveSignatureOfReturnAddressOfCaller);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGigacageEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionToCacheableDictionary);
 static JSC_DECLARE_HOST_FUNCTION(functionToUncacheableDictionary);
@@ -4939,6 +4942,47 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsBoolean(Options::useFTLJIT()));
 }
 
+// Returns true if LLInt and the JITs are to sign the return address that a function saves, and the processor does so.
+// Usage: $vm.functionsSignReturnAddress()
+JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if CPU(ARM64E)
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(true));
+#elif ENABLE(RETURN_ADDRESS_SIGNING)
+    uintptr_t address = std::bit_cast<uintptr_t>(callFrame);
+    uintptr_t result = address;
+    asm("mov x30, %0\n"
+        "hint #26\n" // PACIBZ
+        "mov %0, x30"
+        : "+r"(result) : : "x30");
+    return JSValue::encode(jsBoolean(result != address));
+#else
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+// Returns true if the return address that the calling function saved in its frame has a signature.
+// Usage: $vm.returnAddressOfCallerIsSigned()
+JSC_DEFINE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CallFrame* caller = callFrame->callerFrame();
+    return JSValue::encode(jsBoolean(caller->rawReturnPC() != caller->returnPCForInspection()));
+}
+
+// Leaves the address alone, which is what somebody who overwrites it can do at best. The calling function must not get to return to it.
+// Usage: $vm.removeSignatureOfReturnAddressOfCaller()
+JSC_DEFINE_HOST_FUNCTION(functionRemoveSignatureOfReturnAddressOfCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CallFrame* caller = callFrame->callerFrame();
+    caller->setReturnPC(caller->returnPCForInspection());
+    return JSValue::encode(jsUndefined());
+}
+
 // Returns true if Gigacage is enabled.
 // Usage: $vm.isGigacageEnabled()
 JSC_DEFINE_HOST_FUNCTION(functionIsGigacageEnabled, (JSGlobalObject*, CallFrame*))
@@ -6245,6 +6289,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
+    addFunction(vm, alwaysAllow, "functionsSignReturnAddress"_s, functionFunctionsSignReturnAddress, 0);
+    addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
+    addFunction(vm, alwaysAllow, "removeSignatureOfReturnAddressOfCaller"_s, functionRemoveSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);

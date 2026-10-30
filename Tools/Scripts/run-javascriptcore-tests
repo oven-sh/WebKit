@@ -120,6 +120,7 @@ my $runQuickMode = 0;
 my $noSlowTests = 0; # Bun
 my $asanBuild = 0; # Bun
 my $withoutAOT = 0; # Bun
+my $withoutWebAssembly = 0; # Bun
 
 my $forceCollectContinuously = 0;
 my $envVars = "";
@@ -324,6 +325,7 @@ Usage: $programName [options] [options to pass to build system]
   --no-slow                     Bun: skip the tests marked //\@ slow! (run-jsc-stress-tests --no-slow).
   --asan                        Bun: the build under test has AddressSanitizer; skip the tests marked //\@ skip if \$asan.
   --without-aot                 Bun: the build under test has ENABLE_AOT=0; no testaot, and skip the tests marked //\@ skip if !\$aot.
+  --without-webassembly         Bun: the build under test has ENABLE_WEBASSEMBLY=0; as on a platform without WebAssembly.
 
   --[no-]fail-fast              Stop this script when a test family reports an error or failure (default: $failFastDefault)
   --[no-]force-collectContinuously Enable the collectContinuously mode even if it was disabled on this platform.
@@ -418,6 +420,7 @@ GetOptions(
     'no-slow' => \$noSlowTests,
     'asan' => \$asanBuild,
     'without-aot' => \$withoutAOT,
+    'without-webassembly' => \$withoutWebAssembly,
     'fail-fast!' => \$failFast,
     'force-collectContinuously!' => \$forceCollectContinuously,
     'copy!' => \$copyJSC,
@@ -930,6 +933,11 @@ sub runJSCStressTests
         $runJITlessWasm = 0;
     }
 
+    if ($withoutWebAssembly) {
+        $runWasm = 0;
+        $runJITlessWasm = 0;
+    }
+
     if ($runJSCStress) {
         @testList = (
             "PerformanceTests/SunSpider/tests/sunspider-1.0",
@@ -1037,6 +1045,10 @@ sub runJSCStressTests
 
     if ($withoutAOT) {
         push(@jscStressDriverCmd, "--without-aot");
+    }
+
+    if ($withoutWebAssembly) {
+        push(@jscStressDriverCmd, "--without-webassembly");
     }
 
     if (!$runJITStressTests) {

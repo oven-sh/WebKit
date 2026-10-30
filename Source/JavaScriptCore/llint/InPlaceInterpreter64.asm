@@ -11784,7 +11784,7 @@ end
 
     loadp [cfr], t5
     storep t5, [t4]                         # originalCallerFrame
-if ARM64E
+if ARM64E or RETURN_ADDRESS_SIGNING
     loadp ReturnPC[cfr], lr
     addp CallerFrameAndPCSize, cfr, t5
     untagReturnAddress t5
@@ -11839,6 +11839,10 @@ if ARM64E
     tagCodePtr t4, t5
 else
     pcrtoaddr _wasm_restore_frame_return, t4
+    if RETURN_ADDRESS_SIGNING
+        addp CallerFrameAndPCSize, cfr, t5
+        tagCodePtr t4, t5
+    end
 end
     storep t4, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
 
@@ -12444,7 +12448,7 @@ end
     # on ARM: lr = return address
 
     move sc2, sp
-if ARM64E
+if ARM64E or RETURN_ADDRESS_SIGNING
     addp CallerFrameAndPCSize, cfr, ws2
 end
     # saved cfr
@@ -12466,6 +12470,9 @@ end
 if ARM64E
     leap _g_config, ws1
     jmp JSCConfigGateMapOffset + (constexpr Gate::wasmIPIntTailCallWasmEntryPtrTag) * PtrSize[ws1], NativeToJITGatePtrTag # WasmEntryPtrTag
+end
+if RETURN_ADDRESS_SIGNING
+    untagReturnAddress ws2
 end
 
 _wasm_trampoline_wasm_ipint_tail_call:
@@ -12768,7 +12775,7 @@ _wasm_restore_frame_return:
     loadp CodeBlock[cfr], wasmInstance
     ipintReloadMemory(ws0)
 
-if ARM64E
+if ARM64E or RETURN_ADDRESS_SIGNING
     loadp ReturnPC[cfr], lr
     addp CallerFrameAndPCSize, cfr, ws0
     untagReturnAddress ws0

@@ -752,7 +752,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.emitFunctionEpilogue();
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     jit.untagReturnAddress(scratchGPR);
 #endif
 

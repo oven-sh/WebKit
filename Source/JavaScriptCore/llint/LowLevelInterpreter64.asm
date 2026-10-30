@@ -789,6 +789,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%UntagGateAfter:
     else
         _js_trampoline_%opcodeName%_untag:
+        if RETURN_ADDRESS_SIGNING
+            loadp 8[cfr], lr
+            addp 16, cfr, t3
+            untagReturnAddress t3
+        end
     end
 
     // Move frame up t1 slots
@@ -825,6 +830,11 @@ macro functionArityCheck(opcodeName, doneLabel)
         _%opcodeName%TagGateAfter:
     else
         _js_trampoline_%opcodeName%_tag:
+        if RETURN_ADDRESS_SIGNING
+            addp 16, cfr, t1
+            tagReturnAddress t1
+            storep lr, 8[cfr]
+        end
     end
 
 .continue:

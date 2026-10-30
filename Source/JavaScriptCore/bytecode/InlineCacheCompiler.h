@@ -442,7 +442,7 @@ bool LEGACY_NODELETE doesJSCalls(AccessCase::AccessType);
 
 #if CPU(X86_64)
 static constexpr size_t prologueSizeInBytesDataIC = 1;
-#elif CPU(ARM64E)
+#elif CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
 static constexpr size_t prologueSizeInBytesDataIC = 4;
 #elif CPU(ARM64)
 static constexpr size_t prologueSizeInBytesDataIC = 0;
