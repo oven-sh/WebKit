@@ -17,6 +17,7 @@
 #include "AOTSlotPlan.h"
 #include "AOTStackSlotPoisoning.h"
 #include "AOTVector.h"
+#include "AirAllocateRegistersByGreedy.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
 #include "AirOptimizePairedLoadStore.h"
@@ -29,6 +30,7 @@
 #include "B3HoistLoopInvariantValues.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
+#include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
 #include "B3RegionCloner.h"
@@ -1790,6 +1792,90 @@ static void testLoadsAreNotPairedAcrossStoreThatMayLieOverThem()
 #endif
 }
 
+// value = argument; call(value); call(value); value += value; then two busier values are born, value is read twice more, and calls follow that the two live across.
+// No register outlives both of the first calls but the two that the busier values take. So value is split into one cluster over the blocks, which finds no register
+// either, and that cluster into one for each block. The operands of the first calls lie between the two writes, and the slot is written behind the second.
+static void testOperandOfCallIsFoundWhenLiveRangeIsSplitTwice()
+{
+    using namespace B3::Air;
+    B3::Policy policy;
+    policy.air.splitting.splitsIntoClustersOverBlocks = true;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+
+    RegisterSet lostAtFirstCall { GPRInfo::argumentGPR0, GPRInfo::argumentGPR1 };
+    RegisterSet lostAtSecondCall { GPRInfo::argumentGPR2, GPRInfo::argumentGPR3 };
+    RegisterSet lostAtLaterCalls = lostAtFirstCall;
+    lostAtLaterCalls.merge(lostAtSecondCall);
+    RegisterSet allowed = lostAtLaterCalls;
+    allowed.merge(RegisterSet { GPRInfo::regCS0, GPRInfo::regCS1 });
+    for (Reg reg : Vector<Reg>(code.regsInPriorityOrder(B3::GP))) {
+        if (!allowed.contains(reg, IgnoreVectors))
+            code.pinRegister(reg);
+    }
+
+    Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
+    auto appendCall = [&](B3::Air::BasicBlock* block, const RegisterSet& lost, Tmp operand = Tmp()) {
+        auto* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
+        patchpoint->clobberLate(lost);
+        patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+        if (!operand) {
+            block->appendInst(Inst(Patch, patchpoint, Arg::special(special)));
+            return;
+        }
+        patchpoint->append(proc.addConstant(B3::Origin(), B3::Int64, 0), B3::ValueRep::ColdAny);
+        block->appendInst(Inst(Patch, patchpoint, Arg::special(special), operand));
+    };
+
+    B3::Air::BasicBlock* first = code.addBlock();
+    B3::Air::BasicBlock* between = code.addBlock();
+    B3::Air::BasicBlock* last = code.addBlock();
+    Tmp value = code.newTmp(B3::GP);
+    Tmp addend = code.newTmp(B3::GP);
+    Tmp sum = code.newTmp(B3::GP);
+
+    first->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), value);
+    appendCall(first, lostAtFirstCall, value);
+    appendCall(first, lostAtSecondCall, value);
+    first->append(Add64, nullptr, value, value);
+    first->append(Jump, nullptr);
+    first->setSuccessors(between);
+
+    between->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 16), addend);
+    between->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 24), sum);
+    between->append(Jump, nullptr);
+    between->setSuccessors(last);
+
+    last->append(Add64, nullptr, value, sum);
+    last->append(Add64, nullptr, value, sum);
+    for (unsigned call = 0; call < 2; ++call) {
+        appendCall(last, lostAtLaterCalls);
+        for (unsigned use = 0; use < 6; ++use)
+            last->append(Add64, nullptr, addend, sum);
+    }
+    last->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    last->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+    code.resetReachability();
+
+    allocateRegistersByGreedy(code);
+
+    Vector<StackSlot*> written;
+    for (Inst& inst : *first) {
+        inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank, Width) {
+            if (arg.isStack() && Arg::isAnyUse(role))
+                AOT_TEST_CHECK(written.contains(arg.stackSlot()));
+        });
+        inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank, Width) {
+            if (arg.isStack() && Arg::isAnyDef(role))
+                written.append(arg.stackSlot());
+        });
+    }
+    // The value is held in a register in the first block and stored once, for the last block.
+    AOT_TEST_CHECK(written.size() == 1);
+    AOT_TEST_CHECK(first->at(0).args()[1].isReg());
+}
+
 // entry branches to left and right, which both jump to join.
 struct DiamondForValidation {
     DiamondForValidation()
@@ -1945,6 +2031,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "narrow-truncated-phis"_s, testNarrowTruncatedPhis },
         { "load-is-not-folded-across-write-it-stays-in-front-of"_s, testLoadIsNotFoldedAcrossWriteItStaysInFrontOf },
         { "loads-are-not-paired-across-store-that-may-lie-over-them"_s, testLoadsAreNotPairedAcrossStoreThatMayLieOverThem },
+        { "operand-of-call-is-found-when-live-range-is-split-twice"_s, testOperandOfCallIsFoundWhenLiveRangeIsSplitTwice },
     };
     return tests;
 }

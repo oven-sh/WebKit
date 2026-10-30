@@ -5362,19 +5362,29 @@ private:
             TmpData& clusterData = m_map.get<bank>(clusterTmp);
             for (unsigned k = i ? groups[i - 1].ptrsEnd : 0; k < groups[i].ptrsEnd; ++k)
                 *mentions.ptrs[k] = clusterTmp; // Within this cluster, use clusterTmp rather than Tmp
+            Vector<Point, 8> coldUsePointsInCluster;
             for (unsigned k = i ? groups[i - 1].coldUsePtrsEnd : 0; k < groups[i].coldUsePtrsEnd; ++k) {
                 // Include coldUses only when they are within the warm cluster
                 if (clusterData.liveRange.contains(mentions.coldUsePtrs[k].second)) {
                     *mentions.coldUsePtrs[k].first = clusterTmp;
                     clusterData.hasColdUse = true;
+                    coldUsePointsInCluster.append(pointAtOffset(mentions.coldUsePtrs[k].second, PointOffsets::Pre));
                 }
             }
             if (clusterData.isClusterOverBlocks) {
+                // This cluster may be split again, and that split finds its mentions through this list. A cold use it
+                // missed would keep this cluster's name, and read the spill slot ahead of the store behind the last def.
                 UseDefList& list = m_newTmpUseDefLists.ensure(clusterTmp, [] {
                     return UseDefList();
                 }).iterator->value;
-                for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k)
+                unsigned nextColdUse = 0;
+                for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k) {
+                    while (nextColdUse < coldUsePointsInCluster.size() && coldUsePointsInCluster[nextColdUse] < mentions.points[k])
+                        list.add(coldUsePointsInCluster[nextColdUse++]);
                     list.add(mentions.points[k]);
+                }
+                while (nextColdUse < coldUsePointsInCluster.size())
+                    list.add(coldUsePointsInCluster[nextColdUse++]);
             }
         }
         for (unsigned i = 0; i < groups.size(); ++i) {
