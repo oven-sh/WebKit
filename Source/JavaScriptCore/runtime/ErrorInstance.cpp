@@ -175,20 +175,21 @@ void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 #if USE(BUN_JSC_ADDITIONS)
-    // retainStackFrames(). The mutator replaces the frames under the cell lock.
-    if (thisObject->m_retainsStackFrames) [[unlikely]] {
-        Locker locker { thisObject->cellLock() };
-        if (auto* stackTrace = thisObject->m_stackTrace.get()) {
-            for (auto& frame : *stackTrace)
-                frame.visitAggregate(visitor);
-        }
-    }
+    bool retainsStackFrames = thisObject->m_retainsStackFrames;
+#else
+    bool retainsStackFrames = false;
 #endif
-    if (!thisObject->m_returnAddresses)
+    if (!thisObject->m_returnAddresses && !retainsStackFrames)
         return;
+    // The mutator replaces the return addresses and the frames under the cell lock.
     Locker locker { thisObject->cellLock() };
     if (auto* returnAddresses = thisObject->m_returnAddresses)
         visitor.markAuxiliary(returnAddresses);
+    // retainStackFrames().
+    if (auto* stackTrace = retainsStackFrames ? thisObject->m_stackTrace.get() : nullptr) {
+        for (auto& frame : *stackTrace)
+            frame.visitAggregate(visitor);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(ErrorInstance);
@@ -953,9 +954,33 @@ void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject*
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
     // The lazy properties are not enumerable and their names are strings: no other listing has them.
-    if (mode == DontEnumPropertiesMode::Include && propertyNames.includeStringProperties())
+    if (mode != DontEnumPropertiesMode::Include)
+        return;
+    if (propertyNames.includeStringProperties()) {
         thisObject->materializeErrorInfoIfNeeded(vm);
+        return;
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    thisObject->tellHostOfUse(vm);
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// ErrorInfoRequest::Use. The frames are what the host can keep, so an error that has none, or keeps them, asks nothing.
+void ErrorInstance::tellHostOfUse(VM& vm)
+{
+    if (m_retainsStackFrames || m_isComposingStack || !m_stackTrace || m_stackTrace->isEmpty())
+        return;
+    auto& fn = vm.onComputeErrorInfoJSValue();
+    if (!fn)
+        return;
+    DeferGCForAWhile deferGC(vm);
+    DisallowVMEntry disallowVMEntry(vm);
+    LineColumn unusedLineColumn;
+    String unusedSourceURL;
+    fn(vm, *m_stackTrace, String(), unusedLineColumn.line, unusedLineColumn.column, unusedSourceURL, this, ErrorInfoRequest::Use);
+}
+#endif
 
 bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {

@@ -192,6 +192,9 @@ enum class ErrorInfoRequest : uint8_t {
     // The line, the column and the sourceURL, for anything else that needs the error's own properties. The result is the
     // custom accessor (a CustomGetterSetter) that stands for "stack" until it is read, or empty for none.
     Position,
+    // Nothing: the error is used in a way that needs none of its lazy properties (a listing of its Symbol keys). The host
+    // hears of it because it can need the frames when "stack" is read: ErrorInstance::retainStackFrames(). No result.
+    Use,
 };
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, const String& formattedFrames, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, ErrorInfoRequest)>;
 #endif

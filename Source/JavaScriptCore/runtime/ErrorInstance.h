@@ -235,6 +235,7 @@ protected:
     void discardStackToComposeIfReplaced(VM&);
     void putStack(VM&, JSValue);
     void putStackAccessorIfAbsent(VM&, JSValue stackAccessor);
+    void tellHostOfUse(VM&);
     bool stackIsHostAccessor(VM&, bool setterToo = false);
 #endif
 };
