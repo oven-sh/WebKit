@@ -780,8 +780,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         bool isEnabled = inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, index);
         BuiltinID canonical = builtins.canonicalID(member);
         bool takesNameFromTests = std::ranges::contains(program.openedNames, canonical, &OpenedName::holder);
-        // The images below have run first, and nobody tells this build under which names of their own they have stored on the global object.
-        bool hasNamesOfImagesBelow = canonical == builtins.canonicalID(Builtins::GlobalThis) && inputs.solver().input().refusedCode.hasImagesBelow;
+        bool hasNamesOfImagesBelow = !builtins.at(canonical).flags.contains(BuiltinFlag::IsLockedObject) && inputs.solver().input().refusedCode.hasImagesBelow;
         if (isEnabled && !takesNameFromTests && !hasNamesOfImagesBelow && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
             tables.intactHolders.quickSet(index);
         const Builtin& entry = builtins.at(member);

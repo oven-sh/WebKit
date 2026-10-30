@@ -2440,10 +2440,11 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
         });
     });
     // So does a list inside a literal that has become one constant.
+    Vector<ValueID> valuesInsideLiterals;
+    for (const UnwrittenLiteral& outer : inFunction.unwrittenLiterals)
+        valuesInsideLiterals.appendVector(outer.deadValues);
     inFunction.unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
-        return std::ranges::any_of(inFunction.unwrittenLiterals, [&](const UnwrittenLiteral& outer) {
-            return outer.deadValues.contains(unwritten.literal);
-        });
+        return valuesInsideLiterals.contains(unwritten.literal);
     });
     if (!inFunction.isEmpty())
         found.append(WTF::move(inFunction));

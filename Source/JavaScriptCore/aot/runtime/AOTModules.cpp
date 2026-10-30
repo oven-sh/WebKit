@@ -3165,6 +3165,8 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID moduleOfHost)
     if (modules->isCommonJSFileOrFace(module))
         RELEASE_AND_RETURN(scope, modules->recordOfCommonJSFile(module, Modules::LoadOfFile::IsRequested));
     // A module of the image asks through the loader. Code that is not compiled binds what it imports to the record.
+    if (!modules->isAskingHost())
+        modules->didImportFromUncompiledCode(module);
     RELEASE_AND_RETURN(scope, modules->exposeRecord(module, modules->isAskingHost() ? Modules::RecordHolder::Loader : Modules::RecordHolder::Anyone));
 }
 

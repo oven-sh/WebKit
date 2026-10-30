@@ -133,10 +133,15 @@ ValueSetID HeapRule::holdersWithLockedLocationUnder(const HeapKey& key) const
 
 ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
 {
+    auto withWhatImagesBelowStoredOn = [&](ValueSetID holders, ValueSetID closedHolders) {
+        if (!m_context.refusedCode().hasImagesBelow)
+            return holders;
+        return m_context.maker().unite(holders, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(closedHolders)));
+    };
     if (key.keyClass == HeapKeyClass::Index)
-        return m_tables.holdersOfUndeclaredPropertiesUnderIndexes();
+        return withWhatImagesBelowStoredOn(m_tables.holdersOfUndeclaredPropertiesUnderIndexes(), m_context.maker().unite(m_tables.lockedObjects(), m_tables.holdersWithLockedIndexes()));
     if (key.keyClass != HeapKeyClass::Name)
-        return m_tables.holdersOfUndeclaredPropertiesUnderAnyKey();
+        return withWhatImagesBelowStoredOn(m_tables.holdersOfUndeclaredPropertiesUnderAnyKey(), m_tables.lockedObjects());
     if (m_nameOfHoldersOfUndeclaredProperties == key.name && m_holdersOfUndeclaredPropertiesUnderName)
         return m_holdersOfUndeclaredPropertiesUnderName;
     m_nameOfHoldersOfUndeclaredProperties = key.name;
@@ -150,8 +155,12 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
     if (key.name == m_program.keyOf(BuiltinNames::then) && !doesUnseenCodeRun())
         holders = m_context.maker().intersect(holders, m_context.maker().unite(ValueSets::complement(m_universe.builtinObjects()), m_tables.prototypeObjects()));
     bool isPrivateName = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
+    // Code that nobody has seen finds every built-in object. Those of the host do not escape with the global object that holds them, and a list of all members says what the host has put
+    // there, not what evaluated text has: `process.flag = 1`.
     if (!isPrivateName && doesUnseenCodeRun())
-        holders = m_context.maker().unite(holders, m_context.maker().intersect(m_tables.prototypeObjects(), ValueSets::complement(m_tables.under(key.name).holdersWithLockedLocation)));
+        holders = m_context.maker().unite(holders, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_tables.under(key.name).holdersWithLockedLocation)));
+    if (!isPrivateName)
+        holders = withWhatImagesBelowStoredOn(holders, m_tables.under(key.name).holdersWithLockedLocation);
     return holders;
 }
 

@@ -253,6 +253,191 @@ void Program::unlockReplaceableBuiltins()
                 didMark |= !unlockedNames.quickSet(name.index());
         }
     }
+
+    // So far a function is marked whichever object holds the member. A row for a pristine instance leaves out what a lookup ON THE INSTANCE finds, and nothing stands in the way of that
+    // lookup but the chain of its class. What follows marks fewer functions, class by class, and never one that is not marked above.
+    auto isMarked = [&](BuiltinID function) {
+        return m_functionsLookingUpUnlockedNames.quickGet(m_builtins.canonicalID(function).index());
+    };
+    auto forEachClassFrom = [&](BuiltinClassID instanceClass, NOESCAPE const Invocable<bool(BuiltinClassID)> auto& predicate) {
+        for (BuiltinClassID current = instanceClass; current; current = m_builtins.at(current).parent) {
+            if (predicate(current))
+                return true;
+        }
+        return false;
+    };
+    unsigned classCount = m_builtins.classCount();
+    BitVector classesOfPristineParts(classCount);
+    BitVector isWanted(m_builtins.builtinCount());
+    Vector<BuiltinID> functionsWithRowForPristineInstance;
+    for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
+        if (!isMarked(BuiltinID(index)))
+            continue;
+        bool hasSuchRow = false;
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(BuiltinID(index))) {
+            forEachParameter(overload, [&](const BuiltinParameter& parameter) {
+                for (const BuiltinTypePart& part : m_builtins.at(parameter.accepted).parts) {
+                    if (part.pristine.isEmpty() || !part.builtinClass)
+                        continue;
+                    hasSuchRow = true;
+                    classesOfPristineParts.quickSet(part.builtinClass.index());
+                }
+                return false;
+            });
+        }
+        if (hasSuchRow && !isWanted.quickSet(m_builtins.canonicalID(BuiltinID(index)).index()))
+            functionsWithRowForPristineInstance.append(m_builtins.canonicalID(BuiltinID(index)));
+    }
+
+    struct Chain {
+        BuiltinClassID instanceClass;
+        BitVector closedNames;
+        // Something that a test may have put there is found on an instance, under whatever name.
+        bool holdsWhatTestsPut { false };
+        // The marked functions that a lookup on an instance finds, each with the name that finds it.
+        Vector<std::pair<BuiltinID, BuiltinName>> functionsFound;
+    };
+    auto walk = [&](BuiltinClassID instanceClass) -> std::optional<Chain> {
+        BuiltinID holder = m_builtins.at(instanceClass).prototype;
+        if (!holder)
+            return std::nullopt;
+        Chain chain { instanceClass, BitVector(m_builtins.nameCount()), false, { } };
+        BitVector seen(m_builtins.nameCount());
+        holder = m_builtins.canonicalID(holder);
+        while (true) {
+            for (const OpenedName& opened : openedNames) {
+                if (opened.holder != holder)
+                    continue;
+                chain.holdsWhatTestsPut = true;
+                if (BuiltinName name = m_builtins.nameOf(strings[opened.name]); name && !seen.quickSet(name.index()))
+                    chain.closedNames.quickSet(name.index());
+            }
+            for (BuiltinID member : m_builtins.membersOf(holder)) {
+                BuiltinName name = m_builtins.at(member).name;
+                if (!name || seen.quickGet(name.index()))
+                    continue;
+                if (losesLockOfTable.quickGet(member.index()) && isUnlocked(member)) {
+                    chain.holdsWhatTestsPut = true;
+                    chain.closedNames.quickSet(name.index());
+                }
+                if (isMarked(member))
+                    chain.functionsFound.append({ m_builtins.canonicalID(member), name });
+                // Only what is there for certain, and stays, hides what stands under the same name further up.
+                if (m_builtins.at(member).mutability == BuiltinMutability::AlwaysLocked && !m_builtins.has(BuiltinMark::MayBeAbsent, member))
+                    seen.quickSet(name.index());
+            }
+            switch (m_builtins.at(holder).prototypeLink) {
+            case BuiltinPrototypeLink::Unknown:
+                return std::nullopt;
+            case BuiltinPrototypeLink::Null:
+                return chain;
+            case BuiltinPrototypeLink::Builtin:
+                holder = m_builtins.canonicalID(m_builtins.at(holder).inheritsFrom);
+                break;
+            }
+        }
+    };
+    // A part of class TypedArray stands for a Uint8Array too, whose chain is longer.
+    m_classesWithKnownChains = classesOfPristineParts;
+    Vector<Chain> chains;
+    for (uint32_t index = 0; index < classCount; ++index) {
+        BuiltinClassID instanceClass(index);
+        bool standsForPristinePart = forEachClassFrom(instanceClass, [&](BuiltinClassID above) {
+            return classesOfPristineParts.quickGet(above.index());
+        });
+        if (!standsForPristinePart)
+            continue;
+        if (std::optional<Chain> chain = walk(instanceClass)) {
+            for (auto [function, name] : chain->functionsFound)
+                isWanted.quickSet(function.index());
+            chains.append(WTF::move(*chain));
+            continue;
+        }
+        forEachClassFrom(instanceClass, [&](BuiltinClassID above) {
+            m_classesWithKnownChains.quickClear(above.index());
+            return false;
+        });
+    }
+
+    struct Lookups {
+        Vector<BuiltinName> names;
+        // It has a row for a pristine instance of the class beside a row that takes everything from the same operand, and so names nothing.
+        Vector<BuiltinClassID> classesAskedWithoutName;
+    };
+    constexpr uint32_t hasNoLookups = std::numeric_limits<uint32_t>::max();
+    Vector<uint32_t> positionOfLookups(FillWith { }, m_builtins.builtinCount(), hasNoLookups);
+    Vector<Lookups> lookups;
+    for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
+        std::span<const BuiltinOverload> overloads = m_builtins.overloadsOf(BuiltinID(index));
+        uint32_t function = m_builtins.canonicalID(BuiltinID(index)).index();
+        if (overloads.empty() || !isWanted.quickGet(function))
+            continue;
+        if (positionOfLookups[function] == hasNoLookups) {
+            positionOfLookups[function] = lookups.size();
+            lookups.append(Lookups { });
+        }
+        Lookups& ofFunction = lookups[positionOfLookups[function]];
+        for (const BuiltinOverload& special : overloads) {
+            forEachParameter(special, [&](const BuiltinParameter& parameter) {
+                for (Protocol protocol : parameter.protocols)
+                    ofFunction.names.append(m_builtins.keysReadBy(protocol));
+                for (const BuiltinNameStretch& stretch : { parameter.namedMembers, parameter.calledMembers, parameter.convertedMembers }) {
+                    for (BuiltinName name : stretch)
+                        ofFunction.names.append(name);
+                }
+                bool isBesideRowThatTakesEverything = std::ranges::any_of(overloads, [&](const BuiltinOverload& general) {
+                    return general.mode == special.mode && forEachParameter(general, [&](const BuiltinParameter& other) {
+                        return other.operand == parameter.operand && other.uses == OperandUses::all();
+                    });
+                });
+                for (const BuiltinTypePart& part : m_builtins.at(parameter.accepted).parts) {
+                    if (isBesideRowThatTakesEverything && !part.pristine.isEmpty() && part.builtinClass)
+                        ofFunction.classesAskedWithoutName.append(part.builtinClass);
+                }
+                return false;
+            });
+        }
+    }
+    for (Lookups& ofFunction : lookups) {
+        AOT::sort(ofFunction.names);
+        ofFunction.names.shrink(ofFunction.names.size() - std::ranges::unique(ofFunction.names).size());
+    }
+
+    m_functionsLookingUpUnlockedNamesOnInstances = Vector<BitVector>(classCount);
+    for (Chain& chain : chains) {
+        auto looksUpWhatTestsPut = [&](BuiltinID function) {
+            if (positionOfLookups[function.index()] == hasNoLookups)
+                return false;
+            const Lookups& ofFunction = lookups[positionOfLookups[function.index()]];
+            bool looksUpName = std::ranges::any_of(ofFunction.names, [&](BuiltinName name) {
+                return chain.closedNames.quickGet(name.index());
+            });
+            return looksUpName || (chain.holdsWhatTestsPut && std::ranges::any_of(ofFunction.classesAskedWithoutName, [&](BuiltinClassID asked) {
+                return forEachClassFrom(chain.instanceClass, [&](BuiltinClassID above) {
+                    return above == asked;
+                });
+            }));
+        };
+        // A function that calls such a function under its name is one too, where the name finds it on an instance of this class.
+        for (bool didClose = true; std::exchange(didClose, false);) {
+            for (auto [function, name] : chain.functionsFound) {
+                if (!chain.closedNames.quickGet(name.index()) && looksUpWhatTestsPut(function)) {
+                    chain.closedNames.quickSet(name.index());
+                    didClose = true;
+                }
+            }
+        }
+        BitVector functions(m_builtins.builtinCount());
+        for (BuiltinID function : functionsWithRowForPristineInstance) {
+            if (looksUpWhatTestsPut(function))
+                functions.quickSet(function.index());
+        }
+        forEachClassFrom(chain.instanceClass, [&](BuiltinClassID above) {
+            if (classesOfPristineParts.quickGet(above.index()))
+                m_functionsLookingUpUnlockedNamesOnInstances[above.index()].merge(functions);
+            return false;
+        });
+    }
 }
 
 } // namespace Typed

@@ -219,6 +219,12 @@ public:
     }
     // Of this image.
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
+    // What require() answers for a file of data goes by whether something has imported the file: isHeldForImport().
+    void didImportFromUncompiledCode(ModuleID module)
+    {
+        if (data(module).kind == ModuleKind::Data)
+            m_dataFilesImportedByUncompiledCode.set(module.index());
+    }
     // The host starts a realm with one module, the entry point, and one image of the realm holds it.
     bool isEntryPointOfRealm(ModuleID module) const { return m_firstModuleRequestedByHost == module && !m_otherImageHoldsEntryPointOfRealm; }
     // Those of the image that holds it. Null before the host has asked for a module.
@@ -644,6 +650,7 @@ private:
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
+    BitVector m_dataFilesImportedByUncompiledCode;
     bool m_otherImageHoldsEntryPointOfRealm { false };
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };

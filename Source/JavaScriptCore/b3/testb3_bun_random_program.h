@@ -215,7 +215,6 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
 
     policy.air.splitting.splitsAroundClobbersEarly = true;
     policy.air.splitting.spansStretchesOfClobbers = true;
-    policy.air.splitting.limitsClobberSitesPerSplit = true;
     policy.air.splitting.splitsIntoClustersOverBlocks = true;
     policy.air.splitting.splitsAroundFrame = true;
 

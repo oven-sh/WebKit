@@ -494,13 +494,21 @@ void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
         return;
     unsigned attributes = 0;
     JSValue held = holder->getDirect(*m_instance.vm, key, attributes);
-    if (!held || !held.isCell() || attributes & PropertyAttribute::CustomAccessorOrValue)
+    if (!held || !held.isCell() || attributes & PropertyAttribute::CustomValue)
         return;
     auto fill = [&](BuiltinCellKey cellKey, JSCell* cell) {
         std::optional<uint32_t> number = cell ? numberOf(cellKey) : std::nullopt;
         if (number && !m_isUnavailable.get(*number))
             fillAndKeepAlive(*number, cell);
     };
+    // Native code without a function object: `URL.prototype.href`. The function that stands for it is made when somebody asks, out of what the holder has then.
+    if (attributes & PropertyAttribute::CustomAccessor) {
+        for (BuiltinCellKey cellKey : { BuiltinCellKey::getter(member), BuiltinCellKey::setter(member) }) {
+            if (numberOf(cellKey))
+                fill(cellKey, findInHolder(m_instance.globalObject, cellKey, holder).value_or(nullptr));
+        }
+        return;
+    }
     if (!(attributes & PropertyAttribute::Accessor)) {
         fill(BuiltinCellKey::object(member), held.asCell());
         return;

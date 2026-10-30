@@ -53,6 +53,10 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 template<typename Function>
@@ -625,5 +629,9 @@ void dumpCounts(VM& vm, PrintStream& out)
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

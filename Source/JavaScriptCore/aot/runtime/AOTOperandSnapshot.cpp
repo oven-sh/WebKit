@@ -31,6 +31,10 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 // A loop that calls a native function once per element of a large operand stays linear.
@@ -431,6 +435,10 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 

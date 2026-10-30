@@ -810,33 +810,6 @@ RegExpNamedGroups decodeRegExpNamedGroups(VM& vm, const ImageRegExp& record)
     return groups;
 }
 
-namespace {
-
-struct Literal {
-    const ImageRegExp* record;
-    OptionSet<Yarr::Flags> flags;
-};
-
-struct LiteralTranslator {
-    static unsigned hash(const Literal& literal)
-    {
-        constexpr unsigned bitsAboveFlags = 64 - 8 * sizeof(literal.flags);
-        return intHash(static_cast<uint64_t>(std::bit_cast<uintptr_t>(literal.record)) ^ static_cast<uint64_t>(literal.flags.toRaw()) << bitsAboveFlags);
-    }
-
-    static bool equal(RegExp* regExp, const Literal& literal)
-    {
-        return regExp->imageRecord() == literal.record && regExp->flags() == literal.flags;
-    }
-};
-
-} // anonymous namespace
-
-unsigned RegExpLiterals::CellHash::hash(RegExp* regExp)
-{
-    return LiteralTranslator::hash({ regExp->imageRecord(), regExp->flags() });
-}
-
 template<typename Visitor>
 void RegExpLiterals::visitRoots(Visitor& visitor)
 {
@@ -863,11 +836,13 @@ RegExp* RegExpLiterals::regExpFor(VM& vm, RegExpRecordID id, OptionSet<Yarr::Fla
     if (!m_records) [[unlikely]]
         m_records = &RegExpRecords(*vm.aotState().image).at(id) - id.index();
     const ImageRegExp& record = m_records[id.index()];
-    if (auto known = m_cells.find<LiteralTranslator>(Literal { &record, flags }); known != m_cells.end())
-        return *known;
+    static_assert(sizeof(flags.toRaw()) <= sizeof(uint32_t));
+    uint64_t key = static_cast<uint64_t>(id.index()) << 32 | flags.toRaw();
+    if (auto known = m_cells.find(key); known != m_cells.end())
+        return known->value;
 
     RegExp* regExp = RegExp::createFromImage(vm, regExpPatternOf(vm, record), flags, record);
-    m_cells.add(regExp);
+    m_cells.add(key, regExp);
     m_cellsInOrderOfCreation.append(regExp);
     return regExp;
 }

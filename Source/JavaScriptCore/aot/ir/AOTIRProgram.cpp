@@ -36,10 +36,16 @@ Program::Program(const BuiltinTable& builtins)
 {
 }
 
-bool Program::asksForPristineOperand(BuiltinTypeID tested) const
+bool Program::passesByRowFor(BuiltinID function, BuiltinTypeID tested) const
 {
-    return std::ranges::any_of(m_builtins.at(tested).parts, [](const BuiltinTypePart& part) {
-        return !part.pristine.isEmpty();
+    if (!looksUpUnlockedName(function))
+        return false;
+    return std::ranges::any_of(m_builtins.at(tested).parts, [&](const BuiltinTypePart& part) {
+        if (part.pristine.isEmpty())
+            return false;
+        if (!part.builtinClass || !m_classesWithKnownChains.get(part.builtinClass.index()))
+            return true;
+        return m_functionsLookingUpUnlockedNamesOnInstances[part.builtinClass.index()].get(m_builtins.canonicalID(function).index());
     });
 }
 

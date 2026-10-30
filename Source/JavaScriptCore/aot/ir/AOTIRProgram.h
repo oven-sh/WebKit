@@ -76,7 +76,8 @@ public:
     bool looksUpUnlockedName(BuiltinID function) const { return m_functionsLookingUpUnlockedNames.get(m_builtins.canonicalID(function).index()); }
     // No row of the function says that it calls the member: `new Map(pairs)` and Map.prototype.set. So no row says what the function does.
     bool callsUnlockedMemberThatNoRowNames(BuiltinID function) const { return m_functionsCallingUnlockedMembersThatNoRowNames.get(m_builtins.canonicalID(function).index()); }
-    bool passesByRowFor(BuiltinID function, BuiltinTypeID tested) const { return looksUpUnlockedName(function) && asksForPristineOperand(tested); }
+    // A lookup on a pristine instance goes along the chain of its class: on an array `toString` finds Array.prototype.toString, whatever a test has put under Object.prototype.toString.
+    bool passesByRowFor(BuiltinID function, BuiltinTypeID tested) const;
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
@@ -239,12 +240,14 @@ private:
         Vector<BuiltinName> registeredSymbolNames;
     };
 
-    bool asksForPristineOperand(BuiltinTypeID) const;
-
     const BuiltinTable& m_builtins;
     BitVector m_namesOpenedSomewhere;
     BitVector m_functionsLookingUpUnlockedNames;
     BitVector m_functionsCallingUnlockedMembersThatNoRowNames;
+    // By the class of a pristine part: the functions that look up a name which, on an instance of the class or of one below it, finds what a test may have put there.
+    // A class that is not among the first goes by looksUpUnlockedName() alone.
+    BitVector m_classesWithKnownChains;
+    Vector<BitVector> m_functionsLookingUpUnlockedNamesOnInstances;
     IRForm m_form { IRForm::AsRead };
     bool m_hasGuardedReads { false };
     BitVector m_builtinsThatMayBeTrimmed;

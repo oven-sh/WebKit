@@ -2694,6 +2694,8 @@ bool Modules::isHeldForImport(ModuleID target) const
     // A module of another image imports the file: the loader has asked for its record.
     if (m_instance.program->sharesRealms() && recordIfExists(target))
         return true;
+    if (m_dataFilesImportedByUncompiledCode.get(target.index()))
+        return true;
     return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
         ModuleID importer(import.importer);
         if (status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint()))

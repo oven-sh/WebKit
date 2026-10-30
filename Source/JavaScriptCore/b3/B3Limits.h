@@ -58,7 +58,6 @@ enum class LimitPurpose : uint8_t {
     macro(MaxLeavesToRebalance, 32, CompileTime, "the expression tree is not rebalanced"_s) \
     macro(MaxBitTestTargets, 3, CodeSize, "the cases are lowered as a binary search"_s) \
     macro(MaxCompareChainSearchSize, 16, CompileTime, "the condition is not selected as a compare chain"_s) \
-    macro(MaxClobberSitesPerSplit, AirLimits::maxClobberSitesPerSplit, CompileTime, "the Tmp is not split around clobbers; it takes a callee save or is spilled"_s) \
     macro(MaxSlotsForDenseInterference, AirLimits::maxSlotsForDenseInterference, Memory, "the sparse interference graph is built, with the same result"_s)
 
 enum class Limit : uint8_t {

@@ -46,6 +46,10 @@
 #include <wtf/RawHex.h>
 #include <wtf/text/MakeString.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 std::atomic<bool> imageChecksProofs;
@@ -772,5 +776,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

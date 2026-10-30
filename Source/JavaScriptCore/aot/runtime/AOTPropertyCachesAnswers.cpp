@@ -553,6 +553,29 @@ PropertyAnswer classifyRead(const ReadQuery& query)
                 return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .field = field, .variable = field->slot, .imageOfVariable = static_cast<uint16_t>((position + 1) << PackedSlot::hiddenWordOffsetShift) };
             }
         }
+        // Whatever else is read of a class or a function: `x instanceof Theirs` reads Symbol.hasInstance and "prototype". Its own image says what there is to say of it.
+        // Kept is what the stubs read without a table of their image.
+        if (access == SlotAccess::Read && isCompiledClosure(receiver) && receiver->structure() == structure) {
+            Instance* owner = Instance::owning(receiver);
+            PropertyAnswer answer = [&] {
+                RunningImageScope imageOfClosure(vm.aotState(), owner->program);
+                return classifyRead(query);
+            }();
+            switch (answer.kind) {
+            case PropertyAnswerKind::Uncacheable:
+            case PropertyAnswerKind::Value:
+            case PropertyAnswerKind::Absent:
+            case PropertyAnswerKind::Accessor:
+                return answer;
+            case PropertyAnswerKind::Variable:
+                if (traitsOf(answer.variable.representation()).valueKind == SlotValueKind::DeferredClosure)
+                    break;
+                answer.imageOfVariable = static_cast<uint16_t>((owner->program->position() + 1) << PackedSlot::hiddenWordOffsetShift);
+                return answer;
+            default:
+                break;
+            }
+        }
         return PropertyAnswer::uncacheable(access);
     }
     JSType type = structure->typeInfo().type();
@@ -1083,6 +1106,15 @@ static PropertyAnswer classifyStoreToObjectOfOtherImage(const StoreQuery& query)
             PropertyAnswer answer = classifyExtraPropertyReplacement(access, lookup);
             return answer.kind == PropertyAnswerKind::ExtraProperty ? answer : PropertyAnswer::uncacheable(access);
         }
+    }
+    // `theirs.size = 1` where a class above has `set size(v)`. The image of the object says what the store meets above it. A setter in the storage of its holder is called by any stub.
+    if (!field && query.slot.isCacheableSetter()) {
+        VM& vm = query.globalObject->vm();
+        PropertyAnswer answer = [&] {
+            RunningImageScope imageOfObject(vm.aotState(), object.instance().program);
+            return classifyStore(query);
+        }();
+        return answer.kind == PropertyAnswerKind::Accessor || !answer.isCacheable() ? answer : PropertyAnswer::uncacheable(access);
     }
     if (!field || field->isAccessor() || field->isPrivate() || field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
         return PropertyAnswer::uncacheable(access);

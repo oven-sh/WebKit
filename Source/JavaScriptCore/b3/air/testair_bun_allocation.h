@@ -911,19 +911,13 @@ void testValuesLiveAcross32And33Calls()
 {
     // Two fifths of the values have enough uses to pay for 33 splits. No CPU has a callee save for each of them.
     constexpr unsigned valueCount = 40;
-    static_assert(B3::AirLimits::maxClobberSitesPerSplit == 32);
     int64_t memory[valueCount];
     for (unsigned i = 0; i < valueCount; ++i)
         memory[i] = (i + 1) * 1000003ll;
     for (unsigned callCount : { 32u, 33u }) {
-        for (bool limitsClobberSites : { false, true }) {
-            B3::Policy policy;
-            policy.air.splitting.limitsClobberSitesPerSplit = limitsClobberSites;
-            B3::Procedure proc(policy);
-            int64_t expected = buildSumAcrossCalls(proc, valueCount, callCount, memory);
-            CHECK(compileAndRun<int64_t>(proc, memory) == expected);
-            CHECK(!!proc.report().hitsOf(B3::Limit::MaxClobberSitesPerSplit) == (limitsClobberSites && callCount == 33));
-        }
+        B3::Procedure proc;
+        int64_t expected = buildSumAcrossCalls(proc, valueCount, callCount, memory);
+        CHECK(compileAndRun<int64_t>(proc, memory) == expected);
     }
 }
 

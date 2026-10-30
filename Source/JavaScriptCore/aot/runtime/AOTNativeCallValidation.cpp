@@ -39,6 +39,10 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 enum class NativeCallDeclarationSource : uint8_t {
@@ -1151,5 +1155,9 @@ JSC_DEFINE_HOST_FUNCTION(constructNativeFunctionUnderValidation, (JSGlobalObject
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

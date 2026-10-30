@@ -58,6 +58,10 @@ extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
 #include <unistd.h>
 #endif
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 static Lock s_lock;
@@ -494,5 +498,9 @@ void writePerfMap(const Image& image)
 #endif
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

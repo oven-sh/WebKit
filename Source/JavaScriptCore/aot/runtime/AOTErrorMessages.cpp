@@ -48,6 +48,10 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT {
 
 namespace Primitive = Typed::Primitive;
@@ -1685,6 +1689,10 @@ String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lock
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 

@@ -211,7 +211,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxLeavesToRebalance(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "operands in a rebalanced expression")
     MaxBitTestTargets(GenerateCode, CodeSize, NotOptimized, 3, 3, 0, "targets of a switch lowered to bit tests")
     MaxCompareChainSearchSize(GenerateCode, CompileTime, NotOptimized, 16, 16, 0, "compare chain search work")
-    MaxClobberSitesPerSplit(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "calls a live range is split around")
 
     ClosureAllocationSites(BuildImage, BitWidth, BuildError, 16777216, 16777216, 0, "places that create closures")
     ImageFunctions(BuildImage, BitWidth, BuildError, 16777215, 16777215, 0, "functions in a program, with the copies and entry points that the compiler makes")
