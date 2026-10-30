@@ -299,6 +299,11 @@ void CollectionIntrinsicEmitter::generatePutCollectionIteratorTable(const ValueC
 
 void CollectionIntrinsicEmitter::generateIsCollectionIteratorClosedMark(const ValueContext& value)
 {
+    // An iterator that has made no step. Where the last run of SinkAllocations finds that out, nothing folds the test any more.
+    if (m_function.at(value->tableOperand()).opcode == Opcode::Null) {
+        defineTest(value, boolean(false));
+        return;
+    }
     LValue mark = m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), vm().value(), VM::offsetOfOrderedHashTableSentinel()));
     defineTest(value, Condition(m_out.equal(in<Boxed>(value->tableOperand()).value(), mark)));
 }

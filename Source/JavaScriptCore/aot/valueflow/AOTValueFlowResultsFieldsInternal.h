@@ -791,6 +791,8 @@ private:
     void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
     void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
     ValueSetID followPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID withTargetsOfProxies(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID chainThroughProxies(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);

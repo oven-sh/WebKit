@@ -220,8 +220,6 @@ public:
     Vector<PartOfMadeNodes> partsOfMadeNodes;
     Vector<ValueFlowEdge> edgesOfMadeNodes;
     Vector<ValueFlowEdge> edges;
-    uint64_t mostEdges { UINT64_MAX };
-    bool hasDroppedEdges { false };
     uint32_t numberOfConnectionsOfRun { 0 };
     Vector<FunctionID> reached;
     Vector<Use> uses;

@@ -1,0 +1,50 @@
+# The stores that run most often choose the storage of an array under construction. A direct store tests what it is given, so a value of another kind that unlikely code stores
+# takes the way of a failed store, and does not cost the likely stores their kind. Stores that run as often as each other still have to agree.
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="unlikelyCodeStoresAnything" parameters=[{type=boolean}, {type=int[0, 100]}, {type=number}, {type=anything}] results=[{type=Array<anything>}] {
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v6 = TryPutByValDirect v4, v5, v2
+    Return v4
+  b2() frequency=Unlikely:
+    v7 = TryPutByValDirect v4, v5, v3
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double
+# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v4, v5, v3 arrayStorage=Double
+
+function f1 name="likelyCodeStoresAnythingToo" parameters=[{type=boolean}, {type=int[0, 100]}, {type=number}, {type=anything}] results=[{type=Array<anything>}] {
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v6 = TryPutByValDirect v4, v5, v2
+    Return v4
+  b2():
+    v7 = TryPutByValDirect v4, v5, v3
+    Return v4
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: arrayStorage=
+
+function f2 name="onlyUnlikelyCodeStores" parameters=[{type=boolean}, {type=int[0, 100]}, {type=number}, {type=anything}] results=[{type=Array<anything>}] {
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v6 = TryPutByValDirect v4, v5, v2
+    Return v4
+  b2() frequency=Rare:
+    v7 = TryPutByValDirect v4, v5, v3
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double

@@ -57,7 +57,6 @@ struct ValueFlowSolverInput {
 
     uint64_t mostSetMembers { UINT64_MAX };
     uint64_t mostMembersToldApart { UINT64_MAX };
-    uint64_t mostEdgesLogged { UINT64_MAX };
     uint64_t mostObjectsListedByMember { UINT64_MAX };
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
@@ -291,7 +290,6 @@ public:
         uint32_t nodesSaturated { 0 };
         uint32_t nodesHoldingObjectsOutsideFamily { 0 };
         uint32_t namesWithSeveralCells { 0 };
-        bool isPastEdgeBudget { false };
         Seconds rules;
         Seconds merge;
         Seconds values;
@@ -326,7 +324,7 @@ public:
     ValueFlowSolver(const ValueFlowSolverInput&, ValueSets&, ValueFlowRule, const ParallelLoops&, Rounds = Rounds::Due);
     ~ValueFlowSolver();
 
-    bool solve();
+    void solve();
 
     const ValueSets& sets() const { return m_sets; }
     const ValueFlowGraph& graph() const { return m_graph; }
@@ -655,7 +653,7 @@ private:
     void makeDueInRunningLoop(Thread&, ValueFlowStatementID);
     void countRunsAndEdges();
     void rememberWhoLoggedTheEdges();
-    bool runRules();
+    void runRules();
     void letSomeDueStatementsWait();
     void letStatementsThatRunOftenWait();
     void runDueStatements(bool isFirstLapOfTurn);

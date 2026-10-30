@@ -252,7 +252,7 @@ static JSObject* holderOf(VM& vm, State& state, const LayoutData& layout, ClassS
     if (!holder)
         return nullptr;
     ClassSide foundSide;
-    if (state.objects->classes.classHeldBy(holder, foundSide) != &layout || foundSide != side)
+    if (state.objects->classes.classWithGuardsHeldBy(holder, foundSide) != &layout || foundSide != side)
         return nullptr;
     return holder;
 }
@@ -829,13 +829,51 @@ uint64_t* ClassTable::guardWords(const LayoutData& layout, ClassSide side) const
     return offset ? reinterpret_cast<uint64_t*>(m_state.instance.statics() + *offset) : nullptr;
 }
 
-const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) const
+const LayoutData* ClassTable::classWithGuardsHeldBy(JSObject* holder, ClassSide& side) const
 {
     auto found = m_classSidesByHolder.find(holder);
     if (found == m_classSidesByHolder.end())
         return classLeftToRecordHeldBy(holder, side);
     side = static_cast<ClassSide>(found->value & 1);
     return classWithIndex(found->value >> 1);
+}
+
+const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) const
+{
+    const LayoutData* layout = classWithGuardsHeldBy(holder, side);
+    return layout || !m_hasHoldersLeftOut ? layout : classOfHolderLeftOut(holder, side);
+}
+
+// Nothing can change or remove the prototype property of a class object, so a class object that names the holder as its prototype proves what the holder is.
+const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& side) const
+{
+    VM& vm = *m_state.instance.vm;
+    auto* classObject = dynamicDowncast<Closure>(holder);
+    side = classObject ? ClassSide::Static : ClassSide::Prototype;
+    if (!classObject) {
+        if (holder->type() != FinalObjectType)
+            return nullptr;
+        JSValue constructor = holder->getDirect(vm, vm.propertyNames->constructor);
+        classObject = constructor && constructor.isCell() ? dynamicDowncast<Closure>(constructor.asCell()) : nullptr;
+        if (!classObject || &classObject->state() != &m_state)
+            return nullptr;
+    }
+    const LayoutData* layout = classObject->classData();
+    if (!layout || !isDefinedByClass(*layout) || !watchpointsOf(m_state).hasNoGuardLeft(*layout))
+        return nullptr;
+    JSValue prototype = classObject->getDirect(vm, vm.propertyNames->prototype);
+    if (!prototype || (side == ClassSide::Prototype && prototype != JSValue(holder)))
+        return nullptr;
+    return layout;
+}
+
+bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, JSObject* prototype)
+{
+    if (!watchpointsOf(m_state).hasNoGuardLeft(layout))
+        return false;
+    prototype->didBecomePrototype(vm);
+    m_hasHoldersLeftOut = true;
+    return true;
 }
 
 void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
@@ -1395,6 +1433,21 @@ void ClassTable::disarmMemberGuards(const LayoutData& classLayout)
     for (const MemberGuardData& guard : classLayout.memberGuards())
         end(m_state, classLayout, guard);
     watchpointsOf(m_state).stopWatching(classLayout);
+
+    // A validating run looks at what every holder gets.
+    if (m_state.instance.vm->aotState().validatesRuntime || !m_state.tables.classPrototypeNames().empty() || !isDefinedByClass(classLayout))
+        return;
+    bool hasGuardOfStores = false;
+    auto lookForGuardOfStores = [&](const LayoutData& inheriting) {
+        hasGuardOfStores |= std::ranges::any_of(inheriting.memberGuards(), [](const MemberGuardData& guard) {
+            return guard.kind() == MemberGuardKind::PassedByStores;
+        });
+        return hasGuardOfStores ? IterationStatus::Done : IterationStatus::Continue;
+    };
+    if (lookForGuardOfStores(classLayout) == IterationStatus::Continue)
+        forEachDescendant(m_state, classLayout, lookForGuardOfStores);
+    if (!hasGuardOfStores)
+        watchpointsOf(m_state).didLeaveNoGuard(classLayout);
 }
 
 void didEvaluateClassAgain(State& state, const LayoutData& classLayout)

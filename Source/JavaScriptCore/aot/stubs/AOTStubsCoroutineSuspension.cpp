@@ -172,10 +172,8 @@ static Label emitFunctionReturn(StubAssembler& jit)
     return returnToCallerOfFunction;
 }
 
-// Returns to the caller of the suspended function, so the callee saves reloaded here are not clobbers of the stub.
-static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, Label returnToCallerOfFunction)
+static void emitReturnToCallerOfFunction(StubAssembler& jit, GPRReg scratch, Label returnToCallerOfFunction)
 {
-    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
     // Returning through the label keeps calls and returns paired for the return address predictor.
     jit.loadLabelAddress(returnToCallerOfFunction, scratch);
 #if CPU(X86_64)
@@ -186,7 +184,15 @@ static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratc
 #endif
 }
 
+// Returns to the caller of the suspended function, so the callee saves reloaded here are not clobbers of the stub.
+static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, Label returnToCallerOfFunction)
+{
+    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
+    emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
+}
+
 // Calls the operation with the instance as its first and the suspension words as its sixth argument. The others are already in their registers.
+// The callee saves are reloaded in front of the call: the operation stores the ones it uses, and the function has read what it left in them for the last time.
 static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operation, GPRReg siteWord, Label returnToCallerOfFunction, GPRReg valueToReturn = InvalidGPRReg)
 {
     constexpr int32_t offsetOfSiteWord = OBJECT_OFFSETOF(SuspensionWords, siteWord);
@@ -195,13 +201,17 @@ static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operatio
     const GPRReg scratch = suspensionWords;
     static_assert(sizeof(SuspensionWords) == stackAlignmentBytes());
     static_assert(!offsetOfSiteWord && OBJECT_OFFSETOF(SuspensionWords, preservedRegister) == sizeof(CPURegister));
+#if CPU(X86_64)
+    jit.move(SavedFrame::preservedRegister, scratch);
+#endif
+    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
     jit.emitFunctionPrologue();
     if (valueToReturn != InvalidGPRReg) {
         jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
         jit.store64(valueToReturn, Address(sp));
     }
 #if CPU(X86_64)
-    jit.push(SavedFrame::preservedRegister);
+    jit.push(scratch);
     jit.push(siteWord);
 #else
     jit.subPtr(TrustedImm32(sizeof(SuspensionWords)), sp);
@@ -210,15 +220,24 @@ static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operatio
     jit.move(sp, suspensionWords);
     jit.move(instanceGPR, instance);
     jit.callOperation(operation, jit.reuseScratch(StubRegister::Operation));
-    jit.load32(Address(sp, offsetOfSiteWord), siteWord);
     if (valueToReturn != InvalidGPRReg) {
-        RELEASE_ASSERT(noOverlap(valueToReturn, siteWord, GPRInfo::returnValueGPR2));
+        RELEASE_ASSERT(noOverlap(valueToReturn, GPRInfo::returnValueGPR2));
         jit.load64(Address(sp, sizeof(SuspensionWords)), valueToReturn);
     }
+#if CPU(X86_64)
+    // A handler in the function reads what the function keeps in this register.
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.emitFunctionEpilogue();
+    emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
+    exception.link(&jit);
+    jit.load64(Address(sp, OBJECT_OFFSETOF(SuspensionWords, preservedRegister)), SavedFrame::preservedRegister);
+    jit.emitFunctionEpilogue();
+#else
     jit.emitFunctionEpilogue();
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
-    emitLeaveFunction(jit, siteWord, scratch, returnToCallerOfFunction);
+    emitReturnToCallerOfFunction(jit, scratch, returnToCallerOfFunction);
     exception.link(&jit);
+#endif
     jit.jumpToExceptionHandler();
 }
 

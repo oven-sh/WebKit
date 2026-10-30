@@ -325,11 +325,11 @@ struct LayoutData {
     }
 
     uint16_t indexOf(const FieldData& field) const { return static_cast<uint16_t>(&field - fields().data()); }
-    // Only a field whose slot defers a closure has operands: the function and, where the closure captures an environment, the slot of the hidden field that holds it.
-    FunctionID deferredClosureOf(const FieldData& field) const
+    // Only a field whose slot defers a closure has operands: the closure number of the function and, where the closure captures an environment, the slot of the hidden field that holds it.
+    uint32_t deferredClosureNumberOf(const FieldData& field) const
     {
         ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure);
-        return FunctionID(fieldOperands()[field.operandIndex]);
+        return fieldOperands()[field.operandIndex];
     }
     SlotData closureEnvironmentSlotOf(const FieldData& field) const
     {

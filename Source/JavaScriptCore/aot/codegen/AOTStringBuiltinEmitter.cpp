@@ -14,6 +14,7 @@
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStubsStrings.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
@@ -276,7 +277,7 @@ void StringBuiltinEmitter::generateStringLocaleCompare(const InlineCall& call)
 {
     CellPointer string = stringOperand(call.receiver());
     CellPointer other = stringOperand(call.argument(0));
-    finish(call, low32(callOperation<Integer>(call.context(), RuntimeOperation::StringLocaleCompare, { string, other })));
+    finish(call, low32(Integer(callStub(call.context(), stringLocaleCompare(), { string.value(), other.value() }).first)));
 }
 
 void StringBuiltinEmitter::generateStringConcat(const InlineCall& call)

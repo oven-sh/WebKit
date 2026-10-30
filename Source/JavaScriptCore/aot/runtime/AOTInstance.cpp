@@ -68,6 +68,7 @@
 #include "DeferGC.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
+#include "IntlObject.h"
 #include "JSAsyncGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -172,6 +173,7 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     instance.singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
+    instance.collation.ducetLevel1Weights = ducetLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
     prefix.structureIDBase = JSC::structureIDBase();
@@ -219,7 +221,7 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.fieldRecordIndices = image.programTables().fieldRecordIndices().data();
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
-    words.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(image.programTables().closureFunctionKinds().data()) - image.programTables().closureFunctions.first * sizeof(FunctionKindData);
+    words.closureFunctionKinds = image.programTables().closureFunctionKinds().data();
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
@@ -344,7 +346,7 @@ void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunT
     StackManager::Mirror& limit = instance.callsByValue.limit.get();
     if (!limit.isOnList())
         return;
-    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime;
+    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime + instance.image.tables->closureFunctions.first;
     // No change of the limit of the stack reaches the word any more.
     instance.vm->traps().unregisterMirror(limit);
     *std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(&limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()) = std::numeric_limits<uintptr_t>::max();

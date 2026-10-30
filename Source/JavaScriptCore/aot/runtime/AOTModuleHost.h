@@ -146,6 +146,12 @@ JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional
 
 // A module of the image runs at most once and is in no module cache, and the code calls the module that each constant name stood for in the build.
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
+// The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
+JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isEvaluatedFile(JSGlobalObject*, ModuleID);
+// The module object that require.cache shows for a file that isEvaluatedFile().
+JS_EXPORT_PRIVATE JSObject* requireCacheEntry(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void forEachEvaluatedFile(JSGlobalObject*, const WTF::Function<void(const String&)>&);
 JS_EXPORT_PRIVATE void willChangeRequireOverride(JSGlobalObject*, RequireOverride, bool isOverridden);
 JS_EXPORT_PRIVATE bool hasFileWithExtension(StringView);
 
@@ -157,6 +163,9 @@ JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringIm
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+// `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
+JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
+JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.

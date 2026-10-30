@@ -1,8 +1,0 @@
-# The program of protocols/iteration-over-maps-and-sets.ir with a budget of one logged edge: flow stops, and the build goes on without its results.
-# The build says so once, and the program that comes out of the pass that applies results is valid
-# OPTIONS: limit=MaxValueFlowEdgesLogged:1
-# LOSS: MaxValueFlowEdgesLogged
-# DIAGNOSTIC: ProgramTooLargeToAnalyze
-# RUN: valueflow-apply
-# CHECK: function f0
-# PROGRAM-OF: ../protocols/iteration-over-maps-and-sets.ir

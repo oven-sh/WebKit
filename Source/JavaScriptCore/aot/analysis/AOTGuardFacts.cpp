@@ -20,6 +20,7 @@
 #include "AOTGuardFactDetails.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPointsToSolver.h"
+#include "AOTProgramPasses.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperationColumns.h"
 #include "AOTSchemaValueEffects.h"
@@ -524,12 +525,50 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     return part->contentsAreProven && part->arrayStorage == user.arrayStorage();
 }
 
-static bool fillsListMadeAtItsLength(const Function& function, const Value& user)
+// Only the casts of the list name it, and they are only tested, read, and stored to below the length. So no other code gets hold of the list, and nothing moves its length or its storage.
+bool isTouchedOnlyBelowLength(const Program& program, const Function& function, const UseLists& useLists, ValueID list, int64_t length, Vector<ValueID, 4>* lengthReads)
 {
-    if (user.opcode != Opcode::PutArrayElement || !user.fillsNewList())
+    static constexpr OpcodeSet readers { Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::ElemGet };
+    static constexpr OpcodeSet stores { Opcode::PutArrayElement, Opcode::ElemSet };
+    Vector<ValueID, 4> names { list };
+    while (!names.isEmpty()) {
+        for (const Use& use : useLists.usesOf(names.takeLast())) {
+            // The list is the first operand of whatever reads it or stores into it. Anywhere else it is handed on.
+            if (use.kind != Use::Kind::Operand || use.operandIndex)
+                return false;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode)) {
+                names.append(use.user);
+                continue;
+            }
+            if (readers.contains(user.opcode))
+                continue;
+            std::optional<MeasuredStorage> measured = storageMeasuredBy(program, user);
+            if (measured && measured->heap == AbstractHeap::ArrayStorage) {
+                if (lengthReads)
+                    lengthReads->append(use.user);
+                continue;
+            }
+            if (!stores.contains(user.opcode))
+                return false;
+            const Type& position = program.typeOf(function, user.opcode == Opcode::ElemSet ? user.propertyOperand() : user.positionOperand());
+            if (!position.isInteger() || position.integers.minimum < 0 || position.integers.maximum >= length)
+                return false;
+        }
+    }
+    return true;
+}
+
+// The length of the literal is written down, so the type of the position says whether it lies below.
+static bool isInsideListThatKeepsLength(const Program& program, const Function& function, const Value& user)
+{
+    if (!isInBounds(user))
         return false;
-    const Value& cast = function.at(user.arrayOperand());
-    return cast.opcode == Opcode::AssumeType && function.at(cast.valueOperand()).opcode == Opcode::NewArrayLike;
+    const Value& list = function.at(sameObjectThroughCasts(function, user.arrayOperand()).valueInFrontOfFacts());
+    if (list.opcode != Opcode::NewArray || !list.keepsLength() || list.arrayStorage() != user.arrayStorage())
+        return false;
+    const Type& position = program.typeOf(function, user.positionOperand());
+    return position.isInteger() && position.integers.minimum >= 0 && position.integers.maximum < static_cast<int64_t>(list.holes().size() + list.elementsOperands().size());
 }
 
 ProofSet proofsNeededFromGuard(const Program& program, const Function& function, const Value& user)
@@ -548,10 +587,7 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
             continue;
         if (proof == Proof::ArrayStorage && !namesArrayStorage(user))
             continue;
-        if (proof == Proof::InBounds && !isInsideLength(user))
-            continue;
-        // The counted loop that made the list at its length and fills it from 0 has nothing to test: the checks of proofs test it where the store runs.
-        if (proof == Proof::InBounds && fillsListMadeAtItsLength(function, user))
+        if (proof == Proof::InBounds && (!isInsideLength(user) || isInsideListThatKeepsLength(program, function, user)))
             continue;
         if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
@@ -807,7 +843,7 @@ void forEachGuardOrigin(const Program& program, const Function& function, const 
 bool hasGuardForElementProofs(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, const Value& access)
 {
     bool needsStorage = namesArrayStorage(access);
-    bool needsPosition = isInsideLength(access) && !fillsListMadeAtItsLength(function, access);
+    bool needsPosition = isInsideLength(access) && !isInsideListThatKeepsLength(program, function, access);
     if (!needsStorage && !needsPosition)
         return true;
     const Type& type = program.typeOf(function, guardedOperandOf(access));

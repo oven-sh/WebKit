@@ -41,6 +41,10 @@ ALWAYS_INLINE const ProgramTables& programTables()
     return Image::current()->programTables();
 }
 
+ALWAYS_INLINE uint32_t closureNumberOf(FunctionID function) { return programTables().closureNumberOf(function.index()); }
+ALWAYS_INLINE FunctionID closureFunctionWithNumber(uint32_t number) { return FunctionID(programTables().closureFunctionWithNumber(number)); }
+ALWAYS_INLINE FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionWithNumber(ClosureWord::closureNumberOf(word)); }
+
 ALWAYS_INLINE FunctionKindData functionKindData(FunctionID function)
 {
     return programTables().kindOfFunction(function.index());
@@ -115,6 +119,7 @@ struct FunctionTables {
     using DisplayNamesByFunction = UncheckedKeyHashMap<FunctionID, DisplayName>;
     using TextsByFunction = UncheckedKeyHashMap<FunctionID, Weak<JSString>>;
 
+    // By closure number.
     const uint64_t* words;
     std::array<Strong<JSCell>, numberOfExecutables> executables;
     // The built-in functions of a realm are created before its ClosureTable. Until the table visits the Structures of those closures, nothing else keeps them alive.

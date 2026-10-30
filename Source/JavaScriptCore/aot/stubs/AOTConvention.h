@@ -71,6 +71,7 @@ static_assert(sizeOfSpilledArgumentRegisters <= maxUncheckedFrameSize);
 
 static_assert(numberOfArgumentGPRs <= ClosureWord::maxNumberOfParameters);
 
+// The function is named by its closure number, as in a closure word.
 struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits + 2;
     static constexpr unsigned allocationShift = 32;
@@ -91,7 +92,7 @@ struct ClosureRequest {
         RELEASE_ASSERT(canEncode(function, executable, allocation));
         return function | static_cast<uint64_t>(executable) << executableShift | static_cast<uint64_t>(allocation) << allocationShift;
     }
-    static constexpr uint32_t functionOf(uint64_t request) { return request & ClosureWord::functionMask; }
+    static constexpr uint32_t closureNumberOf(uint64_t request) { return request & ClosureWord::functionMask; }
     static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & ((1u << (isSlimBit - executableShift)) - 1); }
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
     static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x1f; }

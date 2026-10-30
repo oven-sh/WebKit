@@ -362,7 +362,7 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
         return RuntimeCellTest::isBuiltinCell(encoder.numberOrFail(encoder.placement.builtinCell(test.builtin), ProgramTableRule::TypeNotEncoded));
     case CellTestKind::IsClosureOf:
         if (FunctionID entrypoint = encoder.findEntrypoint(test.function))
-            return RuntimeCellTest::isClosureOf(entrypoint);
+            return RuntimeCellTest::isClosureOf(encoder.placement.closureNumberOf(entrypoint));
         return std::nullopt;
     case CellTestKind::IsSymbol:
         return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s));
@@ -956,8 +956,10 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
 static std::optional<uint32_t> fieldOperandOf(TableEncoder& encoder, const PlacedSlot& slot)
 {
     switch (traitsOf(slot.representation).valueKind) {
-    case SlotValueKind::DeferredClosure:
-        return indexOrNone(encoder.findEntrypoint(slot.deferredFunction));
+    case SlotValueKind::DeferredClosure: {
+        FunctionID entrypoint = encoder.findEntrypoint(slot.deferredFunction);
+        return entrypoint ? encoder.placement.closureNumberOf(entrypoint) : indexOrNone(FunctionID());
+    }
     case SlotValueKind::SignedInteger:
     case SlotValueKind::UnsignedInteger:
     case SlotValueKind::Float:
@@ -2232,7 +2234,7 @@ static void appendConstructEntrypoints(TableEncoder& encoder)
             continue;
         }
         bool allocatesThis = program.at(constructEntrypoint).derivation.parameter == allocatingConstructEntrypointParameter;
-        constructEntrypoints.append({ index, constructEntrypoint.index() | (allocatesThis ? ConstructEntrypointData::allocatesThis : 0) });
+        constructEntrypoints.append({ encoder.placement.closureNumberOf(FunctionID(index)), encoder.placement.closureNumberOf(constructEntrypoint) | (allocatesThis ? ConstructEntrypointData::allocatesThis : 0) });
     }
     encoder.setTable(ProgramTableIndex::constructEntrypoints, constructEntrypoints);
 }

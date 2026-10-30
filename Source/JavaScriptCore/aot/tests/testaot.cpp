@@ -285,7 +285,7 @@ static void listLimits(PrintStream& out)
 {
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit != LimitID::None)
-            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), canBeLowered(limit) ? "" : " fixed", " ", purposeOf(limit));
+            out.println(nameOf(limit), " ", defaultLimitValue(limit, hostArchitecture()), isLoweredByAll(limit) ? "" : " fixed", " ", purposeOf(limit));
     }
 }
 

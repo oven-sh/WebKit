@@ -1357,10 +1357,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
     const Program& program = *context.program;
     PrintStream& out = context.out;
     ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::ForEveryEdge);
-    if (!solution.hasResult()) {
-        out.println("stopped at a limit");
-        return;
-    }
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowUniverse& universe = bodies.universe();

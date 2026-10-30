@@ -407,7 +407,7 @@ bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) co
         }
         if (!std::exchange(hasAskedForFunction, true))
             function = functionOf(cell);
-        if (function == test.function())
+        if (function == closureFunctionWithNumber(test.closureNumber()))
             return true;
     }
     return false;
@@ -451,7 +451,7 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
         return cell == m_state.builtinCells->cell(test.builtinCellNumber());
     }
     case CellTestKind::IsClosureOf:
-        return functionOf(cell) == test.function();
+        return functionOf(cell) == closureFunctionWithNumber(test.closureNumber());
     case CellTestKind::IsSymbol:
         // A symbol that nothing has made yet is the uid of no cell.
         return cell->isSymbol() && &asSymbol(cell)->uid() == m_state.instance.vm->aotState().identifiers->tryGetIdentifierConcurrently(test.symbolKeyNumber());

@@ -500,7 +500,7 @@ static void testIsClosureOf(LoadedProgram& program)
     FunctionID area = closureFunctionNamed(program, "area"_s);
     FunctionID perimeter = closureFunctionNamed(program, "perimeter"_s);
     ClosureTable& closures = program.state().objects->closures;
-    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(area) });
+    TypeRecord closuresOfArea({ }, { RuntimeCellTest::isClosureOf(closureNumberOf(area)) });
     AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.closure(vm, area)));
     AOT_TEST_CHECK(values.hasType(closuresOfArea, closures.createClosure(vm, area, { }, 0)));
     AOT_TEST_CHECK(!values.hasType(closuresOfArea, closures.closure(vm, perimeter)));
@@ -568,7 +568,7 @@ static void testShapeHasType(LoadedProgram& program)
         RuntimeCellTest::inheritsClassInfo(BuiltinClasses::WeakRef),
         RuntimeCellTest::isPristine(BuiltinClasses::Array),
         RuntimeCellTest::isBuiltinCell(builtinCellNumberOf(program, Builtins::ArrayPrototype)),
-        RuntimeCellTest::isClosureOf(closureFunctionNamed(program, "area"_s)),
+        RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "area"_s))),
         RuntimeCellTest::isSymbol(numberOfWellKnownSymbol(WellKnownSymbol::Iterator)),
     };
     for (const RuntimeCellTest& test : testsOfOtherCells)

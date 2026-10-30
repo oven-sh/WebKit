@@ -13,7 +13,7 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
     Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
 }
 enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
-enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode LoadsCodeByName }
+enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped }
 enum FeatureUseKind { Named Unnamed }
 enum LocaleUseKind { Unknown HostDefault Constant }

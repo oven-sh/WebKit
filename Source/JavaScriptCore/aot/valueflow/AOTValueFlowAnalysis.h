@@ -81,7 +81,6 @@ public:
     // Where the build widens flow, solver() was given more to begin with, and this one solved the program as it is.
     const ValueFlowSolver* solverOfProgramAsItIs() const { return m_solverOfProgramAsItIs.get(); }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }
-    bool hasResult() const { return m_hasResult; }
     ValueSetID possibleValuesOf(const ValueFlowOperand&);
 
 private:
@@ -95,7 +94,6 @@ private:
     ValueFlowSolverInput m_inputAsItIs;
     std::unique_ptr<ValueFlowSolver> m_solverOfProgramAsItIs;
     std::unique_ptr<ValueFlowSolver> m_solver;
-    bool m_hasResult { false };
 };
 
 } } } // namespace JSC::AOT::Typed

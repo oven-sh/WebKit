@@ -1,0 +1,41 @@
+# A length asked again takes the first answer, but not where a cast in between says which strings are left: there the length has a narrower type, and the declared result rests on it
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="askedOfFewerStrings" parameters=[{type=string}, {type=boolean}] results=[{type=int[0, 2147483647]}] {
+    v2 = GetStringLength v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = AssumeType v0 provenType="ab"|"abcd"
+    v4 = GetStringLength v3
+    v5 = Integer integer=10
+    v6 = Mul v4, v5
+    Return v6
+  b2():
+    Return v2
+# CHECK: v4: int[2, 4] = GetStringLength v3
+# CHECK: v6: int[20, 40] = Mul v4, v5
+}
+
+function f1 name="askedAgain" parameters=[{type=string}, {type=boolean}] results=[{type=int[0, 2147483647]}] {
+    v2 = GetStringLength v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetStringLength v0
+    Return v3
+  b2():
+    Return v2
+# CHECK: b1():
+# CHECK-NEXT: Return v2
+}
+
+function f2 name="askedOfFewerStringsFirst" parameters=[{type=string}] results=[{type=number}] {
+    v1 = AssumeType v0 provenType="ab"|"abcd"
+    v2 = GetStringLength v1
+    v3 = GetStringLength v0
+    v4 = Add v2, v3
+    Return v4
+# CHECK: v2: int[2, 4] = GetStringLength v1
+# CHECK-NEXT: = Add v2, v2
+}

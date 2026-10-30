@@ -226,25 +226,31 @@ static void collectQuestions(const Program& program, BuildContext& build, const 
     }
 }
 
+// A function ends its tail calls where each of them enters only functions that end theirs. Called by value, it is entered through its entrypoints, which have to end theirs too.
+// Each question waits for the answers it needs and is answered once, and a callee set that many calls name is one question: a thousand methods that each leave by a call of any of the thousand are two thousand questions.
 static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const Program& program, const ParallelLoops& loops)
 {
     struct TailCalls {
         FunctionID caller;
         Vector<FunctionID, 2> callees;
         Vector<FunctionID, 2> calleesByValue;
-    };
-    struct Entrypoint {
-        FunctionID function;
-        FunctionID target;
+        Vector<CalleeSetID, 1> sets;
     };
     unsigned numberOfFunctions = program.functions.size();
     Vector<uint8_t> neverEnds(FillWith { }, numberOfFunctions, 0);
     Vector<TailCalls> tailCalls = collectInParallel<TailCalls>(loops, numberOfFunctions, largeFunctions(program, loops).span(), [&](unsigned index, Vector<TailCalls>& found) {
         const Function& function = program.functions[index];
-        TailCalls calls { FunctionID(index), { } };
+        TailCalls calls { FunctionID(index), { }, { }, { } };
         neverEnds[index] = !hasBody(program, FunctionID(index));
         forEachBlockEndingWith(program, FunctionID(index), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
+            if (CalleeSetID set = call.opcode == Opcode::CallDirect ? CalleeSetID() : calleeSetOfCall(program, call); set && program.at(set).isLong()) {
+                if (program.at(set).listsEveryCallee() && program.at(set).written().builtins.empty())
+                    calls.sets.append(set);
+                else
+                    neverEnds[index] = true;
+                return;
+            }
             CalleeList callees = calleesOfCall(program, call);
             std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
             if (!functions) {
@@ -254,43 +260,76 @@ static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const P
             auto& list = call.opcode == Opcode::CallDirect ? calls.callees : calls.calleesByValue;
             list.append(functions->value());
         });
-        if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty()))
+        if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty() || !calls.sets.isEmpty()))
             found.append(WTF::move(calls));
     });
-    Vector<Entrypoint> entrypoints;
+
+    // The questions: does the function end, does it end when called by value, does every function of the set.
+    Vector<CalleeSetID> sets;
+    for (const TailCalls& calls : tailCalls)
+        sets.appendVector(calls.sets);
+    AOT::sort(sets);
+    sets.shrink(std::ranges::unique(sets).begin() - sets.begin());
+    auto directly = [](FunctionID function) { return function.index(); };
+    auto byValue = [&](FunctionID function) { return numberOfFunctions + function.index(); };
+    auto everyOneOf = [&](CalleeSetID set) { return 2 * numberOfFunctions + static_cast<unsigned>(std::ranges::lower_bound(sets, set) - sets.begin()); };
+    unsigned numberOfQuestions = 2 * numberOfFunctions + sets.size();
+
+    Vector<std::pair<unsigned, unsigned>> waits;
+    auto waitFor = [&](unsigned question, unsigned answer) { waits.append({ answer, question }); };
+    for (const TailCalls& calls : tailCalls) {
+        for (FunctionID callee : calls.callees)
+            waitFor(directly(calls.caller), directly(callee));
+        for (FunctionID callee : calls.calleesByValue)
+            waitFor(directly(calls.caller), byValue(callee));
+        for (CalleeSetID set : calls.sets)
+            waitFor(directly(calls.caller), everyOneOf(set));
+    }
+    for (CalleeSetID set : sets) {
+        for (FunctionID callee : program.at(set).written().functions)
+            waitFor(everyOneOf(set), byValue(callee));
+    }
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        waitFor(byValue(FunctionID(index)), index);
         if (const auto* record = program.functions[index].creator.tryAs<CreatorRecord::Entrypoint>())
-            entrypoints.append({ FunctionID(index), record->target });
+            waitFor(byValue(record->target), index);
+    }
+
+    Vector<unsigned> numberAwaited(FillWith { }, numberOfQuestions, 0u);
+    Vector<unsigned> firstWaiting(FillWith { }, numberOfQuestions + 1, 0u);
+    for (auto [answer, question] : waits) {
+        ++numberAwaited[question];
+        ++firstWaiting[answer + 1];
+    }
+    for (unsigned index = 0; index < numberOfQuestions; ++index)
+        firstWaiting[index + 1] += firstWaiting[index];
+    Vector<unsigned> waiting(waits.size());
+    Vector<unsigned> cursors(firstWaiting.span().first(numberOfQuestions));
+    for (auto [answer, question] : waits)
+        waiting[cursors[answer]++] = question;
+
+    BitVector isAnsweredYes(numberOfQuestions);
+    Vector<unsigned> worklist;
+    for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        if (!neverEnds[index] && !numberAwaited[index])
+            worklist.append(index);
+    }
+    while (!worklist.isEmpty()) {
+        unsigned answer = worklist.takeLast();
+        isAnsweredYes.quickSet(answer);
+        for (unsigned question : waiting.subspan(firstWaiting[answer], firstWaiting[answer + 1] - firstWaiting[answer])) {
+            if (!--numberAwaited[question] && (question >= numberOfFunctions || !neverEnds[question]))
+                worklist.append(question);
+        }
     }
 
     BitVector ends(numberOfFunctions);
+    BitVector endsByValue(numberOfFunctions);
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        if (!neverEnds[index])
+        if (isAnsweredYes.quickGet(index))
             ends.quickSet(index);
-    }
-    for (const TailCalls& calls : tailCalls)
-        ends.quickClear(calls.caller.index());
-    BitVector endsByValue;
-    for (bool changed = true; changed;) {
-        changed = false;
-        endsByValue = ends;
-        for (const Entrypoint& entrypoint : entrypoints) {
-            if (!ends.quickGet(entrypoint.function.index()))
-                endsByValue.quickClear(entrypoint.target.index());
-        }
-        for (const TailCalls& calls : tailCalls) {
-            if (ends.quickGet(calls.caller.index()))
-                continue;
-            bool everyCalleeEnds = std::ranges::all_of(calls.callees, [&](FunctionID callee) {
-                return ends.quickGet(callee.index());
-            }) && std::ranges::all_of(calls.calleesByValue, [&](FunctionID callee) {
-                return endsByValue.quickGet(callee.index());
-            });
-            if (everyCalleeEnds) {
-                ends.quickSet(calls.caller.index());
-                changed = true;
-            }
-        }
+        if (isAnsweredYes.quickGet(numberOfFunctions + index))
+            endsByValue.quickSet(index);
     }
     return { WTF::move(ends), WTF::move(endsByValue) };
 }

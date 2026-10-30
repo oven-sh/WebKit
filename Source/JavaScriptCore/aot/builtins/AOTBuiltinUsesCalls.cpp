@@ -423,6 +423,9 @@ BuiltinUsePlan planRematch(const BuiltinUseInputs& inputs, ValueID use, ProgramP
         bool isSameCall = form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && plan.call.overload == call.overload() && !insertsOperations(plan.call);
         if (isSameCall)
             return { };
+        // The expected type of an operand may fit only an overload that says less than the one the tests in front of the call have proven.
+        if (form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && !effectsWhenApplied(inputs, plan).isSubsetOf(effectsOf(inputs.effects, inputs.function, call).normal))
+            return { };
         return WTF::move(plan);
     };
 

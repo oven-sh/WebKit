@@ -355,16 +355,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
         showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
     times.didFinish("solve"_s);
-    if (!solution->hasResult()) {
-        build.destroyLater(WTF::move(solution));
-        build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::ProgramTooLargeToAnalyze });
-        FlowResults results;
-        results.setReasonForNoResults(UnseenCodeCause::LimitReached);
-        build.continueWithoutFlowResults();
-        if (goesOn)
-            (*goesOn)(reportUsesOfLibraryCode(results));
-        return results;
-    }
     if (build.options().checksFlowFixpoint)
         reportRulesThatWereNotDue(solution->solver(), build);
 

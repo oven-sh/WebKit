@@ -242,6 +242,7 @@ static void noteLookForNameReadFromTable(StubAssembler& jit, GPRReg closure, GPR
     needsNoNote.link(&jit);
 }
 
+// Its closure number.
 static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)
 {
     isNotClosure.append(jit.branchIfNotCell(value));
@@ -264,7 +265,6 @@ void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& mi
 
     loadClosureFunction(jit, closure, index, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), index);
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, programTableCount(tables, ProgramTableIndex::functionLengths)));
     loadProgramTable(jit, tables, ProgramTableIndex::functionLengths, scratch);
     jit.load8(BaseIndex(scratch, index, CCallHelpers::TimesOne), scratch);
@@ -305,14 +305,14 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
         jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);
         jit.sub32(programTableCount(tables, ProgramTableIndex::functionSources), scratch);
     };
+    // A function that closures are made of is a form of another.
+    jit.add32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), function);
     loadNumberOfFunctionsInFrontOfForms();
-    Jump isListed = jit.branch32(CCallHelpers::Below, function, scratch);
     jit.sub32(scratch, function);
     loadProgramTable(jit, tables, ProgramTableIndex::functionSources, scratch);
     loadNumber24(jit, scratch, function, function);
     loadNumberOfFunctionsInFrontOfForms();
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, function, scratch));
-    isListed.link(&jit);
     loadProgramTable(jit, tables, ProgramTableIndex::functionNameGroups, scratch);
     const GPRReg haveName = tables;
     jit.urshift32(function, TrustedImm32(5), haveName);

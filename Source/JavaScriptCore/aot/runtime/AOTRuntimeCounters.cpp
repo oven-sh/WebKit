@@ -391,7 +391,7 @@ void AllocationCounts::willAllocateClosure(Instance& instance, uint64_t request)
     else if (const AllocationSiteRecord* record = instance.objects.allocationSite(ClosureRequest::allocationOf(request)))
         allocator = record->allocator;
     if (auto list = usedUpListOf(allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " closure:"_s, countedAsWord(writtenFunctionName(FunctionID(ClosureRequest::functionOf(request))))), *list);
+        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " closure:"_s, countedAsWord(writtenFunctionName(closureFunctionWithNumber(ClosureRequest::closureNumberOf(request))))), *list);
 }
 
 void AllocationCounts::willAllocateMap(Instance& instance)

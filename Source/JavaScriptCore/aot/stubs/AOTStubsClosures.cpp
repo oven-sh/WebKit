@@ -237,9 +237,7 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     ASSERT(noOverlap(function, number, scratch));
     const GPRReg tables = scratch;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.move(function, number);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
-    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo), number);
     jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
     jit.addPtr(tables, number);
     const GPRReg lowBytes = scratch;

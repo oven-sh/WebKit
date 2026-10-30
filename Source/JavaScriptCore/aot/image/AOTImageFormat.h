@@ -205,7 +205,7 @@ struct ImageFunction {
 };
 static_assert(sizeof(ImageFunction) == 8 && std::has_unique_object_representations_v<ImageFunction>);
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFunctionBits);
-static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
+static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
 static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) / ClosureWord::offsetUnit <= 1ull << ClosureWord::isRenamedBit);
 
 // A frame is named by the place of its frame record: the word below its return address.

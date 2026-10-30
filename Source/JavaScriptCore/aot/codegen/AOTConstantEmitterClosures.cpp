@@ -80,13 +80,13 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     if (!m_placement.closureCellNumber(entrypoint))
         return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
     if (context.shape() != CodeShape::Fast)
-        return CellPointer(callStub(context, closureOfTable(), { }, { .immediate = entrypoint.index() }).first);
+        return CellPointer(callStub(context, closureOfTable(), { }, { .immediate = m_placement.closureNumberOf(entrypoint) }).first);
     CellPointer created = emitter<ClosureTestEmitter>().closureIfCreated(entrypoint);
     return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
         return created;
     }, [&] {
         // The operation that takes the closure declares no write, so a call with its effects would let B3 reuse the empty word of the closure table.
-        return CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(closureOfTable(), std::span<const LValue>(), { .immediate = entrypoint.index(), .isOnRarePath = true, .convertsNoCells = m_placement.functionKind(entrypoint).isSlim }).first);
+        return CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(closureOfTable(), std::span<const LValue>(), { .immediate = m_placement.closureNumberOf(entrypoint), .isOnRarePath = true, .convertsNoCells = m_placement.functionKind(entrypoint).isSlim }).first);
     });
 }
 
@@ -104,7 +104,7 @@ std::optional<CellPointer> ConstantEmitter::tryMakeClosureOfField(const Operatio
         if (representation != Representation::Cell && representation != Representation::JSValue)
             return std::nullopt;
     }
-    Integer request = integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32 | entrypoint.index()));
+    Integer request = integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32 | m_placement.closureNumberOf(entrypoint)));
     return CellPointer(callStub(context, makeClosureOfField(kind.slimClosureKind(), capturesObject), { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
 }
 
@@ -123,7 +123,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     if (count > ClosureRequest::maxSlimClosureCaptures)
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
-    uint64_t requestWord = request.entrypoint.index() | static_cast<uint64_t>(request.kind.slimClosureKind()) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit;
+    uint64_t requestWord = m_placement.closureNumberOf(request.entrypoint) | static_cast<uint64_t>(request.kind.slimClosureKind()) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit;
     if (value.shape() != CodeShape::Fast || request.storage != AllocationStorage::Frame)
         return callClosureStub(value, request, requestWord, SlimClosure::allocationSize(count));
 
@@ -139,11 +139,12 @@ CellPointer ConstantEmitter::newClosureByStub(const ValueContext& value, const N
 {
     unsigned executable = static_cast<unsigned>(FunctionTables::executableKind(request.kind));
     uint32_t allocation = request.storage == AllocationStorage::Heap ? request.allocation.index() : 0;
-    if (!ClosureRequest::canEncode(request.entrypoint.index(), executable, allocation)) {
+    uint32_t closureNumber = m_placement.closureNumberOf(request.entrypoint);
+    if (!ClosureRequest::canEncode(closureNumber, executable, allocation)) {
         generator().failAtLimit(value, LimitID::ClosureAllocationSites, static_cast<uint64_t>(allocation) + 1);
         return zeroOf(Representation::Cell).as<CellPointer>();
     }
-    return callClosureStub(value, request, ClosureRequest::encode(request.entrypoint.index(), executable, allocation), Closure::allocationSize(request.captures.size()));
+    return callClosureStub(value, request, ClosureRequest::encode(closureNumber, executable, allocation), Closure::allocationSize(request.captures.size()));
 }
 
 CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const NewClosureRequest& request, uint64_t requestWord, size_t cellSize)
@@ -155,7 +156,7 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
     switch (request.storage) {
     case AllocationStorage::Heap:
         if (ClosureRequest::isSlim(requestWord)) {
-            operands[0] = integer(static_cast<int64_t>(request.entrypoint.index())).value();
+            operands[0] = integer(static_cast<int64_t>(ClosureRequest::closureNumberOf(requestWord))).value();
             return CellPointer(callStub(value, AOT::newSlimClosure(request.kind.slimClosureKind(), count), operands.span()).first);
         }
         return CellPointer(callStub(value, newClosure(count), operands.span()).first);
@@ -238,7 +239,7 @@ void ConstantEmitter::storeCaptures(CellPointer closure, const NewClosureRequest
 Integer ConstantEmitter::closureWordOf(FunctionID entrypoint)
 {
     Pointer closureWords = loadImmutablePointer(AOT_INSTANCE_OFFSET(functionTables.closureWords));
-    return Integer(m_out.load64(m_out.address(m_heaps.AOTImage_tables, closureWords.value(), static_cast<ptrdiff_t>(entrypoint.index()) * sizeof(uint64_t))));
+    return Integer(m_out.load64(m_out.address(m_heaps.AOTImage_tables, closureWords.value(), static_cast<ptrdiff_t>(m_placement.closureNumberOf(entrypoint)) * sizeof(uint64_t))));
 }
 
 } } } // namespace JSC::AOT::Typed

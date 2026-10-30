@@ -76,6 +76,7 @@ void noteRequest(ValueFlowRuleContext&, FunctionID requester, ModuleID);
 void applyEventsOfCall(const ValueFlowStatement&, ValueFlowRuleContext&, ClimbingSet callees);
 
 void applyEventsOfStore(const ValueFlowStatement&, ValueFlowRuleContext&, ClimbingSet receivers, PropertyKeyID name);
+void applyEventsOfDelete(ValueFlowRuleContext&, ClimbingSet receivers);
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext&, BuiltinID canonicalEntry, Vector<ValueFlowObjectID, 32>&);
 void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext&, ValueSetID children);
 bool isFoundByNameAlone(BuiltinID canonicalMember);

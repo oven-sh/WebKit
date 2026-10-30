@@ -11,6 +11,8 @@
 #include "AOTClaims.h"
 #include "AOTFlowOrder.h"
 #include "AOTLedger.h"
+#include "AOTLedgerOfClassesAndClosures.h"
+#include "AOTClaimsAboutClassesAndClosures.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
@@ -281,6 +283,34 @@ static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderIn
     }
 }
 
+namespace Claims = ClaimsAboutClassesAndClosures;
+
+// A store is the definition of a member only where nothing can answer it instead: no accessor, freeze or link on the function, and nobody but the program's statements near it. The built-in prototypes above it are read-only.
+static void collectMembersOfFunctionsDefinedByStores(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)
+{
+    if (!inputs.classesAndClosures)
+        return;
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    const LedgerOfClassesAndClosures& ledger = *inputs.classesAndClosures;
+    for (const Layout& layout : program.layouts) {
+        if (!layout.has(LayoutFlags::IsConstructorFunction) || layout.staticFields.isEmpty())
+            continue;
+        ValueFlowObjectID closure = universe.closureOf(layout.constructor);
+        Writers everyOwnProperty = ledger.writersOfEveryOwnProperty(closure);
+        bool isOnlyStoredTo = Claims::isInSeenHandsAlone(ledger.handsOpenOn(closure))
+            && Claims::mutabilityOf(ledger.writersOfPrototypeLink(closure)) == MemberMutability::Fixed
+            && Claims::isNeverFrozen(everyOwnProperty)
+            && Claims::namesAreComplete(everyOwnProperty, Claims::Redefinitions::MayAddNames, [&](PropertyKeyID key) {
+                return key && layout.findStaticField(key).has_value();
+            });
+        if (!isOnlyStoredTo)
+            continue;
+        for (const StaticField& field : layout.staticFields)
+            order.membersOfFunctionsDefinedByStores.set(field.variable.index());
+    }
+}
+
 static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, const FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -291,6 +321,7 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     order.modulesLoadedByHost = BitVector(program.modules.size());
     order.modulesNamedByOperationsNobodyKnows = BitVector(program.modules.size());
     order.staticFieldsOfEscapedClasses = BitVector(program.variables.size());
+    order.membersOfFunctionsDefinedByStores = BitVector(program.variables.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         if (inputs.isReached(FunctionID(index)) || isUnsolvedCode(inputs, tables, FunctionID(index)))
             order.reachedFunctions.quickSet(index);
@@ -305,6 +336,7 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     collectCallsOfClosures(inputs, tables, order);
     collectModules(inputs, order, moduleOfRuntimeModule, libraryLoadsItsModulesByName);
     collectStaticFields(inputs, order);
+    collectMembersOfFunctionsDefinedByStores(inputs, order);
     return order;
 }
 

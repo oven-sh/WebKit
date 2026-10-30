@@ -310,7 +310,7 @@ static void printCellTest(const TablesContext& context, const RuntimeCellTest& t
         printBuiltinCell(context, test.builtinCellNumber());
         break;
     case CellTestKind::IsClosureOf:
-        context.printer.print(test.function());
+        context.printer.print(FunctionID(context.tables.closureFunctionWithNumber(test.closureNumber())));
         break;
     case CellTestKind::IsSymbol:
         printIdentifier(context, test.symbolKeyNumber());
@@ -371,7 +371,8 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         line.flag("slotHoldsUndefinedAndNull"_s, field.slotHoldsUndefinedAndNull);
         if (field.slot.representation() != SlotRepresentation::DeferredClosure)
             continue;
-        line.field("function"_s, layout.deferredClosureOf(field));
+        uint32_t closureNumber = layout.deferredClosureNumberOf(field);
+        line.field("function"_s, closureNumber == UINT32_MAX ? FunctionID() : FunctionID(context.tables.closureFunctionWithNumber(closureNumber)));
         if (field.flags & fieldDeferredClosureCapturesEnvironment)
             line.field("environment"_s, layout.closureEnvironmentSlotOf(field));
     }
@@ -582,7 +583,7 @@ static void printFunctions(const TablesContext& context)
             .field("constructs"_s, !!bound.constructs).field("firstArgumentSlot"_s, static_cast<uint32_t>(bound.firstArgumentSlot)).field("capturedArguments"_s, static_cast<uint32_t>(bound.numberOfCapturedArguments));
     }
     for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
-        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint())).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).field("entrypoint"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.constructEntrypoint()))).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
     forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
         RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
             .field("line"_s, place.line).field("column"_s, place.column);

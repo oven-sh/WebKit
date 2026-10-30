@@ -86,6 +86,12 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             continue;
         for (const RequiredNameData& requiredName : m_table.requiredNames(module)) {
             ModuleID exporter = requiredName.exporterModule();
+            // A file that has no face and captures nothing is asked for `default` alone, which it has until its error is dropped.
+            if (data(exporter).kind == ModuleKind::CommonJs && !data(exporter).capturesExports()) {
+                if (!ensureLoaded(exporter).didDropError)
+                    continue;
+                RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
+            }
             StarExportResolution::Type resolution = resolveRequiredName(exporter, identifier(requiredName.name));
             RETURN_IF_EXCEPTION(scope, void());
             switch (resolution) {

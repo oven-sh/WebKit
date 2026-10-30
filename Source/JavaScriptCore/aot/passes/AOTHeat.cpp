@@ -1545,6 +1545,9 @@ struct OutliningScan {
         // Only the body of a coroutine may hold it.
         if (value.opcode == Opcode::TakeGeneratorPrototype)
             return false;
+        // The accesses with no test of their position name the literal.
+        if (value.opcode == Opcode::NewArray && value.keepsLength())
+            return false;
         // The function object that it calls is in this frame.
         if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
             return false;

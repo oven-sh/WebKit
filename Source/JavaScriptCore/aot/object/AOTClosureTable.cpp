@@ -242,7 +242,7 @@ JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
 JSObject* ClosureTable::calleeOfModuleBodies(VM& vm, FunctionID body)
 {
     ClosureFunctionRangeData closureFunctions = m_tables.closureFunctions;
-    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.functionTables.closureWords[body.index()]);
+    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.functionTables.closureWords[m_tables.closureNumberOf(body.index())]);
     if (!m_calleeOfModuleBodies) [[unlikely]] {
         m_calleeOfModuleBodies = createClosureForOneCall(vm, body);
         m_state.immortalCells->add(m_calleeOfModuleBodies);
@@ -394,7 +394,7 @@ JSValue Object::materializeDeferredClosure(VM& vm, const FieldData& field)
         return JSValue::decode(word);
     }
 
-    JSObject* closure = state.objects->closures.createClosureOver(vm, layout().deferredClosureOf(field), valueCapturedByClosureOf(*this, field, cageBase));
+    JSObject* closure = state.objects->closures.createClosureOver(vm, closureFunctionWithNumber(layout().deferredClosureNumberOf(field)), valueCapturedByClosureOf(*this, field, cageBase));
     JSCell* held = closure;
     if (field.isAccessor()) [[unlikely]]
         held = GetterSetter::create(vm, state.instance.globalObject, closure, nullptr);

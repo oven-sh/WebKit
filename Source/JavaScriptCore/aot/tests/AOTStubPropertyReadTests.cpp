@@ -1452,7 +1452,7 @@ public:
         instance.image.fieldRecordIndices = m_recordIndices.data();
 
         kind().isSlim = 1;
-        instance.image.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(m_functionKinds.data());
+        instance.image.closureFunctionKinds = m_functionKinds.data();
 
         closureWord() = ClosureWord::encode({ CalleeThatReadsItsClosure::distanceFromCode, 1 }, function, { });
         instance.functionTables.closureWords = m_closureWords.data();

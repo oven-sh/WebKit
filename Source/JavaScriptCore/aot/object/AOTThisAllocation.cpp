@@ -123,7 +123,7 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return createWithoutFields(vm, m_state.objects->layouts, m_state.objects->structures.objectStructure(vm, classLayout.shape, prototype), classLayout);
 }
 
-// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its number.
+// What FunctionRareData::compiledAllocationConstructor() holds for a function that was constructed with itself as new.target. Any other constructor is remembered by its closure number.
 static constexpr uint32_t constructorIsNewTarget = FunctionRareData::maxCompiledAllocationConstructor;
 static_assert(ClosureWord::functionMask < constructorIsNewTarget);
 
@@ -134,7 +134,7 @@ static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, J
     if (constructor == newTarget)
         return rememberedConstructor == constructorIsNewTarget;
     std::optional<FunctionID> function = functionOf(constructor);
-    return function && rememberedConstructor == function->index() && constructor->structure()->realm() == remembered->realm();
+    return function && rememberedConstructor == closureNumberOf(*function) && constructor->structure()->realm() == remembered->realm();
 }
 
 JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constructor, JSObject* newTarget)
@@ -164,7 +164,7 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
     if (canRemember)
-        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : function->index());
+        target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : closureNumberOf(*function));
     return object;
 }
 
@@ -226,7 +226,7 @@ static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, c
         captured = &instance;
     else if (field.flags & fieldDeferredClosureCapturesEnvironment)
         captured = closureEnvironmentOf(state, allocated, field);
-    return state.objects->closures.createClosureOver(vm, allocated.layout().deferredClosureOf(field), captured);
+    return state.objects->closures.createClosureOver(vm, closureFunctionWithNumber(allocated.layout().deferredClosureNumberOf(field)), captured);
 }
 
 static void shareClosureEnvironment(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance, const FieldData& target)

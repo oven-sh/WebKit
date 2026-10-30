@@ -172,6 +172,7 @@ public:
         LayoutList layoutsOfTable;
         LayoutList otherLayouts;
         bool hasConditions { false };
+        bool someMethodLeavesByDispatch { false };
         size_t numberOfArms { 0 };
 
         friend bool operator==(const TableCallTargets&, const TableCallTargets&) = default;

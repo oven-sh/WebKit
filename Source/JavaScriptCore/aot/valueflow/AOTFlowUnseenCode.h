@@ -29,7 +29,6 @@ constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
         return true;
     case UnseenCodeCause::Unknown:
     case UnseenCodeCause::LoadsModuleByName:
-    case UnseenCodeCause::LimitReached:
     case UnseenCodeCause::FlowResultDisabled:
     case UnseenCodeCause::RunsMachineCode:
         return false;

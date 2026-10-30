@@ -16,6 +16,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinTable.h"
+#include "AOTDecidedBranches.h"
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTFlowCoroutines.h"
@@ -1880,6 +1881,21 @@ static bool canLiveInWord(const Program& program, const Function& function, Valu
     return program.typeOf(function, id).isJavaScriptValue();
 }
 
+// An edge that narrows an operand of the test asks the branch's condition which operand, and a word read back is no test: the resume function casts on the edge instead. A guard only the test itself makes.
+static bool isTestThatMakesGuards(FunctionAnalyses& analyses, ValueID id)
+{
+    const Function& function = analyses.function();
+    return std::ranges::any_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+        if (use.kind != Use::Kind::TerminatorOperand || !function.at(use.block).terminator.isConditionalBranch())
+            return false;
+        for (uint32_t targetIndex = 0; targetIndex < function.at(use.block).terminator.targets.size(); ++targetIndex) {
+            if (!canFollowWithoutTest(function, Edge { use.block, targetIndex }))
+                return true;
+        }
+        return false;
+    });
+}
+
 static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
 {
     plan.wordOf.fill(noWord, numberOfValues);
@@ -2017,11 +2033,16 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
             localCalc.forEachLive([&](ValueID live) {
                 if (live == yield.yield || live == plan.generator)
                     return;
+                // Its results are read behind the yield, and a word holds one value.
+                if (numberOfResultsOf(program, function, function.at(live))) {
+                    isStorable = false;
+                    return;
+                }
                 if (isRematerializable(function.at(live))) {
                     yield.constants.append(live);
                     return;
                 }
-                if (!canLiveInWord(program, function, live)) {
+                if (!canLiveInWord(program, function, live) || isTestThatMakesGuards(analyses, live)) {
                     isStorable = false;
                     return;
                 }
@@ -2104,6 +2125,42 @@ static void rewriteBody(const AnalysisContext& context, TaskArenas& arenas, Func
     builder.emptyUnreachableBlocks();
     analyses.didChangeControlFlow();
     runner.runSchedule(FunctionSchedule::Simplify, context.program, inputs, context.id, function, arenas);
+}
+
+// What a branch on a test that lives in a word proves on its edges holds where the branch stands, whatever the condition has become.
+static void castOnEdgesOfStoredTests(IRBuilder& builder, FunctionAnalyses& analyses, const HeapFramePlan& plan)
+{
+    Function& function = builder.function();
+    BitVector isStored(function.values.size());
+    for (const YieldInFrame& yield : plan.yields) {
+        for (ValueID id : yield.stored)
+            isStored.quickSet(id.index());
+    }
+    bool didChange = false;
+    for (uint32_t index = 0, end = function.blocks.size(); index < end; ++index) {
+        BlockID block(index);
+        if (!function.at(block).terminator.isConditionalBranch() || !isStored.quickGet(function.at(block).terminator.conditionOperand().index()))
+            continue;
+        for (uint32_t targetIndex = 0; targetIndex < function.at(block).terminator.targets.size(); ++targetIndex) {
+            Edge edge { block, targetIndex };
+            if (!hasEdgeResults(function, edge))
+                continue;
+            BlockID target = targetOf(function, edge).block;
+            Arguments arguments = argumentsWithoutTest(function, edge);
+            builder.setOrigin(function.at(block).terminator.origin());
+            BlockID onEdge = builder.addBlock(function.at(target).frequency);
+            builder.moveToEndOf(onEdge);
+            builder.emitJump(target, WTF::move(arguments));
+            function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[targetIndex] = Target { onEdge, { }, { } };
+            castArgumentsToParameters(builder, onEdge, builder.context().build.validates());
+            didChange = true;
+        }
+    }
+    if (!didChange)
+        return;
+    builder.applyInsertions();
+    analyses.didChangeControlFlow();
+    analyses.didChangeValues();
 }
 
 // Only a yield writes a word, right in front of its return, so what a run reads from a word the word still holds. A parameter holds it if all that arrives there does.
@@ -2202,6 +2259,7 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
     ValueID frame = builder.addParameter(entryBlock, TypeTable::anything);
     ValueID mode = builder.addParameter(entryBlock, modeType);
     ValueID sent = builder.addParameter(entryBlock, TypeTable::anything);
+    castOnEdgesOfStoredTests(builder, analyses, plan);
 
     Vector<ValueID, 4> yieldedValues(plan.yields.size(), [&](size_t index) { return function.at(plan.yields[index].yield).valueOperand(); });
     auto emitLeave = [&](YieldInFrame& yield, unsigned index) {

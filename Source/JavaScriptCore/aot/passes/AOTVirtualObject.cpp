@@ -1354,8 +1354,12 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     switch (description.kind) {
     case VirtualObjectKind::Environment: {
         // A variable has its type where the program reads it. Where nobody reads, the field may hold any word.
+        // A load would be the first read of a field that is recorded as never read, and what nothing reads may lose its stores and its room.
         std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
-        isSafe = layoutField && !holdsDeclaredTypeOnlyBehindEntry(flowOf(program, { description.layout, *layoutField }).location);
+        if (layoutField) {
+            const LocationFlow& location = flowOf(program, { description.layout, *layoutField }).location;
+            isSafe = !holdsDeclaredTypeOnlyBehindEntry(location) && location.reads != ReadState::NeverRead;
+        }
         break;
     }
     case VirtualObjectKind::Closure:

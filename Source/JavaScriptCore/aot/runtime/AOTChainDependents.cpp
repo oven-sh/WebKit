@@ -211,7 +211,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
 {
     ClassTable& classes = state.objects->classes;
     ClassSide side;
-    const LayoutData* layout = classes.classHeldBy(changed, side);
+    const LayoutData* layout = classes.classWithGuardsHeldBy(changed, side);
     if (!layout)
         return;
     if (uidOrNull) {

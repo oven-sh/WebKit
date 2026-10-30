@@ -361,8 +361,8 @@ static void testIsBuiltinCell(LoadedProgram& program)
 static void testIsClosureOf(LoadedProgram& program)
 {
     const ProgramTables& tables = program.state().tables;
-    String area = describe(tables, TypeRecord(noPrimitives, { RuntimeCellTest::isClosureOf(closureFunctionNamed(program, "area"_s)) }));
-    String perimeter = describe(tables, TypeRecord(noPrimitives, { RuntimeCellTest::isClosureOf(closureFunctionNamed(program, "perimeter"_s)) }));
+    String area = describe(tables, TypeRecord(noPrimitives, { RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "area"_s))) }));
+    String perimeter = describe(tables, TypeRecord(noPrimitives, { RuntimeCellTest::isClosureOf(closureNumberOf(closureFunctionNamed(program, "perimeter"_s))) }));
     AOT_TEST_CHECK(area.contains("area"_s) && !area.contains("perimeter"_s));
     AOT_TEST_CHECK(perimeter.contains("perimeter"_s) && !perimeter.contains("area"_s));
 

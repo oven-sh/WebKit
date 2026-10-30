@@ -332,6 +332,7 @@ static void branchOnFunctionObject(StubAssembler& jit, const ObjectLookupRegiste
     static_assert(SlimClosureWithPropertiesType == SlimClosureType + 1 && CompiledClosureType > SlimClosureWithPropertiesType - SlimClosureType);
     FunctionKindData constructor { };
     constructor.isConstructor = 1;
+    constructor.isDerivedConstructor = 1;
     const GPRReg type = r.size;
     const GPRReg function = r.vector;
     const GPRReg kind = r.size;

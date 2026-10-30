@@ -247,6 +247,17 @@ struct ProgramTables {
     {
         return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
+    // What closure words, requests for closures and the stubs have for a function that closures are made of.
+    uint32_t closureNumberOf(uint32_t function) const
+    {
+        ASSERT(function >= closureFunctions.first && function < closureFunctions.end);
+        return function - closureFunctions.first;
+    }
+    uint32_t closureFunctionWithNumber(uint32_t number) const
+    {
+        ASSERT(number < closureFunctions.end - closureFunctions.first);
+        return closureFunctions.first + number;
+    }
     uint32_t functionLengthOf(uint32_t function) const
     {
         uint8_t length = functionLengths()[function - closureFunctions.first];

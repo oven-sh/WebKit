@@ -20,6 +20,8 @@ constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
 constexpr StubKey stringsAreEqual() { return StubKey(StubFamily::StringsAreEqual); }
 constexpr StubKey distinctStringsAreEqual() { return StubKey(StubFamily::DistinctStringsAreEqual); }
 constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings); }
+// The operands: two strings. The result: their order by the default collator, -1, 0 or 1, sign-extended to 64 bits.
+constexpr StubKey stringLocaleCompare() { return StubKey(StubFamily::StringLocaleCompare); }
 // The operands: a string and a position, which is in range where it is below the length as an unsigned 64-bit number. The result: the code point there, or undefinedInteger.
 constexpr StubKey stringCodePointAt() { return StubKey(StubFamily::StringCodePointAt); }
 // The operands: a builder and a string.
@@ -41,7 +43,7 @@ constexpr StubKey concatenate(unsigned count)
 }
 
 static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stringBuilderDiscard()) && exists(stackStringBuilderAppendString()));
-static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
+static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(stringLocaleCompare()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));

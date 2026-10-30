@@ -657,54 +657,34 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSGlobalObject* realm = target.structure()->realm();
+        // Where the second object holds nothing but elements the fields go by a plan. No code runs, so the order of the names and the elements does not show.
+        Object& from = *uncheckedDowncast<Object>(source);
+        Instance& instance = from.instance();
+        bool didAssignFields = holder->structure() == instance.realm.extraPropertiesWithElementsStructure && tryAssignFieldsLeavingElementsOut(vm, target, from);
+        if (didAssignFields && !target.hasExtraProperties() && target.layout().extraPropertiesSlot() && !target.structure()->mayBePrototype() && !target.layout().isClass() && instance.state->tables.addedNames().empty()) {
+            if (JSFinalObject* elements = tryCopyWithElements(vm, holder)) {
+                target.setExtraProperties(vm, elements, instance.state->objects->structures.withExtraProperties(vm, target.compiledStructure(), nullptr));
+                return true;
+            }
+        }
+        // Nothing intercepts a store, so where the target has no elements to keep the attributes of, a store is a definition.
+        bool mayDefine = !elementsOfTarget || !JSC::hasIndexedProperties(elementsOfTarget->indexingType());
         holder->forEachOwnElement<>([&](unsigned index, JSValue value) {
-            Object::putByIndex(&target, realm, index, value, true);
+            if (!mayDefine || !tryDefineElementOfCompiledObject(&instance, &target, index, value))
+                Object::putByIndex(&target, realm, index, value, true);
             scope.assertNoException();
             return IterationStatus::Continue;
         });
+        if (didAssignFields)
+            return true;
     }
     return storePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
-}
-
-// A record whose second object holds nothing but elements: no code runs, so the order of the names and the elements does not show.
-static bool tryAssignFieldsThenElements(VM& vm, Object& target, JSObject* source)
-{
-    Object* from = compiledObjectOrNull(source);
-    if (!from || from == &target)
-        return false;
-    JSObject* holder = from->extraProperties();
-    Instance& instance = from->instance();
-    if (!holder || holder->structure() != instance.realm.extraPropertiesWithElementsStructure || hasFieldPreparedBeforeLookups(vm, *from) || !wouldPerformFastPut(vm, &target))
-        return false;
-    JSObject* elementsOfTarget = objectHoldingIndexedProperties(&target);
-    if (target.anyObjectInChainMayInterceptIndexedAccesses() || (elementsOfTarget && elementsOfTarget->canHaveExistingOwnIndexedGetterSetterProperties()))
-        return false;
-    if (!tryAssignFieldsLeavingElementsOut(vm, target, *from))
-        return false;
-    if (!target.hasExtraProperties() && target.layout().extraPropertiesSlot() && !target.structure()->mayBePrototype() && !target.layout().isClass() && instance.state->tables.addedNames().empty()) {
-        if (JSFinalObject* elements = tryCopyWithElements(vm, holder)) {
-            target.setExtraProperties(vm, elements, instance.state->objects->structures.withExtraProperties(vm, target.compiledStructure(), nullptr));
-            return true;
-        }
-    }
-    DeferTerminationForAWhile deferTermination(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSGlobalObject* realm = target.structure()->realm();
-    // Nothing intercepts a store, so where the target has no elements to keep the attributes of, a store is a definition.
-    bool mayDefine = !elementsOfTarget || !JSC::hasIndexedProperties(elementsOfTarget->indexingType());
-    holder->forEachOwnElement<>([&](unsigned index, JSValue value) {
-        if (!mayDefine || !tryDefineElementOfCompiledObject(&instance, &target, index, value))
-            Object::putByIndex(&target, realm, index, value, true);
-        scope.assertNoException();
-        return IterationStatus::Continue;
-    });
-    return true;
 }
 
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)
 {
     Object* typed = compiledObjectOrNull(compiledTarget);
-    return typed && (tryAssignFieldsThenElements(vm, *typed, source) || typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation(vm, *typed, source));
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation(vm, *typed, source));
 }
 
 void didBecomePrototype(VM& vm, JSObject* object)

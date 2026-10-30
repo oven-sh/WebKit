@@ -870,6 +870,9 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         if (module.exportsVariable)
             openToTestRunner(context, module.exportsVariable);
     }
+    // Taken out of require.cache, the file loads again from disk, and the run time stores what that exports.
+    if (module.exportsVariable && module.flags.contains(ModuleFlags::MayBeEvicted))
+        openToTestRunner(context, module.exportsVariable);
     for (const ModuleRequest& request : module.requests) {
         if (request.kind == ModuleRequestKind::Require)
             continue;
@@ -934,6 +937,8 @@ static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleCont
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
     connect(context, requiredValueOf(context, module), statement.result);
+    if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
+        context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
     const BuiltinTable& builtins = context.program().builtins();
     RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
     if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
@@ -1060,6 +1065,8 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
             context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
             connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
             connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
+            if (program.at(module).flags.contains(ModuleFlags::MayBeEvicted))
+                context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
         };
         import(operation.module());
         if (!context.operandsOf(statement).empty()) {

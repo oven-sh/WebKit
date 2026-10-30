@@ -960,6 +960,7 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
     }
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     m_context.mark(m_context.restrict(receivers, m_universe.objects()), ObjectMutation::DeleteField);
+    applyEventsOfDelete(m_context, receivers);
     answerBoolean();
     mayThrow();
 }

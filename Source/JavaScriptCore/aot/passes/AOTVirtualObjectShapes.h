@@ -171,7 +171,7 @@ inline constexpr OpcodeSet evaluatedTests {
 };
 
 inline constexpr OpcodeSet testsLeftToRun {
-    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView, Opcode::IsPrototypeOfClass,
+    Opcode::IsNotThenable, Opcode::AreMembersUnchanged, Opcode::IsEnumeratorCurrent, Opcode::IsInsideView,
     Opcode::IsBuiltinLocationUnchanged,
 };
 

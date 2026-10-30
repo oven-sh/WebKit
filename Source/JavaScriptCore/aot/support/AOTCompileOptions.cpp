@@ -681,8 +681,6 @@ static std::optional<String> applyLimit(Wire::CompileOptions& options, const Opt
     auto limit = findMember<LimitID>(name);
     if (!limit || *limit == LimitID::None)
         return unknownNameSentence(word.noun, name);
-    if (!canBeLowered(*limit))
-        return makeString("the limit "_s, name, " fails the build and cannot be lowered"_s);
     auto loweredValue = parseNumber<uint64_t>(*loweredValueText);
     if (!loweredValue)
         return notANumberSentence(*loweredValueText);
@@ -702,7 +700,7 @@ static void listLimits(PrintStream& out)
     for (LimitID limit : allMembersOf<LimitID>) {
         if (limit == LimitID::None)
             continue;
-        ASCIILiteral mark = canBeLowered(limit) ? ""_s : " (cannot be lowered)"_s;
+        ASCIILiteral mark = isLoweredByAll(limit) ? ""_s : " (not lowered by All)"_s;
         listValue(out, nameOf(limit), ' ', defaultLimitValue(limit, hostArchitecture()), ' ', nameOf(stageOf(limit)), ' ', nameOf(protectsOf(limit)), ' ', nameOf(degradesToOf(limit)), mark);
     }
 }

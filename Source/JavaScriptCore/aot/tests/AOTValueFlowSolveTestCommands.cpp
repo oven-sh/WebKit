@@ -134,10 +134,6 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowSolver::Counters& counters = solver.counters();
-    if (!solution.hasResult()) {
-        context.out.println("stopped at a limit: edges-logged ", counters.edgesLogged, " rounds ", counters.rounds);
-        return;
-    }
     const ValueFlowUniverse& universe = bodies.universe();
 
     uint32_t functionsWithBody = 0;

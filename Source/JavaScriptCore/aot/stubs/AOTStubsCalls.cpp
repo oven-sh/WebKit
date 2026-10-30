@@ -448,8 +448,6 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     jit.and32(TrustedImm32(ClosureWord::functionMask), function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     loadProgramTable(jit, tables, ProgramTableIndex::closureCaptureCounts, scratch);
-    jit.load32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), tables);
-    jit.sub32(tables, function);
     jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne), function);
     slow.append(jit.branch32(CCallHelpers::Equal, function, TrustedImm32(countsAreListed)));
     // Allocator i serves cells of 16 * (i + 1) bytes. The captures stand above the four bits of the references: (captures + 1) / 2.

@@ -264,7 +264,7 @@ static void checkListedFunctions(const TableCheck& check)
         check.expect(!boundEntrypoint || std::ranges::binary_search(check.tables.boundFunctions(), boundEntrypoint.index(), { }, &BoundFunctionData::function), ProgramTableRule::FunctionNotListed, { }, id);
         auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
         bool hasConstructEntrypoint = function.role == FunctionRole::GenericEntrypoint && entrypoint && entrypoint->constructEntrypoint;
-        check.expect(!hasConstructEntrypoint || std::ranges::binary_search(check.tables.constructEntrypoints(), id.index(), { }, &ConstructEntrypointData::function), ProgramTableRule::FunctionNotListed, { }, id);
+        check.expect(!hasConstructEntrypoint || std::ranges::binary_search(check.tables.constructEntrypoints(), check.encoder.placement.closureNumberOf(id), { }, &ConstructEntrypointData::function), ProgramTableRule::FunctionNotListed, { }, id);
     }
     for (size_t index = 0; index < check.program.layouts.size(); ++index) {
         FunctionID constructor = check.program.layouts[index].constructor;
@@ -494,7 +494,7 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeCellTest& encoded
     case CellTestKind::IsBuiltinCell:
         return check.encoder.placement.builtinCell(test.builtin) == encoded.builtinCellNumber();
     case CellTestKind::IsClosureOf:
-        return encoded.function() == check.encoder.findEntrypoint(test.function);
+        return encoded.closureNumber() == check.encoder.placement.closureNumberOf(check.encoder.findEntrypoint(test.function));
     case CellTestKind::IsSymbol:
         return encoded.symbolKeyNumber() == check.encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s);
     case CellTestKind::SharingModeIs:

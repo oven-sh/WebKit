@@ -295,7 +295,12 @@ void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
 {
     LValue frame = in<Boxed>(value->frameOperand()).value();
-    m_out.store64(in<Boxed>(value->valueOperand()).value(), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfWords() + value->index() * sizeof(uint64_t)));
+    ValueID operand = value->valueOperand();
+    LValue stored = in<Boxed>(operand).value();
+    // The collector visits every word. A narrow reference that nothing has filled is 0, which decodes to the start of the cage.
+    if (m_function.at(operand).representation == Representation::Cell32 && typeOf(operand).mayBeUnspecified())
+        stored = m_out.select(m_out.isZero32(in<NarrowReference>(operand).value()), m_out.int64Zero, stored);
+    m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfWords() + value->index() * sizeof(uint64_t)));
 }
 
 void SavedFrameEmitter::generateGetResumeIndex(const ValueContext& value)

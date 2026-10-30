@@ -1070,7 +1070,7 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())
                     appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
-                else if (visitor.compiledFrames().isAtFailedTailCall())
+                else if (visitor.compiledFrames().isAtFailedTailCall() && !visitor->isConstructCall()) // A function that was constructed makes no tail calls.
                     appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();

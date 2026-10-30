@@ -4493,6 +4493,34 @@ static Vector<ListMadeWithLength, 2> findListsMadeWithLength(FunctionPassContext
     return found;
 }
 
+// Below the length itself, or below what the list says its length is: that is still the length if no store in front of this one has changed it. A position that joins several comes from each of them.
+static bool isBelowLengthOfList(FunctionPassContext& context, IntegerRelations& relations, ObjectID object, ValueID position, ValueID length, BlockID at, unsigned depth = 0)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (relations.isAtMost(position, length, -1, at) == IntegerRelations::Answer::Proven)
+        return true;
+    for (const ObjectUse& other : analyses.escape().usesOf(object)) {
+        if (other.use.kind != Use::Kind::Operand)
+            continue;
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, function.at(other.use.user));
+        if (measured && measured->heap == AbstractHeap::ArrayStorage && analyses.identityOf(measured->owner) == analyses.escape().at(object).definition && relations.isAtMost(position, other.use.user, -1, at) == IntegerRelations::Answer::Proven)
+            return true;
+    }
+    if (function.at(position).opcode != Opcode::Parameter || depth == 3)
+        return false;
+    BlockID block = analyses.useLists().blockOf(position);
+    uint32_t parameter = static_cast<uint32_t>(function.at(block).parameters.find(position));
+    bool isEmpty = true;
+    for (Edge edge : analyses.cfg().incomingEdges(block)) {
+        ValueID passed = valuePassedOn(function, edge, parameter);
+        if (!passed || !isBelowLengthOfList(context, relations, object, passed, length, edge.from, depth + 1))
+            return false;
+        isEmpty = false;
+    }
+    return !isEmpty;
+}
+
 // `new Array(n)` has the length n until something changes it. Nothing has where every use of the list that may come in front of the block only reads it or stores below n.
 static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, ValueID creation, ValueID length, BlockID at)
 {
@@ -4532,7 +4560,9 @@ static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelation
         if (isKeyed && user.opcode == Opcode::ElemGet)
             continue;
         ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
-        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven || relations.isAtMost(position, length, -1, use.block) != IntegerRelations::Answer::Proven)
+        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven)
+            return false;
+        if (!isBelowLengthOfList(context, relations, *object, position, length, use.block))
             return false;
     }
     return true;
@@ -4661,6 +4691,108 @@ static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& c
     return PassOutcome::Changed;
 }
 
+// `new Array(3)` that only reads and stores below 3 touch is `[, , ,]` that keeps its length and its storage. So nobody need ask, and the passes that write out loops and take lists away know it.
+static PassOutcome makeLiteralsOfShortListsOfHoles(FunctionPassContext& context)
+{
+    static constexpr int64_t maxLength = 8;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<ListMadeWithLength, 2> listsMade = findListsMadeWithLength(context);
+    if (listsMade.isEmpty() || context.build.validates())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (const ListMadeWithLength& made : listsMade) {
+        KnownValue length = knownValueOf(context.program, function, made.length);
+        if (length.kind() != KnownValue::Kind::Integer || length.asInteger() < 1 || length.asInteger() > maxLength)
+            continue;
+        // What flow found in the arrays of the site stands in the cast behind the call.
+        ValueID onlyCast;
+        bool hasOtherUse = false;
+        for (const Use& use : analyses.useLists().usesOf(made.list)) {
+            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && !onlyCast)
+                onlyCast = use.user;
+            else
+                hasOtherUse = true;
+        }
+        if (!onlyCast || hasOtherUse)
+            continue;
+        Type named = context.program.typeOf(function, onlyCast);
+        const ClassPart* part = named.singleBuiltinClass();
+        std::optional<ProvenValue<TypeID>> contents = part ? part->provenContentsAt(context.program.builtins(), ContentsSlot::Element) : std::nullopt;
+        if (!contents || part->builtinClass != BuiltinClasses::Array || arrayStorageAtAllocation(context.program, named) != ArrayStorage::Contiguous || !part->provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Names }))
+            continue;
+        // All of it or none.
+        Vector<ValueID, 4> lengthsRead;
+        if (!isTouchedOnlyBelowLength(context.program, function, analyses.useLists(), made.list, length.asInteger(), &lengthsRead))
+            continue;
+        auto liesBelowLength = [&](ValueID position) {
+            const Type& type = context.program.typeOf(function, position);
+            return type.isInteger() && type.integers.minimum >= 0 && type.integers.maximum < length.asInteger();
+        };
+        // A test is answered where the type of the cast or of the position says what it asks. Whatever leaned on the test finds the same there.
+        Vector<std::pair<ValueID, BlockID>, 4> tests;
+        bool keepsAll = true;
+        for (const Use& use : analyses.useLists().usesOf(onlyCast)) {
+            const Value& user = function.at(use.user);
+            keepsAll &= !isCast(user.opcode);
+            if (Value::opcodesWithArrayStorage.contains(user.opcode))
+                keepsAll &= user.arrayStorage() == ArrayStorage::Contiguous || user.arrayStorage() == ArrayStorage::Other;
+            if (Value::opcodesWithIsInBounds.contains(user.opcode) && user.isInBounds())
+                keepsAll &= liesBelowLength(user.positionOperand());
+            if (user.opcode == Opcode::HasArrayStorage || (user.opcode == Opcode::IsInBounds && liesBelowLength(user.positionOperand())))
+                tests.append({ use.user, use.block });
+        }
+        if (!keepsAll)
+            continue;
+
+        ValueLocation location = analyses.useLists().locationOf(made.list);
+        Vector<uint32_t, 8> holes;
+        for (int64_t position = 0; position < length.asInteger(); ++position)
+            holes.append(static_cast<uint32_t>(position));
+        Value literal = IRBuilder::make(Opcode::NewArray);
+        literal.setContents(*contents);
+        literal.setContentsAreProven(true);
+        literal.setHoles(holes.span());
+        literal.setArrayStorage(ArrayStorage::Contiguous);
+        literal.setKeepsLength(true);
+        builder.setOrigin(function.at(made.list).origin());
+        ValueID madeLiteral = builder.insertBefore({ location.block, location.index }, WTF::move(literal));
+        builder.applyInsertions();
+        named.classes[0].arrayStorage = ArrayStorage::Contiguous;
+        {
+            TypeID namedType = context.types.intern(named);
+            function.edit(onlyCast, ValueEdit::Definition).setProvenType(Proven::byPosition(namedType));
+            function.edit(onlyCast, ValueEdit::Type).type = namedType;
+        }
+        ValueSubstitution answers(function);
+        answers.replace(made.list, madeLiteral);
+        for (ValueID read : lengthsRead)
+            answers.replace(read, made.length);
+        // The branch on a test becomes a jump over its taken edge.
+        for (auto [test, at] : tests) {
+            if (function.at(at).terminator.kind != TerminatorKind::Branch || function.at(at).terminator.conditionOperand() != test)
+                continue;
+            Terminator& terminator = function.edit(at, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+            Target taken = terminator.taken();
+            builder.setOrigin(terminator.origin());
+            terminator = Terminator { };
+            builder.moveToEndOf(at);
+            if (!taken.proofs.isEmpty()) {
+                ValueID noProof = builder.append(Opcode::AllGuards, { });
+                for (size_t result = 0; result < taken.proofs.size(); ++result)
+                    taken.arguments.append(noProof);
+            }
+            builder.emitJump(taken.block, WTF::move(taken.arguments));
+            analyses.didChangeValues();
+        }
+        answers.apply(function, &analyses);
+        analyses.didChangeValues();
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
+}
+
 // `list.length` of a list that still has the length it was made with is that length.
 static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context)
 {
@@ -4753,6 +4885,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
     marked |= requestElementPositions(context);
+    marked |= makeLiteralsOfShortListsOfHoles(context);
     marked |= askWhetherComparedPositionsAreInBounds(context);
     marked |= readLengthsThatListsWereMadeWith(context);
     ExpectedTypesByUse expectations(context.function);

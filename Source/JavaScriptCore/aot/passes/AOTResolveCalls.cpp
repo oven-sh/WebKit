@@ -3242,7 +3242,7 @@ struct CallResolver {
     std::optional<ReceiverCandidates> findReceiversOfTableCall(const ValueSite& position) const
     {
         const Value& call = function.at(position.value);
-        if (call.opcode != Opcode::Call || !call.calleeKey() || call.expectedResult() || call.argumentsOperands().size() > maxTableCallArguments || isTailCall(function, position))
+        if (call.opcode != Opcode::Call || !call.calleeKey() || call.expectedResult() || call.argumentsOperands().size() > maxTableCallArguments)
             return std::nullopt;
         const Value& read = function.at(CastChain(function, call.calleeOperand()).last());
         if (read.opcode != Opcode::PropGet || read.key() != call.calleeKey() || read.isFreeName() || classOfClassObject(program, typeOf(read.objectOperand())))
@@ -3251,6 +3251,27 @@ struct CallResolver {
         if (candidates.proof != ReceiverProof::Type || candidates.hasOtherParts || candidates.proven.size() > context.limit(LimitID::MaxAccessPlanMembers))
             return std::nullopt;
         return candidates;
+    }
+
+    // The function ends in a call that chooses among more functions than one round of arms tests for, or in a call of a function that does.
+    bool leavesByDispatch(FunctionID id, uint64_t depth = 0) const
+    {
+        const Function& body = program.at(id);
+        return std::ranges::any_of(body.blocks, [&](const Block& block) {
+            if (block.terminator.kind != TerminatorKind::ReturnCall)
+                return false;
+            const Value& call = body.at(block.terminator.callOperand());
+            switch (call.opcode) {
+            case Opcode::CallTable:
+                return true;
+            case Opcode::CallDirect:
+                return depth < context.limit(LimitID::MaxForwardingDepth) && leavesByDispatch(call.function(), depth + 1);
+            case Opcode::Call:
+                return call.callees() && program.at(call.callees()).seen().predicted().functions.size() > context.limit(LimitID::MaxDispatchCases);
+            default:
+                return false;
+            }
+        });
     }
 
     Plan planTableCall(const CallSite& site)
@@ -3282,11 +3303,17 @@ struct CallResolver {
                 const MemberAnswer& answer = arm.answer;
                 bool isEnteredThroughTable = answer.kind == MemberKind::Method && answer.receiverProofs.isEmpty() && canRetireMemberRead(site, answer.method)
                     && canHaveTableEntrypoint(program, context.types, answer.method, parameters.span());
-                for (LayoutID layout : arm.layouts)
-                    (isEnteredThroughTable && !builtinBaseClassOf(program, layout) ? targets.layoutsOfTable : targets.otherLayouts).add(layout);
-                if (!isEnteredThroughTable)
+                // A method that only objects of classes below a built-in class find is entered by no receiver of the table.
+                bool hasReceiverOfTable = false;
+                for (LayoutID layout : arm.layouts) {
+                    bool isOfTable = isEnteredThroughTable && !builtinBaseClassOf(program, layout);
+                    (isOfTable ? targets.layoutsOfTable : targets.otherLayouts).add(layout);
+                    hasReceiverOfTable |= isOfTable;
+                }
+                if (!hasReceiverOfTable)
                     continue;
                 targets.hasConditions |= !answer.conditions.isEmpty();
+                targets.someMethodLeavesByDispatch |= leavesByDispatch(answer.method);
                 targets.methods.append(answer.method);
             }
             return targets;
@@ -3313,6 +3340,14 @@ struct CallResolver {
         // One method: a test of one bit in front of a direct call, which can be inlined, costs less than the load of an entry and an indirect call.
         if (targets.methods.size() < 2 || (!targets.hasConditions && targets.numberOfArms <= context.limit(LimitID::MaxDispatchCases)))
             return declined;
+        if (isTailCall(function, site.position)) {
+            // Once a method is replaced the table enters the lookup, which keeps a frame while it calls what the receiver has under the name.
+            if (targets.hasConditions)
+                return declined;
+            // Arms that are copied into the caller cost less than the load of an entry and a jump. Not where a copy leaves by such a call again: that call gets arms too, and so do theirs.
+            if (!targets.someMethodLeavesByDispatch)
+                return declined;
+        }
 
         LayoutSetID receivers = context.types.completeLayoutSet(targets.layoutsOfTable.span());
         LayoutSetID otherReceivers = targets.otherLayouts.isEmpty() ? LayoutSetID() : context.types.completeLayoutSet(targets.otherLayouts.span());

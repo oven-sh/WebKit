@@ -984,6 +984,18 @@ void applyEventsOfStore(const ValueFlowStatement& statement, ValueFlowRuleContex
         context.add(context.nodes().ofHost(ValueFlowHostNode::RequiredValuesLoadedByName), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
 
+// In a test run a file taken out of require.cache loads again, through the loader of the host.
+void applyEventsOfDelete(ValueFlowRuleContext& context, ClimbingSet receivers)
+{
+    if (!context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
+        return;
+    bool mayEvict = std::ranges::any_of(context.program().modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::MayBeEvicted);
+    });
+    if (mayEvict)
+        enterLoaderOfHost(context);
+}
+
 static bool isGetterFoundWithoutItsName(const BuiltinTable& builtins, BuiltinID builtin)
 {
     if (builtins.at(builtin).kind != BuiltinKind::Accessor || !builtins.moduleLoadsOf(builtin).empty())

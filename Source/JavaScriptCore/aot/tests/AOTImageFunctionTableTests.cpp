@@ -628,7 +628,7 @@ static void testGranuleSizeFollowsLengthOfWalk()
 
 static uint64_t expectedClosureWord(const Image& image, FunctionID function, uint32_t codeOffset, unsigned numberOfParameters)
 {
-    return ClosureWord::encode({ codeOffset, numberOfParameters }, function.index(), closureWordFlags(image.programTables().kindOfFunction(function.index())));
+    return ClosureWord::encode({ codeOffset, numberOfParameters }, image.programTables().closureNumberOf(function.index()), closureWordFlags(image.programTables().kindOfFunction(function.index())));
 }
 
 static void testClosureWords()
@@ -652,7 +652,7 @@ static void testClosureWords()
     uint64_t word = loaded.closureWord(entrypoint);
     AOT_TEST_CHECK(word);
     AOT_TEST_CHECK(word == expectedClosureWord(loaded, entrypoint, image.built.layout.bodyStarts[image.indexOf(entrypoint.index())], 3));
-    AOT_TEST_CHECK(ClosureWord::functionOf(word) == entrypoint.index());
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(word) == entrypoint.index() - range.first);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(word) == 3);
     AOT_TEST_CHECK(ClosureWord::addressOf(word, std::bit_cast<uintptr_t>(loaded.code().data())) == std::bit_cast<uintptr_t>(image.address(entrypoint.index(), 0)));
 

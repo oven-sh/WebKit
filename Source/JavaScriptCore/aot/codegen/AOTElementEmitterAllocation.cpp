@@ -535,7 +535,8 @@ CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& valu
     join.add(newArray);
 
     m_out.appendTo(slowPath);
-    CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(0) }, { .isOnRarePath = true });
+    uint32_t flags = value->keepsLength() ? NewArrayWithHolesFlag::mustHaveIndexingType : 0;
+    CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(flags) }, { .isOnRarePath = true });
     RawElements boxedElements = boxElements<Operand>(generator(), value, elements);
     for (size_t i = 0; i < boxedElements.size(); ++i)
         callVoidOperation(value, RuntimeOperation::ArrayPutAtIndex, { arrayOfHoles, boxedElements[i], integer(indexes[i]) }, { .isOnRarePath = true });

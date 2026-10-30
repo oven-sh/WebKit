@@ -1,0 +1,13 @@
+# localeCompare() of two strings without a locale calls the StringLocaleCompare stub, which orders ASCII itself. The site calls no operation.
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="order" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallInline v0, v1 inlineBuiltin=StringLocaleCompare overload=StringPrototypeLocaleCompare/0
+    Return v2
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation
+# CHECK: stub StringLocaleCompare x1

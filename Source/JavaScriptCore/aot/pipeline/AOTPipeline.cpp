@@ -1414,6 +1414,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         if (!m_runner.isStopped()) {
             inputsFor(id);
             output.flow->setBorrowedParameters(m_analyses.borrowedParameters());
+            ProgramCachesWithScratchTypes caches(m_program, m_build);
             output.flow->setFrameArrayParameters(computeFrameArrayParameters(m_program, m_build));
         }
         *output.frameAllocation = edit(id, allocateInFrames, inputsFor(id), *output.flow, m_build);
@@ -1798,16 +1799,51 @@ void Pipeline::runPlacementStage()
         stage.run(PassID::CheckPlacement);
 }
 
-// Code generation writes function numbers into closure words, which have no room for a larger one. The image builder checks the same limit, but only after the code is generated.
-void Pipeline::checkNumberOfFunctions()
+// The tables have three bytes for the number of a function. The image builder checks the same limit, but only after the tables are encoded.
+bool Pipeline::checkNumberOfFunctions()
 {
     if (m_runner.isStopped())
-        return;
+        return true;
     uint64_t count = m_program.functions.size();
     while (count && !m_program.functions[count - 1].hasBody())
         --count;
-    if (m_build.exceeds(LimitID::ImageFunctions, count))
-        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
+    if (!m_build.exceeds(LimitID::ImageFunctions, count))
+        return true;
+    m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
+    return false;
+}
+
+// How far the program is from the limits that stop a build, and from 2 GB in one Vector.
+void Pipeline::logSizeOfProgram() const
+{
+    std::array<uint64_t, numberOfEnumerators<FunctionRole>> all { };
+    std::array<uint64_t, numberOfEnumerators<FunctionRole>> withBody { };
+    for (const Function& function : m_program.functions) {
+        ++all[static_cast<size_t>(function.role)];
+        withBody[static_cast<size_t>(function.role)] += function.hasBody();
+    }
+    dataLog("AOT size of the program: functions ", m_program.functions.size(), " of ", sizeof(Function), " bytes | strings ", m_program.strings.size(), " | layouts ", m_program.layouts.size(), " of ", sizeof(Layout), " bytes | variables ", m_program.variables.size(), " | modules ", m_program.modules.size(), " | data ", m_program.data.size(), " | allocations ", m_output->placement->numberOfAllocations());
+    ClosureFunctionRange closures = m_output->placement->closureFunctions();
+    if (closures.first)
+        dataLog(" | closure functions ", closures.first.index(), " to ", closures.end.index());
+    dataLogLn();
+    for (size_t role = 0; role < all.size(); ++role) {
+        if (all[role])
+            dataLogLn("AOT size of the program: ", nameOf(static_cast<FunctionRole>(role)), " ", all[role], " | with a body ", withBody[role]);
+    }
+}
+
+// Code generation writes the numbers of the functions that closures are made of into closure words, which have no room for a larger one. No other function needs a number that fits there.
+void Pipeline::checkNumberOfClosureFunctions()
+{
+    if (m_runner.isStopped())
+        return;
+    if (m_build.options().logging.logsPhaseTimes) [[unlikely]]
+        logSizeOfProgram();
+    ClosureFunctionRange closures = m_output->placement->closureFunctions();
+    uint64_t count = closures.end.index() - closures.first.index();
+    if (m_build.exceeds(LimitID::ImageClosureFunctions, count))
+        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageClosureFunctions, .count = clampTo<uint32_t>(count) });
 }
 
 void Pipeline::runRepresentationStage()
@@ -1903,13 +1939,15 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     m_build.giveFreedMemoryBack();
     // Whoever stops, prints or verifies between the two stages sees bodies that have all their words.
     const auto& options = m_build.options();
-    if (m_runner.mayRunAnalysesTogether() && !options.verifiesProgram && !options.isVerifyOnly())
+    if (!checkNumberOfFunctions())
+        m_runner.stopAfterErrors();
+    else if (m_runner.mayRunAnalysesTogether() && !options.verifiesProgram && !options.isVerifyOnly())
         runPlacementAndRepresentationStagesTogether();
     else {
         runPlacementStage();
         runRepresentationStage();
     }
-    checkNumberOfFunctions();
+    checkNumberOfClosureFunctions();
     {
         // A run that was stopped after a pass hands out what its passes used. What it never computed stays the default result.
         PhaseTimes times(m_build, Stage::GenerateCode);

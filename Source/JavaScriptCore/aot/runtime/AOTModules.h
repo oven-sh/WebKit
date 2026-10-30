@@ -122,6 +122,7 @@ public:
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
     std::optional<BitVector> modulesNotBehindMocks(ModuleID root) const;
     bool hasBegunToLoad(ModuleID) const;
+    std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
     void runMocksBelow(ModuleID root);
     JSObject* capturedExports(ModuleID);
@@ -157,6 +158,9 @@ public:
     void runMainModuleThatWaited();
     void failMainModuleThatWaited();
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
+    void evict(ModuleID);
+    JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
+    bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
     // The text of a data: URL that the program imports under a constant name is part of the program.
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
@@ -422,6 +426,7 @@ private:
     JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue answerRequire(ModuleID);
+    JSValue loadEvictedFile(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
@@ -525,6 +530,8 @@ private:
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     BitVector m_mockedModules;
+    BitVector m_evictedFiles;
+    BitVector m_filesToLoadAgain;
     BitVector m_modulesWithMockToRun;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };

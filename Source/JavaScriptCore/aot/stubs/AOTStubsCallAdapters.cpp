@@ -409,7 +409,7 @@ void generateEnterClosure(StubAssembler& jit)
     clearIsRenamedBit(jit, word);
     hasWord.append(jit.jump());
 
-    // The callee only says which realm is entered. The first argument is the number of the function, an int32.
+    // The callee only says which realm is entered. The first argument is the closure number of the function, an int32.
     jit.bindEntry(enterModuleBody());
     emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load32(Address(fp, offsetOfFirstArgument), word);

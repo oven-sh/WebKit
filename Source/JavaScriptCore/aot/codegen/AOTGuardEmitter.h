@@ -36,7 +36,6 @@ public:
     void generateHasKeyOrder(const ValueContext&);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
-    void generateIsPrototypeOfClass(const ValueContext&);
 
     Condition holds(GuardBitID);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }

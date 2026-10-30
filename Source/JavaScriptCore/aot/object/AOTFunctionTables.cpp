@@ -131,14 +131,14 @@ const BoundFunctionData& boundFunctionData(FunctionID function)
     return *found;
 }
 
-static const uint64_t* closureWordsByFunction(const Image& image)
+static const uint64_t* closureWordsByNumber(const Image& image)
 {
-    auto section = image.section<uint64_t>(ImageSection::ClosureWords);
-    return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(section.data()) - image.programTables().closureFunctions.omittedWordCount * sizeof(uint64_t));
+    const ClosureFunctionRangeData& range = image.programTables().closureFunctions;
+    return image.section<uint64_t>(ImageSection::ClosureWords).subspan(range.first - range.omittedWordCount).data();
 }
 
 FunctionTables::FunctionTables(VM& vm)
-    : words(closureWordsByFunction(*Image::current()))
+    : words(closureWordsByNumber(*Image::current()))
 {
     RELEASE_ASSERT(!Options::useJIT());
     for (unsigned index = 0; index < numberOfExecutables; ++index) {

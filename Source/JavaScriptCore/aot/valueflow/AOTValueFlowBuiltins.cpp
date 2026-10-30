@@ -191,6 +191,19 @@ public:
         });
     }
 
+    // Callees that are followed, each set of them with the receiver that finds it. A receiver that is not listed may find any of them.
+    void forEachReceiverOfFollowedCallees(ClimbingSet callees, ValueSetID sought, NOESCAPE const Invocable<void(ClimbingSet, const ValueFlowOperand&)> auto& functor) const
+    {
+        sought = m_context.maker().intersect(sought, ValueSets::complement(m_context.universe().placeholdersAlone()));
+        for (const Known& known : m_known) {
+            ClimbingSet found = m_context.restrict(known.found, sought);
+            if (m_context.meet(found, ValueSets::anything))
+                functor(found, operandHolding(m_context.maker().of(known.receiver)));
+        }
+        if (m_others.node || m_context.meet(m_context.valueOf(m_others), ValueSets::anything))
+            functor(callees, m_others);
+    }
+
 private:
     struct Known {
         ValueFlowObjectID receiver;
@@ -4248,20 +4261,26 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
 
     ClimbingSet objects = withWhatUntrackedObjectCovers(context, context.restrict(receivers, universe.objects()));
     auto runGettersOn = [&](NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& holdersOf) {
-        forEachPartOfCallees(context, context.restrict(context.valueOf(context.readWhatWasWritten(holdersOf(objects), everyGetterName)), universe.callables()), [&](ClimbingSet getters) {
+        auto find = [&](ClimbingSet asked) {
+            return context.valueOf(context.readWhatWasWritten(holdersOf(asked), everyGetterName));
+        };
+        ClimbingSet found = find(objects);
+        if (!context.meet(found, universe.callables()))
+            return;
+        ReceiversByWhatTheyFind finding(context, thisValue, find);
+        auto run = [&](ClimbingSet getters, const ValueFlowOperand& holdingReceivers) {
             ValueFlowCallGroup group = context.group(getters, ValueFlowCallKind::Get);
-            if (context.contains(getters, ValueFlowUniverse::unknownObject())) {
-                context.forEachMember(context.restrict(objects, universe.knownObjects()), [&](ValueFlowObjectID receiver) {
-                    if (context.contains(context.valueOf(context.readWhatWasWritten(holdersOf(only(context, receiver)), everyGetterName)), ValueFlowUniverse::unknownObject()))
-                        context.add(group.thisValue, only(context, receiver));
-                });
-                ValueFlowOperand holdingOthers = thisValue;
-                holdingOthers.mask = context.maker().intersect(holdingOthers.mask, ValueSets::complement(universe.knownObjects()));
-                context.connect(holdingOthers, group.thisValue);
-            } else
-                context.connect(thisValue, group.thisValue);
+            context.connect(holdingReceivers, group.thisValue);
             carryOut(context, group.thrown);
             take(group.result);
+        };
+        forEachPartOfCallees(context, context.restrict(finding.withCalleesFoundAlone(found), universe.callables()), [&](ClimbingSet getters) {
+            if (context.meet(getters, universe.placeholdersAlone())) {
+                finding.forEachOperandHoldingReceiversOf(getters, [&](const ValueFlowOperand& holdingReceivers) {
+                    run(getters, holdingReceivers);
+                });
+            } else
+                finding.forEachReceiverOfFollowedCallees(getters, universe.callables(), run);
         });
     };
 

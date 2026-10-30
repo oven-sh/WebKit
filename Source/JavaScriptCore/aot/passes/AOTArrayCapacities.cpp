@@ -304,25 +304,14 @@ struct CapacityPlanner {
         Vector<AppendSite, 2> loopSites;
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
         BlocksReachedFrom blocksBehindLiteralByLikelyPaths { analyses.cfg(), point.block, &frequencies };
-        bool hasStoreThatTellsNothing = false;
         for (const AppendSite& site : sites) {
             if ((frequencies.classOf(point.block) < frequencies.classOf(site.block)).predicted() || !mayFollowLiteral(site))
-                continue;
-            // A rare arm that joins a copy of the loop does not make its appends ours: on the likely ways they append to the list of that copy.
-            ValueID appended = analyses.identityOf(appendedArrayOf(function.at(site.value)));
-            ValueID givenOnLikelyEdges = analyses.identityOf(valueOnLikelyEdges(appended).predicted());
-            if (givenOnLikelyEdges != analyses.identityOf(id) && function.at(givenOnLikelyEdges).opcode == Opcode::NewArray)
                 continue;
             const NaturalLoop* loop = loops.innerMostLoopOf(site.block);
             bool isInOtherCycle = !loop && analyses.isInCycle(site.block);
             if (!isInOtherCycle && loop == loopOfLiteral) {
                 bool alwaysRuns = chain.get(site.block.index()) && (site.block != point.block || useLists.locationOf(site.value).index >= point.index);
-                // A store that says nothing of the length: it counts for nothing, but a loop may still tell the capacity.
-                if (site.kind == AppendKind::StoreAtIndex) {
-                    hasStoreThatTellsNothing = true;
-                    continue;
-                }
-                if (!alwaysRuns && site.kind != AppendKind::Elements)
+                if (alwaysRuns ? site.kind == AppendKind::StoreAtIndex : site.kind != AppendKind::Elements)
                     return std::nullopt;
                 if (site.kind == AppendKind::List) {
                     const Value& append = function.at(site.value);
@@ -339,8 +328,6 @@ struct CapacityPlanner {
                 return std::nullopt;
         }
 
-        if (hasStoreThatTellsNothing && loopSites.isEmpty())
-            return std::nullopt;
         if (!loopSites.isEmpty()) {
             if (!tryAddLoopSites(result, { id, point }, loopSites))
                 return std::nullopt;
@@ -1074,7 +1061,8 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
 {
     struct Group {
         Vector<ValueID, 2> directStores;
-        Vector<ValueID, 2> directStoresOutsideRareCode;
+        Vector<ValueID, 2> mostFrequentDirectStores;
+        BlockFrequency frequencyOfDirectStores { BlockFrequency::Rare };
         Vector<ValueID, 2> testedStores;
         Vector<ValueID, 2> tests;
         bool hasOtherUseOfStorage { false };
@@ -1127,26 +1115,30 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         return group;
     };
 
-    Vector<std::tuple<ValueID, unsigned, bool>, 8> usesOfArrays;
+    Vector<std::tuple<ValueID, unsigned, BlockFrequency>, 8> usesOfArrays;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        bool isInRareCode = function.at(block).frequency.predicted() == BlockFrequency::Rare;
+        BlockFrequency frequency = function.at(block).frequency.predicted();
         for (ValueID id : function.at(block).values) {
             if (!usesOfConstructedStorage.contains(function.at(id).opcode))
                 continue;
             if (std::optional<unsigned> group = groupNamedBy(function.at(id).arrayOperand()))
-                usesOfArrays.append({ id, *group, isInRareCode });
+                usesOfArrays.append({ id, *group, frequency });
         }
     }
 
     // Two groups may have become one behind a use of either.
     Vector<Group, 2> groups(allocations.size());
-    for (auto [id, group, isInRareCode] : usesOfArrays) {
+    for (auto [id, group, frequency] : usesOfArrays) {
         const Value& value = function.at(id);
         Group& uses = groups[leaderOf(group)];
         if (value.opcode == Opcode::TryPutByValDirect) {
             uses.directStores.append(id);
-            if (!isInRareCode)
-                uses.directStoresOutsideRareCode.append(id);
+            if (frequency < uses.frequencyOfDirectStores) {
+                uses.frequencyOfDirectStores = frequency;
+                uses.mostFrequentDirectStores.clear();
+            }
+            if (frequency == uses.frequencyOfDirectStores)
+                uses.mostFrequentDirectStores.append(id);
         } else if (value.opcode != Opcode::PutArrayElement && value.arrayStorage() == ArrayStorage::Double)
             continue;
         else if (readsNamingArrayStorage.contains(value.opcode) || value.arrayStorage() != ArrayStorage::Contiguous)
@@ -1204,9 +1196,8 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
             setStorage(uses.tests, ArrayStorage::Double);
             continue;
         }
-        // A direct store tests what it is given, so what rare code stores need not fit.
-        const Vector<ValueID, 2>& decidingStores = uses.directStoresOutsideRareCode.isEmpty() ? uses.directStores : uses.directStoresOutsideRareCode;
-        ArrayStorage kind = storageHolding(context, function.at(allocations[group]), decidingStores.span());
+        // A direct store tests what it is given, so what less frequent code stores need not fit.
+        ArrayStorage kind = storageHolding(context, function.at(allocations[group]), uses.mostFrequentDirectStores.span());
         // A reader that tests for doubles would convert each fresh array of integers and read it by the generic path.
         if (kind == ArrayStorage::Int32 && isReadAsDoubles(group))
             kind = ArrayStorage::Double;
@@ -2071,284 +2062,6 @@ static unsigned makeElementsOfAppendsBehindLiterals(FunctionPassContext& context
     return found.size();
 }
 
-// `const list = []; for (let k = 0; k < n; k++) list[k] = v;` where nothing that runs can see the list on the way: it may as well be made with the length n.
-// The stores then lie inside the length, the length stays in one place, and the loop has one test of its own.
-static PassOutcome makeListsThatLoopsFillWithTheirLength(FunctionPassContext& context)
-{
-    struct Fill {
-        ValueID literal;
-        ValueID store;
-        ValueID length;
-        ValueID counter;
-    };
-    Function& function = context.function;
-    FunctionAnalyses& analyses = context.analyses;
-    const NaturalLoops& loops = analyses.naturalLoops();
-    const EscapeAnalysis& escape = analyses.escape();
-    if (escape.gaveUp())
-        return PassOutcome::Unchanged;
-
-    auto runsNothing = [&](ValueID id) {
-        return !analyses.mayThrow(id) && !analyses.mayRunOtherCodeOnAnyEdge(id);
-    };
-    Vector<Fill, 2> fills;
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        for (ValueID id : function.at(block).values) {
-            const Value& literal = function.at(id);
-            if (literal.opcode != Opcode::NewArray || !literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
-                continue;
-            std::optional<ObjectID> object = escape.objectDefinedBy(id);
-            if (!object)
-                continue;
-            ValueID store;
-            bool isSingleStore = true;
-            for (const ObjectUse& objectUse : escape.usesOf(*object)) {
-                if (objectUse.use.kind != Use::Kind::Operand)
-                    continue;
-                const Value& user = function.at(objectUse.use.user);
-                bool isPush = user.opcode == Opcode::CallBuiltin && inlineImplementationOf(context.program, user) == InlineBuiltin::ArrayPush && user.argumentsOperands().size() == 1 && builtinOperandAt(user, objectUse.use.operandIndex).isReceiver() && analyses.useLists().usesOf(objectUse.use.user).empty();
-                // What is stored behind the loop lies inside the length as well, or goes the way it went.
-                if (loops.innerMostLoopOf(objectUse.use.block) == loops.innerMostLoopOf(block))
-                    continue;
-                if (isPush || (user.opcode == Opcode::PutArrayElement && objectUse.use.operandIndex == OperandIndex::PutArrayElement::array)) {
-                    isSingleStore &= !store;
-                    store = objectUse.use.user;
-                }
-            }
-            if (!store || !isSingleStore)
-                continue;
-            BlockID blockOfStore = analyses.useLists().blockOf(store);
-            const NaturalLoop* loop = loops.innerMostLoopOf(blockOfStore);
-            if (!loop || loops.innerMostLoopOf(block) == loop || !analyses.dominators().dominates(block, loop->header()))
-                continue;
-            // Every turn stores once.
-            bool storesEveryTurn = true;
-            bool isPushInLoop = function.at(store).opcode == Opcode::CallBuiltin;
-            for (Edge edge : analyses.cfg().incomingEdges(loop->header())) {
-                // A push that a turn skips, however seldom, moves all the pushes behind it. And a loop inside a loop that the list stands outside of runs more turns than its counter says.
-                if (!loops.belongsTo(edge.from, *loop))
-                    storesEveryTurn &= loops.innerMostLoopOf(edge.from) == loops.innerMostLoopOf(block);
-                else if (isPushInLoop || function.at(edge.from).frequency.predicted() != BlockFrequency::Rare)
-                    storesEveryTurn &= analyses.dominators().dominates(blockOfStore, edge.from);
-            }
-            if (!storesEveryTurn)
-                continue;
-
-            // The counter goes from 0 in steps of 1 up to the capacity, and its test is the only way out.
-            bool isPush = function.at(store).opcode == Opcode::CallBuiltin;
-            // A store in place of a push relies on what the list is proven to be.
-            if (isPush && !pristineAspectsProvenBy(context.program.typeOf(function, function.at(store).receiverOperand()), BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names }))
-                continue;
-            // A store inside the length takes its value unseen.
-            if (!isPush && !canStoreWithoutConversion(function.at(store).arrayStorage(), context.program.typeOf(function, function.at(store).valueOperand())))
-                continue;
-            ValueID position = isPush ? ValueID() : analyses.identityOf(function.at(store).positionOperand());
-            ValueID capacity = literal.capacityOperand();
-            if (function.at(capacity).opcode == Opcode::Add && knownValueOf(context.program, function, function.at(capacity).operand(0)).kind() == KnownValue::Kind::Integer && !knownValueOf(context.program, function, function.at(capacity).operand(0)).asInteger())
-                capacity = function.at(capacity).operand(1);
-            const Type& lengthType = context.program.typeOf(function, literal.capacityOperand());
-            if (!lengthType.isInteger() || lengthType.integers.minimum < 0 || lengthType.integers.maximum > INT32_MAX)
-                continue;
-            auto [counter, test] = CapacityPlanner { context }.findUnitStepCounter(*loop);
-            if (!counter || (!isPush && analyses.identityOf(counter->parameter) != position) || counter->step.constant != 1 || test->relation != Opcode::Less)
-                continue;
-            // The store stands behind the test: a store in front of it runs once more than the counter says.
-            if (!analyses.dominators().dominates(function.at(test->block).terminator.targets[test->stayingEdge.targetIndex].block, blockOfStore))
-                continue;
-            // The arm of the general store comes back in front of the loop, with the next position.
-            ValueID startValue = counter->start;
-            if (function.at(startValue).opcode == Opcode::Parameter) {
-                BlockID blockOfStart = analyses.useLists().blockOf(startValue);
-                uint32_t parameterIndex = static_cast<uint32_t>(function.at(blockOfStart).parameters.find(startValue));
-                ValueID given;
-                for (Edge edge : analyses.cfg().incomingEdges(blockOfStart)) {
-                    if (function.at(edge.from).frequency.predicted() == BlockFrequency::Rare)
-                        continue;
-                    ValueID passed = valuePassedOn(function, edge, parameterIndex);
-                    given = !given || given == passed ? passed : ValueID();
-                    if (!given)
-                        break;
-                }
-                if (given)
-                    startValue = given;
-            }
-            KnownValue start = knownValueOf(context.program, function, startValue);
-            KnownValue limit = knownValueOf(context.program, function, capacity);
-            KnownValue bound = knownValueOf(context.program, function, test->bound);
-            bool isCounted = start.kind() == KnownValue::Kind::Integer && !start.asInteger();
-            isCounted &= analyses.identityOf(test->bound) == analyses.identityOf(capacity) || (limit.kind() == KnownValue::Kind::Integer && bound.kind() == KnownValue::Kind::Integer && limit.asInteger() == bound.asInteger());
-            if (!isCounted)
-                continue;
-
-            // What runs of the loop runs no code and throws nothing, and it leaves by its test alone. The arm of the general store may come back in front of the loop: it stores inside the length as well.
-            bool isSilent = true;
-            auto isSilentValue = [&](ValueID inside) {
-                const Value& value = function.at(inside);
-                bool isGeneralStore = value.opcode == Opcode::ElemSet && analyses.sameObjectThroughCasts(value.objectOperand()) == analyses.sameObjectThroughCasts(id);
-                return inside == store || isGeneralStore || value.opcode == Opcode::LoopHint || runsNothing(inside);
-            };
-            for (unsigned blockIndex = 0; blockIndex < loop->size(); ++blockIndex) {
-                BlockID inLoop = loop->at(blockIndex);
-                isSilent &= std::ranges::all_of(function.at(inLoop).values, isSilentValue);
-                for (uint32_t targetIndex = 0; isSilent && targetIndex < function.at(inLoop).terminator.targets.size(); ++targetIndex) {
-                    BlockID target = function.at(inLoop).terminator.targets[targetIndex].block;
-                    if (loops.belongsTo(target, *loop) || (inLoop == test->block && targetIndex != test->stayingEdge.targetIndex))
-                        continue;
-                    // Round the loop by the arm of the general store, by jumps alone.
-                    unsigned steps = 0;
-                    while (isSilent && target != loop->header()) {
-                        const Block& beside = function.at(target);
-                        isSilent = ++steps <= 4 && beside.terminator.kind == TerminatorKind::Jump && std::ranges::all_of(beside.values, isSilentValue);
-                        if (isSilent)
-                            target = beside.terminator.targets[0].block;
-                    }
-                }
-            }
-            // Nothing but the store and tests of the storage touches the list in the loop, and nothing that runs on the way to the loop can look at it.
-            BlocksReachedFrom reachedLikely { analyses.cfg(), block, &analyses.blockFrequencies() };
-            for (const ObjectUse& objectUse : escape.usesOf(*object)) {
-                if (objectUse.use.kind != Use::Kind::Operand)
-                    continue;
-                const Value& user = function.at(objectUse.use.user);
-                bool isInLoop = loops.belongsTo(objectUse.use.block, *loop);
-                if (function.at(objectUse.use.block).frequency.predicted() == BlockFrequency::Rare && user.opcode == Opcode::ElemSet)
-                    continue;
-                if (isInLoop && objectUse.use.user != store && user.opcode != Opcode::HasArrayStorage && !isCast(user.opcode))
-                    isSilent = false;
-                // Behind a rare edge the list is whole: the way there runs through the loop, or through an arm that is never taken.
-                if (!isInLoop && !analyses.dominators().dominates(loop->header(), objectUse.use.block) && reachedLikely.contains(objectUse.use.block) && !isCast(user.opcode) && analyses.effectsOf(objectUse.use.user).onAnyEdge().reads.contains(AbstractHeap::ArrayStorage))
-                    isSilent = false;
-            }
-            BlockID onTheWay = block;
-            uint32_t behindLiteral = analyses.useLists().locationOf(id).index + 1;
-            for (unsigned steps = 0; isSilent && onTheWay != loop->header(); ++steps) {
-                const Block& between = function.at(onTheWay);
-                for (uint32_t index = behindLiteral; index < between.values.size(); ++index)
-                    isSilent &= runsNothing(between.values[index]);
-                if (between.terminator.kind != TerminatorKind::Jump || steps == 8) {
-                    isSilent = false;
-                    break;
-                }
-                onTheWay = between.terminator.targets[0].block;
-                behindLiteral = 0;
-            }
-            if (isSilent)
-                fills.append({ id, store, literal.capacityOperand(), counter->parameter });
-        }
-    }
-    if (fills.isEmpty())
-        return PassOutcome::Unchanged;
-
-    IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    for (const Fill& fill : fills) {
-        const Value& store = function.at(fill.store);
-        bool isPush = store.opcode == Opcode::CallBuiltin;
-        ValueID array = isPush ? store.receiverOperand() : store.arrayOperand();
-        // The loop writes into holes: what the list is afterwards, without holes, it is not yet.
-        Type whileFilled = context.program.typeOf(function, array);
-        for (ClassPart& part : whileFilled.classes)
-            part.provenPristine.remove(PristineAspects::Dense);
-        ArrayStorage storageOfList = isPush ? arrayStorageAtAllocation(context.program, whileFilled) : store.arrayStorage();
-        if (isPush && (!hasArrayStorageForm(storageOfList) || !canStoreWithoutConversion(storageOfList, context.program.typeOf(function, store.argumentsOperands()[0]))))
-            storageOfList = ArrayStorage::Contiguous;
-        const ClassPart* partWhileFilled = whileFilled.singleBuiltinClass();
-        bool needsNoTest = isPush && partWhileFilled && partWhileFilled->contentsAreProven && partWhileFilled->provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Names }) && (partWhileFilled->arrayStorage == ArrayStorage::Other || partWhileFilled->arrayStorage == storageOfList);
-        if (needsNoTest)
-            whileFilled.classes[0].arrayStorage = storageOfList;
-        ValueLocation behindList = analyses.useLists().locationOf(array);
-        Value castWhileFilled = IRBuilder::make(Opcode::AssumeType, { fill.literal });
-        castWhileFilled.setProvenType(Proven::byPosition(context.types.intern(whileFilled)));
-        builder.setOrigin(function.at(array).origin());
-        array = builder.insertBefore({ behindList.block, behindList.index + 1 }, WTF::move(castWhileFilled));
-        builder.applyInsertions();
-        ValueID position = isPush ? fill.counter : store.positionOperand();
-        ValueID stored = isPush ? store.argumentsOperands()[0] : store.valueOperand();
-        ValueID oldGuard = isPush ? ValueID() : store.guardOperand();
-        ArrayStorage storage = isPush ? arrayStorageAtAllocation(context.program, context.program.typeOf(function, array)) : store.arrayStorage();
-        if (isPush && (!hasArrayStorageForm(storage) || !canStoreWithoutConversion(storage, context.program.typeOf(function, stored))))
-            storage = ArrayStorage::Contiguous;
-        Origin origin = store.origin();
-        ValueLocation location = analyses.useLists().locationOf(fill.store);
-        if (needsNoTest) {
-            Value put = IRBuilder::make(Opcode::PutArrayElement, { array, position, stored });
-            put.setArrayStorage(storage);
-            put.setLevel(KnowledgeLevel::Proven);
-            put.setKeyIsIntegral(true);
-            put.setIsInBounds(true);
-            put.setFillsNewList(true);
-            builder.setOrigin(origin);
-            builder.insertBefore({ location.block, location.index }, WTF::move(put));
-            builder.applyInsertions();
-            BitVector erasedPush;
-            erasedPush.set(function.at(location.block).values.find(fill.store));
-            builder.eraseValues(location.block, erasedPush);
-        } else {
-        const uint32_t cuts[] { location.index, location.index + 1 };
-        Vector<BlockID> pieces = builder.splitBlock(location.block, cuts);
-        BlockID storing = pieces[0];
-        BlockID behind = pieces[1];
-        function.edit(location.block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
-        builder.setOrigin(origin);
-        builder.setHandler(function.at(location.block).handler);
-        BlockID general = builder.addBlock(BlockFrequency::Rare);
-        builder.moveToEndOf(general);
-        Value elementSet = IRBuilder::make(Opcode::ElemSet, { array, position, stored });
-        elementSet.setKeyIsIntegral(true);
-        builder.append(WTF::move(elementSet));
-        builder.emitJump(behind);
-        builder.moveToEndOf(location.block);
-        if (isPush) {
-            Value kindTest = makeArrayStorageTest(array, storage, true);
-            IRBuilder::ProvenBranch isOfKind = builder.emitBranchWithProof(builder.append(WTF::move(kindTest)), 0, BlockFrequency::Normal, BlockFrequency::Rare, { BlockID(), Target { general, { }, { } } });
-            oldGuard = isOfKind.provenOnTaken;
-            builder.moveToEndOf(isOfKind.taken);
-        }
-        ValueID test = builder.append(IRBuilder::make(Opcode::IsInBounds, { array, position }));
-        IRBuilder::ProvenBranch isInside = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare, { storing, Target { general, { }, { } } });
-        ValueID guard = isInside.provenOnTaken;
-        if (oldGuard)
-            guard = builder.insertBefore(ProgramPoint::atHeadOf(storing), IRBuilder::make(Opcode::AllGuards, { oldGuard, guard }));
-        builder.applyInsertions();
-        if (isPush) {
-            Value put = IRBuilder::make(Opcode::PutArrayElement, { array, position, stored });
-            put.setGuardOperand(guard);
-            put.setArrayStorage(storage);
-            put.setLevel(KnowledgeLevel::Expected);
-            put.setKeyIsIntegral(true);
-            put.setIsInBounds(true);
-            uint32_t at = function.at(storing).values.find(fill.store);
-            builder.insertBefore({ storing, at }, WTF::move(put));
-            builder.applyInsertions();
-            BitVector erasedPush;
-            erasedPush.set(function.at(storing).values.find(fill.store));
-            builder.eraseValues(storing, erasedPush);
-        } else {
-            Value& edited = function.edit(fill.store, ValueEdit::Definition);
-            edited.setArrayOperand(array);
-            edited.setGuardOperand(guard);
-            edited.setIsInBounds(true);
-        }
-        }
-
-        ValueSubstitution substitution(function);
-        Value made = IRBuilder::make(Opcode::NewArrayLike, { fill.length });
-        made.setArrayStorage(storage);
-        made.setAllocationSite(function.at(fill.literal).allocationSite());
-        builder.setOrigin(function.at(fill.literal).origin());
-        ValueLocation place = analyses.useLists().locationOf(fill.literal);
-        ValueID allocation = builder.insertBefore({ place.block, place.index }, WTF::move(made));
-        builder.applyInsertions();
-        substitution.replace(fill.literal, allocation);
-        substitution.apply(function, &analyses);
-        ValueLocation old = analyses.useLists().locationOf(fill.literal);
-        BitVector erased;
-        erased.set(old.index);
-        builder.eraseValues(old.block, erased);
-    }
-    analyses.didChangeValues();
-    return PassOutcome::Changed;
-}
-
 // `[...list]` of a list without holes that stays in the storage it has is a copy of it, which the stub of slice() makes in one piece.
 static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
 {
@@ -2532,8 +2245,6 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     unsigned grown = applyGrowthPlans(context, CapacityPlanner { context }.collectGrowthPlans(Opcode::ReserveArrayCapacity, &CapacityPlanner::planGrowth));
     if (grown)
         context.build.statistics().count(StatisticID::ArrayGrowthsPlanned, grown);
-    if (!plans.isEmpty() && makeListsThatLoopsFillWithTheirLength(context) == PassOutcome::Changed)
-        converted = PassOutcome::Changed;
     if (converted == PassOutcome::Unchanged && !constructed && plans.isEmpty() && !grown)
         return PassOutcome::Unchanged;
 

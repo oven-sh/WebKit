@@ -163,9 +163,26 @@ JSModuleLoader* Modules::loader() const
 ModuleStatus Modules::statusInRecord(ModuleID module) const
 {
     ModuleRecord* record = m_records.get(module);
+    if (!record && m_filesToLoadAgain.get(module.index()))
+        return ModuleStatus::Linked;
     RELEASE_ASSERT(record);
     ModuleStatus status = statusOf(*record);
     return status == ModuleStatus::Unlinked && !data(module).needsLink() ? ModuleStatus::Linked : status;
+}
+
+// Code that requires a file reads its stored status, and asks the run time where that says the status is kept elsewhere.
+void Modules::evict(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    ModuleStatus current = status(file);
+    if (current != ModuleStatus::Evaluated && current != ModuleStatus::Evaluating)
+        return;
+    m_evictedFiles.set(file.index());
+    m_admitsCodeOutsideImage = true;
+    if (current != ModuleStatus::Evaluated || data(file).kind != ModuleKind::CommonJs)
+        return;
+    m_filesToLoadAgain.set(file.index());
+    setStoredStatus(file, StoredModuleStatus::InRecord);
 }
 
 void Modules::setStatus(ModuleID module, ModuleStatus status)
@@ -362,13 +379,17 @@ void Modules::throwExportNotFound(const RequiredNameData& requiredName)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    Identifier name = identifier(requiredName.name);
+    bool isDefault = name == m_instance.vm->propertyNames->defaultKeyword;
     if (const ExportStatementData* statement = m_table.findExportStatement(requiredName)) {
-        throwException(realm, scope, createExportStatementFindsNothingError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
+        // As CyclicModuleRecord::initializeEnvironment() says it.
+        if (isDefault)
+            throwSyntaxError(realm, scope, "export default cannot be used with export *"_s);
+        else
+            throwException(realm, scope, createExportStatementFindsNothingError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
         return;
     }
-    Identifier name = identifier(requiredName.name);
     String path = m_table.pathText(m_table.fileBehindFace(requiredName.exporterModule()).value_or(requiredName.exporterModule()));
-    bool isDefault = name == m_instance.vm->propertyNames->defaultKeyword;
     throwException(realm, scope, isDefault ? createMissingDefaultExportError(realm, path) : createExportNotFoundError(realm, name.string(), path));
 }
 
@@ -477,6 +498,25 @@ bool Modules::hasBegunToLoad(ModuleID module) const
     if ((current != ModuleStatus::Unlinked && current != ModuleStatus::Linked) || didCaptureExports(module))
         return true;
     return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
+}
+
+// A mock names a path. The loader of `bun run` looks there as JSModuleLoader::registryEntry() does: for the file as no attribute asks for it, then as a type of the host's own, then as JSON. It holds only what has been loaded.
+std::optional<ModuleID> Modules::formThatMockFinds(StringView path, std::optional<ModuleID> file) const
+{
+    if (file && hasBegunToLoad(*file))
+        return file;
+    Vector<ModuleID, 2> forms = m_table.formsThatAttributesAskFor(path);
+    std::optional<ModuleID> json;
+    for (ModuleID form : forms) {
+        if (!hasBegunToLoad(form))
+            continue;
+        if (!m_table.pathText(form).endsWith("?json"_s))
+            return form;
+        json = form;
+    }
+    if (json || file || forms.isEmpty())
+        return json ? json : file;
+    return forms[0];
 }
 
 void Modules::deferMock(ModuleID module)
@@ -939,6 +979,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
+    if (isEvicted(module)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, importUncompiled(moduleKey(fileOf(module)), referrer, WTF::move(*fetchParameters)));
     if (!data(module).isUncompiledCode()) {
         // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
@@ -2276,10 +2318,44 @@ bool isNativeModule(ModuleID module)
     return table && table->data(module).kind == ModuleKind::Runtime;
 }
 
+void didDeleteRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    if (modules && !modules->data(module).isOfLibrary())
+        modules->evict(module);
+}
+
+bool isEvaluatedFile(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return false;
+    const ModuleData& data = modules->data(module);
+    return !data.isOfLibrary() && !data.isFaceOfFile() && modules->table().hasFilePath(module) && !modules->isEvicted(module) && modules->status(module) == ModuleStatus::Evaluated;
+}
+
+JSObject* requireCacheEntry(JSGlobalObject* realm, ModuleID module)
+{
+    ASSERT(isEvaluatedFile(realm, module));
+    return modulesOf(realm)->requireCacheEntry(module);
+}
+
+void forEachEvaluatedFile(JSGlobalObject* realm, const WTF::Function<void(const String&)>& functor)
+{
+    Modules* modules = modulesOf(realm);
+    if (!modules)
+        return;
+    const ModuleTable& table = modules->table();
+    for (unsigned index = 0; index < table.size(); ++index) {
+        if (isEvaluatedFile(realm, ModuleID(index)))
+            functor(table.pathText(ModuleID(index)));
+    }
+}
+
 bool leavesModuleToHost(JSGlobalObject* realm, ModuleID module)
 {
-    if (modulesOf(realm))
-        return false;
+    if (Modules* modules = modulesOf(realm))
+        return modules->isEvicted(module);
     std::optional<ModuleTable> table = currentModuleTable();
     return table && table->data(module).isOfLibrary();
 }
@@ -2508,6 +2584,18 @@ bool hasBegunToLoad(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return !modules || modules->hasBegunToLoad(module);
+}
+
+std::optional<ModuleID> formThatMockFinds(JSGlobalObject* realm, StringView path, std::optional<ModuleID> file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->formThatMockFinds(path, file) : file;
+}
+
+Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject* realm, StringView path)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->table().formsThatAttributesAskFor(path) : Vector<ModuleID, 2>();
 }
 
 void deferMock(JSGlobalObject* realm, ModuleID module)

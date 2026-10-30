@@ -125,6 +125,10 @@ std::span<const FunctionID> entrypointsOfTableCall(const Program& program, const
 
 CalleeList calleesOfCall(const Program& program, const Value& call)
 {
+    // The set is sorted: one copy, where adding a thousand entrypoints one by one searches a thousand times.
+    if (call.opcode == Opcode::CallTable && !entrypointsOfTableCall(program, call).empty() && !mayEnterTableLookup(program, call))
+        return CalleeList::complete(program.at(call.entrypoints()).written());
+
     CalleeList namedCallees = CalleeList::none();
     forEachFunctionReference(call, [&](FunctionID callee, FunctionReferenceKind kind) {
         if (isCall(kind))

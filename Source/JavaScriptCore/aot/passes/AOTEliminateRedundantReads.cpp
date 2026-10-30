@@ -14,6 +14,7 @@
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
 #include "AOTDominators.h"
+#include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -35,6 +36,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVirtualObject.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <bit>
 #include <limits>
@@ -1564,7 +1566,8 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
             std::optional<uint32_t> earlier = outer;
             while (earlier && made[*earlier].block != block && !dominators.terminatorDominates(made[*earlier].block, block))
                 earlier = made[*earlier].outer;
-            if (earlier) {
+            // Behind a test the same question may have a narrower answer, and whoever takes it was typed by that.
+            if (earlier && context.program.typeOf(function, made[*earlier].result).isSubsetOf(context.program.typeOf(function, values[index]), context.program)) {
                 substitution.replace(values[index], made[*earlier].result);
                 repeated.append({ { block, index }, made[*earlier].result });
                 continue;

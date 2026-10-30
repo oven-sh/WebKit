@@ -1588,7 +1588,8 @@ bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObj
 }
 
 // The fields of a record whose second object holds nothing but elements: the plan does not see that object.
-static bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target, Object& source, bool defines)
+template<bool defines>
+static ALWAYS_INLINE bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
 {
     uint32_t orderWord = source.orderWord();
     if (target.orderWord() & orderWordIntegrityBits || &source == &target || isOrderStoredOutOfLine(orderWord) || source.layout().keysAreNeverEnumerated || &source.state() != &target.state())
@@ -1607,12 +1608,12 @@ static bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target, Object& sour
 
 bool tryDefineFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
 {
-    return tryCopyFieldsLeavingElementsOut(vm, target, source, true);
+    return tryCopyFieldsLeavingElementsOut<true>(vm, target, source);
 }
 
 bool tryAssignFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
 {
-    return tryCopyFieldsLeavingElementsOut(vm, target, source, false);
+    return tryCopyFieldsLeavingElementsOut<false>(vm, target, source);
 }
 
 bool Object::tryAssignPropertiesOf(VM& vm, JSObject* source, std::span<UniquedStringImpl* const> excludedNames)

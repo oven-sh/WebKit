@@ -417,8 +417,15 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
         times.didFinish("destroy results"_s);
     }
     output.diagnostics = context.takeDiagnostics();
-    if (context.options().logging.logsPhaseTimes) [[unlikely]]
+    if (context.options().logging.logsPhaseTimes) [[unlikely]] {
         context.statistics().dumpPassTimes(WTF::dataFile());
+        // What stands beside a limit that stops a build.
+        Vector<uint64_t> counted = context.statistics().values();
+        dataLog("AOT size of the image:");
+        for (StatisticID id : { StatisticID::ImageFunctionsEmitted, StatisticID::CodeBytesEmitted, StatisticID::TableBytesEmitted, StatisticID::ProgramTableBytesEmitted, StatisticID::TextBytesEmitted, StatisticID::IdentifiersNumbered, StatisticID::StringConstantsNumbered, StatisticID::LiteralStringsNumbered, StatisticID::Shapes, StatisticID::CallSitesEmitted })
+            dataLog(" | ", nameOf(id), " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
+    }
     output.statistics = context.takeStatistics();
     output.limitValues = Vector<uint64_t>(context.limits().span());
     if (output.diagnostics.hasErrors()) {

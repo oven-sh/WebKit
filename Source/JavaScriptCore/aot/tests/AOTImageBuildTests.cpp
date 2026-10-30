@@ -848,9 +848,12 @@ static void testCompileLimitValues()
 
 static void testCompileLimitThatFailsBuild()
 {
-    for (LimitID limit : { LimitID::TableBytes, LimitID::VectorBytes, LimitID::CodeBytes, LimitID::ImageFunctions }) {
-        AOT_TEST_CHECK(!canBeLowered(limit));
-        checkOptionsRejected(wireOptions({ .loweredLimit = limit, .loweredLimitValue = 64 }));
+    for (LimitID limit : { LimitID::TableBytes, LimitID::VectorBytes, LimitID::CodeBytes, LimitID::ImageFunctions, LimitID::ImageClosureFunctions }) {
+        AOT_TEST_CHECK(canBeLowered(limit) && !isLoweredByAll(limit));
+        std::unique_ptr<CompileOutput> byName = compileProgram({ }, wireOptions({ .loweredLimit = limit, .loweredLimitValue = 64 }));
+        AOT_TEST_CHECK(byName && byName->limitValues[static_cast<size_t>(limit)] == 64);
+        std::unique_ptr<CompileOutput> byAll = compileProgram({ }, wireOptions({ .loweredLimit = LimitID::All, .loweredLimitValue = 64 }));
+        AOT_TEST_CHECK(byAll && byAll->limitValues[static_cast<size_t>(limit)] == defaultLimitValue(limit, hostArchitecture()));
     }
 }
 

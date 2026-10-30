@@ -504,9 +504,9 @@ JSValue Modules::callBody(ModuleID module)
     SetForScope isAskingHost(m_isAskingHost, false);
     if (!moduleData.isOfLibrary())
         didStartThread(&vm);
-    // Nothing in a file of the program names the function that is its body, so the body needs no closure of its own: the entry takes the number of the function.
+    // Nothing in a file of the program names the function that is its body, so the body needs no closure of its own: the entry takes the closure number of the function.
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
-        EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(body->index())));
+        EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(closureNumberOf(*body))));
         CallData entry = CallData::forCompiledCode(moduleBodyEntrypoint().taggedPtr(), realm);
         return callCompiledCode(vm, closures.calleeOfModuleBodies(vm, *body), entry, jsUndefined(), nullptr, ArgList(&function, 1));
     }
@@ -635,6 +635,10 @@ void Modules::evaluateModuleInRecord(ModuleID module)
 
 bool Modules::beginModuleInRecord(ModuleID module)
 {
+    if (m_filesToLoadAgain.get(module.index())) [[unlikely]] {
+        loadEvictedFile(module);
+        return false;
+    }
     if (isRunningFilesOf(module))
         return false;
     ModuleStatus moduleStatus = status(module);
@@ -2691,12 +2695,28 @@ bool Modules::isHeldForImport(ModuleID target) const
     });
 }
 
+JSValue Modules::loadEvictedFile(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    JSValue value = requireSpecifier(pathString(file), file, true);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (m_filesToLoadAgain.get(file.index())) {
+        m_filesToLoadAgain.clear(file.index());
+        setValue(file, value);
+        if (!recordIfExists(file))
+            setStoredStatus(file, StoredModuleStatus::Evaluated);
+    }
+    return value;
+}
+
 JSValue Modules::answerRequire(ModuleID target)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     runMocksBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
+    if (isEvicted(target)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
     if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
         m_state.statics->fillVariablesOfAllFiles();

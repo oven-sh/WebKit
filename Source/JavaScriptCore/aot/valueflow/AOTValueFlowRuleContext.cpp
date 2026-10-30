@@ -116,13 +116,8 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
             m_log.namesWatched.shrink(kept);
         }
     }
-    if (!m_filtersKnownEdges) {
-        if (endOfEdges > m_log.mostEdges) [[unlikely]] {
-            m_log.hasDroppedEdges = true;
-            m_log.edges.shrink(std::max<size_t>(m_firstEdgeOfRun, m_log.mostEdges));
-        }
+    if (!m_filtersKnownEdges)
         return;
-    }
     size_t kept = m_firstEdgeOfRun;
     std::span<ValueFlowEdge> edges = m_log.edges.mutableSpan();
     for (size_t first = m_firstEdgeOfRun; first < endOfEdges; first += mostAtOnce) {
@@ -142,10 +137,6 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         for (size_t index = 0; index < batch.size(); ++index) {
             if (present >> index & 1)
                 continue;
-            if (kept >= m_log.mostEdges) [[unlikely]] {
-                m_log.hasDroppedEdges = true;
-                break;
-            }
             edges[kept++] = batch[index];
         }
     }

@@ -189,6 +189,7 @@ public:
         recordReadsOfStoredFunctions();
         runFixpoint();
         refineEntriesByCalls();
+        recordStoresThatDefineMembersOfFunctions();
         AOT::sort(m_definitions);
     }
 
@@ -473,6 +474,31 @@ private:
                 return numbering.locationOf(user.layout(), user.fields()[*listedField]);
         }
         return std::nullopt;
+    }
+
+    // `K.n = 0` among the statements of a file, where the order inputs know that nothing else answers a store to the name: the variable of the member is filled from there on.
+    void recordStoresThatDefineMembersOfFunctions()
+    {
+        FlowScopeFrame& frame = ownerFrame();
+        const Program& program = m_index.program();
+        for (const Block& block : frame.body.blocks) {
+            for (ValueID id : block.values) {
+                const Value& store = frame.body.at(id);
+                if (store.opcode != Opcode::PropSet)
+                    continue;
+                const Value& object = frame.body.at(sameObjectThroughCasts(frame.body, store.objectOperand()));
+                if (object.opcode != Opcode::GetModuleVariable)
+                    continue;
+                const Variable& variable = program.at(object.variable());
+                FunctionID function = variable.initialization == VariableInitialization::Function ? variable.function : FunctionID();
+                VariableID member = function ? findStaticFieldVariable(program, function, store.key()) : VariableID();
+                if (!member || !m_index.inputs.membersOfFunctionsDefinedByStores.get(member.index()) || m_index.locationOwners[member.index()] != m_owner.function)
+                    continue;
+                m_definitions.append({ member.index(), frame.function, id });
+                // A variable of a file holds the function from the start, so no closure is followed to here.
+                m_classesEvaluatedOnce.set(program.at(function).constructedClass.index());
+            }
+        }
     }
 
     void recordStoredFunction(FlowScopeLocation location, FunctionID function, const FlowScopeEntry& store)

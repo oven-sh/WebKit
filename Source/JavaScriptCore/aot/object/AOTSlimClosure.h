@@ -66,7 +66,7 @@ public:
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
-    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_word)); }
+    FunctionID function() const { return functionOfClosureWord(m_word); }
     FunctionKindData kind() const { return functionKindData(function()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
     bool isBound() const { return kind().isBound(); }
@@ -107,7 +107,7 @@ ALWAYS_INLINE bool SlimClosure::tryVisitFields(SlimClosure* closure, Visitor& vi
     if (closure->structureID() != structureID)
         return false;
     if (word)
-        visitSlimClosureCaptures(closure, FunctionID(ClosureWord::functionOf(word)), visitor);
+        visitSlimClosureCaptures(closure, functionOfClosureWord(word), visitor);
     return true;
 }
 
@@ -144,7 +144,7 @@ public:
     // Under every other name defineOwnProperty() is that of an ordinary object.
     static bool hasOrdinaryDefineOwnProperty(VM&, PropertyName);
 
-    FunctionID function() const { return FunctionID(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
+    FunctionID function() const { return closureFunctionWithNumber(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
     FunctionKindData kind() const { return functionKindData(function()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
     bool isBound() const { return kind().isBound(); }

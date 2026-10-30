@@ -236,19 +236,19 @@ static void testPackedWords()
     constexpr uint64_t offsetInCode = 64;
     constexpr uintptr_t code = 4096;
     uint64_t closureWord = ClosureWord::encode({ offsetInCode, 3 }, 7, { });
-    AOT_TEST_CHECK(ClosureWord::functionOf(closureWord) == 7);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(closureWord) == 7);
     AOT_TEST_CHECK(ClosureWord::addressOf(closureWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(closureWord) == 3);
     AOT_TEST_CHECK(ClosureWord::isCallable(closureWord) && !ClosureWord::takesNewTarget(closureWord));
 
     uint64_t classWord = ClosureWord::encode({ offsetInCode, ClosureWord::maxNumberOfParameters }, ClosureWord::firstReservedFunction - 1, { .isNotCallable = true, .takesNewTarget = true });
-    AOT_TEST_CHECK(ClosureWord::functionOf(classWord) == ClosureWord::firstReservedFunction - 1);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(classWord) == ClosureWord::firstReservedFunction - 1);
     AOT_TEST_CHECK(ClosureWord::addressOf(classWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(classWord) == ClosureWord::maxNumberOfParameters);
     AOT_TEST_CHECK(!ClosureWord::isCallable(classWord) && ClosureWord::takesNewTarget(classWord));
 
     uint64_t request = ClosureRequest::encode(5, 2, 9);
-    AOT_TEST_CHECK(ClosureRequest::functionOf(request) == 5);
+    AOT_TEST_CHECK(ClosureRequest::closureNumberOf(request) == 5);
     AOT_TEST_CHECK(ClosureRequest::executableOf(request) == 2);
     AOT_TEST_CHECK(ClosureRequest::allocationOf(request) == 9);
 

@@ -138,6 +138,7 @@ private:
     ValueID appendFastResult(ValueID member);
     Vector<ValueID, 4> appendOriginalMembers();
     bool isRootListed() const;
+    bool canStandBehindCast(ValueID);
     void retype(ValueID);
     void finishMembers();
     void finishCreatedValues();

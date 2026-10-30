@@ -1008,7 +1008,7 @@ static bool isInJobFunction(const void* code)
     auto isIn = [&](auto function) {
         return std::bit_cast<uintptr_t>(code) - std::bit_cast<uintptr_t>(function) < largestJobFunction;
     };
-    return isIn(&resumeAsyncFunction) || isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
+    return isIn(&resumeAsyncFunction) || isIn(&resumeSavedAsyncFunction) || isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
 }
 #endif
 

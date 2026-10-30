@@ -2960,7 +2960,7 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
     const Block& end = function().at(m_builder.currentBlock());
     Opcode opcode = function().at(result).opcode;
     // The casts of the terminator were resolved against the type of the original call.
-    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect) && !end.values.isEmpty() && end.values.last() == result
+    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect || opcode == Opcode::CallTable) && !end.values.isEmpty() && end.values.last() == result
         && !end.handler && program.typeOf(function(), result).isSubsetOf(program.at(m_original.type), program);
     // An arm marks its call before it is known whether the call can stay a tail call.
     if (endsWithTailCall) {

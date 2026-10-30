@@ -406,7 +406,7 @@ static void reportModules(const ValueFlowResultInputs& inputs, std::span<const M
             if (entry.variable)
                 locations.leaveOpen(locations.of(entry.variable), entry.isReplaceable ? OptionSet<Actor> { Actor::Loader, Actor::NativeCode } : OptionSet<Actor> { Actor::Loader });
         }
-        if (module.exportsVariable && module.flags.contains(ModuleFlags::MayBeMocked))
+        if (module.exportsVariable && (module.flags.contains(ModuleFlags::MayBeMocked) || module.flags.contains(ModuleFlags::MayBeEvicted)))
             locations.leaveOpen(locations.of(module.exportsVariable), Actor::NativeCode);
         if (ModuleID captured = commonJsModuleCapturedBy(program, module))
             locations.note(locations.of(program.at(captured).exportsVariable), ReadNoted::ByLoader);

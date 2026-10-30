@@ -35,7 +35,7 @@ struct RuntimeCellTest {
     static constexpr RuntimeCellTest inheritsClassInfo(BuiltinClassID builtinClass) { return { CellTestKind::InheritsClassInfo, 0, 0, 0, builtinClass.index() }; }
     static constexpr RuntimeCellTest isPristine(BuiltinClassID builtinClass) { return { CellTestKind::IsPristine, 0, 0, 0, builtinClass.index() }; }
     static constexpr RuntimeCellTest isBuiltinCell(uint32_t builtinCellNumber) { return { CellTestKind::IsBuiltinCell, 0, 0, 0, builtinCellNumber }; }
-    static constexpr RuntimeCellTest isClosureOf(FunctionID function) { return { CellTestKind::IsClosureOf, 0, 0, 0, function.index() }; }
+    static constexpr RuntimeCellTest isClosureOf(uint32_t closureNumber) { return { CellTestKind::IsClosureOf, 0, 0, 0, closureNumber }; }
     static constexpr RuntimeCellTest isSymbol(uint32_t propertyKeyNumber) { return { CellTestKind::IsSymbol, 0, 0, 0, propertyKeyNumber }; }
     static constexpr RuntimeCellTest sharingModeIs(ArrayBufferSharingMode sharingMode) { return { CellTestKind::SharingModeIs, 0, 0, 0, static_cast<uint32_t>(sharingMode) }; }
     static constexpr RuntimeCellTest isNamespaceOf(ModuleID module) { return { CellTestKind::IsNamespaceOf, 0, 0, 0, module.index() }; }
@@ -58,7 +58,7 @@ struct RuntimeCellTest {
         return BuiltinClassID(operand);
     }
     constexpr uint32_t builtinCellNumber() const { return operandOf(CellTestKind::IsBuiltinCell); }
-    constexpr FunctionID function() const { return FunctionID(operandOf(CellTestKind::IsClosureOf)); }
+    constexpr uint32_t closureNumber() const { return operandOf(CellTestKind::IsClosureOf); }
     constexpr uint32_t symbolKeyNumber() const { return operandOf(CellTestKind::IsSymbol); }
     constexpr ArrayBufferSharingMode sharingMode() const { return operandOf(CellTestKind::SharingModeIs) ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
     constexpr ModuleID module() const { return ModuleID(operandOf(CellTestKind::IsNamespaceOf)); }

@@ -317,7 +317,7 @@ String describe(const ProgramTables& tables, const RuntimeType& type)
             appendUnique(cellNames, builtinCellName(tables, test.builtinCellNumber()));
             continue;
         case CellTestKind::IsClosureOf:
-            if (String name = initialNameProperty(test.function()); !name.isEmpty())
+            if (String name = initialNameProperty(closureFunctionWithNumber(test.closureNumber())); !name.isEmpty())
                 appendUnique(cellNames, makeString("typeof "_s, name));
             else
                 allowsAnyFunction = true;

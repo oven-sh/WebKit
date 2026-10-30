@@ -77,7 +77,7 @@ struct JSONLevelWords {
 // A stub that makes a tail call by value compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame once the run time has seen a function object get a name.
 struct CallByValueWords {
     ZeroedStorage<StackManager::Mirror> limit;
-    // FunctionTables::isRenamedAtRunTime.
+    // FunctionTables::isRenamedAtRunTime, from the first function that closures are made of on: by closure number.
     const uint8_t* isRenamedAtRunTime;
 };
 
@@ -168,8 +168,8 @@ struct ImageWords {
     const uint64_t* classAccessors;
     // ProgramTables::data(): compiled code points an array of constants at the storage in its node.
     const uint64_t* data;
-    // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
-    uintptr_t closureFunctionKindsOrigin;
+    // ProgramTables::closureFunctionKinds(), by closure number.
+    const FunctionKindData* closureFunctionKinds;
 };
 
 struct LazyStringWords {
@@ -297,6 +297,11 @@ struct IterationWords {
     JSCell* emptyEnumerator;
 };
 
+struct CollationWords {
+    // What the default collator orders ASCII by at the first level.
+    const uint8_t* ducetLevel1Weights;
+};
+
 struct NumberWords {
     const double* powersOfTen;
     uint64_t hashSecrets[2];
@@ -331,7 +336,8 @@ struct NumberWords {
     v(callsByValue, CallByValueWords) \
     v(closureTable, ClosureTableWords) \
     v(shortArrays, ShortArrayWords) \
-    writtenOnce(emptyTable, EmptyTableWords)
+    writtenOnce(emptyTable, EmptyTableWords) \
+    writtenOnce(collation, CollationWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {

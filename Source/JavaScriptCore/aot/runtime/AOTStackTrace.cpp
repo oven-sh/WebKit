@@ -811,6 +811,8 @@ public:
         if (!isConstructCall || !m_pending) [[likely]]
             return true;
         m_pending->isConstructCall = true;
+        // A function that was constructed makes no tail calls, so its frame is still there and is named by the function object.
+        m_pending->isAtFailedTailCall = false;
         return handOn();
     }
 
@@ -885,6 +887,7 @@ private:
 
             if (m_pending && !frame.isOfCalledBuiltin && frame.inlineFrame && frame.isInlinedConstructCall) {
                 m_pending->isConstructCall = true;
+                m_pending->isAtFailedTailCall = false;
                 if (!handOn())
                     return false;
             }

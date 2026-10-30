@@ -125,6 +125,7 @@ public:
     // AsDefinitionMadeIt: the definition has made the holder an ordinary object just now, and the holder has what the record says it creates and nothing else.
     enum class HolderState : uint8_t { Unknown, AsDefinitionMadeIt, NotTouched };
     void armMemberGuards(VM&, const LayoutData&, ClassSide, JSObject* holder, HolderState = HolderState::Unknown);
+    bool tryLeaveHoldersOut(VM&, const LayoutData&, JSObject* prototype);
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void didCreatePrototypeLeftToRecord(const LayoutData&);
     void disarmMemberGuards(const LayoutData&);
@@ -169,6 +170,8 @@ public:
     void didShadowMember(const LayoutData& instanceLayout, UniquedStringImpl*);
     void didChangeInstancePrototype(VM&, const LayoutData& instanceLayout, JSValue prototype);
     const LayoutData* classHeldBy(JSObject* holder, ClassSide&) const;
+    // Without the holders of later evaluations of a class that has no guard left.
+    const LayoutData* classWithGuardsHeldBy(JSObject* holder, ClassSide&) const;
 
     bool declaresOwnMember(const LayoutData&, UniquedStringImpl*) const;
     std::optional<JSObject*> findDeclaredMethod(VM&, const LayoutData&, UniquedStringImpl*);
@@ -228,6 +231,7 @@ private:
     bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     bool tryDefineAgainWithKeptStructures(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     const LayoutData* classLeftToRecordHeldBy(JSObject* holder, ClassSide&) const;
+    const LayoutData* classOfHolderLeftOut(JSObject* holder, ClassSide&) const;
 
     static_assert(std::is_same_v<PropertyOffset, decltype(PlaceOfPrototypeProperty::offset)>);
     static size_t indexOfPlace(uint32_t structureID) { return structureID >> shiftOfStructureIDForPlaceOfPrototypeProperty & (numberOfPlacesOfPrototypeProperties - 1); }
@@ -260,6 +264,7 @@ private:
     UncheckedKeyHashMap<JSObject*, Structure*> m_lazyClassObjectStructures;
     UncheckedKeyHashMap<JSObject*, Structure*> m_classObjectStructures;
     UncheckedKeyHashMap<JSObject*, uint32_t> m_classSidesByHolder;
+    bool m_hasHoldersLeftOut { false };
     RememberedSlotSet m_writes;
     Vector<JSObject*> m_declaredMemberHolders;
     ByIndex m_declaredMemberLocations;

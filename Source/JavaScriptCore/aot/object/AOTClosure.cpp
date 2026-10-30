@@ -101,10 +101,10 @@ Closure* Closure::create(VM& vm, Structure* structure, FunctionID function, std:
     RELEASE_ASSERT(numberOfReferences <= captures.size() && captures.size() <= maxNumberOfCaptures);
     FunctionTables& tables = FunctionTables::of(vm);
     ClosureFunctionRangeData closureFunctions = programTables().closureFunctions;
-    RELEASE_ASSERT(closureFunctions.first <= function.index() && function.index() < closureFunctions.end && tables.words[function.index()]);
+    RELEASE_ASSERT(closureFunctions.first <= function.index() && function.index() < closureFunctions.end && tables.words[closureNumberOf(function)]);
     CaptureCounts counts = captureCountsOf(function);
     RELEASE_ASSERT(counts.references == numberOfReferences && counts.captures == captures.size());
-    Closure* closure = new (NotNull, allocateCell<Closure>(vm, allocationSize(captures.size()))) Closure(vm, structure, tables.executableOf(function), tables.words[function.index()]);
+    Closure* closure = new (NotNull, allocateCell<Closure>(vm, allocationSize(captures.size()))) Closure(vm, structure, tables.executableOf(function), tables.words[closureNumberOf(function)]);
     memcpySpan(std::span { reinterpret_cast<uint64_t*>(closure + 1), captures.size() }, captures);
     closure->finishCreation(vm);
     return closure;
@@ -183,10 +183,10 @@ bool mayHaveLazyProperty(VM& vm, JSCell* cell, UniquedStringImpl* uid, LookupPos
     if (cell->type() != CompiledClosureType)
         return true;
     auto* closure = uncheckedDowncast<Closure>(cell);
-    if (!closure->kind().isConstructor)
+    if (!closure->kind().isConstructor && !closure->kind().hasStaticFields())
         return false;
     const LayoutData* classLayout = closure->classData();
-    if (!classLayout || !closure->getDirect(vm, vm.propertyNames->prototype))
+    if (!classLayout || (closure->kind().isConstructor && !closure->getDirect(vm, vm.propertyNames->prototype)))
         return true;
     // A static field that a class above declares is a property of that class object alone.
     const FieldData* field = closure->state().objects->classes.staticField(*classLayout, uid);
@@ -220,7 +220,7 @@ GetValueFunc closurePrototypePropertyGetter()
 
 const LayoutData* Closure::classData() const
 {
-    return kind().isConstructor ? state().objects->classes.classConstructedBy(function()) : nullptr;
+    return kind().isConstructor || kind().hasStaticFields() ? state().objects->classes.classConstructedBy(function()) : nullptr;
 }
 
 bool Closure::isLazyClassObject() const
@@ -501,8 +501,7 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
     validateIsNotInFrame(vm, closure);
     didLookForNameProperty(vm, closure);
     closure->prepareForGenericAccess(vm);
-    if (closure->kind().isConstructor)
-        StaticFields::ensureProperties(vm, *closure);
+    StaticFields::ensureProperties(vm, *closure);
     Base::getOwnSpecialPropertyNames(object, globalObject, names, mode);
     if (mode == DontEnumPropertiesMode::Include && FunctionTables::hasPrototypePropertyAtCreation(closure->kind()) && closure->ensurePrototypeProperty(vm))
         names.add(vm.propertyNames->prototype);
@@ -788,7 +787,7 @@ void PropertyWalk::didPutDirectOnClosure(VM&, JSObject* object, UniquedStringImp
         return;
     ClassTable& classes = closure->state().objects->classes;
     ClassSide side;
-    if (classes.classHeldBy(closure, side) == classLayout && side == ClassSide::Static)
+    if (classes.classWithGuardsHeldBy(closure, side) == classLayout && side == ClassSide::Static)
         classes.didChangeMember(*classLayout, ClassSide::Static, uid);
 }
 
@@ -808,10 +807,10 @@ Structure* ReifiedSlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JS
 SlimClosure* SlimClosure::create(VM& vm, Structure* structure, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
 {
     FunctionTables& tables = FunctionTables::of(vm);
-    RELEASE_ASSERT(tables.words[function.index()] && functionKindData(function).isSlim);
+    RELEASE_ASSERT(tables.words[closureNumberOf(function)] && functionKindData(function).isSlim);
     CaptureCounts counts = captureCountsOf(function);
     RELEASE_ASSERT(counts.references == numberOfReferences && counts.captures == captures.size());
-    SlimClosure* closure = new (NotNull, allocateCell<SlimClosure>(vm, allocationSize(captures.size()))) SlimClosure(vm, structure, tables.words[function.index()]);
+    SlimClosure* closure = new (NotNull, allocateCell<SlimClosure>(vm, allocationSize(captures.size()))) SlimClosure(vm, structure, tables.words[closureNumberOf(function)]);
     memcpySpan(std::span { reinterpret_cast<uint64_t*>(closure + 1), captures.size() }, captures);
     closure->finishCreation(vm);
     return closure;
@@ -904,7 +903,7 @@ Structure* SlimClosure::fillInitialProperties(VM& vm, std::span<JSValue, numberO
     State& state = this->state();
     FunctionID function = this->function();
     Structure* structure = state.objects->closures.reifiedSlimClosureStructure(vm, function);
-    values[0] = jsNumber(function.index());
+    values[0] = jsNumber(closureNumberOf(function));
     values[1] = jsNumber(functionLengthOf(function));
     values[2] = kind().notesLooksForName() ? JSValue(state.objects->closures.untakenNameProperty()) : JSValue(initialNamePropertyString(vm, state, function));
     values[3] = FunctionTables::hasPrototypePropertyAtCreation(kind()) ? JSValue(state.objects->closures.uncreatedPrototypeProperty()) : JSValue();

@@ -40,18 +40,20 @@ struct FrameShape {
 
 } // anonymous namespace
 
-static bool checkFunctionLimit(const LinkedFunctions& functions, const Vector<EntryAlias>& aliases, BuildContext& context)
+static bool checkFunctionLimits(const FunctionTableInputs& inputs, BuildContext& context)
 {
     uint64_t endOfFunctionIDs = 0;
-    for (const CompiledCode& code : functions)
+    for (const CompiledCode& code : inputs.functions)
         endOfFunctionIDs = std::max(endOfFunctionIDs, static_cast<uint64_t>(code.function.index()) + 1);
-    for (const EntryAlias& alias : aliases)
+    for (const EntryAlias& alias : inputs.aliases)
         endOfFunctionIDs = std::max(endOfFunctionIDs, static_cast<uint64_t>(alias.function.index()) + 1);
-    uint64_t count = std::max<uint64_t>(functions.size(), endOfFunctionIDs);
-    if (!context.exceeds(LimitID::ImageFunctions, count))
-        return true;
-    context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
-    return false;
+    auto fits = [&](LimitID limit, uint64_t count) {
+        if (!context.exceeds(limit, count))
+            return true;
+        context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = limit, .count = clampTo<uint32_t>(count) });
+        return false;
+    };
+    return fits(LimitID::ImageFunctions, std::max<uint64_t>(inputs.functions.size(), endOfFunctionIDs)) && fits(LimitID::ImageClosureFunctions, inputs.programTables.closureFunctions.end - inputs.programTables.closureFunctions.first);
 }
 
 static uint64_t unwindableRegisterMask()
@@ -213,18 +215,17 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, co
 {
     const ClosureFunctionRangeData& range = inputs.programTables.closureFunctions;
     RELEASE_ASSERT(range.omittedWordCount <= range.first && range.first <= range.end && range.end <= inputs.programTables.numberOfFunctions());
-    Vector<uint64_t> words(FillWith { }, range.end, 0);
+    Vector<uint64_t> words(FillWith { }, range.end - range.omittedWordCount, 0);
     forEachEntryInParallel(inputs, loops, [&](FunctionID function, uint32_t codeOffset, const EntryDescription& entry) {
         uint32_t index = function.index();
-        if (index >= words.size())
+        if (index < range.first || index >= range.end)
             return;
         RELEASE_ASSERT(codeOffset && !(codeOffset % imageFunctionAlignment));
         ClosureWord::Flags flags = closureWordFlags(inputs.programTables.kindOfFunction(index));
         flags.borrowedArguments = entry.borrowedArguments;
         flags.endsItsTailCalls = entry.endsItsTailCalls;
-        words[index] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index, flags);
+        words[index - range.omittedWordCount] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index - range.first, flags);
     });
-    words.removeAt(range.first - range.omittedWordCount, range.omittedWordCount);
     return words;
 }
 
@@ -270,7 +271,7 @@ EncodedFunctionTables encodeFunctionTables(const FunctionTableInputs& inputs, Bu
     RELEASE_ASSERT(layout.bodyStarts.size() == functions.size());
     RELEASE_ASSERT(inputs.sideTableFlags.size() == functions.size() && inputs.sideTableOffsets.size() == functions.size());
 
-    if (!checkFunctionLimit(functions, inputs.aliases, context))
+    if (!checkFunctionLimits(inputs, context))
         return { };
 
     EncodedFunctionTables tables;

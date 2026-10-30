@@ -58,7 +58,7 @@ public:
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     JSCell* environment() const { return numberOfReferences() ? std::bit_cast<JSCell*>(captures()[0]) : nullptr; }
-    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_entry)); }
+    FunctionID function() const { return functionOfClosureWord(m_entry); }
     uint64_t entry() const { return m_entry; }
     void markRenamed() { m_entry |= 1ULL << ClosureWord::isRenamedBit; }
     State& state() const { return State::of(structure()->realm()); }

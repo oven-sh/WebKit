@@ -38,7 +38,9 @@ public:
     void runReadStage();
     void runPlacementStage();
     void runRepresentationStage();
-    void checkNumberOfFunctions();
+    bool checkNumberOfFunctions();
+    void checkNumberOfClosureFunctions();
+    void logSizeOfProgram() const;
 
     PassOutcome runProgramPass(PassID);
     PassOutcome verify(IRForm);

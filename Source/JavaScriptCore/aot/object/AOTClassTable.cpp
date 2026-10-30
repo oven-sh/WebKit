@@ -1080,6 +1080,8 @@ bool ClassDefinition::hasAssumedBase() const
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
+    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_prototype))
+        return;
     bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
     HolderState stateOfClassObject = holdersHaveWhatRecordSays && m_classLayout.staticFields().empty() ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
@@ -1102,6 +1104,11 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (heritage.isNull())
         return jsNull();
+    // Nothing can change or remove the prototype property of a class object.
+    if (auto* classObject = heritage.isCell() ? dynamicDowncast<Closure>(heritage.asCell()) : nullptr; classObject && classObject->kind().isConstructor) {
+        if (JSValue prototype = classObject->getDirect(vm, vm.propertyNames->prototype))
+            return prototype;
+    }
     if (!heritage.isConstructor()) {
         throwException(globalObject, scope, createSuperclassNotConstructorError(globalObject));
         return { };
@@ -1219,6 +1226,8 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     classObject->setStructure(vm, kept.classObjectStructure);
     classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
     prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
+    if (tryLeaveHoldersOut(vm, classLayout, prototype))
+        return true;
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
     return true;
@@ -1460,7 +1469,7 @@ static JSC_DECLARE_CUSTOM_SETTER(staticFieldSetter);
 
 bool ownsVariables(const Closure& classObject)
 {
-    return classObject.kind().isConstructor && classObject.state().objects->closures.closureIfCreated(classObject.function()) == &classObject;
+    return classObject.classData() && classObject.state().objects->closures.closureIfCreated(classObject.function()) == &classObject;
 }
 
 const FieldData* findOwnField(const Closure& classObject, UniquedStringImpl* uid)

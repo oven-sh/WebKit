@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowResults.h"
 #include "AOTForwardedCalls.h"
 #include "AOTLayout.h"
 #include "AOTPropertyAccessElements.h"

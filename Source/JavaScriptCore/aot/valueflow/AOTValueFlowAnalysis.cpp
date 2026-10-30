@@ -587,7 +587,6 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .ranges = m_bodies.ranges(),
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
-        .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         .mostObjectsListedByMember = build.limit(LimitID::MaxValueFlowObjectsListedByMember),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
@@ -609,16 +608,15 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         m_inputAsItIs.isAskedHowValuesCame = true;
         m_inputAsItIs.leavesOutWhatIsCovered = false;
         m_solver = makeUnique<ValueFlowSolver>(m_inputAsItIs, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
-        if (m_solver->solve()) {
-            unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
-            m_solverOfProgramAsItIs = WTF::move(m_solver);
-            m_input.seedOfWidening = build.recordedOptions().layoutSeed;
-        }
+        m_solver->solve();
+        unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
+        m_solverOfProgramAsItIs = WTF::move(m_solver);
+        m_input.seedOfWidening = build.recordedOptions().layoutSeed;
         times.didFinish("solve: the program as it is"_s);
     }
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
-    m_hasResult = m_solver->solve();
+    m_solver->solve();
     times.didFinish("solve: rounds"_s);
     if (build.options().logging.logsPhaseTimes) {
         ValueFlowBytesByTable bytes;
@@ -627,7 +625,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
-    if (m_solverOfProgramAsItIs && m_hasResult) [[unlikely]] {
+    if (m_solverOfProgramAsItIs) [[unlikely]] {
         reportWhatIsFoundOnlyFromLess(*this, unseenCodeOfProgramAsItIs.span(), build);
         times.didFinish("solve: the two solves compared"_s);
     }

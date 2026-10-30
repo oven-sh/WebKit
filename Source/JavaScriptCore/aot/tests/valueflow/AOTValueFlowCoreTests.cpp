@@ -1349,7 +1349,7 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
             ValueSets sets(program.numberOfObjects);
             makeToyFunctions(sets, program);
             ValueFlowSolver solver(input, sets, runToyRule, loops, way.rounds);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             for (uint32_t node = 0; node < program.numberOfNodes(); ++node)
                 AOT_TEST_CHECK(holdsTheSame(sets, solver.possibleValuesOf(ValueFlowNodeID(node)), expected.values[node]));
             for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
@@ -1440,44 +1440,12 @@ static void whatATurnMakesAndReachesRunsInThatTurn()
         ValueSets sets(program.numberOfObjects);
         makeToyFunctions(sets, program);
         ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve());
+        solver.solve();
         for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
             AOT_TEST_CHECK(solver.isReached(FunctionID(function)));
         AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(program.node(host, 3)), ValueFlowObjectID(4u)));
         for (const ValueFlowSolver::Round& round : solver.rounds())
             AOT_TEST_CHECK(round.turns <= 1);
-    }
-    toyProgram = nullptr;
-}
-
-static void valueFlowSolveStopsAtTheLimitOnLoggedEdges()
-{
-    WeakRandom random(7);
-    ToyProgram program = makeToyProgram(random);
-    toyProgram = &program;
-    ValueFlowSolverInput input;
-    input.numberOfNodes = program.numberOfNodes();
-    input.edges = program.edges.span();
-    input.statements = program.statements.span();
-    input.operands = program.operands.span();
-    input.ranges = program.ranges.span();
-
-    ParallelLoops loops(2);
-    uint64_t edgesLogged;
-    {
-        ValueSets sets(program.numberOfObjects);
-        makeToyFunctions(sets, program);
-        ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve());
-        edgesLogged = solver.counters().edgesLogged;
-        AOT_TEST_CHECK(edgesLogged > 4);
-    }
-    for (uint64_t limit : { static_cast<uint64_t>(0), static_cast<uint64_t>(1), edgesLogged / 2, edgesLogged - 1, edgesLogged }) {
-        input.mostEdgesLogged = limit;
-        ValueSets sets(program.numberOfObjects);
-        makeToyFunctions(sets, program);
-        ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve() == (limit == edgesLogged));
     }
     toyProgram = nullptr;
 }
@@ -1516,7 +1484,7 @@ static void valueFlowSolverFindsObjectsOutsideDeclaredTypes()
     input.ranges = ranges;
 
     ValueFlowSolver solver(input, sets, [](const ValueFlowStatement&, ValueFlowRuleContext&) { }, loops);
-    AOT_TEST_CHECK(solver.solve());
+    solver.solve();
     AOT_TEST_CHECK(solver.possibleValuesOf(takingStranger) == setOf({ 0, 3, 5 }));
     AOT_TEST_CHECK(solver.possibleValuesOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
     AOT_TEST_CHECK(solver.holdsObjectOutsideFamily(takingStranger) && !solver.holdsObjectOutsideFamily(takingPlaceholders));
@@ -1550,14 +1518,14 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, addsTheSameOnBothWays, loops, ValueFlowSolver::Rounds::Due);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
             AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
         }
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::Due);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(solver.addedByGeneralRules().nodesThatHoldMore == 1);
             AOT_TEST_CHECK(solver.addedByGeneralRules().firstNodesThatHoldMore.size() == 1 && solver.addedByGeneralRules().firstNodesThatHoldMore[0] == statements[0].result);
             AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
@@ -1565,7 +1533,7 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
             AOT_TEST_CHECK(solver.possibleValuesOf(statements[0].result) == ValueSets::nothing);
         }
@@ -1609,7 +1577,7 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
         ValueSets sets(numberOfObjects);
         runsOfStatementThatAsksLast = 0;
         ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
-        AOT_TEST_CHECK(solver.solve());
+        solver.solve();
         AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statements[0].result)) == numberOfObjects);
         AOT_TEST_CHECK(solver.possibleValuesOf(statements[1].result) == solver.possibleValuesOf(statements[0].result));
         AOT_TEST_CHECK(solver.rounds().size() > numberOfObjects);
@@ -1681,7 +1649,7 @@ static void aMakerThatIsGivenBackWaitsForItsThread()
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
+    v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

@@ -30,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesWithConstructionRules { Opcode::FinishObject, Opcode::FinishClass, Opcode::DefineMethod, Opcode::GetClassPrototype };
 static constexpr OpcodeSet opcodesWithClassRules { Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList };
-static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs };
+static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallTable, Opcode::CallForwardVarargs };
 
 static bool isPrivateKind(PropertyKeyKind kind)
 {

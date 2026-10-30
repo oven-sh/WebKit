@@ -73,6 +73,8 @@ ProofSet proofsOfAllocation(const Program&, const Function&, const Value& alloca
 bool allocationProves(const Program&, const Function&, const Value& allocation, const Value& test);
 ValueID guardedOperandOf(const Value& user);
 ProofSet proofsNeededFromGuard(const Program&, const Function&, const Value& user);
+// What a list of that length must be like to say that it keeps its length. Lists the reads of the length for whoever replaces them.
+bool isTouchedOnlyBelowLength(const Program&, const Function&, const UseLists&, ValueID list, int64_t length, Vector<ValueID, 4>* lengthReads = nullptr);
 using ParameterLocator = ScopedLambda<ValueLocation(ValueID parameter)>;
 using GuardOriginVisitor = ScopedLambda<IterationStatus(Proof, const GuardOrigin&)>;
 void forEachGuardOrigin(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, ValueID guard, NOESCAPE const GuardOriginVisitor&);
