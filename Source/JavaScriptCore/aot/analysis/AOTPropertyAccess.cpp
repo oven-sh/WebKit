@@ -166,6 +166,9 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
     Opcode opcode = access.opcode;
     if (!isNamedAccess(opcode) || (FlagMask::isFreeName(opcode) && access.isFreeName()))
         return std::nullopt;
+    // It has been moved as a read that runs nothing. The read behind its failing side is the one to plan for.
+    if (opcode == Opcode::PropGet && access.asksOnlyTables())
+        return std::nullopt;
 
     PropertyAccessQuery query;
     query.access = accessOf(opcode);

@@ -125,6 +125,7 @@ struct ImageCodeRanges {
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
 // Without LoadsCodeOutsideImage they hold only while no file with code is loaded but those that the build lists as staying outside.
 // Without FindsDataFilesByName they hold only while no data file of the image is found by a name.
+// Without StoresPathOfMainModule they hold only while `require.main` answers the module object of no file but an entry point.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -135,6 +136,11 @@ enum class ImageFlag : uint32_t {
     FindsDataFilesByName = 1 << 6,
     // A realm that runs the image may run others: CompileOptions::sharesRealms().
     SharesRealms = 1 << 7,
+    // The host may start an ES module that is an entry point once more in the same realm: ModuleFlags::RunsAgain.
+    RunsEntryPointsAgain = 1 << 8,
+    // CompileOptions::holdsLibraryAlone(). It knows nothing of the run: the image above it is the first that does, and says what the realm locks.
+    HoldsLibraryAlone = 1 << 9,
+    StoresPathOfMainModule = 1 << 10,
 };
 
 // The numbers of an image that cells, or code of another image, may hold. The images of a realm were built one after the other, and none takes a number of those before it.

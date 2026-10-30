@@ -50,15 +50,15 @@ inline constexpr OperandUses declaredOperandUses = [] {
     return uses;
 }();
 
-// A set of objects is a row of words, as many as hold a bit for each object of the function: one word in nearly every function.
-using ObjectWord = uint64_t;
-inline constexpr unsigned objectsPerWord = 64;
+using ObjectWord = ObjectWords::Word;
+using WordsOfObjects = std::span<const ObjectWords::Entry>;
+inline constexpr unsigned objectsPerWord = ObjectWords::objectsPerWord;
 
-void forEachObjectIn(std::span<const ObjectWord> words, NOESCAPE const Invocable<void(ObjectID)> auto& functor)
+void forEachObjectIn(WordsOfObjects words, NOESCAPE const Invocable<void(ObjectID)> auto& functor)
 {
-    for (size_t index = 0; index < words.size(); ++index) {
-        for (ObjectWord word = words[index]; word; word &= word - 1)
-            functor(ObjectID(index * objectsPerWord + std::countr_zero(word)));
+    for (const ObjectWords::Entry& entry : words) {
+        for (ObjectWord word = entry.word; word; word &= word - 1)
+            functor(ObjectID(entry.index * objectsPerWord + std::countr_zero(word)));
     }
 }
 
@@ -78,7 +78,7 @@ struct QueuedApplication {
 
 struct SlotState {
     ObjectSlot slot;
-    Vector<ObjectWord, 1> objects;
+    ObjectWords objects;
     Vector<SolvedContents, 1> contents;
     Vector<ValueID, 1> readers;
     Vector<ContentsApplication, 1> applications;
@@ -107,7 +107,7 @@ struct ContainerState {
         if (SlotState* found = find(*slot))
             return *found;
         RELEASE_ASSERT(*slot < std::numeric_limits<uint32_t>::max() - 1);
-        slots.append(SlotState { slot, Vector<ObjectWord, 1>(FillWith { }, unknownSlot.objects.size(), ObjectWord { 0 }), { }, { }, { } });
+        slots.append(SlotState { slot, { }, { }, { }, { } });
         if (slots.size() == maxSearchedSlots + 1) {
             for (uint32_t index = 0; index < slots.size(); ++index)
                 indexOfSlot.add(*slots[index].slot, index);
@@ -143,7 +143,7 @@ struct UserOperand {
 // The objects that have arrived at a value since its uses were last looked at.
 struct ArrivedObjects {
     std::span<const ObjectID> objects;
-    std::span<const ObjectWord> words;
+    WordsOfObjects words;
 };
 
 struct NarrowedCopy {
@@ -230,8 +230,6 @@ private:
         MayRunOtherCode = 1 << 9,
         RunsNoOtherCode = 1 << 10,
     };
-    using WordsOfSet = Vector<ObjectWord, 2>;
-
     bool definesObject(ValueID value) const { return (m_valueFlags[value.index()] & OptionSet<ValueFlag> { ValueFlag::DefinesObject, ValueFlag::IsSharedByObjects }) == ValueFlag::DefinesObject; }
     bool isSharedByObjects(ValueID value) const { return m_valueFlags[value.index()].contains(ValueFlag::IsSharedByObjects); }
     bool hasSet(ValueID value) const { return !!m_results.setOfValue[value.index()]; }
@@ -241,10 +239,8 @@ private:
     bool isReference(ValueID value) { return askOnce(value, AnswerFromTypes::Question::IsReference, ValueFlag::IsReference, ValueFlag::IsNoReference); }
     bool refersToOperand(ValueID value) { return askOnce(value, AnswerFromTypes::Question::RefersToOperand, ValueFlag::RefersToOperand, ValueFlag::RefersToNoOperand); }
     bool mayRunOtherCode(ValueID);
-    std::span<ObjectWord> wordsOf(ValueSetID set) LIFETIME_BOUND { return m_wordsOfSets.mutableSpan().subspan(size_t { set.index() } * m_wordsPerSet, m_wordsPerSet); }
-    std::span<ObjectWord> arrivalsOf(ValueSetID set) LIFETIME_BOUND { return m_arrivalsOfSets.mutableSpan().subspan(size_t { set.index() } * m_wordsPerSet, m_wordsPerSet); }
     // A copy: a set grows, and the table of all sets moves, while its members are looked at.
-    WordsOfSet objectsOf(ValueID) const;
+    ObjectWords objectsOf(ValueID) const;
     ValueSetID ensureSet(ValueID);
     ValueID parameterFor(const Use& edgeUse) const;
     std::span<const NarrowedCopy> narrowedCopiesOf(ValueID subject) const;
@@ -259,13 +255,8 @@ private:
     void addObjectSharingItsValue(ValueID);
     bool makesObjectOnEdge(BlockID from) const;
     void add(ValueID, ObjectID);
-    struct WordRange {
-        uint32_t first { std::numeric_limits<uint32_t>::max() };
-        uint32_t end { 0 };
-    };
-    void addAll(ValueID, std::span<const ObjectWord>);
-    void addAll(ValueID, std::span<const ObjectWord>, WordRange nonzero);
-    void addAll(ValueID, const ArrivedObjects&);
+    void addAll(ValueID, WordsOfObjects);
+    void addAll(ValueID value, const ArrivedObjects& arrived) { addAll(value, arrived.words); }
     void takeSets();
     size_t mirroredWhenBackward(size_t index) const { return m_sweep == Sweep::Forward ? index : m_function.values.size() - 1 - index; }
 
@@ -289,7 +280,7 @@ private:
     LayoutID environmentLayoutOf(ObjectID) const;
     ContainerState& ensureContainer(ObjectID);
     OperandUses environmentFieldUses(const ContainerState&, ObjectSlot) const;
-    void addContents(ObjectID container, ObjectSlot, std::span<const ObjectWord> objects);
+    void addContents(ObjectID container, ObjectSlot, WordsOfObjects);
     bool mayReadContentsIntoReference(const SolvedUse&, const UserOperand&) const;
     OperandSummary summaryOf(ValueID user, uint32_t operandIndex);
     void solveContentsRead(SolvedUse&, const ArrivedObjects&, const UserOperand&);
@@ -319,21 +310,23 @@ private:
     const CFG& m_cfg;
     const UseLists& m_useLists;
     const uint64_t m_maxWork;
-    // A word for each value is no more than the function itself takes. Past 64 objects the table grows with sets times objects.
+    // A word for each value is no more than the function itself takes.
     const uint64_t m_maxWordsOfSets;
+    uint64_t m_numberOfWordsOfSets { 0 };
     const Sweep m_sweep;
     uint64_t m_work { 0 };
     PointsToResults m_results;
     mutable Vector<AnswerFromTypes> m_answersFromTypes;
     Vector<NarrowedCopy> m_narrowedCopies;
     Vector<OptionSet<ValueFlag>> m_valueFlags;
-    unsigned m_wordsPerSet { 1 };
-    Vector<ObjectWord> m_wordsOfSets;
-    Vector<ObjectWord> m_arrivalsOfSets;
-    // The words of a set's arrivals that may hold a bit. In a function of thousands of objects a row is long and nearly every set holds one object.
-    Vector<WordRange> m_arrivedWordsOfSets;
+    struct SetState {
+        ObjectWords objects;
+        // Those whose uses are still to be looked at.
+        ObjectWords arrivals;
+    };
+    Vector<SetState> m_sets;
     Vector<bool> m_setsThatMayBeUntracked;
-    Vector<ObjectWord, 2> m_newContents;
+    ObjectWords m_newContents;
     BitVector m_valuesWithArrivals;
     Vector<QueuedApplication, 8> m_applicationWorklist;
     // An object has a place in the list once something is known of its contents. The list never moves: it has room for all objects from the start.
@@ -355,7 +348,8 @@ private:
     Vector<uint32_t> m_firstSummaryOfUser;
     Vector<KeptSummary> m_summaries;
     Vector<ValueID> m_valueOfSet;
-    WordsOfSet m_calledObjects;
+    // A bit for each object.
+    Vector<ObjectWord, 2> m_calledObjects;
 };
 
 static bool isRetainedInOperand(const OperandSummary& summary)
@@ -403,13 +397,21 @@ static const OpcodeObjectFacts& objectFactsOf(Opcode opcode)
     return factsOfOpcodes[static_cast<unsigned>(opcode)];
 }
 
+bool isFrameWordWithAllocationGroup(const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::GetHeapFrameWord || !value.allocationGroup() || function.role != FunctionRole::CoroutineBody)
+        return false;
+    std::span<const ValueID> entryParameters = function.at(entryBlock).parameters.span();
+    return std::ranges::find(entryParameters, value.frameOperand()) != entryParameters.end();
+}
+
 const OpcodeSet& opcodesThatMayDefineObjects()
 {
     static const OpcodeSet opcodes = [] {
         OpcodeSet result;
         for (Opcode member : allMembersOf<Opcode>) {
             const OpcodeObjectFacts& facts = objectFactsOf(member);
-            if (resultMayBeFresh(member) || facts.allocatesOrReturnsOperand || facts.isSuperConstruct)
+            if (resultMayBeFresh(member) || facts.allocatesOrReturnsOperand || facts.isSuperConstruct || member == Opcode::GetHeapFrameWord)
                 result.add(member);
         }
         return result;
@@ -423,7 +425,7 @@ const OpcodeSet& opcodesThatDefineObjectsThatNeedNotBeFresh()
         OpcodeSet result;
         for (Opcode member : allMembersOf<Opcode>) {
             const OpcodeObjectFacts& facts = objectFactsOf(member);
-            if (facts.allocatesOrReturnsOperand || facts.isSuperConstruct)
+            if (facts.allocatesOrReturnsOperand || facts.isSuperConstruct || member == Opcode::GetHeapFrameWord)
                 result.add(member);
         }
         return result;
@@ -628,8 +630,7 @@ PointsToResults PointsToSolver::solve()
     findNarrowedCopies();
     findObjects();
     Vector<ObjectID, 16> arrivedObjects;
-    WordsOfSet arrivedWords(FillWith { }, m_wordsPerSet, ObjectWord { 0 });
-    WordRange rangeOfArrivedWords { 0, 1 };
+    ObjectWords arrivedWords;
     size_t numberOfValues = m_function.values.size();
     for (size_t next = 0; !m_results.gaveUp;) {
         size_t position = m_valuesWithArrivals.findBit(next, true);
@@ -644,21 +645,14 @@ PointsToResults PointsToSolver::solve()
 
         ValueID value(mirroredWhenBackward(position));
         ValueSetID set = m_results.setOfValue[value.index()];
-        std::span<ObjectWord> arrivals = arrivalsOf(set);
-        if (m_wordsPerSet > 1) {
-            for (uint32_t index = rangeOfArrivedWords.first; index < rangeOfArrivedWords.end; ++index)
-                arrivedWords[index] = 0;
-            rangeOfArrivedWords = std::exchange(m_arrivedWordsOfSets[set.index()], WordRange { });
-        }
+        arrivedWords = std::exchange(m_sets[set.index()].arrivals, { });
         arrivedObjects.shrink(0);
-        for (uint32_t index = rangeOfArrivedWords.first; index < rangeOfArrivedWords.end; ++index) {
-            arrivedWords[index] = std::exchange(arrivals[index], 0);
-            for (ObjectWord word = arrivedWords[index]; word; word &= word - 1)
-                arrivedObjects.append(ObjectID(index * objectsPerWord + std::countr_zero(word)));
-        }
+        forEachObjectIn(arrivedWords.entries(), [&](ObjectID object) {
+            arrivedObjects.append(object);
+        });
         if (!takeWork(arrivedObjects.size()))
             break;
-        ArrivedObjects arrived { arrivedObjects.span(), arrivedWords.span() };
+        ArrivedObjects arrived { arrivedObjects.span(), arrivedWords.entries() };
         for (const Use& use : m_useLists.usesOf(value))
             solveUse(arrived, value, use);
         for (const NarrowedCopy& copy : narrowedCopiesOf(value))
@@ -747,12 +741,12 @@ bool PointsToSolver::mayRunOtherCode(ValueID value)
     return result;
 }
 
-PointsToSolver::WordsOfSet PointsToSolver::objectsOf(ValueID value) const
+ObjectWords PointsToSolver::objectsOf(ValueID value) const
 {
     ValueSetID set = m_results.setOfValue[value.index()];
     if (!set)
         return { };
-    return WordsOfSet(m_wordsOfSets.subspan(size_t { set.index() } * m_wordsPerSet, m_wordsPerSet));
+    return m_sets[set.index()].objects;
 }
 
 AnswerFromTypes PointsToSolver::ask(AnswerFromTypes::Question question, uint32_t subject, uint32_t operandIndex) const
@@ -766,35 +760,19 @@ AnswerFromTypes PointsToSolver::ask(AnswerFromTypes::Question question, uint32_t
     return answer;
 }
 
-static void appendZeros(Vector<ObjectWord>& words, unsigned count)
-{
-    size_t size = words.size();
-    if (size + count > words.capacity())
-        words.reserveCapacity(std::max<size_t>(64, std::max<size_t>(size + count, words.capacity() * 2)));
-    if (count == 1) {
-        words.append(0);
-        return;
-    }
-    words.grow(size + count);
-    zeroSpan(words.mutableSpan().subspan(size));
-}
-
 ValueSetID PointsToSolver::ensureSet(ValueID value)
 {
     ValueSetID& id = m_results.setOfValue[value.index()];
     if (id)
         return id;
-    if (m_wordsOfSets.size() + m_wordsPerSet > m_maxWordsOfSets) {
+    if (m_numberOfWordsOfSets >= m_maxWordsOfSets) {
         giveUp();
         return { };
     }
     id = ValueSetID(m_setsThatMayBeUntracked.size());
     m_setsThatMayBeUntracked.append(true);
     m_valueOfSet.append(value);
-    appendZeros(m_wordsOfSets, m_wordsPerSet);
-    appendZeros(m_arrivalsOfSets, m_wordsPerSet);
-    if (m_wordsPerSet > 1)
-        m_arrivedWordsOfSets.append(WordRange { });
+    m_sets.append(SetState { });
     return id;
 }
 
@@ -802,31 +780,9 @@ void PointsToSolver::takeSets()
 {
     size_t numberOfSets = m_setsThatMayBeUntracked.size();
     m_results.sets.reserveInitialCapacity(numberOfSets);
-    // n reads of a field that holds any of n objects have n equal sets. A set is filled bit by bit and copied word by word.
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstSetWithHash;
-    for (size_t index = 0; index < numberOfSets; ++index) {
-        std::span<const ObjectWord> words = wordsOf(ValueSetID(index));
-        ValueSet set;
-        const ValueSet* equalSet = nullptr;
-        if (m_wordsPerSet > 1) {
-            uint64_t hash = 0;
-            for (ObjectWord word : words)
-                hash = (hash ^ word) * 0x9e3779b97f4a7c15ull + (hash >> 29);
-            uint32_t first = firstSetWithHash.add(std::min(hash, std::numeric_limits<uint64_t>::max() - 2), static_cast<uint32_t>(index)).iterator->value;
-            if (first != index && std::ranges::equal(words, wordsOf(ValueSetID(first))))
-                equalSet = &m_results.sets[first];
-        }
-        if (equalSet)
-            set.objects = equalSet->objects;
-        else {
-            set.objects.ensureSize(m_results.objects.size());
-            forEachObjectIn(words, [&](ObjectID object) {
-                set.objects.quickSet(object.index());
-            });
-        }
-        set.mayBeUntracked = m_setsThatMayBeUntracked[index];
-        m_results.sets.append(WTF::move(set));
-    }
+    for (size_t index = 0; index < numberOfSets; ++index)
+        m_results.sets.append(ValueSet { WTF::move(m_sets[index].objects), m_setsThatMayBeUntracked[index] });
+    m_sets.clear();
 }
 
 ValueID PointsToSolver::parameterFor(const Use& edgeUse) const
@@ -892,7 +848,6 @@ void PointsToSolver::findNarrowedCopies()
 
 void PointsToSolver::findObjects()
 {
-    // How many words a set has is known when all objects are.
     struct FoundObject {
         ValueID value;
         ObjectKind kind { ObjectKind::Allocation };
@@ -922,6 +877,8 @@ void PointsToSolver::findObjects()
                 addObjectSharingItsValue(id);
             else if (objectFactsOf(value.opcode).isSuperConstruct && ask(AnswerFromTypes::Question::IsReference, id.index()).isTrue)
                 addObject(id, ObjectKind::EntryParameter);
+            else if (isFrameWordWithAllocationGroup(m_function, value))
+                addObject(id, ObjectKind::EntryParameter);
         }
         if (!makesObjectOnEdge(block))
             continue;
@@ -931,14 +888,11 @@ void PointsToSolver::findObjects()
         });
     }
 
-    m_wordsPerSet = std::max<size_t>(1, (found.size() + objectsPerWord - 1) / objectsPerWord);
     // Each object has a set of its own, also when the rest is given up. So none is tracked.
-    if (uint64_t { found.size() } * m_wordsPerSet > m_maxWordsOfSets) {
+    if (found.size() > m_maxWordsOfSets) {
         found.clear();
-        m_wordsPerSet = 1;
         giveUp();
     }
-    m_newContents.fill(0, m_wordsPerSet);
     m_results.objects.reserveInitialCapacity(found.size());
     for (const FoundObject& object : found) {
         if (object.sharesItsValue)
@@ -949,7 +903,7 @@ void PointsToSolver::findObjects()
     m_containerOfObject.fill(noContainer, m_results.objects.size());
     m_containers.reserveInitialCapacity(m_results.objects.size());
     m_lastApplicationsToAll.fill({ }, m_results.objects.size());
-    m_calledObjects.fill(0, m_wordsPerSet);
+    m_calledObjects.fill(0, (m_results.objects.size() + objectsPerWord - 1) / objectsPerWord);
     if (!m_results.objects.isEmpty())
         m_results.uses.reserveInitialCapacity(m_function.values.size());
 }
@@ -980,82 +934,28 @@ void PointsToSolver::addObjectSharingItsValue(ValueID value)
 
 void PointsToSolver::add(ValueID value, ObjectID object)
 {
-    if (definesObject(value))
-        return;
-
-    ValueSetID set = ensureSet(value);
-    if (!set)
-        return;
-    uint32_t wordInSet = object.index() / objectsPerWord;
-    size_t word = size_t { set.index() } * m_wordsPerSet + wordInSet;
-    ObjectWord bit = ObjectWord { 1 } << (object.index() % objectsPerWord);
-    if (m_wordsOfSets[word] & bit)
-        return;
-    m_wordsOfSets[word] |= bit;
-    m_arrivalsOfSets[word] |= bit;
-    if (m_wordsPerSet > 1) {
-        WordRange& range = m_arrivedWordsOfSets[set.index()];
-        range.first = std::min(range.first, wordInSet);
-        range.end = std::max(range.end, wordInSet + 1);
-    }
-    m_valuesWithArrivals.quickSet(mirroredWhenBackward(value.index()));
+    ObjectWords::Entry entry = ObjectWords::entryOf(object);
+    addAll(value, singleElementSpan(entry));
 }
 
 // The words lie outside the table of all sets, which may move here.
-void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects)
+void PointsToSolver::addAll(ValueID value, WordsOfObjects objects)
 {
-    addAll(value, objects, WordRange { 0, static_cast<uint32_t>(objects.size()) });
-}
-
-// All words outside the range are zero.
-void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects, WordRange nonzero)
-{
-    if (definesObject(value))
-        return;
     // No value has an empty set.
-    if (std::ranges::all_of(objects.subspan(nonzero.first, nonzero.end - nonzero.first), [](ObjectWord word) { return !word; }))
+    if (definesObject(value) || objects.empty())
         return;
 
     ValueSetID set = ensureSet(value);
     if (!set)
         return;
-    std::span<ObjectWord> words = wordsOf(set);
-    std::span<ObjectWord> arrivals = arrivalsOf(set);
-    if (m_wordsPerSet == 1) {
-        ObjectWord newObjects = objects[0] & ~words[0];
-        if (!newObjects)
-            return;
-        words[0] |= newObjects;
-        arrivals[0] |= newObjects;
+    SetState& state = m_sets[set.index()];
+    size_t numberOfWordsBefore = state.objects.entries().size();
+    state.objects.add(objects, state.arrivals);
+    m_numberOfWordsOfSets += state.objects.entries().size() - numberOfWordsBefore;
+    if (!state.arrivals.isEmpty())
         m_valuesWithArrivals.quickSet(mirroredWhenBackward(value.index()));
-        return;
-    }
-
-    WordRange& range = m_arrivedWordsOfSets[set.index()];
-    ObjectWord arrived = 0;
-    for (uint32_t index = nonzero.first; index < nonzero.end; ++index) {
-        ObjectWord newObjects = objects[index] & ~words[index];
-        if (!newObjects)
-            continue;
-        words[index] |= newObjects;
-        arrivals[index] |= newObjects;
-        arrived |= newObjects;
-        range.first = std::min(range.first, index);
-        range.end = std::max(range.end, index + 1);
-    }
-    if (arrived)
-        m_valuesWithArrivals.quickSet(mirroredWhenBackward(value.index()));
-}
-
-void PointsToSolver::addAll(ValueID value, const ArrivedObjects& arrived)
-{
-    AOT_THRESHOLD(size_t, fewObjects, 4);
-    if (m_wordsPerSet == 1 || arrived.objects.size() > fewObjects) {
-        addAll(value, arrived.words);
-        return;
-    }
-    for (ObjectID object : arrived.objects)
-        add(value, object);
+    if (m_numberOfWordsOfSets > m_maxWordsOfSets)
+        giveUp();
 }
 
 void PointsToSolver::solveUse(const ArrivedObjects& arrived, ValueID usedValue, const Use& use)
@@ -1176,7 +1076,7 @@ void PointsToSolver::solveOperandRetainedByTerminator(SolvedUse& solved, const A
         return;
     }
     // Another edge may pass a different object to the parameter. That object keeps what its own creator stored in it.
-    forEachObjectIn(objectsOf(solved.retainedBy).span(), [&](ObjectID container) {
+    forEachObjectIn(objectsOf(solved.retainedBy).entries(), [&](ObjectID container) {
         if (m_results.objects[container.index()].definition == solved.retainedBy)
             addContents(container, std::nullopt, arrived.words);
     });
@@ -1313,7 +1213,7 @@ void PointsToSolver::solveRetainedOperand(SolvedUse& solved, const ArrivedObject
         return;
     case RetainedIn::Result:
         solved.retainedBy = solved.use.user;
-        forEachObjectIn(objectsOf(solved.retainedBy).span(), [&](ObjectID container) {
+        forEachObjectIn(objectsOf(solved.retainedBy).entries(), [&](ObjectID container) {
             addContents(container, slotInResult(operand.user, operand.index), arrived.words);
         });
         return;
@@ -1324,7 +1224,7 @@ void PointsToSolver::solveRetainedOperand(SolvedUse& solved, const ArrivedObject
             solved.reasons.add(EscapeReason::StoredInUnknownMemory);
             return;
         }
-        forEachObjectIn(objectsOf(solved.retainedBy).span(), [&](ObjectID container) {
+        forEachObjectIn(objectsOf(solved.retainedBy).entries(), [&](ObjectID container) {
             addContents(container, slotInContainer(container, operand.user), arrived.words);
         });
         return;
@@ -1354,7 +1254,7 @@ void PointsToSolver::addStoredOperands(ObjectID container, const Value& user, st
         return;
     ObjectSlot slot = slotInContainer(container, user);
     for (ValueID stored : storedOperands)
-        addContents(container, slot, objectsOf(stored).span());
+        addContents(container, slot, objectsOf(stored).entries());
 }
 
 void PointsToSolver::addOperandsRetainedInResult(ValueID result, const ArrivedObjects& containers)
@@ -1369,9 +1269,9 @@ void PointsToSolver::addOperandsRetainedInResult(ValueID result, const ArrivedOb
         if (!summary.uses.contains(OperandUse::Retains) || summary.retainedIn != RetainedIn::Result)
             return;
         ObjectSlot slot = slotInResult(user, index);
-        WordsOfSet objects = objectsOf(stored);
+        ObjectWords objects = objectsOf(stored);
         for (ObjectID container : containers.objects)
-            addContents(container, slot, objects.span());
+            addContents(container, slot, objects.entries());
     });
 }
 
@@ -1412,6 +1312,8 @@ std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& an
                 if (objectFactsOf(definition.opcode).allocatesOrReturnsOperand)
                     makers.append(id);
                 else if (objectFactsOf(definition.opcode).isSuperConstruct && mayBeReference(analyses.program().typeOf(function, id)))
+                    continue;
+                else if (isFrameWordWithAllocationGroup(function, definition))
                     continue;
             }
             addOperandsOf(definition);
@@ -1619,7 +1521,6 @@ ContainerState& PointsToSolver::ensureContainer(ObjectID object)
         m_containers.append(ContainerState { });
         ContainerState& state = m_containers.last();
         state.environment = environmentLayoutOf(object);
-        state.unknownSlot.objects.fill(0, m_wordsPerSet);
     }
     return m_containers[index];
 }
@@ -1632,28 +1533,20 @@ OperandUses PointsToSolver::environmentFieldUses(const ContainerState& state, Ob
     return slot ? flow->storedValueUses(FieldReference { state.environment, *slot }) : OperandSummary().uses;
 }
 
-void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<const ObjectWord> objects)
+void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, WordsOfObjects objects)
 {
     if (objects.empty())
         return;
 
     ContainerState& state = ensureContainer(container);
     SlotState& holder = state.ensure(slot);
-    // A store adds an object or two, and every reader of the slot hears of them: it looks at the words that hold them, not at a word for every 64 objects of the function.
-    WordRange added { m_wordsPerSet, 0 };
-    for (unsigned index = 0; index < m_wordsPerSet; ++index) {
-        m_newContents[index] = objects[index] & ~holder.objects[index];
-        holder.objects[index] |= m_newContents[index];
-        if (m_newContents[index]) {
-            added.first = std::min(added.first, index);
-            added.end = index + 1;
-        }
-    }
-    if (!added.end)
+    m_newContents.removeAll();
+    holder.objects.add(objects, m_newContents);
+    if (m_newContents.isEmpty())
         return;
 
     size_t firstNewEntry = holder.contents.size();
-    forEachObjectIn(m_newContents.span(), [&](ObjectID object) {
+    forEachObjectIn(m_newContents.entries(), [&](ObjectID object) {
         holder.contents.append(SolvedContents { container, slot, object, false });
     });
     auto apply = [&](OperandUses uses, EscapeReason reason) {
@@ -1667,7 +1560,7 @@ void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<
         if (!takeWork(overlapping.readers.size()))
             return;
         for (ValueID reader : overlapping.readers)
-            addAll(reader, m_newContents.span(), added);
+            addAll(reader, m_newContents.entries());
         for (const ContentsApplication& application : overlapping.applications)
             apply(application.uses, application.reason);
     });
@@ -1705,16 +1598,16 @@ void PointsToSolver::addReader(ObjectID container, ValueID reader, ObjectSlot sl
     read.readers.append(reader);
     state.didAddListener(read);
     forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
-        addAll(reader, overlapping.objects.span());
+        addAll(reader, overlapping.objects.entries());
     });
 }
 
 // n calls of a value that may be any of n closures: all but the first find every closure called.
 void PointsToSolver::callObjects(const ArrivedObjects& arrived)
 {
-    for (size_t index = 0; index < arrived.words.size(); ++index) {
-        for (ObjectWord word = arrived.words[index] & ~m_calledObjects[index]; word; word &= word - 1)
-            callObject(ObjectID(index * objectsPerWord + std::countr_zero(word)));
+    for (const ObjectWords::Entry& entry : arrived.words) {
+        for (ObjectWord word = entry.word & ~m_calledObjects[entry.index]; word; word &= word - 1)
+            callObject(ObjectID(entry.index * objectsPerWord + std::countr_zero(word)));
     }
 }
 

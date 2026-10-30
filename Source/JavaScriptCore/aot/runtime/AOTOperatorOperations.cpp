@@ -239,17 +239,43 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsCallable, size_t, (Instance*, JS
     return cell->isCallable();
 }
 
+// Exact for a whole quotient below maxExactQuotient.
+#if CPU(ARM64) || defined(__FMA__)
+static constexpr double maxExactQuotient = 0x1p53;
+static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)
+{
+    return std::fma(-quotient, divisor, dividend);
+}
+#else
+static constexpr double maxExactQuotient = 0x1p26;
+static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)
+{
+    double high = std::bit_cast<double>(std::bit_cast<uint64_t>(divisor) & ~((1ull << 27) - 1));
+    return (dividend - quotient * high) - quotient * (divisor - high);
+}
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFmod, double, (double a, double b))
 {
+    double dividend = std::abs(a);
+    double divisor = std::abs(b);
+    if (dividend < divisor)
+        return a;
+    double quotient = std::trunc(dividend / divisor);
+    if (quotient < maxExactQuotient && dividend < 0x1p1000) [[likely]] {
+        double remainder = subtractProduct(dividend, quotient, divisor);
+        if (remainder < 0) [[unlikely]]
+            remainder += divisor;
+        return std::copysign(remainder, a);
+    }
+
     constexpr double limit = 4611686018427387904.0;
-    if (std::abs(a) < limit) [[likely]] {
-        int64_t dividend = static_cast<int64_t>(a);
-        if (static_cast<double>(dividend) == a && std::abs(b) < limit) [[likely]] {
-            int64_t divisor = static_cast<int64_t>(b);
-            if (static_cast<double>(divisor) == b && divisor) [[likely]] {
-                int64_t remainder = dividend % divisor;
-                return remainder ? static_cast<double>(remainder) : a * 0.0;
-            }
+    if (dividend < limit && divisor < limit) [[likely]] {
+        int64_t wholeDividend = static_cast<int64_t>(a);
+        int64_t wholeDivisor = static_cast<int64_t>(b);
+        if (static_cast<double>(wholeDividend) == a && static_cast<double>(wholeDivisor) == b && wholeDivisor) [[likely]] {
+            int64_t remainder = wholeDividend % wholeDivisor;
+            return remainder ? static_cast<double>(remainder) : a * 0.0;
         }
     }
     return Math::fmodDouble(a, b);

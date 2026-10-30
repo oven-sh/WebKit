@@ -82,11 +82,12 @@ private:
 
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
     CellPointer allocateCell(const ValueContext&, AllocationID, const PlannedLayout&, AllocationStorage, ZeroedBy);
+    bool initializesFrameObjectInStub(const ValueContext&, LayoutID);
     CellPointer allocateFrameCell(const ValueContext&, AllocationID, const PlannedLayout&);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, AllocationID, const BitVector& isInitialField, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, uint32_t freeCellOffset);
-    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy);
+    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy, bool hasStateOfFrameCell);
     static Representation representationWantedBy(const InitialField&);
     bool isNarrowedWhereStored(const InitialField&) const;
     Operand takeForSlot(const InitialField&);

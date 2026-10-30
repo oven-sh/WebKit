@@ -235,6 +235,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
         cold.terminatorKinds = MallocSpan<TerminatorKind>::malloc(function.blocks.size() * sizeof(TerminatorKind));
     std::span<TerminatorKind> terminatorKinds = cold.terminatorKinds.mutableSpan();
     std::span<IndexedValue> words = cold.listedValues.mutableSpan();
+    OpcodeSet opcodes;
     TerminatorKindSet terminators;
     bool hasNeverValue = false;
     size_t next = 0;
@@ -246,7 +247,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
         }
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            hot.opcodes.add(value.opcode);
+            opcodes.add(value.opcode);
             hasNeverValue |= hasNeverResult(value);
             words[next++] = IndexedValue(id, value.opcode, BlockID(index));
         }
@@ -254,6 +255,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
         terminatorKinds[index] = block.terminator.kind;
         hot.traits.add(bodyTraitsOf(block, BlockID(index)));
     }
+    setOpcodes(opcodes);
     hot.terminatorBits = static_cast<uint16_t>(std::bit_cast<uint64_t>(terminators));
     hot.listsParameters = numberOfParameters;
     hot.traits.add(traitsBesideBlocks(function, hot.listsParameters, hasNeverValue));
@@ -264,6 +266,14 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
         cold.makeNames(function);
         cold.stateOfNames = static_cast<uint8_t>(State::Known);
     }
+}
+
+void BodyIndex::Row::setOpcodes(const OpcodeSet& opcodes)
+{
+    OpcodeWords words = std::bit_cast<OpcodeWords>(opcodes);
+    std::ranges::copy(std::span(words).first(numberOfFirstOpcodeWords), hot.firstOpcodeWords.begin());
+    std::ranges::copy(std::span(words).subspan(numberOfFirstOpcodeWords), cold.laterOpcodeWords.begin());
+    hot.holdsLaterOpcodes = std::ranges::any_of(cold.laterOpcodeWords, std::identity { });
 }
 
 const BodyIndex::HotRow& BodyIndex::hotRowWithoutBody(RecordFacts facts)
@@ -461,7 +471,7 @@ void BodyIndex::check(const Program& program, const ParallelLoops& loops) const
         const HotRow& hot = hotRowOfKnown(FunctionID(index));
         const ColdRow& cold = m_storedRows[index] ? m_storedRows[index]->cold : coldRowWithoutBody;
         Row made(program.functions[index]);
-        RELEASE_ASSERT(hot.isComplete == made.hot.isComplete && hot.listsAllValues == made.hot.listsAllValues && (hot.holdsExpectedTypes || !made.hot.holdsExpectedTypes) && hot.opcodes == made.hot.opcodes && hot.terminatorBits == made.hot.terminatorBits);
+        RELEASE_ASSERT(hot.isComplete == made.hot.isComplete && hot.listsAllValues == made.hot.listsAllValues && (hot.holdsExpectedTypes || !made.hot.holdsExpectedTypes) && hot.firstOpcodeWords == made.hot.firstOpcodeWords && cold.laterOpcodeWords == made.cold.laterOpcodeWords && hot.holdsLaterOpcodes == made.hot.holdsLaterOpcodes && hot.terminatorBits == made.hot.terminatorBits);
         RELEASE_ASSERT(hot.listsParameters == made.hot.listsParameters && hot.traits == made.hot.traits);
         RELEASE_ASSERT(m_denseRows[index] == made.dense);
         RELEASE_ASSERT(!m_hasRecordStamps[index] || m_recordStamps[index] == computeRecordStamps(program.functions[index]));

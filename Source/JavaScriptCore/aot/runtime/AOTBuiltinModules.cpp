@@ -227,7 +227,7 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
         add(builtin);
     for (unsigned index = 0; index < table.builtinCount(); ++index) {
         for (const BuiltinCalledFunction& called : table.calledFunctionsOf(BuiltinID(index))) {
-            if (called.function == function)
+            if (called.function == function && !(called.condition && called.condition->isAboutWhatProgramReplaces()))
                 add(called.builtin);
         }
     }

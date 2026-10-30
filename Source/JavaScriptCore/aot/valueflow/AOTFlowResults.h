@@ -110,6 +110,8 @@ struct FlowTypedResultCall {
     AccessSiteID call;
     TypeID type;
     Vector<LayoutID, 4> layouts;
+    FunctionID function;
+    bool isUnprofitable { false };
 
     friend bool operator==(const FlowTypedResultCall&, const FlowTypedResultCall&) = default;
 };
@@ -286,8 +288,11 @@ struct FlowProgramTables {
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     bool findsFilesOfProgramByName { true };
+    bool storesPathOfMainModule { true };
     // CompileOptions::admitsFilesRunByHost()
     bool hostRunsFilesOutsideImage { false };
+    // A test run, which ends a realm before it makes the next.
+    bool hasOneRealmAtATime { false };
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
     Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
@@ -436,6 +441,9 @@ public:
     // For `table[key](..)` in a copy of a function whose caller spells the key: flow has looked at the function with every key at once.
     Expected<std::span<const FlowClosureStoredUnderKey>> closuresSeenStoredUnder(PropertyKeyID) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
+    std::span<const FlowTypedResultCall> typedResultCalls() const LIFETIME_BOUND { return m_tables.sites.typedResultCalls.span(); }
+    bool isTypedResultUnprofitable(AccessSiteID call) const;
+    void markTypedResultsUnprofitable(std::span<const AccessSiteID> sortedCalls);
     TypeID typedResultType(AccessSiteID call) const;
     std::span<const LayoutID> typedResultLayouts(AccessSiteID call) const LIFETIME_BOUND;
     AllocationSiteID typedResultSite(LayoutID) const;
@@ -449,6 +457,8 @@ public:
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
     bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
     bool hostRunsFilesOutsideImage() const { return hasResults() && m_tables.wholeProgram.hostRunsFilesOutsideImage; }
+    bool hasOneRealmAtATime() const { return hasResults() && m_tables.wholeProgram.hasOneRealmAtATime; }
+    bool storesPathOfMainModule() const { return !hasResults() || m_tables.wholeProgram.storesPathOfMainModule; }
     // The body of the first has run to its end when the body of the second begins.
     bool completesBefore(ModuleID first, ModuleID second) const { return m_tables.wholeProgram.moduleOrder.completesBefore(first, second); }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }

@@ -82,6 +82,39 @@ static std::optional<MemberSite> findMemberInClassOrSubclasses(const BuiltinUseI
     return site;
 }
 
+// Instances of classes whose constructors leave the property at the same place, such as Error and TypeError, or TypeError and RangeError.
+// The read compares the Structure of the object with the one of each class and goes by name for any other, so the type has nothing to prove.
+static std::optional<MemberSite> findOwnSlotOfEveryClass(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
+{
+    if (!present.isObject() || !present.hasOnlyClassObjects() || present.classes.size() < 2)
+        return std::nullopt;
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinMemberName name = builtinMemberNameOf(inputs.program, key);
+    if (!name || name.isPrivateAlias)
+        return std::nullopt;
+
+    BuiltinClassID above = present.classes[0].builtinClass;
+    for (const ClassPart& part : present.classes) {
+        while (above && !table.isSameOrSubclassOf(part.builtinClass, above))
+            above = table.at(above).parent;
+    }
+    BuiltinOverloadID slotAbove = above ? findOwnSlotOfInstances(table, above, name.name) : BuiltinOverloadID();
+    if (!slotAbove)
+        return std::nullopt;
+    for (const ClassPart& part : present.classes) {
+        BuiltinOverloadID slot = findOwnSlotOfInstances(table, part.builtinClass, name.name);
+        if (!slot || !liesAtSamePlace(table, slot, slotAbove))
+            return std::nullopt;
+    }
+
+    MemberSite site { .receiver = receiver, .key = key };
+    site.start = { BuiltinReceiverKind::Instance, { }, above };
+    site.answer = findMemberOfInstances(inputs.lookup(), above, key);
+    if (!site.answer.isConstant() || site.answer.member != table.canonicalID(table.at(slotAbove).builtin))
+        return std::nullopt;
+    return site;
+}
+
 static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, BuiltinClassID expectedClass = { })
 {
     const Program& program = inputs.program;
@@ -93,6 +126,8 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
         if (std::optional<MemberSite> found = findMemberInClassOrSubclasses(inputs, receiver, key, present))
+            return found;
+        if (std::optional<MemberSite> found = findOwnSlotOfEveryClass(inputs, receiver, key, present))
             return found;
         TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)

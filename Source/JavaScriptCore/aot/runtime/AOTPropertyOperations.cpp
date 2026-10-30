@@ -19,6 +19,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
@@ -157,9 +158,11 @@ static NEVER_INLINE bool deleteAndFile(Instance* instance, JSObject* object, Pro
     Object* compiled = compiledObjectOrNull(object);
     if (instance->state->sharesRealm && compiled && !compiled->isDescribedBy(*instance->state)) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
-    JSObject* extra = compiled ? compiled->extraProperties() : nullptr;
+    // Nothing is filed about an object whose stars wait, as for a read.
+    bool starsWait = compiled && hasPendingStars(*compiled);
+    JSObject* extra = compiled && !starsWait ? compiled->extraProperties() : nullptr;
     bool belongsToOneObject = extra && !compiled->compiledStructure().extraPropertiesSlot();
-    if (belongsToOneObject || !caches.shouldFile(structureBefore->id(), property.uid(), access))
+    if (belongsToOneObject || !caches.shouldFile(structureBefore->id(), property.uid(), access) || starsWait)
         RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
     CachedAccess filed { structureBefore, { property.uid(), std::nullopt }, access };
     // The next object arrives as this one did, so nothing is gained by a Structure that says more.
@@ -633,6 +636,8 @@ static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Ins
     const Identifier& identifier = identifierAt(instance, key);
     const FieldData* field = object->fieldNamed(*instance->state, identifier);
     if (!field) {
+        if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, identifier.impl()))
+            OPERATION_RETURN(scope, !!*source);
         JSObject* extra = object->extraProperties();
         OPERATION_RETURN(scope, extra && extra->getDirectOffset(vm, identifier) != invalidOffset);
     }

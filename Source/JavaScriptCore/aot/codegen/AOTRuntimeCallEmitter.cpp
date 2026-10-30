@@ -78,7 +78,7 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const B3::Stackmap
         B3::Type childType = call->child(i)->type();
         if (childType == B3::Double)
             continue;
-        GPRReg destination = operationArgumentGPR(destinationIndex++);
+        GPRReg destination = argumentGPROfPreservingCall(*preservingCall, entryAtOffset(*immediate), destinationIndex++);
         const B3::ValueRep& rep = params[firstRep + i];
         if (rep.isGPR()) {
             if (rep.gpr() != destination)
@@ -505,11 +505,11 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
             continue;
         }
         RELEASE_ASSERT(nextGPR < numberOfOperationArgumentGPRs);
-        GPRReg destination = operationArgumentGPR(nextGPR++);
         if (!request.preservingCall) {
-            request.operands.append({ argument, B3::ValueRep::reg(destination) });
+            request.operands.append({ argument, B3::ValueRep::reg(operationArgumentGPR(nextGPR++)) });
             continue;
         }
+        GPRReg destination = argumentGPROfPreservingCall(*request.preservingCall, *request.entry, nextGPR++);
         LValue widened = argument->hasInt32() ? m_out.constInt64(static_cast<uint32_t>(argument->asInt32())) : argument;
         request.operands.append({ widened, B3::ValueRep::ColdAny });
         request.additionalClobbers.add(destination, IgnoreVectors);
@@ -652,6 +652,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     B3::PatchpointValue* patchpoint = m_out.patchpoint(patchpointTypeOf(m_proc, signature.result));
     patchpoint->effects.terminal = !returns;
+    if (MutatorFenceRecords::isUsed && returns && request.effectsOfCallee.writes.containsOnly(bookkeepingHeaps) && request.effectsOfCallee.alwaysCompletes())
+        m_records.mutatorFences.allocations.set(patchpoint->index());
     patchpoint->setNeedsFrameRecord(readsFrameRecordOfCaller(key.family()));
     patchpoint->setRunsWithoutFrame(!hasSite && !generator().validates() && returns && leavesCallerWithoutFrame(key));
 

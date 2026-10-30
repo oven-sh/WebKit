@@ -794,6 +794,7 @@ template<typename Record, typename RecordID>
 RecordID TypeArena::didUse(TypeInterningPhase::Storage& storage, uint32_t position)
 {
     ++m_unshareableEventCount;
+    ++m_useCountOfRecordsOfPhase;
     RecordID id = TypeTable::provisionalID<RecordID>(storage.number, position);
     uint32_t& lastLease = storage.recordsOf<Record>().lastLease[position];
     if (lastLease != storage.lease) {

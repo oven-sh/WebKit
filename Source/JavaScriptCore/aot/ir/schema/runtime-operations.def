@@ -70,7 +70,9 @@ runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; 
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
+runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
 runtime NewArrayOfElements : JSCell* (JSCell* source, uint64_t capacity) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayOfMembers : JSCell* (JSCell* source, uint64_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayCapacity : void (JSCell* array, uint64_t additional) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 runtime ReserveCollectionCapacity : void (JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects
@@ -189,6 +191,7 @@ runtime MakeCheckedFrameCell : void* (void* slot, void* wordOfFrame, uint64_t si
 runtime LeaveFrameOfCheckedCells : void (void* wordOfFrame) ; reads(all) writes(ValidationState)
 runtime ReportEscapedFrameCell : void (void* cell) ; reads(all) writes(ExternalState)
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
+runtime ValueHasType : size_t (EncodedJSValue value, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant
 runtime PollSlow : void () ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
 runtime PollBeforeEntering : void (void* stackPointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
@@ -221,6 +224,8 @@ runtime RunImageOfAdapter : void (void* instance, void* adapterFrame) ; none ; l
 runtime ImportModule : EncodedJSValue (uint32_t module, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
+runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode
 runtime ThrowModuleFailure : void (uint32_t failure, uint32_t isForRequire) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime BeginModuleEvaluation : size_t (uint32_t module) ; unknownCode

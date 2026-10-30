@@ -3248,6 +3248,10 @@ private:
             }
             if (m_numbering && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
                 TriState known = m_conditions.isNonZero(m_numbering->representativeOf(m_value->child(0)));
+                if (known == TriState::Indeterminate) {
+                    if (Value* opposite = m_numbering->representativeOfOppositeComparison(m_value->child(0)))
+                        known = invert(m_conditions.isNonZero(opposite));
+                }
                 if (known != TriState::Indeterminate)
                     replaceTerminalWithJump(known == TriState::True ? m_block->taken() : m_block->notTaken());
             }
@@ -4887,8 +4891,15 @@ private:
     Value* insertOrReusePartOfAddress(Opcode opcode, Value* left, Value* right)
     {
         Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), left, right);
-        if (!m_numbering || (isX86() && inserted->type() != Int32))
+        if (!m_numbering)
             return inserted;
+        if (isX86() && inserted->type() != Int32) {
+            m_numbering->numberCopyOfPartOfAddress(inserted);
+            return inserted;
+        }
+        // The walk orders the operands of each sum that it comes to. The same sum further down, as the program's code made it, is found to be this one if this one has that order.
+        if (opcode == Add && shouldSwapBinaryOperands(inserted))
+            std::swap(inserted->child(0), inserted->child(1));
         Value* representative = inserted;
         // The first turn has the sum as the program's code made it, which may be the other way round. With two sums the shift has two users and is an instruction of its own.
         if (opcode == Add) {
@@ -4922,6 +4933,8 @@ private:
                 if (value->opcode() != opcode || !value->owner)
                     continue;
                 value->performSubstitution();
+                if (opcode == Add && shouldSwapBinaryOperands(value))
+                    std::swap(value->child(0), value->child(1));
                 valuesByKey.add(value->key(), Vector<Value*, 8>()).iterator->value.append(value);
             }
             for (auto& values : valuesByKey.values()) {

@@ -858,6 +858,76 @@ unsigned linesOfTextAboveSource(FunctionID source)
     return found != constructors.end() && found->function == source.index() ? found->linesOfTextAbove : 0;
 }
 
+std::optional<PlaceInKeptText> findInKeptText(FunctionID source, ModuleID module, LineColumn wanted)
+{
+    const ProgramTables& tables = programTables();
+    if (tables.functionTexts().empty())
+        return std::nullopt;
+    std::span entries = functionTextEntriesOfSource(tables, source.index());
+    const FunctionTextEntry* entry = entries.empty() ? nullptr : &entries.front();
+    const FunctionTexts& texts = tables.functionTexts()[0];
+    // The last of them belongs to no module.
+    std::span modules { tables.at<PiecesOfModule>(texts.modulesWithPiecesOffset), texts.numberOfModulesWithPieces + 1 };
+    size_t found = std::ranges::lower_bound(modules, module.index(), { }, &PiecesOfModule::module) - modules.begin();
+    if (modules[found].module != module.index())
+        return std::nullopt;
+
+    const uint8_t* cursor = tables.at<uint8_t>(texts.piecesOffset) + modules[found].start;
+    const uint8_t* end = tables.at<uint8_t>(texts.piecesOffset) + modules[found + 1].start;
+    uint32_t endOfLastPiece = 0;
+    uint32_t line = 0;
+    while (cursor < end) {
+        uint32_t start = static_cast<uint32_t>(endOfLastPiece + zigZagDecode(readVarint(cursor) >> 1));
+        endOfLastPiece = start + static_cast<uint32_t>(readVarint(cursor));
+        line += static_cast<uint32_t>(readVarint(cursor));
+        PlaceOfTextInFile place { line, static_cast<uint32_t>(readVarint(cursor)) };
+        // The same text may stand in the file twice, and is held once. The place lies in one of the two.
+        size_t startOfSearched = entry ? entry->start : start;
+        size_t endOfSearched = entry ? entry->end : endOfLastPiece;
+        bool mayHold = start <= startOfSearched && endOfSearched <= endOfLastPiece;
+        std::span text { tables.at<uint8_t>(texts.textOffset), endOfLastPiece };
+        size_t at = start;
+        for (size_t cut = start;;) {
+            bool hasCut = cursor < end && !(*cursor & 1);
+            cut = hasCut ? cut + static_cast<size_t>(readVarint(cursor) >> 1) : endOfLastPiece;
+            for (size_t limit = std::min(cut, endOfSearched); mayHold && at < limit; at = place.advanceOver(text, at)) {
+                if (place.line == wanted.line && place.column == wanted.column && at >= startOfSearched)
+                    return PlaceInKeptText { startOfSearched, endOfSearched, at };
+                mayHold = place.line < wanted.line || (place.line == wanted.line && place.column < wanted.column);
+            }
+            if (!hasCut)
+                break;
+            uint64_t columns = readVarint(cursor);
+            place.advanceOverCut(columns & 1 ? static_cast<uint32_t>(readVarint(cursor)) : 0, static_cast<uint32_t>(columns >> 1));
+        }
+    }
+    return std::nullopt;
+}
+
+std::span<const Latin1Character> sourceBytesOfAllFunctions()
+{
+    const ProgramTables& tables = programTables();
+    auto texts = tables.functionTexts();
+    if (texts.empty())
+        return { };
+    // What follows the text in the image ends it.
+    return { tables.at<Latin1Character>(texts[0].textOffset), texts[0].modulesWithPiecesOffset - texts[0].textOffset };
+}
+
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID module, StartOfPrintedText start)
+{
+    const ProgramTables& tables = programTables();
+    std::span modules = tables.modulesWithTextPrintedInPlace();
+    std::span bytes = tables.textPrintedInPlace();
+    if (modules.empty() || bytes[0] != static_cast<uint8_t>(start))
+        return { };
+    // The last of them belongs to no module.
+    auto found = std::ranges::lower_bound(modules, module.index(), { }, &TextPrintedInPlaceOfModule::module);
+    if (found->module != module.index())
+        return { };
+    return TextPrintedInPlace::readAll(bytes.subspan(found->start, std::next(found)->start - found->start));
+}
+
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
 {
     VM& vm = globalObject->vm();

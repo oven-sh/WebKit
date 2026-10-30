@@ -32,6 +32,19 @@ struct ReleaseGraph {
         block->append(Patch, hint, special, place);
     }
 
+    // A call with these arguments. Its callee lets go of the first.
+    template<typename... Arguments>
+    void appendCallWhoseCalleeLetsGoOfFirst(Arguments... arguments)
+    {
+        call = callRunsWithoutFrame ? addPatchpointWithoutFrame(proc) : addPatchpoint(proc);
+        for (unsigned index = 0; index < sizeof...(arguments); ++index)
+            call->append(proc.addConstant(B3::Origin(), B3::Int64, 0), B3::ValueRep::ColdAny);
+        BitVector children;
+        children.set(0);
+        call->setChildrenLetGoByCallee(WTF::move(children));
+        block->append(Patch, call, special, arguments...);
+    }
+
     void appendPatchpoint(bool runsWithoutFrame = false)
     {
         block->append(Patch, runsWithoutFrame ? addPatchpointWithoutFrame(proc) : addPatchpoint(proc), special);
@@ -71,6 +84,17 @@ struct ReleaseGraph {
         return false;
     }
 
+    bool clearsInFrontOfCall(const Arg& place) const
+    {
+        for (const Inst& inst : *block) {
+            if (inst.kind.opcode == Patch && inst.origin == call)
+                return false;
+            if (storesZero(inst) && inst.args()[1] == place)
+                return true;
+        }
+        return false;
+    }
+
     bool hintIsThere() const
     {
         for (const Inst& inst : *block) {
@@ -86,6 +110,8 @@ struct ReleaseGraph {
     Arg special { Arg::special(patchpointSpecialOf(code)) };
     StackColoring coloring;
     B3::PatchpointValue* hint { nullptr };
+    B3::PatchpointValue* call { nullptr };
+    bool callRunsWithoutFrame { false };
 };
 
 static Tmp someSavedRegister()
@@ -321,6 +347,87 @@ void testReleaseFollowsCopiesIntoOtherBlocks()
     CHECK(graph.clears(Arg::stack(onOnePath)));
 }
 
+void testReleaseClearsCopiesOfCallerInFrontOfCall()
+{
+    ReleaseGraph graph;
+    StackSlot* slot = graph.addSlot(0);
+    Tmp saved = someSavedRegister();
+    graph.block->append(Move, nullptr, argumentTmp(0), saved);
+    graph.block->append(Move, nullptr, saved, Arg::stack(slot));
+    graph.block->append(Move, nullptr, Arg::stack(slot), argumentTmp(2));
+    graph.appendCallWhoseCalleeLetsGoOfFirst(argumentTmp(2));
+    graph.run();
+    CHECK(graph.numberOfClears() == 1);
+    CHECK(graph.clearsInFrontOfCall(Arg::stack(slot)));
+    CHECK(graph.call->registersToRelease() == RegisterSet(saved.reg()));
+    CHECK(graph.call->lateClobbered().contains(saved.reg(), IgnoreVectors));
+}
+
+// A tail call. The frame of the callee lies over the words of this one, and the saved registers have been restored when its generator runs.
+void testReleaseClearsWordsInFrontOfCallWithoutFrame()
+{
+    ReleaseGraph graph;
+    graph.callRunsWithoutFrame = true;
+    StackSlot* slot = graph.addSlot(0);
+    Tmp saved = someSavedRegister();
+    graph.block->append(Move, nullptr, argumentTmp(0), saved);
+    graph.block->append(Move, nullptr, saved, Arg::stack(slot));
+    graph.block->append(Move, nullptr, Arg::stack(slot), argumentTmp(2));
+    graph.appendCallWhoseCalleeLetsGoOfFirst(argumentTmp(2));
+    graph.run();
+    CHECK(graph.numberOfClears() == 1);
+    CHECK(graph.clearsInFrontOfCall(Arg::stack(slot)));
+    CHECK(!graph.call->lateClobbered().contains(saved.reg(), IgnoreVectors));
+}
+
+void testReleaseKeepsCopiesOfCallerReadBehindCall()
+{
+    ReleaseGraph graph;
+    StackSlot* slot = graph.addSlot(0);
+    Tmp saved = someSavedRegister();
+    graph.block->append(Move, nullptr, argumentTmp(0), saved);
+    graph.block->append(Move, nullptr, saved, Arg::stack(slot));
+    graph.block->append(Move, nullptr, Arg::stack(slot), argumentTmp(2));
+    graph.appendCallWhoseCalleeLetsGoOfFirst(argumentTmp(2));
+    graph.block->append(Move, nullptr, Arg::stack(slot), argumentTmp(1));
+    graph.block->append(Move, nullptr, saved, argumentTmp(3));
+    graph.run();
+    CHECK(!graph.numberOfClears());
+    CHECK(graph.call->registersToRelease().isEmpty());
+}
+
+void testReleaseKeepsWhatCallReads()
+{
+    ReleaseGraph graph;
+    StackSlot* slot = graph.addSlot(0);
+    graph.code.requestCallArgAreaSizeInBytes(16);
+    graph.block->append(Move, nullptr, argumentTmp(0), Arg::stack(slot));
+    graph.block->append(Move, nullptr, Arg::stack(slot), argumentTmp(2));
+    graph.block->append(Move, nullptr, argumentTmp(2), Arg::callArg(0));
+    graph.block->append(Move, nullptr, argumentTmp(2), Arg::callArg(8));
+    graph.appendCallWhoseCalleeLetsGoOfFirst(Arg::callArg(0));
+    graph.run();
+    CHECK(graph.numberOfClears() == 2);
+    CHECK(graph.clearsInFrontOfCall(Arg::stack(slot)));
+    CHECK(graph.clearsInFrontOfCall(Arg::callArg(8)));
+    CHECK(!graph.clearsInFrontOfCall(Arg::callArg(0)));
+}
+
+void testReleaseLeavesCopiesOfArgumentsThatCalleeKeeps()
+{
+    ReleaseGraph graph;
+    StackSlot* letGo = graph.addSlot(0);
+    StackSlot* kept = graph.addSlot(1);
+    graph.block->append(Move, nullptr, argumentTmp(0), Arg::stack(letGo));
+    graph.block->append(Move, nullptr, argumentTmp(1), Arg::stack(kept));
+    graph.block->append(Move, nullptr, Arg::stack(letGo), argumentTmp(2));
+    graph.block->append(Move, nullptr, Arg::stack(kept), argumentTmp(3));
+    graph.appendCallWhoseCalleeLetsGoOfFirst(argumentTmp(2), argumentTmp(3));
+    graph.run();
+    CHECK(graph.numberOfClears() == 1);
+    CHECK(graph.clearsInFrontOfCall(Arg::stack(letGo)));
+}
+
 #define RUN_BUN_RELEASE_TESTS() do { \
         RUN(testReleaseClearsDeadSpillWord()); \
         RUN(testReleaseCountsCCallAsCollection()); \
@@ -337,4 +444,9 @@ void testReleaseFollowsCopiesIntoOtherBlocks()
         RUN(testReleaseClearsSavedRegisterInPatchpoint()); \
         RUN(testReleaseKeepsSavedRegisterReadAgain()); \
         RUN(testReleaseFollowsCopiesIntoOtherBlocks()); \
+        RUN(testReleaseClearsCopiesOfCallerInFrontOfCall()); \
+        RUN(testReleaseClearsWordsInFrontOfCallWithoutFrame()); \
+        RUN(testReleaseKeepsCopiesOfCallerReadBehindCall()); \
+        RUN(testReleaseKeepsWhatCallReads()); \
+        RUN(testReleaseLeavesCopiesOfArgumentsThatCalleeKeeps()); \
     } while (false)

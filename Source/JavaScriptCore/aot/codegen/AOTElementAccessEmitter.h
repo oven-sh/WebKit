@@ -48,6 +48,7 @@ public:
     void generatePutArrayElement(const ValueContext&);
     void generateHasArrayElement(const ValueContext&);
     void generateAppendElements(const ValueContext&);
+    void generateAppendMembers(const ValueContext&);
     void generateHasSpareArrayCapacity(const ValueContext&);
     void generateReserveArrayCapacity(const ValueContext&);
     void generateConvertToDoubleStorage(const ValueContext&);

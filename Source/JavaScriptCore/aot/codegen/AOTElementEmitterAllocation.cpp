@@ -150,6 +150,24 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
     if (value->storage() != AllocationStorage::Heap)
         return emitter<CellAllocationEmitter>().newArrayOf(value, boxElements<Boxed>(generator(), value, value->elementsOperands()).span(), value->storage());
 
+    if (std::optional<ValueID> append = membersThatFillLiteral(value.block(), value.id())) {
+        // Of the kind that whoever reads the list expects. No profile has to learn it.
+        std::optional<ArrayStorage> expected;
+        auto lookAtReadersOf = [&](ValueID list) {
+            for (const Use& use : analyses().useLists().usesOf(list)) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = m_function.at(use.user);
+                if (Value::opcodesWithArrayStorage.contains(user.opcode) && hasArrayStorageForm(user.arrayStorage()))
+                    expected = std::max(expected.value_or(ArrayStorage::Int32), user.arrayStorage());
+            }
+        };
+        lookAtReadersOf(value.id());
+        lookAtReadersOf(m_function.at(*append).arrayOperand());
+        const ArrayStorageForm& form = expected ? arrayStorageFormOf(*expected) : formOfEmptyLiteral(value.id(), typeOf(value.id()));
+        return CellPointer(callStub(value, newArrayOfMembers(kindOf(form)), { in<CellPointer>(m_function.at(*append).sourceOperand()).value() }).first);
+    }
+
     switch (value->literalStorage()) {
     case ArrayLiteralStorage::Fresh:
         break;
@@ -569,6 +587,30 @@ std::optional<ValueID> ArrayAllocationEmitter::appendThatFillsLiteral(BlockID bl
         if (value.opcode != Opcode::AssumeType && value.opcode != Opcode::AppendElements)
             return std::nullopt;
         bool isAppend = value.opcode == Opcode::AppendElements;
+        if (sameObjectThroughCasts(m_function, isAppend ? value.arrayOperand() : value.valueOperand()).valueInFrontOfFacts() != id)
+            return std::nullopt;
+        if (isAppend)
+            return *next;
+    }
+    return std::nullopt;
+}
+
+// `[...set]`: the list is made with the members in it.
+std::optional<ValueID> ArrayAllocationEmitter::membersThatFillLiteral(BlockID block, ValueID id)
+{
+    const Value& literal = m_function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty())
+        return std::nullopt;
+    std::span<const ValueID> values = m_function.at(block).values.span();
+    auto next = std::ranges::find(values, id);
+    if (next == values.end())
+        return std::nullopt;
+    // Only casts of the literal stand between the two: nothing runs, nobody else has the list, and the set is there when the literal is made.
+    for (++next; next != values.end(); ++next) {
+        const Value& value = m_function.at(*next);
+        if (value.opcode != Opcode::AssumeType && value.opcode != Opcode::AppendMembers)
+            return std::nullopt;
+        bool isAppend = value.opcode == Opcode::AppendMembers;
         if (sameObjectThroughCasts(m_function, isAppend ? value.arrayOperand() : value.valueOperand()).valueInFrontOfFacts() != id)
             return std::nullopt;
         if (isAppend)

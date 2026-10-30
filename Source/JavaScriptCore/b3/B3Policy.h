@@ -42,12 +42,24 @@ enum class KnownProperty : uint8_t {
     Induction,
 };
 
+enum class MoveLeftOutByRegisterAllocator : uint8_t {
+    None,
+    StoreBehindCluster,
+    LoadAheadOfCluster,
+    StoreAheadOfClobber,
+    LoadBehindClobber,
+    StoreBehindSpilledDefinition,
+};
+
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
     bool keepsOriginsOfAccessesThatTakeTraps { false };
+    // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
+    bool checksSpillSlots { false };
+    bool checksAllocatedRegisters { false };
     // These break a phase on purpose, for the tests of the checks.
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
@@ -62,6 +74,8 @@ struct ValidationPolicy {
     bool takesSumsOfNumbersToBeWhole { false };
     bool comparesAllLanesWithSign { false };
     bool setsUpFrameBehindWrites { false };
+    bool overlooksColdUsesOfClustersOverBlocks { false };
+    MoveLeftOutByRegisterAllocator moveLeftOutByRegisterAllocator { MoveLeftOutByRegisterAllocator::None };
 };
 
 enum class RedundancyElimination : uint8_t {

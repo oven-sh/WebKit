@@ -67,7 +67,7 @@ static bool isStageTime(StatisticID statistic)
 // Two statements that run side by side on two threads log the same edge twice; on one thread after the other, the second finds it known. The graph is the same.
 static bool dependsOnWhichThreadRanWhat(StatisticID statistic)
 {
-    return statistic == StatisticID::FlowEdgesLogged;
+    return statistic == StatisticID::FlowEdgesLogged || statistic == StatisticID::FlowBodiesTakenBack;
 }
 
 static void printDifferentStatistics(PrintStream& out, const Statistics& release, const Statistics& validated)

@@ -223,10 +223,12 @@ struct PlannedAccess {
     AccessTests tests;
 };
 
+enum class TestSiteCandidates : bool { All, AccessesToObjectsMadeHere };
+
 class TestSiteReporter {
     WTF_MAKE_NONCOPYABLE(TestSiteReporter);
 public:
-    explicit TestSiteReporter(FunctionPassContext&);
+    explicit TestSiteReporter(FunctionPassContext&, TestSiteCandidates = TestSiteCandidates::All);
 
     FunctionPassContext& context() const { return m_context; }
     const Program& program() const { return m_context.program; }
@@ -286,8 +288,10 @@ private:
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;
     bool isWrittenInCatchClause(BlockID);
+    bool isAccessToObjectMadeHere(const Value&) const;
 
     FunctionPassContext& m_context;
+    TestSiteCandidates m_wantedCandidates { TestSiteCandidates::All };
     TestSiteRuleID m_rule { TestSiteRuleID::Operator };
     ValueID m_use;
     ProgramPoint m_point;
@@ -358,6 +362,7 @@ FOR_EACH_AOT_TEST_SITE_RULE(AOT_DECLARE_TEST_SITE_RULE)
 #undef AOT_DECLARE_TEST_SITE_RULE
 
 std::span<const TestSiteRule> testSiteRules();
+Expected<bool> asksForMoreThanLayoutsTell(const Program&, const Function&, const TypeArena&, const Value& test);
 const TestSiteRule& ruleOf(TestSiteRuleID);
 
 } } } // namespace JSC::AOT::Typed

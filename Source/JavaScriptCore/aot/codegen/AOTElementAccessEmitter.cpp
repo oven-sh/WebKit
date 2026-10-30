@@ -430,7 +430,7 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
 const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
 {
     const Type& receiver = typeOf(read->objectOperand());
-    if (read.shape() != CodeShape::Fast || !receiver.hasOnlyLayouts() || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+    if (read.shape() != CodeShape::Fast || !receiver.isObject() || !receiver.hasOnlyLayouts() || !typeOf(read->propertyOperand()).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
         return nullptr;
     std::span<const LayoutID> layouts = m_program.at(receiver.layouts).completeMembers();
     if (layouts.size() != 1)

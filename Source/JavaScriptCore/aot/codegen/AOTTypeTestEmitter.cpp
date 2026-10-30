@@ -147,6 +147,24 @@ Condition TypeTestEmitter::emitBoolean(Operand operand, const TypeTestPlan& plan
     });
 }
 
+std::optional<Condition> TypeTestEmitter::tryEmitAsOneCondition(Operand operand, const TypeTestPlan& plan, CodeShape shape)
+{
+    RELEASE_ASSERT(operand.representation == plan.representation);
+    SetForScope shapeOfTest(m_shape, shape);
+    switch (plan.verdict) {
+    case TypeTestVerdict::AlwaysPasses:
+        return boolean(true);
+    case TypeTestVerdict::NeverPasses:
+        return boolean(false);
+    case TypeTestVerdict::NeedsTest:
+        break;
+    }
+    LBasicBlock blockBefore = m_out.m_block;
+    std::optional<Condition> condition = tryGetSingleCondition(operand, plan);
+    RELEASE_ASSERT(condition || m_out.m_block == blockBefore);
+    return condition;
+}
+
 void TypeTestEmitter::leaveUnless(Condition condition, B3::FrequentedBlock failure)
 {
     if (condition.value()->hasInt32()) {

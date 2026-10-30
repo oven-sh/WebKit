@@ -114,6 +114,10 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 {
     ModuleID module = value->module();
     const Module& target = m_program.at(module);
+    if (value->ifHeldForImport()) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndex(module), moduleIndex(value->referrer()) }));
+        return;
+    }
     auto requireInSlowPath = [&](CallOptions options) {
         options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
@@ -135,6 +139,12 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
+}
+
+void ModuleEmitter::generateCountExecution(const ValueContext& value)
+{
+    Operand arguments[] { moduleIndex(value->module()), word32(static_cast<int32_t>(value->description().index())), word32(static_cast<int32_t>(value->counter())) };
+    callWithoutSite(RuntimeOperation::CountExecution, arguments, Representation::Void, { });
 }
 
 void ModuleEmitter::generateResolveModule(const ValueContext& value)
@@ -197,7 +207,10 @@ void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
     ModuleID module = value->module();
     LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
-    if (!m_program.at(module).flags.contains(ModuleFlags::MayBeEvicted)) {
+    OptionSet<ModuleFlags> flags = m_program.at(module).flags;
+    // A module without a start of its own is marked behind the site that requires it, whatever BeginModuleEvaluation has answered there: the loader may hold its status in a record.
+    bool isMarkedWhereRequired = flags.contains(ModuleFlags::IsListedInCache) && !flags.contains(ModuleFlags::EvaluatesItself);
+    if (!flags.contains(ModuleFlags::MayBeEvicted) && !isMarkedWhereRequired) {
         m_out.store32As8(evaluated, statusOf(module));
         return;
     }

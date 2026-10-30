@@ -157,6 +157,31 @@ static bool isConstantExpression(const Function& function, const Value& value, u
     return isConstantExpression(function, function.at(value.leftOperand()), remainingDepth - 1) && isConstantExpression(function, function.at(value.rightOperand()), remainingDepth - 1);
 }
 
+// A body is measured before its accesses are resolved. Where the type of the receiver names its layouts the access ends as what the name finds on them: a slot operation for a field, a call for an accessor.
+static unsigned estimatedBytesOfAccessByName(const Program& program, const Function& function, const Value& access)
+{
+    if (!isNamedAccess(access.opcode))
+        return CodeSize::accessByName;
+    LayoutSetID layouts = program.typeOf(function, access.operand(*receiverOf(access.opcode))).layouts;
+    if (!layouts)
+        return CodeSize::accessByName;
+    Access kind = accessOf(access.opcode);
+    if (kind != Access::Read && kind != Access::Store)
+        return CodeSize::slotAccess;
+
+    unsigned operandsOfAccessor = kind == Access::Store ? 2 : 1;
+    PropertyKeyID key = keyOfNamedAccess(program, access);
+    unsigned bytes = CodeSize::slotAccess;
+    for (LayoutID layout : program.at(layouts).completeMembers()) {
+        MemberAnswer member = findMember({ program }, { MemberStart::Instance, layout, key, kind });
+        if (member.kind == MemberKind::Accessor && member.accessorFor(kind))
+            bytes = std::max(bytes, estimatedDirectCallBytes(operandsOfAccessor));
+        else if (member.kind == MemberKind::Field && fieldAt(program, { member.holder, member.field }).form.contains(FieldForm::IsAccessor))
+            bytes = std::max(bytes, CodeSize::slotAccess + CodeSize::indirectCall + CodeSize::perOperand * (1 + operandsOfAccessor));
+    }
+    return bytes;
+}
+
 unsigned estimatedCodeBytes(const Program& program, const Function& function, const Value& value)
 {
     Opcode opcode = value.opcode;
@@ -186,8 +211,7 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     case AccessClass::Slot:
         return CodeSize::slotAccess;
     case AccessClass::ByName:
-        // A body is measured before its accesses are resolved. Where the type of the receiver names its layouts the access ends as a slot operation.
-        return isNamedAccess(opcode) && program.typeOf(function, value.operand(*receiverOf(opcode))).layouts ? CodeSize::slotAccess : CodeSize::accessByName;
+        return estimatedBytesOfAccessByName(program, function, value);
     case AccessClass::DirectCall:
         return estimatedDirectCallBytes(value.numberOfOperands());
     case AccessClass::IndirectCall:
@@ -2572,8 +2596,11 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
-    Bets bets = isCold(heat).predicted() || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
+    // The table has an entrypoint for every method under the name, nobody knows which of them a call enters, and the body stays where it is for whoever calls the method by value.
+    // So with the function that has an arm for each function that a value may be.
+    bool isOneRowOfMany = caller.role == FunctionRole::TableEntrypoint || isCallWithSharedArms(caller);
+    Bets bets = isCold(heat).predicted() || depth >= InlineModel::depthWithoutBets || isOneRowOfMany ? Bets::None : Bets::OnSpeed;
+    uint32_t budget = isCallWithSharedArms(caller) || wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {
@@ -2951,6 +2978,15 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
     // The limit is on what inlining adds. A caller that is large by itself takes in as much as a small one.
     auto computeInlinedBytes = [&] {
         const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+        // The traversal of a chain of array methods was let past the limit, so what it brought is not held against whoever asks next.
+        const Vector<InlineFrame>& frames = context.function.inlineFrames;
+        BitVector isInsideChain(frames.size());
+        for (uint32_t index = 1; index < frames.size(); ++index) {
+            const InlineFrame& frame = frames[index];
+            RELEASE_ASSERT(frame.parent < index);
+            if (isInsideChain.quickGet(frame.parent) || (frame.callee && context.program.at(frame.callee).role == FunctionRole::ChainStep))
+                isInsideChain.quickSet(index);
+        }
         uint64_t bytes = 0;
         for (BlockID block : context.analyses.cfg().reversePostOrder()) {
             if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
@@ -2960,7 +2996,7 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
                 // The test that a comparison of the program asks for takes the place of the test its access would make.
                 if (value.opcode == Opcode::IsInBounds && value.isFromProgram())
                     continue;
-                if (value.inlineFrame)
+                if (value.inlineFrame && !isInsideChain.quickGet(value.inlineFrame))
                     bytes += estimatedCodeBytes(context.program, context.function, value);
             }
         }

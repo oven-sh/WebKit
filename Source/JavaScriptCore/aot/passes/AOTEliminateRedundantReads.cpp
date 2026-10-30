@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinUses.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
 #include "AOTDominators.h"
@@ -30,6 +31,7 @@
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
+#include "AOTSplitUnions.h"
 #include "AOTThreshold.h"
 #include "AOTTypeRelations.h"
 #include "AOTUseEffectHistory.h"
@@ -542,7 +544,7 @@ struct RedundantReadElimination {
             seen = true;
         else if (!mayBeSameObject(typeOf(a), typeOf(b), m_program.types))
             seen = false;
-        else if (namesNoObjectMadeHere(a) && namesNoObjectMadeHere(b))
+        else if (namesNoObjectMadeHere(a) && namesNoObjectMadeHere(b) && !m_analyses.opcodesOfValues().contains(Opcode::GetHeapFrameWord))
             seen = true;
         if (m_checksScreens && seen && !m_analyses.escape().gaveUp()) [[unlikely]]
             RELEASE_ASSERT(m_analyses.escape().mayAlias(a, b) == *seen);
@@ -1584,6 +1586,10 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
         ProgramPoint point;
         ValueID first;
     };
+    struct NarrowingBranch {
+        ValueID test;
+        BlockID block;
+    };
     Function& function = context.function;
     size_t numberOfComparisons = 0;
     for (const Block& block : function.blocks) {
@@ -1594,8 +1600,38 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
     if (numberOfComparisons < 2)
         return PassOutcome::Unchanged;
 
+    // A branch hands operands of its test to its arms, and names them by their positions in the test.
+    Vector<NarrowingBranch, 8> narrowingBranches;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Terminator& terminator = function.at(BlockID(blockIndex)).terminator;
+        if (!terminator.isConditionalBranch() || !questions.contains(function.at(terminator.conditionOperand()).opcode))
+            continue;
+        if (!terminator.taken().proofs.isEmpty() || !terminator.notTaken().proofs.isEmpty())
+            narrowingBranches.append({ terminator.conditionOperand(), BlockID(blockIndex) });
+    }
+    auto indexOfTest = [](const NarrowingBranch& branch) { return branch.test.index(); };
+    AOT::sort(narrowingBranches, { }, indexOfTest);
+    // An arm was typed by what its own test says of the operand that it takes: the first test has to say as much of the same operand.
+    auto saysAsMuchToArms = [&](ValueID first, ValueID repeatedTest, bool namesOperandsTheOtherWayRound) {
+        TypingContext typing { context.program, function, context.types };
+        return std::ranges::all_of(std::ranges::equal_range(narrowingBranches, repeatedTest.index(), { }, indexOfTest), [&](const NarrowingBranch& branch) {
+            const Terminator& terminator = function.at(branch.block).terminator;
+            for (EdgeSide side : { EdgeSide::Taken, EdgeSide::NotTaken }) {
+                const Target& target = side == EdgeSide::Taken ? terminator.taken() : terminator.notTaken();
+                for (uint32_t index = 0; index < target.proofs.size(); ++index) {
+                    uint32_t operandIndex = namesOperandsTheOtherWayRound ? 1 - target.proofs[index] : target.proofs[index];
+                    ValueID parameter = function.at(target.block).parameters[target.arguments.size() + index];
+                    if (!narrowOperandByTest(typing, function.at(first), operandIndex, side).isSubsetOf(context.program.typeOf(function, parameter), context.program))
+                        return false;
+                }
+            }
+            return true;
+        });
+    };
+
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
     const Dominators& dominators = context.analyses.dominators();
+    Vector<BlockID, 4> branchesOnTestsTheOtherWayRound;
     Vector<Comparison, 16> made;
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> innermost;
     Vector<size_t, 16> numberMadeAtEntry;
@@ -1619,7 +1655,13 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
             while (earlier && made[*earlier].block != block && !dominators.terminatorDominates(made[*earlier].block, block))
                 earlier = made[*earlier].outer;
             // Behind a test the same question may have a narrower answer, and whoever takes it was typed by that.
-            if (earlier && context.program.typeOf(function, made[*earlier].result).isSubsetOf(context.program.typeOf(function, values[index]), context.program)) {
+            bool namesOperandsTheOtherWayRound = earlier && sameObjectThroughCasts(function, function.at(made[*earlier].result).operand(0)).valueInFrontOfFacts().index() != left;
+            if (earlier && context.program.typeOf(function, made[*earlier].result).isSubsetOf(context.program.typeOf(function, values[index]), context.program)
+                && saysAsMuchToArms(made[*earlier].result, values[index], namesOperandsTheOtherWayRound)) {
+                if (namesOperandsTheOtherWayRound) {
+                    for (const NarrowingBranch& branch : std::ranges::equal_range(narrowingBranches, values[index].index(), { }, indexOfTest))
+                        branchesOnTestsTheOtherWayRound.append(branch.block);
+                }
                 substitution.replace(values[index], made[*earlier].result);
                 repeated.append({ { block, index }, made[*earlier].result });
                 continue;
@@ -1638,6 +1680,12 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
     if (repeated.isEmpty())
         return PassOutcome::Unchanged;
     substitution.apply(function, &context.analyses);
+    for (BlockID block : branchesOnTestsTheOtherWayRound) {
+        for (Target& target : function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets) {
+            for (uint32_t& operandIndex : target.proofs)
+                operandIndex = 1 - operandIndex;
+        }
+    }
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     if (context.build.validates()) {
         // The repeated comparison stays, and its answer is held against the first one's.
@@ -1958,7 +2006,9 @@ static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context,
                 Effects effects = analyses.effectsOf(values[index]).onAnyEdge();
                 if (effects.mayRunOtherCode() || effects.writes.containsAny(kind.heapsRead))
                     return { };
-                if (earlier.opcode == kind.opcode && earlier.type == read.type && kind.hasSamePayload(earlier, read) && identitiesOf(earlier) == operands)
+                // The first read may know more of what it found: behind a test of its position it finds an element, where the second one says an element or undefined.
+                bool answersSecondRead = earlier.type == read.type || context.program.at(earlier.type).isSubsetOf(context.program.at(read.type), context.program);
+                if (earlier.opcode == kind.opcode && answersSecondRead && kind.hasSamePayload(earlier, read) && identitiesOf(earlier) == operands)
                     return values[index];
             }
             std::span<const BlockID> predecessors = cfg.predecessors(block);
@@ -2044,6 +2094,27 @@ static PassOutcome dropRepeatedPrivateReads(FunctionPassContext& context)
         return std::pair { read.objectOperand(), read.tokenOperand() };
     }, [](const Value& earlier, const Value& read) {
         return earlier.layout() == read.layout() && earlier.field() == read.field();
+    } });
+}
+
+// `shape.radius + shape.radius`, each asked of the tables of the run time alone: while nothing is written and no code runs they answer the same, and so does the test whether they did.
+static PassOutcome dropRepeatedReadsFromTables(FunctionPassContext& context)
+{
+    PassOutcome outcome = dropRepeatedReadsOnStraightWays(context, { Opcode::PropGet, { AbstractHeap::NamedProperties, AbstractHeap::ObjectFields, AbstractHeap::ShapeWords, AbstractHeap::PrototypeLinks, AbstractHeap::RuntimeState }, [](FunctionPassContext&, ValueID, const Value& read) {
+        return read.asksOnlyTables();
+    }, [](const Value& read) {
+        return std::pair { read.objectOperand(), read.objectOperand() };
+    }, [](const Value& earlier, const Value& read) {
+        return earlier.asksOnlyTables() && earlier.key() == read.key();
+    } });
+    if (outcome == PassOutcome::Unchanged)
+        return outcome;
+    return outcome | dropRepeatedReadsOnStraightWays(context, { Opcode::DidReadAbove, { }, [](FunctionPassContext&, ValueID, const Value&) {
+        return true;
+    }, [](const Value& test) {
+        return std::pair { test.valueOperand(), test.valueOperand() };
+    }, [](const Value&, const Value&) {
+        return true;
     } });
 }
 
@@ -2250,6 +2321,31 @@ struct LoopEditor {
     TypePropagationInputs typingInputs() { return { m_program, m_context.id, m_function, m_analyses, m_context.types, m_context.build, &m_context.typingMemo }; }
     IRBuilder makeBuilder() { return IRBuilder(m_analyses.context(), m_function, m_context.types, &m_analyses); }
 
+    // The copy is entered in the middle of a turn. What the loop has made by then joins what the copy makes there: a parameter for each such value that is live.
+    // Entries times live values is all that grows faster than the loop here: a loop that carries n sums, each with a path that leaves, would get n x n parameters.
+    // So a loop of any size is copied as long as the joins stay in proportion to the copy. Of 6,000 loops of real programs the most has 1.3 joins for a value copied, half have 0.12.
+    bool joinsMoreThanItCopies(std::span<const BlockID> region, std::span<const BlockID> entriesOfCopy)
+    {
+        AOT_THRESHOLD(size_t, joinsForEachValueCopied, 2);
+        BitVector isInLoop(m_function.blocks.size());
+        size_t mostValuesJoined = 0;
+        for (BlockID block : region) {
+            isInLoop.set(block.index());
+            mostValuesJoined += m_function.at(block).parameters.size() + m_function.at(block).values.size();
+        }
+        mostValuesJoined *= joinsForEachValueCopied;
+        const Liveness& liveness = m_analyses.liveness();
+        const UseLists& uses = m_analyses.useLists();
+        size_t numberOfValuesJoined = 0;
+        for (BlockID entry : entriesOfCopy) {
+            for (ValueID live : liveness.liveAtHead(entry)) {
+                if (isInLoop.get(uses.blockOf(live).index()) && ++numberOfValuesJoined > mostValuesJoined)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     // The cycle through the copy of a separated loop starts at a block that SeparateUnlikelyLoopPaths made, which has no hint.
     bool isHeaderOfLoopOfProgram(BlockID header) const
     {
@@ -2357,6 +2453,16 @@ struct VariableCarrier : LoopEditor {
     // In every loop that no path has to leave for it: the variables that the first turn reads before the loop can end. What is read ahead of an inner loop is a read of the loop around it.
     PassOutcome run()
     {
+        bool tookHeadsOutOfLoops = false;
+        for (BlockID header : headersFromInnermost()) {
+            const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
+            if (loop && isHeaderOfLoopOfProgram(header) && beginLaterTurnsBehindUnchangingHead(*loop))
+                tookHeadsOutOfLoops = true;
+        }
+        if (tookHeadsOutOfLoops) {
+            removeTrivialParameters(m_context);
+            retype();
+        }
         bool hoistedObjectTests = false;
         if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops)) {
             for (BlockID header : headersFromInnermost()) {
@@ -2377,7 +2483,7 @@ struct VariableCarrier : LoopEditor {
                 isHeaderOfChangedLoop.set(header.index());
         }
         if (isHeaderOfChangedLoop.isEmpty())
-            return hoistedObjectTests ? PassOutcome::Changed : PassOutcome::Unchanged;
+            return hoistedObjectTests || tookHeadsOutOfLoops ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         for (unsigned round = 0; round < maxRoundsPerStep && retype(); ++round) {
             bool moved = false;
@@ -2619,10 +2725,13 @@ struct VariableCarrier : LoopEditor {
     }
 
     // Adds the blocks that stay in a loop when `leaves` has left it and that may write a variable which every turn reads, other than by a store of the loop's own. False, and nothing is added: there is no such variable, or the loop no longer turns without them.
-    bool letWritersOfVariablesLeave(const NaturalLoop& loop, BitVector& leaves)
+    enum class WhatPays : bool { Reads, Stores };
+    bool letWritersOfVariablesLeave(const NaturalLoop& loop, BitVector& leaves, WhatPays whatPays)
     {
         findVariables(loop, leaves);
         if (m_variables.isEmpty())
+            return false;
+        if (whatPays == WhatPays::Stores && std::ranges::all_of(m_variables, [](const CarriedVariable& variable) { return variable.stores.isEmpty(); }))
             return false;
         BitVector writers(m_function.blocks.size());
         for (const CarriedVariable& variable : m_variables) {
@@ -2861,6 +2970,228 @@ struct VariableCarrier : LoopEditor {
         return true;
     }
 
+    // `for (let i = 0; i < queue.length; i++)` where the queue is an array or an object with a layout: every turn begins by telling the two apart and reads the length of the one it has found,
+    // and the two ways join in front of the comparison. Nothing in the loop writes what they read, so every turn finds what the first one found.
+    struct UnchangingHead {
+        Vector<BlockID, 8> blocks { };
+        BlockID join { };
+        // For each parameter of the join, the parameter of the header that every way passes for it. None: what is passed is the same in every turn.
+        Vector<std::optional<size_t>, 4> parametersOfHeaderPassedOn { };
+    };
+
+    // Nothing if the loop runs other code.
+    std::optional<LocationMasks> findWritesOf(const NaturalLoop& loop)
+    {
+        LocationMasks writes;
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID block = loop.at(position);
+            Effects ofTerminator = m_analyses.effectsOfTerminator(block).onAnyEdge();
+            if (ofTerminator.mayRunOtherCode())
+                return std::nullopt;
+            writes.merge(ofTerminator.writes);
+            for (ValueID value : m_function.at(block).values) {
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                // A store to a slot leaves the field in its slot. Any other store to a field may give it a value that the slot cannot hold.
+                bool mayTakeFieldOutOfSlot = m_function.at(value).opcode != Opcode::PutSlot && !effects.writes.restrictedTo({ AbstractHeap::ObjectFields }).isEmpty();
+                if (mayTakeFieldOutOfSlot || effects.mayRunOtherCode())
+                    return std::nullopt;
+                writes.merge(effects.writes);
+            }
+        }
+        return writes;
+    }
+
+    // The blocks from the header on that only ask what has one answer, as far as all their ways through the loop lead to one block.
+    std::optional<UnchangingHead> findUnchangingHead(const NaturalLoop& loop)
+    {
+        const CFG& cfg = m_analyses.cfg();
+        const NaturalLoops& loops = m_analyses.naturalLoops();
+        const UseLists& useLists = m_analyses.useLists();
+        BlockID header = loop.header();
+        const CompactList<ValueID>& parametersOfHeader = m_function.at(header).parameters;
+
+        BitVector staysTheSame(m_function.values.size());
+        auto isSameInEveryTurn = [&](ValueID value) {
+            return staysTheSame.get(value.index()) || !loops.belongsTo(useLists.locationOf(value).block, loop);
+        };
+        std::optional<LocationMasks> writes;
+        auto onlyAsks = [&](BlockID id) {
+            const Block& block = m_function.at(id);
+            const Terminator& terminator = block.terminator;
+            if (block.handler || block.isHandlerBlock() || loops.innerMostLoopOf(id) != &loop || (terminator.kind != TerminatorKind::Jump && terminator.kind != TerminatorKind::Branch))
+                return false;
+            for (ValueID value : block.values) {
+                const Value& operation = m_function.at(value);
+                if (operation.opcode == Opcode::LoopHint && id == header)
+                    continue;
+                bool hasSameOperands = true;
+                operation.forEachOperand([&](ValueID operand, uint32_t) {
+                    hasSameOperands &= isSameInEveryTurn(operand);
+                });
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                if (!hasSameOperands || !effects.isUnobservable() || !effects.writes.isEmpty())
+                    return false;
+                if (!effects.reads.isEmpty()) {
+                    if (!writes && !(writes = findWritesOf(loop)))
+                        return false;
+                    if (effects.reads.overlaps(*writes))
+                        return false;
+                }
+                staysTheSame.set(value.index());
+            }
+            if (terminator.kind == TerminatorKind::Branch && !isSameInEveryTurn(terminator.conditionOperand()))
+                return false;
+            return std::ranges::none_of(terminator.targets, [&](const Target& target) {
+                return target.block == header;
+            });
+        };
+        auto waysOnThroughLoop = [&](BlockID id) -> size_t {
+            return std::ranges::count_if(m_function.at(id).terminator.targets, [&](const Target& target) {
+                return loops.belongsTo(target.block, loop);
+            });
+        };
+
+        if (!onlyAsks(header))
+            return std::nullopt;
+        UnchangingHead head { { header } };
+        BitVector isInHead(m_function.blocks.size());
+        isInHead.set(header.index());
+        size_t openWays = waysOnThroughLoop(header);
+        // A head with one way through the loop is a row of leading tests, which moveLeadingTestsAheadOf() and the back end take.
+        bool forks = openWays > 1;
+        size_t numberOfBlocksAheadOfJoin = 0;
+
+        for (BlockID id : cfg.reversePostOrder()) {
+            if (id == header || !loops.belongsTo(id, loop))
+                continue;
+            const Block& block = m_function.at(id);
+            std::span<const Edge> waysIn = cfg.incomingEdges(id);
+            bool isEnteredFromHeadAlone = std::ranges::all_of(waysIn, [&](Edge edge) {
+                return !edge.isHandlerEdge() && isInHead.get(edge.from.index());
+            });
+            if (!isEnteredFromHeadAlone)
+                break;
+
+            Vector<std::optional<size_t>, 4> passedOn(block.parameters.size());
+            bool canBeJoin = !block.handler && !block.isHandlerBlock();
+            bool getsTheSameInEveryTurn = true;
+            for (size_t position = 0; position < block.parameters.size(); ++position) {
+                size_t numberOfWaysThatPassParameter = 0;
+                for (Edge edge : waysIn) {
+                    const Arguments& arguments = targetOf(m_function, edge).arguments;
+                    // What a test of the head has proven.
+                    if (position >= arguments.size() || isSameInEveryTurn(arguments[position]))
+                        continue;
+                    size_t index = parametersOfHeader.find(arguments[position]);
+                    canBeJoin &= index != notFound && (!passedOn[position] || *passedOn[position] == index);
+                    passedOn[position] = index;
+                    ++numberOfWaysThatPassParameter;
+                }
+                if (!numberOfWaysThatPassParameter)
+                    continue;
+                getsTheSameInEveryTurn = false;
+                canBeJoin &= numberOfWaysThatPassParameter == waysIn.size();
+            }
+            if (canBeJoin && forks && waysIn.size() == openWays) {
+                head.join = id;
+                head.parametersOfHeaderPassedOn = WTF::move(passedOn);
+                numberOfBlocksAheadOfJoin = head.blocks.size();
+            }
+            if (!getsTheSameInEveryTurn)
+                break;
+            for (ValueID parameter : block.parameters)
+                staysTheSame.set(parameter.index());
+            if (!onlyAsks(id))
+                break;
+            head.blocks.append(id);
+            isInHead.set(id.index());
+            size_t waysOn = waysOnThroughLoop(id);
+            forks |= waysOn > 1;
+            openWays = openWays - waysIn.size() + waysOn;
+        }
+        if (!head.join)
+            return std::nullopt;
+        head.blocks.shrink(numberOfBlocksAheadOfJoin);
+        return head;
+    }
+
+    // The head stays where it is and runs once, as the beginning of the first turn. Every later turn begins where the ways through the head join, with what the first turn has found. Nothing is copied.
+    bool beginLaterTurnsBehindUnchangingHead(const NaturalLoop& loop)
+    {
+        BlockID header = loop.header();
+        Vector<Edge, 4> latches;
+        for (Edge edge : m_analyses.cfg().incomingEdges(header)) {
+            if (!m_analyses.naturalLoops().belongsTo(edge.from, loop))
+                continue;
+            if (edge.isHandlerEdge() || hasEdgeResults(m_function, edge))
+                return false;
+            latches.append(edge);
+        }
+        std::optional<UnchangingHead> head = findUnchangingHead(loop);
+        if (!head)
+            return false;
+        BlockID join = head->join;
+        Vector<Edge, 4> waysToJoin;
+        waysToJoin.append(m_analyses.cfg().incomingEdges(join));
+        Vector<ValueID, 4> parametersOfHeader;
+        parametersOfHeader.append(m_function.at(header).parameters.span());
+        size_t numberOfAnswers = m_function.at(join).parameters.size();
+
+        IRBuilder builder = makeBuilder();
+        builder.setOrigin(m_function.at(header).terminator.origin());
+        BlockID landing = builder.addBlock(m_function.at(join).frequency);
+        Arguments entering;
+        for (size_t position = 0; position < numberOfAnswers; ++position) {
+            const Value& parameter = m_function.at(m_function.at(join).parameters[position]);
+            TypeID type = parameter.type;
+            ExpectedType expected = parameter.expected();
+            ValueID found = builder.addParameter(landing, type);
+            m_function.edit(found, ValueEdit::Type).setExpected(expected);
+            entering.append(found);
+        }
+        for (Edge edge : waysToJoin) {
+            BlockID way = builder.splitEdge(edge);
+            Terminator jump = takeTerminator(builder, way);
+            builder.setOrigin(jump.origin());
+            builder.emitJump(landing, WTF::move(jump.targets[0].arguments));
+        }
+
+        builder.setOrigin(m_function.at(header).terminator.origin());
+        Vector<Vector<ValueID, 4>, 4> definitionsOfVariables;
+        constexpr uint32_t noEdgeResults = 0;
+        for (ValueID parameter : parametersOfHeader) {
+            TypeID type = m_function.at(parameter).type;
+            ExpectedType expected = m_function.at(parameter).expected();
+            ValueID carried = builder.addParameter(join, type, noEdgeResults);
+            m_function.edit(carried, ValueEdit::Type).setExpected(expected);
+            definitionsOfVariables.append({ parameter, carried });
+            entering.append(parameter);
+        }
+        builder.moveToEndOf(landing);
+        builder.emitJump(join, WTF::move(entering));
+        for (Edge latch : latches) {
+            Arguments handedOn(targetOf(m_function, latch).arguments);
+            Arguments arguments;
+            for (size_t position = 0; position < numberOfAnswers; ++position) {
+                std::optional<size_t> passedOn = head->parametersOfHeaderPassedOn[position];
+                arguments.append(passedOn ? handedOn[*passedOn] : m_function.at(join).parameters[position]);
+            }
+            arguments.append(handedOn.span());
+            builder.redirectEdge(latch, join, WTF::move(arguments));
+        }
+
+        // A way out of the head may come back to it, through the copy of a separated loop: that cycle keeps its mark.
+        for (ValueID value : m_function.at(header).values) {
+            if (m_function.at(value).opcode != Opcode::LoopHint)
+                continue;
+            builder.setOrigin(m_function.at(value).origin());
+            builder.insertBefore({ join, 0 }, Value(m_function.at(value)));
+        }
+        builder.applyInsertions();
+        repair(builder, definitionsOfVariables.span());
+        return true;
+    }
+
     struct LeadingTest {
         BlockID block;
         std::optional<size_t> parameterOfHeader;
@@ -2912,6 +3243,21 @@ struct VariableCarrier : LoopEditor {
         Vector<ValueID, 4> proven;
         for (BlockID id = loop.header();;) {
             const Block& block = m_function.at(id);
+            auto onlyComputes = [&] {
+                return std::ranges::all_of(block.values, [&](ValueID value) {
+                    return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
+                });
+            };
+            // Where a test has gone ahead of the loop already, its block goes on to the next one.
+            if (!block.handler && block.terminator.kind == TerminatorKind::Jump) {
+                BlockID next = block.terminator.next().block;
+                if (!onlyComputes() || !loops.belongsTo(next, loop) || next == loop.header() || !cfg.singleIncomingEdge(next))
+                    break;
+                tests.append({ id, std::nullopt, true });
+                proven.append(ValueID());
+                id = next;
+                continue;
+            }
             if (block.handler || block.terminator.kind != TerminatorKind::Branch || block.values.isEmpty() || block.terminator.conditionOperand() != block.values.last())
                 break;
             const Value& test = m_function.at(block.values.last());
@@ -2919,24 +3265,27 @@ struct VariableCarrier : LoopEditor {
             auto isCastBehindFact = [&](ValueID value) {
                 return m_function.at(value).opcode == Opcode::AssumeType && m_function.at(value).factOperand() && useLists.locationOf(value).block == id;
             };
+            // What only computes is computed ahead of the loop as well, for nothing.
             bool holdsNothingElse = std::ranges::all_of(block.values.span().first(block.values.size() - 1), [&](ValueID value) {
                 Opcode opcode = m_function.at(value).opcode;
-                return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
+                return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value) || m_analyses.effectsOf(value).onAnyEdge().isPure();
             });
-            if (wanted == LeadingTests::OfObjects && !objectTestsHoistedBeforeLoops.contains(test.opcode)) {
-                bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
-                    return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
-                });
+            auto staysAndLeadsOn = [&] {
                 const Target& first = block.terminator.targets[0];
                 const Target& second = block.terminator.targets[1];
-                if (!onlyComputes || loops.belongsTo(first.block, loop) == loops.belongsTo(second.block, loop))
-                    break;
+                if (!onlyComputes() || loops.belongsTo(first.block, loop) == loops.belongsTo(second.block, loop))
+                    return false;
                 BlockID next = loops.belongsTo(first.block, loop) ? first.block : second.block;
                 if (next == loop.header() || !cfg.singleIncomingEdge(next))
-                    break;
+                    return false;
                 tests.append({ id, std::nullopt, true });
                 proven.append(ValueID());
                 id = next;
+                return true;
+            };
+            if (wanted == LeadingTests::OfObjects ? !objectTestsHoistedBeforeLoops.contains(test.opcode) : test.opcode != Opcode::TypeTest) {
+                if (!staysAndLeadsOn())
+                    break;
                 continue;
             }
             if (test.opcode != (wanted == LeadingTests::OfTypes ? Opcode::TypeTest : test.opcode) || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
@@ -2966,10 +3315,17 @@ struct VariableCarrier : LoopEditor {
                 parameterOfHeader = tests[position].parameterOfHeader;
             else if (size_t index = header.parameters.find(tested); index != notFound)
                 parameterOfHeader = index;
-            else if (loops.belongsTo(useLists.locationOf(tested).block, loop))
-                break;
-            if (parameterOfHeader && (!isPassedOnWithType(*parameterOfHeader, test.testedType()) || !isNarrowedByTest(header.parameters[*parameterOfHeader], test.testedType())))
-                break;
+            else if (loops.belongsTo(useLists.locationOf(tested).block, loop)) {
+                if (!staysAndLeadsOn())
+                    break;
+                continue;
+            }
+            // A counter that is not yet known to stay an int32 is tested in every turn. Such a test decides whether the loop goes on, like the test that ends it.
+            if (parameterOfHeader && (!isPassedOnWithType(*parameterOfHeader, test.testedType()) || !isNarrowedByTest(header.parameters[*parameterOfHeader], test.testedType()))) {
+                if (!staysAndLeadsOn())
+                    break;
+                continue;
+            }
             tests.append({ id, parameterOfHeader });
             proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
             id = taken.block;
@@ -3228,6 +3584,7 @@ struct LoopPathSeparator : LoopEditor {
         BitVector carriedValuesThatMayBeUnspecified { };
         bool letsVariablesBeCarried { false };
         bool onlyLeavesTestWithOneAnswer { false };
+        bool standsInForLoopInside { false };
         BitVector emptyPathsThatStay { };
     };
 
@@ -3447,6 +3804,48 @@ struct LoopPathSeparator : LoopEditor {
         return false;
     }
 
+    bool leavesReadsUnwritten(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        LocationMasks readsOfLikelyPaths;
+        LocationMasks writesOfLikelyPaths;
+        LocationMasks writesOfLeavingPaths;
+        for (size_t index : isInLoop) {
+            auto add = [&](const Effects& effects) {
+                (leaves.get(index) ? writesOfLeavingPaths : writesOfLikelyPaths).merge(effects.mayRunOtherCode() ? LocationMasks::top() : effects.writes);
+                if (!leaves.get(index))
+                    readsOfLikelyPaths.merge(effects.reads);
+            };
+            for (ValueID value : m_function.blocks[index].values)
+                add(m_analyses.effectsOf(value).onAnyEdge());
+            add(m_analyses.effectsOfTerminator(BlockID(index)).onAnyEdge());
+        }
+        return !writesOfLeavingPaths.intersectedWith(readsOfLikelyPaths).isSubsetOf(writesOfLikelyPaths);
+    }
+
+    bool leavesObjectToLikelyPaths(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        const EscapeAnalysis& escape = m_analyses.escape();
+        for (unsigned index = 0; index < escape.numberOfObjects(); ++index) {
+            const TrackedObject& object = escape.at(ObjectID(index));
+            if (object.kind != ObjectKind::Allocation)
+                continue;
+            BlockID madeIn = m_analyses.useLists().blockOf(object.definition);
+            if (!madeIn || !isInLoop.get(madeIn.index()) || leaves.get(madeIn.index()))
+                continue;
+            bool isUsedOnLeavingPath = false;
+            bool escapesOnLikelyPath = false;
+            for (const ObjectUse& use : escape.usesOf(ObjectID(index))) {
+                if (leaves.get(use.use.block.index()))
+                    isUsedOnLeavingPath = true;
+                else
+                    escapesOnLikelyPath |= use.isEscape;
+            }
+            if (isUsedOnLeavingPath && !escapesOnLikelyPath)
+                return true;
+        }
+        return false;
+    }
+
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
     {
@@ -3460,6 +3859,25 @@ struct LoopPathSeparator : LoopEditor {
             });
             if (isRead)
                 return true;
+        }
+        return false;
+    }
+
+    // Reads that the tables of the run time answer call nothing, so the turns that they answer run without a call once the others have left.
+    bool leavesReadsFromTablesAlone(const BitVector& leaves)
+    {
+        for (size_t index : leaves) {
+            for (Edge edge : m_analyses.cfg().incomingEdges(BlockID(index))) {
+                const Terminator& terminator = m_function.at(edge.from).terminator;
+                if (leaves.get(edge.from.index()) || edge.isHandlerEdge() || !terminator.isConditionalBranch())
+                    continue;
+                const Value& test = m_function.at(terminator.conditionOperand());
+                if (test.opcode != Opcode::DidReadAbove)
+                    continue;
+                const Value& read = m_function.at(test.valueOperand());
+                if (read.opcode == Opcode::PropGet && read.asksOnlyTables())
+                    return true;
+            }
         }
         return false;
     }
@@ -3491,8 +3909,14 @@ struct LoopPathSeparator : LoopEditor {
             if (!stays(block))
                 continue;
             const Block& contents = m_function.at(block);
-            for (ValueID parameter : contents.parameters)
-                changesBetweenTurns.set(parameter.index());
+            // What a test with one answer has proven is what it tested: `queue` as an object with a layout, behind the test that tells such an object from an array.
+            std::optional<Edge> onlyWayIn = m_analyses.cfg().singleIncomingEdge(block);
+            bool followsTestWithOneAnswer = onlyWayIn && !onlyWayIn->isHandlerEdge() && stays(onlyWayIn->from) && m_function.at(onlyWayIn->from).terminator.kind == TerminatorKind::Branch
+                && !changesBetweenTurns.get(m_function.at(onlyWayIn->from).terminator.conditionOperand().index());
+            for (size_t position = 0; position < contents.parameters.size(); ++position) {
+                if (!followsTestWithOneAnswer || position < targetOf(m_function, *onlyWayIn).arguments.size())
+                    changesBetweenTurns.set(contents.parameters[position].index());
+            }
             for (ValueID id : contents.values) {
                 Effects effects = m_analyses.effectsOf(id).onAnyEdge();
                 bool changes = !effects.isUnobservable() || effects.reads.overlaps(writes);
@@ -3505,7 +3929,12 @@ struct LoopPathSeparator : LoopEditor {
             const Terminator& terminator = contents.terminator;
             if (terminator.kind != TerminatorKind::Branch || !contents.values.contains(terminator.conditionOperand()) || changesBetweenTurns.get(terminator.conditionOperand().index()))
                 continue;
-            if (m_analyses.effectsOf(terminator.conditionOperand()).onAnyEdge().reads.isEmpty())
+            // So has a test of the type of a value that was made ahead of the loop. Whether a number is an integer is asked where a counter is made one.
+            const Value& test = m_function.at(terminator.conditionOperand());
+            bool asksForTypeOfValueFromAheadOfLoop = test.opcode == Opcode::TypeTest
+                && !isInLoop.get(m_analyses.useLists().blockOf(m_analyses.identityOf(test.operand(0))).index())
+                && !m_program.at(test.testedType()).isSubsetOf(m_program.at(TypeTable::number), m_program);
+            if (!asksForTypeOfValueFromAheadOfLoop && m_analyses.effectsOf(terminator.conditionOperand()).onAnyEdge().reads.isEmpty())
                 continue;
             if (std::ranges::any_of(terminator.targets, [&](const Target& target) { return leaves.get(target.block.index()); }))
                 return true;
@@ -3676,24 +4105,28 @@ struct LoopPathSeparator : LoopEditor {
         for (ValueID parameter : parameters)
             plan.typesOfCarriedValues.append(m_function.at(parameter).type);
         BitVector isInLoop(m_function.blocks.size());
-        uint64_t bytes = 0;
         uint64_t bytesOfLikelyPaths = 0;
+        bool runsLoopInEveryTurn = false;
         for (unsigned index = 0; index < loop.size(); ++index) {
             BlockID block = loop.at(index);
             if (m_isSeparatedHeader.get(block.index()))
                 return std::nullopt;
             isInLoop.set(block.index());
             plan.region.append(block);
-            uint64_t bytesOfBlock = estimatedCodeBytes(m_program, m_function, m_function.at(block));
-            bytes += bytesOfBlock;
-            if (m_analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Normal)
-                bytesOfLikelyPaths += bytesOfBlock;
+            if (m_analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Normal) {
+                bytesOfLikelyPaths += estimatedCodeBytes(m_program, m_function, m_function.at(block));
+                runsLoopInEveryTurn |= m_analyses.naturalLoops().innerMostLoopOf(block) != &loop;
+            }
         }
+        plan.standsInForLoopInside = paysForLoopInside;
         // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
-        bool isShort = bytesOfLikelyPaths <= m_context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8;
+        AOT_THRESHOLD(uint64_t, bytesOfShortTurn, 512);
+        bool isShort = bytesOfLikelyPaths <= bytesOfShortTurn;
 
         BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute, plan.emptyPathsThatStay);
-        plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
+        // A loop that carries variables is entered through its copy, which is likely code then: it runs the whole first turn, with every turn of a loop inside. A turn that runs a loop
+        // of its own does not wait for one read of a variable, so there the variables have to be stored as well.
+        plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves, runsLoopInEveryTurn ? VariableCarrier::WhatPays::Stores : VariableCarrier::WhatPays::Reads);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
         plan.carriedValuesThatMayBeUnspecified = BitVector(parameters.size());
@@ -3701,13 +4134,15 @@ struct LoopPathSeparator : LoopEditor {
             if (typeOf(parameters[index]).mayBeUnspecified())
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
-        bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
+        Vector<TypeID> testsOfEveryTurn = findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified);
+        bool movesTest = std::ranges::any_of(testsOfEveryTurn, [](TypeID tested) {
             return !!tested;
         });
-        bool paysByItself = movesTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves));
+        bool paysToMoveTest = movesTest && (paysForLoopInside || !runsLoopInEveryTurn || !onlyChoosesBetweenFormsOfLoopInside(loop, isInLoop, leaves, testsOfEveryTurn.span()));
+        bool paysByItself = paysToMoveTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves)) || leavesReadsFromTablesAlone(leaves);
         if (!paysByItself && !(isShort && (paysForLoopInside || leavesTestWithOneAnswer(isInLoop, leaves))))
             return std::nullopt;
-        plan.onlyLeavesTestWithOneAnswer = !paysByItself;
+        plan.onlyLeavesTestWithOneAnswer = !paysByItself && !movesTest;
 
         BitVector isEntryOfCopy(m_function.blocks.size());
         for (size_t index : leaves) {
@@ -3736,7 +4171,7 @@ struct LoopPathSeparator : LoopEditor {
         // The way back enters the copy at its header where a test fails.
         plan.entriesOfCopy.append(header);
 
-        if (m_context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes))
+        if (joinsMoreThanItCopies(plan.region.span(), plan.entriesOfCopy.span()))
             return std::nullopt;
         if (RegionCloner::checkCanDuplicate(m_analyses, plan.region.span(), plan.entriesOfCopy.span()) != CloneCheck::CanClone)
             return std::nullopt;
@@ -3787,6 +4222,71 @@ struct LoopPathSeparator : LoopEditor {
         repair.run();
         m_analyses.didChangeControlFlow();
         retypeValues();
+    }
+
+    // `for (let n = next(); n > 0; n = next()) for (let i = 0; i < n; i++) ..`: the loop inside stands there twice, for an int32 and, rare, for any other number, behind one test of `n`.
+    // A copy of the loop around them would hold both again, and the test would stand on every edge into that loop in place of once in front of the two. A turn that runs a loop does not wait for one test.
+    bool onlyChoosesBetweenFormsOfLoopInside(const NaturalLoop& loop, const BitVector& isInLoop, const BitVector& leavesLoop, std::span<const TypeID> testsOfEveryTurn)
+    {
+        const NaturalLoops& loops = m_analyses.naturalLoops();
+        const Dominators& dominators = m_analyses.dominators();
+        const Block& header = m_function.at(loop.header());
+        Vector<BlockID, 2> whereTestsFail;
+        for (size_t index = 0; index < header.parameters.size(); ++index) {
+            if (!testsOfEveryTurn[index])
+                continue;
+            bool runsLoopWhenFailed = false;
+            for (const Use& use : m_analyses.useLists().usesOf(header.parameters[index])) {
+                if (use.kind != Use::Kind::Operand || m_function.at(use.user).opcode != Opcode::TypeTest || !loops.belongsTo(use.block, loop))
+                    continue;
+                const Terminator& terminator = m_function.at(use.block).terminator;
+                BlockID whenFailed = terminator.kind == TerminatorKind::Branch && terminator.conditionOperand() == use.user ? terminator.notTaken().block : BlockID();
+                if (!whenFailed || !leavesLoop.get(whenFailed.index()))
+                    continue;
+                // A rare form that comes back in front of the likely one hands it a counter from the middle of a run, which is any number.
+                if (loops.innerMostLoopOf(use.block) != &loop)
+                    return false;
+                whereTestsFail.append(whenFailed);
+                for (size_t leaving : leavesLoop)
+                    runsLoopWhenFailed |= loops.headerOf(BlockID(leaving)) && dominators.dominates(whenFailed, BlockID(leaving));
+            }
+            if (!runsLoopWhenFailed)
+                return false;
+        }
+        bool likelyFormHasRarePaths = false;
+        for (size_t leaving : leavesLoop) {
+            if (m_analyses.blockFrequencies().classOf(BlockID(leaving)).predicted() != BlockFrequency::Rare)
+                return false;
+            likelyFormHasRarePaths |= std::ranges::none_of(whereTestsFail, [&](BlockID whenFailed) {
+                return dominators.dominates(whenFailed, BlockID(leaving));
+            });
+        }
+        if (!likelyFormHasRarePaths)
+            return true;
+        auto gains = [&](const BitVector& isInGainingLoop, bool runsLoopInEveryTurn) {
+            BitVector leavesGainingLoop = leavesLoop;
+            leavesGainingLoop.filter(isInGainingLoop);
+            if (leavesGainingLoop.isEmpty())
+                return false;
+            return !runsLoopInEveryTurn || leavesAllocationAlone(isInGainingLoop, leavesGainingLoop) || leavesObjectToLikelyPaths(isInGainingLoop, leavesGainingLoop) || leavesReadsUnwritten(isInGainingLoop, leavesGainingLoop);
+        };
+        if (gains(isInLoop, true))
+            return false;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            const NaturalLoop* inside = loops.headerOf(loop.at(index));
+            if (!inside || inside == &loop || leavesLoop.get(loop.at(index).index()))
+                continue;
+            bool runsLoopInEveryTurn = false;
+            BitVector isInside(m_function.blocks.size());
+            for (unsigned position = 0; position < inside->size(); ++position) {
+                BlockID block = inside->at(position);
+                isInside.set(block.index());
+                runsLoopInEveryTurn |= !leavesLoop.get(block.index()) && loops.innerMostLoopOf(block) != inside;
+            }
+            if (gains(isInside, runsLoopInEveryTurn))
+                return false;
+        }
+        return true;
     }
 
     // A value that goes around the loop and is tested in every turn, with the copy on the failing edge, is tested where it is made instead.
@@ -3961,7 +4461,8 @@ struct LoopPathSeparator : LoopEditor {
         }
 
         // A type that a test cannot establish (proven contents, a range of integers) keeps the copy from coming back.
-        Vector<TypeID> testedEveryTurn = findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
+        // A test that moves to where the value is made stands on every edge into the loop in place of once at its head. A loop that is separated for the loop inside it wants nothing for itself.
+        Vector<TypeID> testedEveryTurn = plan.standsInForLoopInside ? Vector<TypeID>(numberOfParameters) : findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
         Vector<TypeID> testedTypes = testedEveryTurn;
         Vector<TypeID> typesTakenFromCopy(numberOfParameters);
         for (size_t index = 0; index < numberOfParameters; ++index) {
@@ -4059,13 +4560,669 @@ struct LoopPathSeparator : LoopEditor {
     }
 };
 
+// What these answer holds until something writes what they read, and they may be asked at any time.
+constexpr OpcodeSet questionsAskedAheadOfLoops { Opcode::TypeTest, Opcode::IsSlotFilled, Opcode::IsNotFrozen, Opcode::AreMembersUnchanged, Opcode::IsClosureOf, Opcode::GetSlot, Opcode::Expect, Opcode::Upcast };
+// A lookup also reads the fields that compiled objects have under its own name. A store to a field under another name leaves what it finds.
+constexpr AbstractHeapSet heapsThatEveryLookupByNameReads { AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
+
+// `for (..) emitter.emit("tick", i)` asks in every turn what no turn changes: where the table of listeners is, what lies under "tick", whether that is the one function. Then it runs the function.
+// The questions are asked once, ahead of the loop. Behind the answers with which a turn runs no other code stands the loop without the questions.
+// Behind any other answer stands a copy of the loop as it was, which is as likely as the loop was: an emitter with two listeners pays for the questions once and for nothing else.
+// A question costs about what the read costs that it stands for, so a loop that is left in its first turn would only lose. The first turn runs as it was, in a copy of its own, and the questions are asked behind it.
+struct LoopVersioner : LoopEditor {
+    struct Step {
+        enum class Kind : uint8_t { Computation, ReadByName, Parameter, Test };
+        Kind kind;
+        BlockID block;
+        ValueID value;
+        ValueID passed { };
+        uint32_t keptTarget { 0 };
+    };
+    struct Plan {
+        BlockID header;
+        Edge entry;
+        Vector<BlockID> region { };
+        Vector<Step, 16> steps { };
+        Vector<Edge, 4> leavingEdges { };
+        Vector<Edge, 2> latches { };
+    };
+    struct Outlook {
+        bool staysQuiet { false };
+        unsigned questions { 0 };
+    };
+
+    BitVector m_isFinishedHeader { };
+
+    PassOutcome run()
+    {
+        if (!m_analyses.opcodesOfValues().contains(Opcode::PropGet))
+            return PassOutcome::Unchanged;
+        auto findPlan = [&]() -> std::optional<Plan> {
+            for (BlockID header : headersFromInnermost()) {
+                if (m_isFinishedHeader.set(header.index()))
+                    continue;
+                if (std::optional<Plan> plan = planFor(*m_analyses.naturalLoops().headerOf(header)))
+                    return plan;
+            }
+            return std::nullopt;
+        };
+        unsigned numberOfLoops = 0;
+        // A loop gets two copies, and the loop around it two of all three. All the copies together may not outgrow the function, or what a few small loops come to.
+        AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
+        const size_t mostValuesWithCopies = m_function.values.size() + std::max(m_function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
+        while (std::optional<Plan> plan = findPlan()) {
+            if (m_context.exceeds(LimitID::MaxSeparatedLoopsPerFunction, numberOfLoops + 1) || m_function.values.size() > mostValuesWithCopies)
+                break;
+            makeVersion(*plan);
+            ++numberOfLoops;
+        }
+        if (!numberOfLoops)
+            return PassOutcome::Unchanged;
+        removeTrivialParameters(m_context);
+        VariableCarrier { { m_context } }.retype();
+        return PassOutcome::Changed;
+    }
+
+    // It may run a getter or a trap, so it is one operation that nothing moves past. Mostly it finds a plain value, and what its site remembers says so without running anything.
+    bool isReadOffObjectWithoutLayout(ValueID id)
+    {
+        const Value& value = m_function.at(id);
+        if (value.opcode != Opcode::PropGet || value.isFreeName() || !value.key() || value.receivers() || m_program.nameClassOf(value.key()) == NameClass::Length)
+            return false;
+        if (!m_analyses.effectsOf(id).onAnyEdge().mayRunOtherCode())
+            return false;
+        const Type& object = typeOf(value.objectOperand());
+        return object.isJavaScriptValue() && object.hasObjects() && !object.layouts;
+    }
+
+    static bool staysQuiet(const Effects& effects)
+    {
+        return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsThatEveryLookupByNameReads);
+    }
+
+    std::optional<Plan> planFor(const NaturalLoop& loop)
+    {
+        const NaturalLoops& loops = m_analyses.naturalLoops();
+        const CFG& cfg = m_analyses.cfg();
+        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+        BlockID header = loop.header();
+        if (!isHeaderOfLoopOfProgram(header) || frequencies.classOf(header).predicted() != BlockFrequency::Normal)
+            return std::nullopt;
+        if (!isExpectedToRun(m_context, loop).predicted() || !isHot(heatClassOfLoopAt(m_context, header)).predicted())
+            return std::nullopt;
+        std::optional<Edge> entry = loops.findSingleEntry(loop);
+        if (!entry || hasEdgeResults(m_function, *entry))
+            return std::nullopt;
+
+        auto isInLoopBehindHeader = [&](BlockID block) {
+            return block != header && loops.belongsTo(block, loop);
+        };
+        auto isUnlikely = [&](BlockID block) {
+            return (frequencies.classOf(block) > frequencies.classOf(header)).predicted();
+        };
+        // A read that seldom runs is not worth a question in front of every entry: it is other code, and its path goes on in the copy.
+        auto mayBecomeQuestion = [&](BlockID block, ValueID value) {
+            return !isUnlikely(block) && loops.innerMostLoopOf(block) == &loop && isReadOffObjectWithoutLayout(value);
+        };
+
+        Plan plan { header, *entry };
+        for (Edge edge : cfg.incomingEdges(header)) {
+            if (!loops.belongsTo(edge.from, loop))
+                continue;
+            if (edge.isHandlerEdge() || hasEdgeResults(m_function, edge))
+                return std::nullopt;
+            plan.latches.append(edge);
+        }
+        bool readsByName = false;
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID id = loop.at(position);
+            const Block& block = m_function.at(id);
+            if (block.handler || block.isHandlerBlock())
+                return std::nullopt;
+            plan.region.append(id);
+            readsByName |= std::ranges::any_of(block.values, [&](ValueID value) {
+                return mayBecomeQuestion(id, value);
+            });
+        }
+        if (!readsByName)
+            return std::nullopt;
+
+        // From the end of a turn to its start: whether a turn that gets here can end without running other code, if every question that may be asked ahead is answered the best way, and how many of them that saves.
+        Vector<Outlook> outlooks(m_function.blocks.size());
+        auto outlookBehind = [&](BlockID target) -> Outlook {
+            if (!isInLoopBehindHeader(target))
+                return { true, 0 };
+            // An unlikely path that runs other code goes on in the copy.
+            if (!outlooks[target.index()].staysQuiet && isUnlikely(target))
+                return { true, 0 };
+            return outlooks[target.index()];
+        };
+        for (BlockID id : std::views::reverse(cfg.reversePostOrder())) {
+            if (!loops.belongsTo(id, loop))
+                continue;
+            // A loop inside may stand on a way that is not kept: the walk over several listeners, behind the test for one. On a way that is kept it would be copied for nothing.
+            if (loops.innerMostLoopOf(id) != &loop)
+                continue;
+            const Block& block = m_function.at(id);
+            Outlook outlook { staysQuiet(m_analyses.effectsOfTerminator(id).onAnyEdge()), 0 };
+            for (ValueID value : block.values) {
+                if (mayBecomeQuestion(id, value))
+                    ++outlook.questions;
+                else
+                    outlook.staysQuiet &= staysQuiet(m_analyses.effectsOf(value).onAnyEdge());
+            }
+            bool mayBeAskedAhead = block.terminator.kind == TerminatorKind::Branch && questionsAskedAheadOfLoops.contains(m_function.at(block.terminator.conditionOperand()).opcode);
+            Outlook behind { !mayBeAskedAhead, 0 };
+            for (const Target& target : block.terminator.targets) {
+                if (!mayBeAskedAhead) {
+                    Outlook next = outlookBehind(target.block);
+                    behind.staysQuiet &= next.staysQuiet;
+                    behind.questions = std::max(behind.questions, next.questions);
+                    continue;
+                }
+                if (!isInLoopBehindHeader(target.block) || !outlooks[target.block.index()].staysQuiet)
+                    continue;
+                Outlook next = outlooks[target.block.index()];
+                if (!behind.staysQuiet || next.questions + 1 > behind.questions)
+                    behind = { true, next.questions + 1 };
+            }
+            // Neither way stays in the loop and quiet: it is a test like any other.
+            if (mayBeAskedAhead && !behind.staysQuiet) {
+                behind = { true, 0 };
+                for (const Target& target : block.terminator.targets)
+                    behind.staysQuiet &= outlookBehind(target.block).staysQuiet;
+            }
+            outlook.staysQuiet &= behind.staysQuiet;
+            outlook.questions += behind.questions;
+            outlooks[id.index()] = outlook;
+        }
+        if (!outlooks[header.index()].staysQuiet)
+            return std::nullopt;
+
+        // What was entered in every turn was entered in the first, which has run by the time the questions are asked. A cast that names a fact holds wherever the fact does.
+        auto holdsBehindFirstTurn = [&](BlockID block, const Value& operation) {
+            if (operation.opcode == Opcode::Entered) {
+                return std::ranges::all_of(plan.latches, [&](Edge latch) {
+                    return m_analyses.dominators().dominates(block, latch.from);
+                });
+            }
+            return operation.opcode == Opcode::AssumeType && operation.factOperand();
+        };
+        // What a turn writes is known at the end of the walk. An answer that it changes stays a question of every turn, and the walk starts over without it.
+        BitVector changesInLoop(m_function.values.size());
+        while (true) {
+            std::optional<bool> isSettled = walkAlongKeptWays(loop, plan, outlooks.span(), changesInLoop, mayBecomeQuestion, holdsBehindFirstTurn);
+            if (!isSettled)
+                return std::nullopt;
+            if (*isSettled)
+                break;
+        }
+
+        Vector<BlockID, 4> entriesOfCopy { header };
+        BitVector isEntryOfCopy(m_function.blocks.size());
+        isEntryOfCopy.set(header.index());
+        for (Edge edge : plan.leavingEdges) {
+            if (!isEntryOfCopy.set(targetOf(m_function, edge).block.index()))
+                entriesOfCopy.append(targetOf(m_function, edge).block);
+        }
+        if (joinsMoreThanItCopies(plan.region.span(), entriesOfCopy.span()))
+            return std::nullopt;
+        if (RegionCloner::checkCanDuplicate(m_analyses, plan.region.span(), entriesOfCopy.span()) != CloneCheck::CanClone)
+            return std::nullopt;
+        return plan;
+    }
+
+    // The name under which a value was read off an object without a layout, seen through the casts, the tests and the joins that the plan has settled.
+    PropertyKeyID keyThatWasAskedFor(const Plan& plan, ValueID value)
+    {
+        while (true) {
+            value = m_analyses.identityOf(value);
+            const Step* step = std::ranges::find(plan.steps, value, &Step::value);
+            if (step == plan.steps.end())
+                return { };
+            if (step->kind == Step::Kind::ReadByName)
+                return m_function.at(value).key();
+            if (step->kind != Step::Kind::Parameter)
+                return { };
+            value = step->passed;
+        }
+    }
+
+    // `typeof handler === "function"` where a turn stays quiet behind either answer. Flow has seen what the program stores under the name.
+    std::optional<uint32_t> findTargetThatFlowPredicts(const Plan& plan, const Terminator& branch)
+    {
+        const Value& test = m_function.at(branch.conditionOperand());
+        if (test.opcode != Opcode::TypeTest || !m_context.inputs.flow.hasResults())
+            return std::nullopt;
+        PropertyKeyID key = keyThatWasAskedFor(plan, test.operand(OperandIndex::TypeTest::value));
+        if (!key)
+            return std::nullopt;
+        const Type& tested = m_context.types.at(test.testedType());
+        std::optional<uint32_t> predicted;
+        for (const FlowClosureStoredUnderKey& stored : m_context.inputs.flow.closuresSeenStoredUnder(key).predicted()) {
+            Type closure = Type::forFunction(stored.function);
+            bool passes = closure.isSubsetOf(tested, m_program);
+            if (!passes && closure.overlaps(tested, m_program))
+                return std::nullopt;
+            uint32_t target = passes ? 0 : 1;
+            if (predicted && *predicted != target)
+                return std::nullopt;
+            predicted = target;
+        }
+        return predicted;
+    }
+
+    // From the start of a turn to its end, along the ways that are kept. Nothing where the loop cannot be told apart, false where an answer has turned out to change in the loop.
+    std::optional<bool> walkAlongKeptWays(const NaturalLoop& loop, Plan& plan, std::span<const Outlook> outlooks, BitVector& changesInLoop, const auto& mayBecomeQuestion, const auto& holdsBehindFirstTurn)
+    {
+        const NaturalLoops& loops = m_analyses.naturalLoops();
+        const CFG& cfg = m_analyses.cfg();
+        const UseLists& useLists = m_analyses.useLists();
+        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+        BlockID header = loop.header();
+        auto isInLoopBehindHeader = [&](BlockID block) {
+            return block != header && loops.belongsTo(block, loop);
+        };
+        auto isUnlikely = [&](BlockID block) {
+            return (frequencies.classOf(block) > frequencies.classOf(header)).predicted();
+        };
+        plan.steps.clear();
+        plan.leavingEdges.clear();
+        BitVector isReached(m_function.blocks.size());
+        BitVector staysTheSame(m_function.values.size());
+        Vector<std::optional<uint32_t>> keptTargetOf(m_function.blocks.size());
+        LocationMasks writes { };
+        isReached.set(header.index());
+        auto isSameInEveryTurn = [&](ValueID value) {
+            return staysTheSame.get(value.index()) || !loops.belongsTo(useLists.blockOf(value), loop);
+        };
+        auto chooseTarget = [&](const Terminator& branch) -> std::optional<uint32_t> {
+            std::optional<uint32_t> best;
+            auto rankOf = [&](uint32_t index) {
+                BlockID target = branch.targets[index].block;
+                return std::pair { frequencies.classOf(target).predicted(), std::numeric_limits<unsigned>::max() - outlooks[target.index()].questions };
+            };
+            unsigned numberOfQuietWays = 0;
+            for (uint32_t index = 0; index < branch.targets.size(); ++index) {
+                BlockID target = branch.targets[index].block;
+                if (!isInLoopBehindHeader(target) || !outlooks[target.index()].staysQuiet)
+                    continue;
+                ++numberOfQuietWays;
+                if (!best || rankOf(index) < rankOf(*best))
+                    best = index;
+            }
+            if (numberOfQuietWays > 1) {
+                if (std::optional<uint32_t> predicted = findTargetThatFlowPredicts(plan, branch))
+                    return predicted;
+            }
+            return best;
+        };
+        bool asksSite = false;
+        // Likely code that runs other code is left out only where flow has said what is found instead: the one function that the program stores under the name.
+        // Without that, the way that is kept is merely the one that does nothing, and an emitter with two listeners would get a loop for no listener.
+        bool leavesOutLikelyCode = false;
+        bool keepsWhatFlowPredicts = false;
+        for (BlockID id : cfg.reversePostOrder()) {
+            if (!isReached.get(id.index()))
+                continue;
+            const Block& block = m_function.at(id);
+            if (id != header) {
+                std::optional<Edge> only;
+                unsigned numberOfWaysIn = 0;
+                for (Edge edge : cfg.incomingEdges(id)) {
+                    if (!isReached.get(edge.from.index()) || (keptTargetOf[edge.from.index()] && *keptTargetOf[edge.from.index()] != edge.targetIndex))
+                        continue;
+                    only = edge;
+                    ++numberOfWaysIn;
+                }
+                if (numberOfWaysIn == 1) {
+                    const Target& target = targetOf(m_function, *only);
+                    for (uint32_t position = 0; position < block.parameters.size(); ++position) {
+                        if (position >= target.arguments.size()) {
+                            if (keptTargetOf[only->from.index()])
+                                staysTheSame.set(block.parameters[position].index());
+                            continue;
+                        }
+                        if (!isSameInEveryTurn(target.arguments[position]))
+                            continue;
+                        staysTheSame.set(block.parameters[position].index());
+                        plan.steps.append({ Step::Kind::Parameter, id, block.parameters[position], target.arguments[position] });
+                    }
+                }
+            }
+            for (ValueID value : block.values) {
+                const Value& operation = m_function.at(value);
+                bool hasSameOperands = true;
+                operation.forEachOperand([&](ValueID operand, uint32_t) {
+                    hasSameOperands &= isSameInEveryTurn(operand);
+                });
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                if (hasSameOperands && mayBecomeQuestion(id, value)) {
+                    plan.steps.append({ Step::Kind::ReadByName, id, value });
+                    staysTheSame.set(value.index());
+                    asksSite = true;
+                    continue;
+                }
+                if (hasSameOperands && !changesInLoop.get(value.index()) && (questionsAskedAheadOfLoops.contains(operation.opcode) || holdsBehindFirstTurn(id, operation)) && effects.isUnobservable()) {
+                    plan.steps.append({ Step::Kind::Computation, id, value });
+                    staysTheSame.set(value.index());
+                    continue;
+                }
+                if (!staysQuiet(effects))
+                    return std::nullopt;
+                writes.merge(effects.writes);
+            }
+            Effects effects = m_analyses.effectsOfTerminator(id).onAnyEdge();
+            if (!staysQuiet(effects))
+                return std::nullopt;
+            writes.merge(effects.writes);
+            const Terminator& terminator = block.terminator;
+            if (terminator.kind == TerminatorKind::Branch && staysTheSame.get(terminator.conditionOperand().index())) {
+                if (std::optional<uint32_t> kept = chooseTarget(terminator)) {
+                    keptTargetOf[id.index()] = kept;
+                    BlockID other = terminator.targets[1 - *kept].block;
+                    leavesOutLikelyCode |= isInLoopBehindHeader(other) && !isUnlikely(other) && !outlooks[other.index()].staysQuiet;
+                    keepsWhatFlowPredicts |= !*kept && m_function.at(terminator.conditionOperand()).opcode == Opcode::IsClosureOf;
+                    plan.steps.append({ Step::Kind::Test, id, terminator.conditionOperand(), { }, *kept });
+                    isReached.set(terminator.targets[*kept].block.index());
+                    continue;
+                }
+            }
+            for (uint32_t index = 0; index < terminator.targets.size(); ++index) {
+                BlockID target = terminator.targets[index].block;
+                if (!isInLoopBehindHeader(target))
+                    continue;
+                if (outlooks[target.index()].staysQuiet) {
+                    isReached.set(target.index());
+                    continue;
+                }
+                if (!isUnlikely(target))
+                    return std::nullopt;
+                // The copy is entered there from the loop and from its own blocks. A guard speaks of the operands of one test, so two of them do not join.
+                bool passesGuard = std::ranges::any_of(m_function.at(target).parameters.span().last(numberOfEdgeResults(m_function, id, index)), [&](ValueID result) {
+                    return !typeOf(result).isJavaScriptValue();
+                });
+                if (passesGuard)
+                    return std::nullopt;
+                plan.leavingEdges.append(Edge { id, index });
+            }
+        }
+        if (!asksSite || (leavesOutLikelyCode && !keepsWhatFlowPredicts))
+            return std::nullopt;
+        bool isSettled = true;
+        for (const Step& step : plan.steps) {
+            if (step.kind == Step::Kind::ReadByName && writes.overlaps(m_program, MemoryLocation::objectField(m_function.at(step.value).key())))
+                return std::nullopt;
+            if (step.kind == Step::Kind::Computation && m_analyses.effectsOf(step.value).onAnyEdge().reads.without(bookkeepingHeaps).overlaps(writes)) {
+                changesInLoop.set(step.value.index());
+                isSettled = false;
+            }
+        }
+        return isSettled;
+    }
+
+    void makeVersion(const Plan& plan)
+    {
+        IRBuilder builder = makeBuilder();
+        RegionCloner cloner(builder, m_function);
+        cloner.cloneBlocks(plan.region.span(), [](ValueID, Value&) { });
+        RegionCloner firstTurn(builder, m_function);
+        firstTurn.cloneBlocks(plan.region.span(), [](ValueID, Value&) { });
+        for (const RegionCloner* made : { &cloner, &firstTurn }) {
+            for (BlockID block : made->clonedBlocks())
+                m_isFinishedHeader.set(block.index());
+        }
+        BlockID headerOfCopy = cloner.cloneOf(plan.header);
+        for (Edge edge : plan.leavingEdges) {
+            const Target& target = targetOf(m_function, edge);
+            builder.redirectEdge(edge, cloner.cloneOf(target.block), Arguments(target.arguments));
+        }
+        SSARepair repair(builder, m_analyses);
+        cloner.addVariablesTo(repair, m_analyses);
+        firstTurn.addVariablesTo(repair, m_analyses);
+
+        builder.redirectEdge(plan.entry, firstTurn.cloneOf(plan.header), Arguments(targetOf(m_function, plan.entry).arguments));
+        Expected<BlockFrequency> frequency = m_function.at(plan.header).frequency;
+        BlockID current = builder.addBlock(frequency);
+        Arguments entering;
+        for (ValueID parameter : m_function.at(plan.header).parameters)
+            entering.append(builder.addParameter(current, m_function.at(parameter).type));
+        for (Edge latch : plan.latches) {
+            Edge endOfFirstTurn { firstTurn.cloneOf(latch.from), latch.targetIndex };
+            builder.redirectEdge(endOfFirstTurn, current, Arguments(targetOf(m_function, endOfFirstTurn).arguments));
+        }
+
+        Vector<ValueID> askedAhead(m_function.values.size());
+        auto aheadOfLoop = [&](ValueID value) {
+            return value.index() < askedAhead.size() && askedAhead[value.index()] ? askedAhead[value.index()] : value;
+        };
+        struct Answer {
+            ValueID object;
+            PropertyKeyID key;
+            ValueID value;
+        };
+        Vector<Answer, 4> answers;
+        Type valueOrNothing = Type::anything();
+        valueOrNothing.primitives |= Primitive::Absent;
+        TypeID typeOfAnswer = m_context.types.intern(valueOrNothing);
+
+        for (const Step& step : plan.steps) {
+            switch (step.kind) {
+            case Step::Kind::Parameter:
+                askedAhead[step.value.index()] = aheadOfLoop(step.passed);
+                break;
+            case Step::Kind::Computation: {
+                Value copy(m_function.at(step.value));
+                copy.forEachOperand([&](ValueID& operand, uint32_t) {
+                    operand = aheadOfLoop(operand);
+                });
+                builder.moveToEndOf(current);
+                builder.setOrigin(m_function.at(step.value).origin());
+                ValueID asked = builder.append(WTF::move(copy));
+                askedAhead[step.value.index()] = asked;
+                if (typeOf(step.value).isJavaScriptValue())
+                    becomeUpcast(m_function, step.value, asked);
+                break;
+            }
+            case Step::Kind::ReadByName: {
+                ValueID object = aheadOfLoop(m_function.at(step.value).objectOperand());
+                PropertyKeyID key = m_function.at(step.value).key();
+                ValueID found;
+                for (const Answer& answer : answers) {
+                    if (answer.object == object && answer.key == key)
+                        found = answer.value;
+                }
+                if (!found) {
+                    builder.moveToEndOf(current);
+                    builder.setOrigin(m_function.at(step.value).origin());
+                    Value question = IRBuilder::make(Opcode::GetCachedValue, { object });
+                    question.setKey(key);
+                    question.setValueType(typeOfAnswer);
+                    ValueID answer = builder.append(WTF::move(question));
+                    IRBuilder::ProvenBranch knows = builder.emitBranchWithProof(builder.appendTypeTest(answer, Type::anything()), OperandIndex::TypeTest::value, frequency, frequency);
+                    builder.moveToEndOf(knows.notTaken);
+                    builder.emitJump(headerOfCopy, Arguments(entering));
+                    current = knows.taken;
+                    found = knows.provenOnTaken;
+                    answers.append({ object, key, found });
+                }
+                askedAhead[step.value.index()] = found;
+                becomeUpcast(m_function, step.value, found);
+                break;
+            }
+            case Step::Kind::Test: {
+                Terminator branch = takeTerminator(builder, step.block);
+                Target kept = WTF::move(branch.targets[step.keptTarget]);
+                builder.moveToEndOf(current);
+                builder.setOrigin(branch.origin());
+                BlockID next = builder.addBlock(frequency);
+                Target passes { next, { }, { } };
+                Target fails { headerOfCopy, Arguments(entering), { } };
+                if (step.keptTarget)
+                    std::swap(passes, fails);
+                builder.emitBranch(aheadOfLoop(step.value), WTF::move(passes), WTF::move(fails));
+                const CompactList<ValueID>& parameters = m_function.at(kept.block).parameters;
+                size_t firstResult = parameters.size() - kept.proofs.size();
+                Arguments arguments = WTF::move(kept.arguments);
+                for (size_t index = 0; index < kept.proofs.size(); ++index) {
+                    ValueID proven = builder.addEdgeResult(Edge { current, step.keptTarget }, kept.proofs[index]);
+                    askedAhead[parameters[firstResult + index].index()] = proven;
+                    arguments.append(proven);
+                }
+                builder.moveToEndOf(step.block);
+                builder.emitJump(kept.block, WTF::move(arguments));
+                current = next;
+                break;
+            }
+            }
+        }
+        builder.moveToEndOf(current);
+        builder.setOrigin(m_function.at(plan.header).terminator.origin());
+        builder.emitJump(plan.header, WTF::move(entering));
+
+        builder.emptyUnreachableBlocks();
+        m_analyses.didChangeControlFlow();
+        repair.run();
+        m_analyses.didChangeControlFlow();
+        m_context.build.statistics().count(StatisticID::LoopsEnteredByAnswers);
+    }
+};
+
+// `JSON.parse(text)[i].kind` in a loop that is expected to run. No layout of the program has the name and the program stores nothing under it, so whatever has it was made elsewhere, and no test of a layout can stand before the read.
+// What the tables of the run time hold for the Structure of the object is read without a call. A read that they do not answer is unlikely and runs code, so it leaves the loop with the other unlikely paths.
+struct ReaderFromTables : LoopEditor {
+    bool isCalled(ValueID read)
+    {
+        constexpr OpcodeSet calls { Opcode::Call, Opcode::CallList, Opcode::CallForwardVarargs, Opcode::Construct, Opcode::ConstructList };
+        return std::ranges::any_of(m_analyses.useLists().usesOf(read), [&](const Use& use) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = m_function.at(use.user);
+            if (user.opcode == Opcode::IsClosureOf || (calls.contains(user.opcode) && !use.operandIndex))
+                return true;
+            return user.opcode == Opcode::TypeTest && !m_context.types.at(user.testedType()).primitives && m_context.types.at(user.testedType()).hasOnlyKnownCallees();
+        });
+    }
+
+    // `encoder.encodeInto(text, bytes).written`: once the unlikely paths have left the loop, SinkAllocations hands the field over without the object.
+    bool mayBeReplacedByItsFields(BlockID block, ValueID object)
+    {
+        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+        BitVector isListed(m_function.values.size());
+        Vector<ValueID, 8> sources;
+        auto add = [&](ValueID value) {
+            ValueID source = m_analyses.identityOf(value);
+            if (!isListed.set(source.index()))
+                sources.append(source);
+        };
+        add(object);
+        bool hasMaker = false;
+        for (size_t next = 0; next < sources.size(); ++next) {
+            ValueID source = sources[next];
+            if (m_function.at(source).opcode != Opcode::Parameter) {
+                if (describeVirtualObject(m_analyses, source).support != VirtualObjectSupport::Supported)
+                    return false;
+                hasMaker = true;
+                continue;
+            }
+            ValueLocation location = m_analyses.useLists().locationOf(source);
+            if (location.placement != ValuePlacement::Parameter || location.block == m_analyses.cfg().root())
+                return false;
+            for (Edge edge : m_analyses.cfg().incomingEdges(location.block)) {
+                if (edge.isHandlerEdge())
+                    return false;
+                if ((frequencies.classOf(edge.from) > frequencies.classOf(block)).predicted())
+                    continue;
+                IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+                if (incoming.kind == IncomingValue::Kind::Argument) {
+                    if (!incoming.argument)
+                        return false;
+                    add(incoming.argument);
+                    continue;
+                }
+                std::optional<EdgeResult> result = tryGetEdgeResult(m_function, incoming.result);
+                if (!result || !result->subject)
+                    return false;
+                add(result->subject);
+            }
+        }
+        return hasMaker;
+    }
+
+    bool isAskedOfTables(BlockID block, uint32_t index)
+    {
+        ValueID id = m_function.at(block).values[index];
+        const Value& read = m_function.at(id);
+        if (read.opcode != Opcode::PropGet || read.isFreeName() || read.isForTypeOf() || read.asksOnlyTables() || read.isTailCall)
+            return false;
+        if (m_program.at(read.key()).kind != PropertyKeyKind::Text || m_program.nameClassOf(read.key()) != NameClass::Ordinary || !m_program.layoutsWithName(read.key()).empty())
+            return false;
+        // Of an object that the program has made something is known, and a method lies above the object, where the site of the read answers as well.
+        if (!typeOf(read.objectOperand()).anyObject || isCalled(id))
+            return false;
+        // `bytes.byteLength`, where bytes is expected to be a Uint8Array: a test for the class finds the getter, which the tables do not run.
+        BuiltinUseInputs inputs { m_program, m_function, m_context.types, m_context.inputs.flow, m_analyses.effectContext(), &m_analyses, { } };
+        if (planBuiltinUse(inputs, id, ProgramPoint { block, index }))
+            return false;
+        // What the program itself puts under a name onto an object of one of its layouts lies beside the fields, where the tables need a handler.
+        if (m_program.mayBeStoredThroughUnknownReceiver(read.key()) || m_program.isDefinedOnObjectsWithoutKnownLayout(read.key()))
+            return false;
+        const NaturalLoop* loop = m_analyses.naturalLoops().innerMostLoopOf(block);
+        if (!loop || !isHeaderOfLoopOfProgram(loop->header()) || !isExpectedToRun(m_context, *loop).predicted())
+            return false;
+        // One object for all the turns is asked once, ahead of the loop: LoopVersioner.
+        BlockID madeIn = m_analyses.useLists().blockOf(m_analyses.identityOf(read.objectOperand()));
+        return madeIn && m_analyses.naturalLoops().belongsTo(madeIn, *loop) && !mayBeReplacedByItsFields(block, read.objectOperand());
+    }
+
+    PassOutcome run()
+    {
+        Vector<ValueSite> sites;
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (m_analyses.blockFrequencies().classOf(block).predicted() != BlockFrequency::Normal)
+                continue;
+            const BlockValues& values = m_function.at(block).values;
+            // What stands in front of a site stays where it is when the block is cut there.
+            for (uint32_t index = values.size(); index--;) {
+                if (isAskedOfTables(block, index))
+                    sites.append(ValueSite { block, index, values[index] });
+            }
+        }
+        if (sites.isEmpty())
+            return PassOutcome::Unchanged;
+        IRBuilder builder = makeBuilder();
+        for (const ValueSite& site : sites) {
+            SiteExpansion expansion(m_context, builder);
+            expansion.begin(site);
+            Value read = expansion.original();
+            read.setAsksOnlyTables(true);
+            ValueID answer = expansion.append(WTF::move(read));
+            ValueID didRead = expansion.append(IRBuilder::make(Opcode::DidReadAbove, { answer }));
+            BlockID hasAnswer = builder.addBlock(expansion.frequency());
+            BlockID hasNoAnswer = builder.addBlock(BlockFrequency::Unlikely);
+            builder.emitBranch(didRead, Target { hasAnswer, { }, { } }, Target { hasNoAnswer, { }, { } });
+            builder.moveToEndOf(hasAnswer);
+            expansion.finishArm(answer);
+            builder.moveToEndOf(hasNoAnswer);
+            expansion.finishArm(expansion.appendOriginal());
+            expansion.end();
+        }
+        m_analyses.didChangeControlFlow();
+        return PassOutcome::Changed;
+    }
+};
+
 } // anonymous namespace
 
 PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
 {
     if (!context.function.hasBody() || !context.analyses.naturalLoops().numLoops())
         return PassOutcome::Unchanged;
-    PassOutcome outcome = LoopPathSeparator { { context } }.run();
+    PassOutcome outcome = testNumbersThatBoundLoopsAroundLoops(context);
+    outcome |= ReaderFromTables { { context } }.run();
+    outcome |= LoopPathSeparator { { context } }.run();
+    outcome |= dropRepeatedReadsFromTables(context);
+    outcome |= LoopVersioner { { context } }.run();
     outcome |= VariableCarrier { { context } }.run();
     // SimplifyCasts runs inside this pass, and what it says it has kept holds for the function as it left it.
     context.keptAnalyses = { };

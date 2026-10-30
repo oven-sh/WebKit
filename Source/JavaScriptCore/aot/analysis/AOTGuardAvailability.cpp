@@ -111,6 +111,8 @@ public:
             return result;
         if (m_writer && leavesSlotsAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.slotState))
             return result;
+        if (m_writer && leavesArrayStorageAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.arrayStorage))
+            return result;
 
         for (size_t index = 0; index < depended.locations.size(); ++index) {
             const MemoryLocation& location = depended.locations[index];
@@ -144,6 +146,8 @@ public:
         if (!reachesObjects(written))
             return false;
         if (written.isLeftByPropertiesBesideFields && m_writer && definesPropertyBesideFields(m_analyses.program(), m_function.at(m_writer), effectsOn(m_effects, written.edge), m_function.at(subject)))
+            return false;
+        if (written.isLeftByPropertiesBesideFields && m_writer && definesDataPropertyAsLayoutDeclares(m_analyses, m_function.at(m_writer), m_function.at(subject)))
             return false;
 
         std::optional<bool> mayEndProof = mayEndProofJudgedByDefinitions(subject, written);
@@ -348,7 +352,7 @@ private:
             m_operandObjects.emplace();
             const EscapeAnalysis& escape = m_analyses.escape();
             auto addObjectsOf = [&](ValueID operand) {
-                m_operandObjects->merge(escape.pointsTo(operand).objects.bits());
+                escape.pointsTo(operand).objects.addTo(*m_operandObjects);
             };
             if (m_writer)
                 m_function.at(m_writer).forEachChild(addObjectsOf);
@@ -410,7 +414,7 @@ std::optional<GuardDependencies> dependenciesOfGuardOf(FunctionAnalyses& analyse
     const Program& program = analyses.program();
     GuardDependencies dependencies(program, locationsReadBy(test));
     dependencies.slotState = slotStateTestedBy(test);
-    dependencies.isLeftByPropertiesBesideFields = proofsLeftByPropertiesBesideFields.contains(provesOf(test.opcode));
+    dependencies.isLeftByPropertiesBesideFields = areLeftByPropertiesBesideFields(ProofSet { provesOf(test.opcode) }, dependencies.locations.span());
     if (test.numberOfOperands() && test.operand(subjectOperandIndex) && testReadsOnlySubject(program, analyses.function(), test))
         dependencies.subject = analyses.identityOf(test.operand(subjectOperandIndex));
     return dependencies;
@@ -566,11 +570,11 @@ void GuardAvailability::numberComponents()
     m_numberOfKillClassesOfNamedGuards = 0;
 
     HashedIndex locationsIndex;
-    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, bool isLeftByPropertiesBesideFields) -> uint32_t {
-        uint32_t hash = computeHash(hashOf(locations.span()), slotState, isLeftByPropertiesBesideFields);
+    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, ArrayStorage arrayStorage, bool isLeftByPropertiesBesideFields) -> uint32_t {
+        uint32_t hash = computeHash(hashOf(locations.span()), slotState, arrayStorage, isLeftByPropertiesBesideFields);
         std::optional<uint32_t> existing = locationsIndex.find(hash, [&](uint32_t position) {
             const DependedLocations& known = m_dependedLocations[position];
-            return known.locations == locations && known.slotState == slotState && known.isLeftByPropertiesBesideFields == isLeftByPropertiesBesideFields;
+            return known.locations == locations && known.slotState == slotState && known.arrayStorage == arrayStorage && known.isLeftByPropertiesBesideFields == isLeftByPropertiesBesideFields;
         });
         if (existing)
             return *existing;
@@ -578,14 +582,15 @@ void GuardAvailability::numberComponents()
         uint32_t position = m_dependedLocations.size();
         m_dependedLocations.append(DependedLocations(m_analyses.program(), Vector<MemoryLocation, 2>(locations)));
         m_dependedLocations.last().slotState = slotState;
+        m_dependedLocations.last().arrayStorage = arrayStorage;
         m_dependedLocations.last().isLeftByPropertiesBesideFields = isLeftByPropertiesBesideFields;
         locationsIndex.add(hash, position);
         return position;
     };
 
     HashedIndex killClassIndex;
-    auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState) -> uint32_t {
-        uint32_t locations = internLocations(fact.dependsOn, slotState, areLeftByPropertiesBesideFields(fact.proofs));
+    auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState, ArrayStorage arrayStorage) -> uint32_t {
+        uint32_t locations = internLocations(fact.dependsOn, slotState, arrayStorage, areLeftByPropertiesBesideFields(fact.proofs, fact.dependsOn.span()));
         ValueID subject = exclusiveSubjectOf(m_analyses, fact);
         uint32_t hash = computeHash(locations, subject);
         std::optional<uint32_t> existing = killClassIndex.find(hash, [&](uint32_t position) {
@@ -602,9 +607,10 @@ void GuardAvailability::numberComponents()
     };
     auto internKillClass = [&](const GuardFact& fact) {
         TestedSlotState slotState = slotStateProvenBy(m_function, fact);
-        uint32_t killClass = internKillClassWith(fact, slotState);
-        if (slotState != TestedSlotState::None) {
-            uint32_t classBetweenTestAndBranch = internKillClassWith(fact, TestedSlotState::None);
+        ArrayStorage arrayStorage = arrayStorageProvenBy(m_analyses.program(), m_function, fact);
+        uint32_t killClass = internKillClassWith(fact, slotState, arrayStorage);
+        if (slotState != TestedSlotState::None || arrayStorage != ArrayStorage::Other) {
+            uint32_t classBetweenTestAndBranch = internKillClassWith(fact, TestedSlotState::None, ArrayStorage::Other);
             m_killClasses[killClass].classBetweenTestAndBranch = classBetweenTestAndBranch;
         }
         return killClass;

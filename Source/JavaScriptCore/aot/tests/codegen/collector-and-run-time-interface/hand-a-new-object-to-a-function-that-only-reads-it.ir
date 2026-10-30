@@ -13,6 +13,12 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f2
 # REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air f2
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(X64SIZE): lower-to-air size f2
+# REQUIRES(X64SIZE): x86_64 unsanitized-code not-windows
+# RUN(ARM64SIZE): lower-to-air size f2
+# REQUIRES(ARM64SIZE): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -113,3 +119,19 @@ function f2 name="pick" module=m0 position=188 flags=[IsChecked, HasExplicitName
 # CHECK: Stack slots:
 # CHECK-NEXT: stack0: byteSize = 32, 
 # CHECK-LABEL: end of function
+# The record of the layout is made by a call that seldom runs. Its argument goes into the register of its result, so it writes no register that a parameter arrived in:
+# nothing is copied at the entry, both parameters are stored from where they arrived, and the rare block holds the call alone.
+# X64-LABEL: name="pick" role=Source
+# X64-NOT: Move %rdi, %r
+# X64-NOT: Move %rsi, %r
+# X64: Successors: Rare:#[[made]], #[[stores]]
+# X64: Move %rdi, 16(%rsp)
+# X64-NEXT: Move %rsi, 24(%rsp)
+# X64: BB#[[made]]:
+# X64-NEXT: Predecessors: #0
+# X64-NEXT: Patch &Patchpoint0, %rax, $1
+# X64-NEXT: Jump
+# X64-LABEL: end of function
+# X64SIZE: instructions: 15, patchpoints: 1, rare instructions: 2
+# On ARM64 the register of the result is the one the first parameter arrived in: that one is copied.
+# ARM64SIZE: instructions: 17, patchpoints: 1, rare instructions: 3

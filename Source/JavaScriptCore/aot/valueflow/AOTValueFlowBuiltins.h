@@ -58,6 +58,8 @@ ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
 // Whoever takes the member without naming it holds what the member answers out of a native cell as a value nobody knows.
 void openProxiesThatMemberAnswers(ValueFlowRuleContext&, BuiltinID member);
 void exposeNativeCellsReturnedBy(ValueFlowRuleContext&, BuiltinID member);
+// Whoever calls the member without naming it holds the object of the module of the library that the table names as its answer: `Bun[name](path)` answers with what `bun:test` exports.
+void exposeObjectsOfModulesReturnedBy(ValueFlowRuleContext&, BuiltinID member);
 // True where flow can list the own names of every object among the values: `held` gets them.
 bool listKeysAsObjectKeysDoes(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID held);
 
@@ -69,15 +71,21 @@ bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
 bool onlyCallsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
 bool onlyListsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
 bool onlyPassesOperandOn(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool asksOperandAboutOwnProperty(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyLooksAtReceiver(const BuiltinTable&, BuiltinID);
 bool onlyAsksWhatStandsAbove(const BuiltinTable&, BuiltinID, BuiltinOperand, BuiltinCallMode);
 bool onlyLists(const ValueFlowBehavior&);
+bool serializes(const ValueFlowBehavior&);
+bool onlySerializesOperand(const ValueFlowBuiltinTables&, const BuiltinOverload&, BuiltinOperand);
+bool onlyPrintsOperands(const BuiltinTable&, BuiltinID);
+bool isTextThatConvertsNothing(const Program&, const Function& caller, ValueID call, size_t numberOfArguments, unsigned argument);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
 bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);
 bool isCodeThatRecordsDescribe(const ValueFlowUniverse&, FunctionID);
 
 void applyBuiltin(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
-bool bindsNoArgument(const Program&, const ValueFlowUniverse&, ValueFlowObjectID boundFunction);
+bool bindsNoArgument(const ValueFlowUniverse&, ValueFlowObjectID boundFunction);
 bool raisesEventWhenCalled(const BuiltinTable&, BuiltinID);
 
 BuiltinOverloadID overloadForAnotherNewTarget(const BuiltinTable&, BuiltinID, ValueFlowCallKind);
@@ -109,7 +117,7 @@ void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
 void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
 bool mayProgramHaveStoredMethodThatHostLooksFor(ValueFlowRuleContext&);
-bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
+bool isCodeBehindDeclaredEntries(const Program&, const ValueFlowBuiltinTables&, FunctionID);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 

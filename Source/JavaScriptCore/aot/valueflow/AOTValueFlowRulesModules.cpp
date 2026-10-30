@@ -423,7 +423,7 @@ static ValueFlowSources namespaceOfFile(ValueFlowRuleContext& context, ModuleID 
     return sources;
 }
 
-ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
+ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id, WhoRequires asker)
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
@@ -437,6 +437,13 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
     case ModuleKind::Data:
     case ModuleKind::RuntimeSource:
         break;
+    }
+
+    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && asker != WhoRequires::BoundCall) {
+        ValueFlowSources sources = namespaceOf(context, id);
+        if (asker == WhoRequires::Anybody)
+            append(context, sources, requiredValueOf(context, id, WhoRequires::BoundCall));
+        return sources;
     }
 
     switch (module.requireResult) {
@@ -619,18 +626,13 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
 
     // Only a namespace object that is tied to all its exports needs no second look.
     bool isOfBody = context.isStatementOfBody();
-    ValueFlowNodeID tiedForGood = context.nodes().ofHost(ValueFlowHostNode::NamespacesTiedByStatementsOfBodies);
     ValueSetID tiedByThisStatement = isOfBody && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
     Vector<ValueFlowObjectID, 4> tiedNow;
     BitVector visited;
     Vector<ModuleID, 4> pending { first };
     while (!pending.isEmpty()) {
         ModuleID id = pending.takeLast();
-        ClimbingSet created = only(context, universe.namespaceOf(id));
         bool isTiedByThisStatement = context.sets().contains(tiedByThisStatement, universe.namespaceOf(id));
-        // Most calls end here: the program may have thousands of modules, and the list of those visited as many bits.
-        if (!isTiedByThisStatement && context.wasAddedInEarlierRound(tiedForGood, created))
-            continue;
         if (visited.set(id.index()))
             continue;
         bool staysForGood = isOfBody && (deferredExports == DeferredExports::AreRead || listsAllItsExports(program.at(id)));
@@ -638,13 +640,11 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
             // Every use of the namespace may run in one round, and uses times exports is what would reach the edge budget.
             // Rules over the whole program ask for every module. Within a round values stand still, so the second to ask would tie the same.
             bool isTiedWholeInThisRound = staysForGood || (!isOfBody && deferredExports == DeferredExports::AreRead);
-            if (isTiedWholeInThisRound && !context.isFirstToTieNamespaceInThisRound(id))
+            if (isTiedWholeInThisRound && !context.usesGeneralRulesOnly() && !context.isFirstToTieNamespaceInThisRound(id))
                 continue;
             if (staysForGood)
                 tiedNow.append(universe.namespaceOf(id));
         }
-        if (staysForGood)
-            context.add(tiedForGood, created);
         context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, universe.namespaceOf(id)));
         useModule(context, id);
         tieNamespaceToExports(context, id, pending, deferredExports);
@@ -674,21 +674,31 @@ static void runGettersThatProgramLaidOn(ValueFlowRuleContext& context, ClimbingS
     });
 }
 
+// `typeof AbortController` reads what the module abort-controller exports and loads no module.
+void noteLoadOf(ValueFlowRuleContext& context, RuntimeModuleID module)
+{
+    BuiltinID namespaceObject = context.program().builtins().namespaceOf(module);
+    if (!namespaceObject)
+        return;
+    context.use(namespaceObject, BuiltinUse::Read);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectsOfLoadedModules), only(context, context.universe().objectOf(namespaceObject)));
+}
+
 static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
-    if (module.runtimeModule) {
-        if (BuiltinID namespaceObject = program.builtins().namespaceOf(module.runtimeModule))
-            context.use(namespaceObject, BuiltinUse::Read);
-    }
+    if (module.runtimeModule)
+        noteLoadOf(context, module.runtimeModule);
     if (module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode) {
         letUnseenCodeRun(context, UnseenCodeReach::Loader);
         raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
         context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfPublicLibraryExports());
     }
-    if (module.kind == ModuleKind::External)
+    if (module.kind == ModuleKind::External) {
         enterLoaderOfHost(context);
+        askLoaderFunctionsOfProgram(context, module.referrer, RequestAtRunTime::Require);
+    }
     if (moduleHasCode(program, module))
         return;
 
@@ -750,6 +760,7 @@ void evaluateModule(ValueFlowRuleContext& context, ModuleID first)
             if (module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeEvicted)) {
                 raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
                 enterLoaderOfHost(context);
+                askLoaderFunctionsOfProgram(context, id, RequestAtRunTime::Require);
             }
             continue;
         }
@@ -822,7 +833,7 @@ static bool mayCaptureDefaultMember(SyntheticExportRule rule)
 }
 
 // The children of a module object that is handed out hold, under `exports`, what its require() has answered for a file that is no CommonJS file.
-static void showAnswerOfRequireAmongChildren(ValueFlowRuleContext& context, ModuleID required)
+void showAnswerOfRequireInModuleObject(ValueFlowRuleContext& context, ModuleID required)
 {
     const Module& module = context.program().at(required);
     bool hasObjectMadeByRequire = !module.flags.contains(ModuleFlags::IsLibrary) && (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::Data);
@@ -855,7 +866,7 @@ static void followModuleObject(ValueFlowRuleContext& context, ModuleID id)
         context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), children);
         for (const ModuleRequest& request : module.requests) {
             if (request.kind == ModuleRequestKind::Require)
-                showAnswerOfRequireAmongChildren(context, request.target);
+                showAnswerOfRequireInModuleObject(context, request.target);
         }
     }
     if (!objectsOfRequiredModules.isEmpty() && context.holdsAnyOf(children, handedOut))
@@ -942,17 +953,17 @@ static void followModuleObjectsOfRequire(ValueFlowRuleContext& context, ModuleID
     if (context.holdsAnyOf(only(context, parent), handedOut)) {
         if (child)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, child));
-        showAnswerOfRequireAmongChildren(context, required);
+        showAnswerOfRequireInModuleObject(context, required);
     }
     if (child && context.holdsAnyOf(only(context, child), handedOut))
         context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, parent));
 }
 
-void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module, WhoRequires asker)
 {
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
-    connect(context, requiredValueOf(context, module), statement.result);
+    connect(context, requiredValueOf(context, module, asker), statement.result);
     if (statement.result && context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UnseenCode));
     // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
@@ -960,6 +971,7 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
     if (requireMayAnswerWithMock(context.program(), context.program().at(module)) && isWrittenInProgram(context.program().at(statement.function))) {
         enterLoaderOfHost(context);
+        askLoaderFunctionsOfProgram(context, context.program().at(statement.function).module, RequestAtRunTime::Require);
         if (statement.result) {
             context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
             // Modules::answerRequireWithMock()
@@ -1033,6 +1045,7 @@ static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& state
 // `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().
 static DeferredExports deferredExportsAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
 {
+    // An accessor of the library's is read when the export is first read, also through the namespace object of a file that passes the module on: `export * from "node:os"`.
     if (!statement.isOnlyReceiverOfCalls)
         return DeferredExports::AreRead;
     ClimbingSet object = only(context, context.universe().namespaceOf(module));
@@ -1075,7 +1088,7 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
     if (isInSeenCode(context, statement.function))
         letUnseenCodeRun(context, UnseenCodeReach::GlobalScope);
     escapeOperands(statement, context);
-    for (const EvalBinding& binding : program.at(program.at(statement.function).at(statement.site).evalScope()).bindings) {
+    for (const EvalBinding& binding : program.at(context.operationOf(statement).evalScope()).bindings) {
         if (binding.variable)
             open(nodes.variable(binding.variable));
         if (binding.layout && binding.field)
@@ -1090,7 +1103,7 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
-    const Value& operation = program.at(statement.function).at(statement.site);
+    const Value& operation = context.operationOf(statement);
 
     switch (statement.opcode) {
     case Opcode::Builtin:
@@ -1118,8 +1131,11 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         break;
     }
     case Opcode::RequireModule:
-        requireModule(statement, context, operation.module());
+        requireModule(statement, context, operation.module(), WhoRequires::BoundCall);
         followModuleObjectsOfRequire(context, operation.referrer(), operation.module());
+        // No import holds the file.
+        if (operation.ifHeldForImport() && statement.result)
+            context.add(statement.result, only(context, ValueFlowUniverse::primitive(PrimitiveSet::Undefined)));
         return;
     case Opcode::EvaluateModule:
         noteRequest(context, statement.function, operation.module());
@@ -1131,8 +1147,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
             requireModule(statement, context, module);
             return;
         }
-        if (BuiltinID namespaceObject = program.builtins().namespaceOf(operation.runtimeModule()))
-            context.use(namespaceObject, BuiltinUse::Read);
+        noteLoadOf(context, operation.runtimeModule());
         connect(context, runtimeNamespaceOf(context, operation.runtimeModule()), statement.result);
         return;
     case Opcode::ImportDynamic:
@@ -1153,11 +1168,14 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
-    case Opcode::RequireDynamic:
+    case Opcode::RequireDynamic: {
         escapeOperands(statement, context);
         if (program.at(operation.referrer()).exportsVariable)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, context.universe().objectOf(Builtins::ModuleObject, operation.referrer())));
-        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.anything) {
+        bool asksProgram = askLoaderFunctionsOfProgram(context, operation.referrer(), RequestAtRunTime::Require);
+        if (asksProgram && statement.result)
+            context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.anything && !asksProgram) {
             noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
             for (ModuleID module : found.libraryModules)
                 requireModule(statement, context, module);
@@ -1172,9 +1190,12 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         else if (isWrittenInProgram(program.at(statement.function)))
             letModulesBeLoadedByName(context, ValueFlowHostNode::RequiredValuesLoadedByName);
         break;
+    }
     case Opcode::ResolveDynamic:
         if (!operation.isURL())
             context.use(Builtins::ModuleRequireResolve, BuiltinUse::Called);
+        if (!operation.isURL() && !operation.isForRequire())
+            askLoaderFunctionsOfProgram(context, operation.referrer(), RequestAtRunTime::Resolve);
         escapeOperands(statement, context);
         if (statement.result)
             context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));

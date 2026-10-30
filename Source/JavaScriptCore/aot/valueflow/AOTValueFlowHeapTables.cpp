@@ -299,8 +299,15 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
             classes.append(objectOf(entry));
         hostClassesWithSuchMethod = m_maker.of(classes.span());
     }
+    Objects unescapedHoldersWithoutKey;
+    if (!isPrivateName) {
+        for (BuiltinID holder : m_listedHoldersThatDoNotEscape) {
+            if (builtins.findMember(holder, name).outcome == BuiltinMemberLookup::Outcome::Absent)
+                unescapedHoldersWithoutKey.append(objectsOf(holder));
+        }
+    }
     return { holders, m_maker.intersect(holders, m_prototypeObjects), undeclared, m_maker.unite(m_lockedObjects, findLockedHolders(membersUnderKey, name, isPrivateName)), m_maker.intersect(holders, m_maker.of(holdersOfEvaluators.span())),
-        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod };
+        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod, m_maker.of(unescapedHoldersWithoutKey.span()) };
 }
 
 // Whatever makes an instance of a class is listed with the feature that guards the class. A class that no feature guards is there in every executable, and so is whatever makes its instances.
@@ -746,6 +753,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_hasGetEntry.ensureSize(builtins.builtinCount());
         m_hasSetEntry.ensureSize(builtins.builtinCount());
         m_letsInUnseenCode.ensureSize(builtins.builtinCount());
+        m_standsRightAboveObjectOfModule.ensureSize(builtins.builtinCount());
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCode;
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCodeWhenCalled;
         // f.call(..), f.bind(..), Reflect.apply(f, ..), list.map(f): the row says that the function calls its receiver or an argument, or answers a bound function.
@@ -769,6 +777,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 m_hasSetEntry.quickSet(index);
             if (builtins.letsInUnseenCode(builtins.canonicalID(BuiltinID(index))))
                 m_letsInUnseenCode.quickSet(index);
+            // Function.prototype stands above the functions of a module too. It is the engine's, and lists nothing of theirs.
+            if (const Builtin& entry = builtins.at(BuiltinID(index)); entry.scope == BuiltinScope::Module && entry.prototypeLink == BuiltinPrototypeLink::Builtin && builtins.at(entry.inheritsFrom).origin == BuiltinOrigin::Host)
+                m_standsRightAboveObjectOfModule.quickSet(entry.inheritsFrom.index());
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCode);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCodeWhenCalled(BuiltinID(index)))
@@ -893,6 +904,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             m_endOfObjectsOfHolder[index] = m_objectsOfHolders.size();
             if (entry.flags.contains(BuiltinFlag::ListsAllMembers) || m_compiledModuleOfHolder[index])
                 holdersThatListAllMembers.appendVector(objects);
+            // What exposeMembersOf() passes by. A name that no object of the table has is absent there exactly where the whole chain is listed.
+            if ((entry.kind == BuiltinKind::Namespace || entry.kind == BuiltinKind::Constructor) && entry.scope == BuiltinScope::Realm && (entry.origin == BuiltinOrigin::Host || builtins.letsInUnseenCode(holder))
+                && !entry.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) && builtins.findMember(holder, BuiltinName()).outcome == BuiltinMemberLookup::Outcome::Absent)
+                m_listedHoldersThatDoNotEscape.append(holder);
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
                 lockedObjects.appendVector(objects);
             if (builtins.closesIndexKeys(holder))
@@ -1048,6 +1063,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        Objects unescapedHolders;
+        for (BuiltinID holder : m_listedHoldersThatDoNotEscape)
+            unescapedHolders.append(objectsOf(holder));
+        m_membersUnderKey[recordOfText].unescapedHoldersWithoutKey = maker.of(unescapedHolders.span());
         m_closedHoldersNotListingKeyOfClass.grow(MembersUnderKey::numberOfClasses);
         m_holdersUnderKey = std::make_unique<HoldersUnderKey[]>(numberOfKeys);
         m_membersOfHolder = std::make_unique<std::atomic<const ValueFlowMembersOfHolder*>[]>(builtins.builtinCount());
@@ -1172,6 +1191,16 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             createdInStretches[stretch] = WTF::move(createdInStretch);
         });
+        ObjectsCreatedWithFields prototypeObjectsWithMethods;
+        prototypeObjectsWithMethods.underKeys = collectInParallel<ObjectCreatedWithKey>(loops, program.functions.size(), [&](unsigned index, Vector<ObjectCreatedWithKey>& found) {
+            forEachListedValue(program, FunctionID(index), { Opcode::DefineMethod }, [&](BlockID, uint32_t, ValueID, const Value& definition) {
+                if (definition.key() && definition.side() != ClassSide::Static && definition.methodKind() == MethodKind::Method)
+                    found.append({ definition.key(), universe.prototypeOf(definition.layout()) });
+            });
+        });
+        for (const ObjectCreatedWithKey& created : prototypeObjectsWithMethods.underKeys)
+            prototypeObjectsWithMethods.objects.append(created.object);
+        createdInStretches.append(WTF::move(prototypeObjectsWithMethods));
         auto layOut = [&](Vector<ObjectCreatedWithKey> ObjectsCreatedWithFields::* list, Vector<uint32_t>& endOfKey, Vector<ValueFlowObjectID>& objects) {
             endOfKey.fill(0u, numberOfKeys);
             for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {

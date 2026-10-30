@@ -161,6 +161,21 @@ constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
     return *key;
 }
 
+// The stub writes the register of its result anyway. The argument behind the instance arrives there and goes to its place once the registers of the caller are saved,
+// so a call with one argument writes no register that a parameter of the caller may live in.
+constexpr bool takesArgumentInResultRegister(const OperationCallShape& shape)
+{
+    return shape.returns == OperationCall::Returns::Value && shape.firstArgument == OperationCall::FirstArgument::Instance;
+}
+
+// Where compiled code leaves the argument that the operation gets in operationArgumentGPR(index). A prelude reads the registers of the operation and uses that of the result.
+inline GPRReg argumentGPROfPreservingCall(const OperationCall& call, Entry entry, unsigned index)
+{
+    if (index == 1 && !hasPrelude(entry) && takesArgumentInResultRegister(preservingCallShapes[callOperationPreservingRegisters(call).form()]))
+        return GPRInfo::returnValueGPR;
+    return operationArgumentGPR(index);
+}
+
 // Over every variant a site may pick once it knows which registers are live. OperationCall::saves is ignored.
 RegisterSet registersClobberedByPreservingCall(const StubCatalog&, OperationCall);
 

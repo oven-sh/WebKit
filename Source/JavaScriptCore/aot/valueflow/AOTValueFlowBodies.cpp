@@ -77,6 +77,8 @@ struct PendingStatement {
     uint32_t firstOperand { 0 };
     uint32_t operandCount { 0 };
     bool leavesBody { true };
+    // They stand behind the operands.
+    uint8_t numberOfObjectsReadUnderKeyOfStore { 0 };
 };
 
 struct Guard {
@@ -168,7 +170,7 @@ public:
 private:
     Vector<Record>& m_records;
     Vector<unsigned, 25> m_hashes;
-    HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_byHash;
+    HashMap<uint64_t, Vector<uint32_t, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_byHash;
 };
 
 class BodyReducer {
@@ -492,7 +494,9 @@ private:
     {
         const Type& type = typeOf(id);
         const ClassPart* classPart = type.singleBuiltinClass();
-        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID() });
+        const Value& value = m_function.at(id);
+        bool isDenseArrayLiteral = value.opcode == Opcode::NewArray && value.holes().empty();
+        return addSite({ ValueFlowSiteOrigin::Operation, id, 0, type.singleLayout(m_program), classPart ? classPart->builtinClass : BuiltinClassID(), false, false, isDenseArrayLiteral });
     }
 
     void addInterface()
@@ -622,6 +626,20 @@ private:
     }
 
     bool isTypedByChecks(ValueID id) const { return isBehindCheck(id) && takesTypeFromOperands(m_function.at(id).opcode); }
+
+    bool copiesPrimitives(ValueID id) const
+    {
+        const Type& type = typeOf(id);
+        return flowOf(m_function.at(id).opcode) == ValueFlowEdgeClass::Copies && !type.hasObjects() && type.isJavaScriptValue();
+    }
+
+    bool callsFunctionWithoutBody(const Value& value) const
+    {
+        if (value.opcode != Opcode::Call)
+            return false;
+        FunctionID callee = onlyCalleeOf(m_program, typeOf(value.operand(OperandIndex::Call::callee)));
+        return callee && !m_program.at(callee).hasBody();
+    }
 
     // A block that one edge leads to is entered only behind what that edge is behind. Out of a test the edge brings the tested value as the test lets it through.
     void findGuardsOf(BlockID id)
@@ -1026,6 +1044,7 @@ private:
         case Opcode::ReadScope:
         case Opcode::ReportMismatch:
         case Opcode::RecordRequire:
+        case Opcode::CountExecution:
             return;
         case Opcode::GetModuleVariable:
             if (carriesValue(id))
@@ -1097,7 +1116,7 @@ private:
         }
         if (producer.opcode == Opcode::CallDirect && !m_program.at(producer.function()).isUnsplitCoroutine())
             return setNode(id, NodeName::result(producer.function(), value.index()));
-        bool isListedName = value.index() == static_cast<uint32_t>(ForInStepResult::Key) && walksNamesThatAreReExported(m_function, producer);
+        bool isListedName = producer.opcode == Opcode::ForInStep && value.index() == static_cast<uint32_t>(ForInStepResult::Key);
         if (!isListedName && !typeOf(id).hasObjects() && typeOf(id).isJavaScriptValue())
             return setConstant(id, constantOfType(typeOf(id)));
         beginSources(id);
@@ -1184,7 +1203,7 @@ private:
         }
         if (flowRuleOf(value.opcode) == FlowRule::Call) {
             bool namesLayout = value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList;
-            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { }, false, constructsProxyByName(value) });
+            addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { }, false, constructsProxyByName(value), false, value.opcode == Opcode::Call && value.variadicOperands().size() <= 1 });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
         }
         if (!carriesValue(id))
@@ -1279,7 +1298,8 @@ private:
         }
         bool mayTurnOutWithoutFraction = type.primitives & Primitive::FractionalNumber && makesNoFraction(value.opcode);
         bool isOfOneKind = (type.hasOnlyPrimitives(Primitive::Number) && !mayTurnOutWithoutFraction) || type.hasOnlyPrimitives(Primitive::AnyString) || type.hasOnlyPrimitives(Primitive::BigInt);
-        if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && (isOfOneKind || !answersByKindsOfOperands(value.opcode)))
+        bool isCopiedByRule = copiesPrimitives(id) && hasRuleOfItsOwn(value.opcode) && !type.isNever() && !callsFunctionWithoutBody(value);
+        if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && !isCopiedByRule && (isOfOneKind || !answersByKindsOfOperands(value.opcode)))
             return setConstant(id, constantOfType(type));
         at(id).role = Role::Result;
     }
@@ -1293,8 +1313,9 @@ private:
             std::optional<ObjectName> site;
             switch (node.kind()) {
             case DataNode::Kind::Array: {
-                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array });
                 const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
+                bool hasHole = std::ranges::any_of(elements, [](const DataNode& element) { return element.kind() == DataNode::Kind::Hole; });
+                site = addSite({ ValueFlowSiteOrigin::DataNode, id, ordinal, { }, BuiltinClasses::Array, false, false, !hasHole });
                 for (size_t index = elements.size(); index--;)
                     stack.append(&elements[index]);
                 break;
@@ -1392,6 +1413,12 @@ private:
         PendingStatement statement { id, block, static_cast<uint32_t>(m_statementOperands.size()), value.numberOfOperands(), !onlyLooksAtOperands(value) };
         for (uint32_t index = 0; index < statement.operandCount; ++index)
             m_statementOperands.append(value.operand(index));
+        if (value.opcode == Opcode::ElemSet) {
+            if (Vector<ValueID, 2> objects = objectsReadUnderKeyOfStore(m_function, value); objects.size() <= 2) {
+                m_statementOperands.appendVector(objects);
+                statement.numberOfObjectsReadUnderKeyOfStore = objects.size();
+            }
+        }
         m_guardsOfBlock[block.index()].areAskedFor = true;
         m_statements.append(statement);
     }
@@ -1607,7 +1634,7 @@ private:
                 TypeID type = m_function.at(id).type;
                 Opcode opcode = m_function.at(id).opcode;
                 bool isInsideType = type && resultRuleOf(opcode) != ResultRule::Results && opcode != Opcode::Builtin;
-                ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : kindOfResultMask(opcode);
+                ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : copiesPrimitives(id) ? ValueFlowMaskKind::Checked : kindOfResultMask(opcode);
                 description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type, kind) : 0);
                 if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(id))
                     m_body.seedsOnceReached.append({ description.name, constantOf(Primitive::Undefined), 0 });
@@ -2171,11 +2198,81 @@ private:
         return definitionThroughSameValues(m_function, read.objectOperand()) == definitionThroughSameValues(m_function, receiver) ? key : PropertyKeyID();
     }
 
+    static bool isReadByRules(Opcode opcode)
+    {
+        switch (opcode) {
+        case Opcode::Data:
+        case Opcode::NewObject:
+        case Opcode::NewDictionary:
+        case Opcode::CopyObject:
+        case Opcode::SetLiteralPrototype:
+        case Opcode::ForInOpen:
+        case Opcode::ForInStep:
+        case Opcode::GetSuperBase:
+        case Opcode::GetInternalField:
+        case Opcode::PrivateGet:
+        case Opcode::PrivateSet:
+        case Opcode::PrivateDefine:
+        case Opcode::IteratorOpen:
+        case Opcode::IteratorResume:
+        case Opcode::IteratorClose:
+        case Opcode::NewClass:
+        case Opcode::DefineMethod:
+        case Opcode::Builtin:
+        case Opcode::ModuleNamespace:
+        case Opcode::ImportModule:
+        case Opcode::RequireModule:
+        case Opcode::EvaluateModule:
+        case Opcode::RequireBuiltinModule:
+        case Opcode::ImportDynamic:
+        case Opcode::RequireDynamic:
+        case Opcode::ResolveDynamic:
+        case Opcode::DirectEval:
+        case Opcode::NativeBinding:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void noteFactsOfText(const Value& value, ValueID site, Body::Statement& statement)
+    {
+        if (isReadByRules(value.opcode)) {
+            statement.factsOfText.add(ValueFlowFactOfText::HasCopyOfOperation);
+            m_body.copiesOfOperations.append(ValueFlowCopyOfOperation { m_body.function, site, value });
+        }
+        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
+            statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
+        ValueFlowRareFactsOfText rare { m_body.function, site, { }, { } };
+        if (flowRuleOf(value.opcode) == FlowRule::Call) {
+            if (value.operand(1))
+                statement.factsOfText.add(ValueFlowFactOfText::HasSecondOperand);
+            if (ValueID callee = value.operand(0))
+                rare.entryNamed = entryNamedByOperations(m_program, m_function, callee);
+            if (!statement.key)
+                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_function, value);
+        } else if (value.opcode == Opcode::PropGet || value.opcode == Opcode::PropSet || value.opcode == Opcode::PropDelete) {
+            if (value.isFreeName())
+                statement.factsOfText.add(ValueFlowFactOfText::IsFreeName);
+            if (value.opcode == Opcode::PropGet)
+                rare.entryNamed = entryNamedByOperations(m_program, m_function, site);
+        }
+        if (value.opcode == Opcode::ElemGet || value.opcode == Opcode::ElemSet) {
+            static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property);
+            rare.textThatKeyBeginsWith = textThatSumBeginsWith(m_program, m_function, value.operand(OperandIndex::ElemGet::property));
+        }
+        if (!rare.entryNamed && !rare.keyOfMemberCalledOnItsHolder && !rare.textThatKeyBeginsWith)
+            return;
+        statement.factsOfText.add(ValueFlowFactOfText::HasRareFacts);
+        m_body.rareFactsOfText.append(rare);
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
         statement.key = keyOfStatement(value);
+        noteFactsOfText(value, pending.site, statement);
         if (value.opcode == Opcode::PropGet || value.opcode == Opcode::ElemGet || value.opcode == Opcode::ModuleNamespace) {
             if (!std::exchange(m_hasFoundReadsHandedOn, true))
                 findReadsHandedOn();
@@ -2187,6 +2284,10 @@ private:
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
             m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         }
+        for (uint32_t index = 0; index < pending.numberOfObjectsReadUnderKeyOfStore; ++index)
+            m_body.operands.append(operandFormOf(m_statementOperands[pending.firstOperand + pending.operandCount + index]));
+        if (pending.numberOfObjectsReadUnderKeyOfStore)
+            statement.factsOfText.add(pending.numberOfObjectsReadUnderKeyOfStore == 1 ? ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey : ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey);
         GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
         if (!guards.areWritten) {
             guards.areWritten = true;
@@ -2418,7 +2519,7 @@ ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& t
         auto shrink = [](auto&... lists) {
             (lists.shrinkToFit(), ...);
         };
-        shrink(body.passedParameters, body.nodes, body.sites, body.constants, body.masks, body.edges, body.edgesOnceReached, body.seedsOnceReached, body.functionsEnteredOnceReached, body.statements, body.operands, body.observedValues, body.comparedValues, body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly);
+        shrink(body.passedParameters, body.nodes, body.sites, body.constants, body.masks, body.edges, body.edgesOnceReached, body.seedsOnceReached, body.functionsEnteredOnceReached, body.copiesOfOperations, body.statements, body.operands, body.observedValues, body.rareFactsOfText, body.comparedValues, body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly);
         return WTF::move(body);
     };
     if (!function.hasBody())

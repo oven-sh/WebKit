@@ -90,6 +90,10 @@ LocationProof absenceProofOf(const BuiltinLookupContext&, BuiltinID holder, Prop
 
 BuiltinMemberAnswer findMemberFrom(const BuiltinLookupContext&, BuiltinID holder, PropertyKeyID);
 BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext&, BuiltinClassID, PropertyKeyID);
+// The read of the slot where the constructor of the class leaves the property. The instances of a class below have a Structure of their own, so each class answers for itself.
+BuiltinOverloadID findOwnSlotOfInstances(const BuiltinTable&, BuiltinClassID, BuiltinName);
+// Whether one load reads either slot.
+bool liesAtSamePlace(const BuiltinTable&, BuiltinOverloadID ownSlot, BuiltinOverloadID otherOwnSlot);
 
 enum class FreeNameAnswerKind : uint8_t { ByName, Constant, Absent, Bound };
 

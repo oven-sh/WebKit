@@ -320,6 +320,8 @@ public:
     ALWAYS_INLINE void didRunAsBefore(AssignmentPlan&);
     ALWAYS_INLINE AssignmentPlan* recentPlan(StructureID target, StructureID source, uint32_t sourceOrderWord, uint32_t excludedRunNumberPlusOne) { return m_recentPlans[recentIndex(target, source, sourceOrderWord, excludedRunNumberPlusOne)]; }
     ALWAYS_INLINE MappedCopy& mappedCopyAt(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne);
+    // Stands at the place of copies that the stub makes by what the two objects say. An empty place sends the stub to the operation at once.
+    const MappedCopy& copyOfNoSource() const { return m_copyOfNoSource; }
     // Null where the names that the copy leaves out have not been listed yet.
     FieldMap* fieldMapFor(const LayoutData& target, const LayoutData& source, uint32_t excludedRunNumberPlusOne);
     FieldMap::Entry describeMappedField(VM&, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne);
@@ -407,6 +409,7 @@ private:
     static constexpr unsigned numberOfPlacesForCopyOfTwo = 4;
     std::array<std::unique_ptr<CopyOfTwoPlan>, numberOfCopiesOfTwo> m_copiesOfTwo;
     Vector<std::unique_ptr<MappedCopy>> m_mappedCopies;
+    MappedCopy m_copyOfNoSource;
     unsigned m_shiftForMappedCopies { 0 };
     unsigned m_numberOfMappedCopiesTaken { 0 };
     unsigned m_nextMappedCopyReplaced { 0 };

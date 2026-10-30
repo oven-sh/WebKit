@@ -857,4 +857,12 @@ template<typename T> inline constexpr bool canMoveWithMemcpy<OutOfLineOptional<T
 
 } } } // namespace JSC::AOT::Typed
 
+namespace JSC { namespace AOT {
+
+template<typename T> inline constexpr bool movesAsBytes<Typed::CompactList<T>> = true;
+template<typename T, unsigned inlineCapacity> inline constexpr bool movesAsBytes<Typed::InlineList<T, inlineCapacity>> = true;
+template<typename T> inline constexpr bool movesAsBytes<Typed::OutOfLineOptional<T>> = true;
+
+} } // namespace JSC::AOT
+
 #endif // ENABLE(AOT)

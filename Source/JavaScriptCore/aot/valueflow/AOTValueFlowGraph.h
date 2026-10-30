@@ -39,6 +39,7 @@ public:
         uint32_t nodesFlowingIntoCoveredNodes { 0 };
         uint32_t nodesRetired { 0 };
         uint32_t edgesStraightIntoCoveredNodes { 0 };
+        uint64_t edgesRemoved { 0 };
         Seconds rows;
         Seconds waving;
     };
@@ -116,6 +117,15 @@ public:
 
     void addInitialEdges(std::span<const ValueFlowEdge> edges) { addEdges(edges); }
     size_t addEdges(std::span<const ValueFlowEdge>);
+    // The graph itself connects the predecessors of a retired node to the covered node.
+    bool isCoveredNode(ValueFlowNodeID node) const
+    {
+        return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
+            return covering.covered == node.index();
+        });
+    }
+    // What the edges have carried stays where it is. Each has been through a solve() and comes out of no constant. One that is listed twice is removed once.
+    void removeEdges(std::span<const ValueFlowEdge>);
     bool hasAdded(ValueFlowEdge edge) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
@@ -419,6 +429,7 @@ private:
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
     bool m_hasReleasedRows { false };
+    size_t m_numberOfNodesWithBitsOfCoverings { 0 };
     bool m_keepsPredecessors { false };
 
     Vector<std::unique_ptr<Worker>> m_workers;

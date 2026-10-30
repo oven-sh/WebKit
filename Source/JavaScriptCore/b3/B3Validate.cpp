@@ -47,6 +47,7 @@
 #include "B3VariableValue.h"
 #include "B3WasmBoundsCheckValue.h"
 #include <algorithm>
+#include <bit>
 #include <span>
 #include <utility>
 #include <wtf/HashSet.h>
@@ -61,8 +62,10 @@ enum class ViolationAction : uint8_t { Crash, Record };
 
 class Validater {
 public:
-    Validater(Procedure& procedure, UTF8CStringView dumpBefore, ViolationAction violationAction)
+    // What follows from the control flow is computed into `form` where it is not there yet.
+    Validater(Procedure& procedure, UTF8CStringView dumpBefore, ViolationAction violationAction, ValidatedForm& form)
         : m_procedure(procedure)
+        , m_form(form)
         , m_dumpBefore(dumpBefore)
         , m_violationAction(violationAction)
     {
@@ -89,6 +92,7 @@ public:
         Vector<unsigned> indexInBlock;
         indexInBlock.fill(0, values.size());
         UncheckedKeyHashMap<Value*, Vector<std::optional<Type>>> extractions;
+        m_blocksWithPhis.ensureSize(m_procedure.size());
 
         for (unsigned tuple = 0; tuple < m_procedure.tuples().size(); ++tuple) {
             VALIDATE(m_procedure.tuples()[tuple].size(), ("In tuple ", tuple));
@@ -104,14 +108,19 @@ public:
                 VALIDATE(!m_ownerOfValue[value->index()], ("At ", *value));
                 m_ownerOfValue[value->index()] = block;
                 indexInBlock[value->index()] = i;
+                if (value->opcode() == Phi)
+                    m_blocksWithPhis.quickSet(block->index());
+                VALIDATE(value->effects().terminal == (i + 1 == block->size()), ("At ", *value));
             }
         }
 
-        for (Value* value : values)
-            VALIDATE(ownerOf(value), ("At ", *value));
+        for (unsigned index = 0; index < values.size(); ++index)
+            VALIDATE(!values[index] || m_ownerOfValue[index], ("At ", *values[index]));
 
         // Compute dominators ourselves to avoid perturbing Procedure.
-        Dominators dominators(m_procedure);
+        if (!m_form.dominators)
+            m_form.dominators = makeUnique<Dominators>(m_procedure);
+        Dominators& dominators = *m_form.dominators;
 
         for (Value* value : values) {
             for (Value* child : value->children()) {
@@ -133,9 +142,6 @@ public:
         latestJumperTo.fill(nullptr, m_procedure.size());
         for (BasicBlock* block : m_procedure) {
             VALIDATE(block->size() >= 1, ("At ", *block));
-            for (unsigned i = 0; i < block->size() - 1; ++i)
-                VALIDATE(!block->at(i)->effects().terminal, ("At ", *block->at(i)));
-            VALIDATE(block->last()->effects().terminal, ("At ", *block->last()));
 
             for (BasicBlock* successor : block->successorBlocks()) {
                 VALIDATE(isInProcedure(successor), ("At ", *block, "->", pointerDump(successor)));
@@ -159,6 +165,10 @@ public:
         // The pointers are compared and not followed: the list of a dead block may name blocks that are gone.
         Vector<BasicBlock*, 8> predecessors;
         for (BasicBlock* block : m_procedure) {
+            if (block->numPredecessors() == 1 && firstJumperTo[block->index() + 1] - firstJumperTo[block->index()] == 1) {
+                VALIDATE(block->predecessor(0) == jumpers[firstJumperTo[block->index()]], ("At ", *block));
+                continue;
+            }
             predecessors.shrink(0);
             predecessors.appendRange(block->predecessors().begin(), block->predecessors().end());
             std::ranges::sort(predecessors);
@@ -1229,12 +1239,18 @@ private:
         bool changed = true;
         BitVector blocksToVisit;
         IndexMap<BasicBlock*, UncheckedKeyHashSet<Value*>> undominatedPhisAtTail(m_procedure.size());
+        // A BitVector grows by no more than it is asked for.
+        blocksToVisit.ensureSize(m_procedure.size());
         for (BasicBlock* block : m_procedure)
-            blocksToVisit.set(block->index());
+            blocksToVisit.quickSet(block->index());
+        if (m_form.blocksInPostOrder.isEmpty())
+            m_form.blocksInPostOrder = m_procedure.blocksInPostOrder();
         while (changed) {
             changed = false;
-            for (BasicBlock* block : m_procedure.blocksInPostOrder()) {
+            for (BasicBlock* block : m_form.blocksInPostOrder) {
                 if (!blocksToVisit.quickClear(block->index()))
+                    continue;
+                if (undominatedPhisAtTail[block].isEmpty() && !m_blocksWithPhis.quickGet(block->index()))
                     continue;
                 UncheckedKeyHashSet<Value*> undominatedPhis = undominatedPhisAtTail[block];
                 for (unsigned index = block->size()-1; index--;) {
@@ -1298,23 +1314,112 @@ private:
     }
     
     Procedure& m_procedure;
+    ValidatedForm& m_form;
     Vector<BasicBlock*> m_ownerOfValue;
+    BitVector m_blocksWithPhis;
     UTF8CStringView m_dumpBefore;
     ViolationAction m_violationAction;
     std::optional<ValidationRule> m_violatedRule;
 };
 
+class Hasher {
+public:
+    void add(uint64_t word)
+    {
+        m_hash = (m_hash ^ word) * 0x9e3779b97f4a7c15ull;
+        m_hash ^= m_hash >> 29;
+    }
+
+    void add(const void* pointer) { add(static_cast<uint64_t>(std::bit_cast<uintptr_t>(pointer))); }
+
+    uint64_t hash() const { return m_hash; }
+
+private:
+    uint64_t m_hash { 0 };
+};
+
+// Reads blocks and the values in them, and follows no other pointer: a broken procedure is for the validation to report.
+void hashProcedure(Procedure& procedure, uint64_t& hashOfControlFlow, uint64_t& hashOfValues)
+{
+    Hasher controlFlow;
+    Hasher values;
+    controlFlow.add(procedure.size());
+    values.add(procedure.values().size());
+    values.add(procedure.variables().size());
+    values.add(procedure.tuples().size());
+    for (BasicBlock* block : procedure) {
+        controlFlow.add(block);
+        controlFlow.add(static_cast<uint64_t>(block->numSuccessors()) << 32 | block->numPredecessors());
+        for (const FrequentedBlock& successor : block->successors())
+            controlFlow.add(successor.block());
+        for (BasicBlock* predecessor : block->predecessors())
+            controlFlow.add(predecessor);
+
+        values.add(block);
+        for (Value* value : *block) {
+            values.add(value);
+            if (!value)
+                continue;
+            values.add(static_cast<uint64_t>(value->kind().hash()) << 32 | value->type().hash());
+            values.add(value->numChildren());
+            for (Value* child : value->children())
+                values.add(child);
+            if (auto* memory = value->as<MemoryValue>()) {
+                values.add(static_cast<uint64_t>(memory->offset()));
+                values.add(static_cast<uint64_t>(memory->range().begin()) << 32 | memory->range().end());
+            } else if (auto* upsilon = value->as<UpsilonValue>())
+                values.add(upsilon->phi());
+            else if (auto* access = value->as<VariableValue>())
+                values.add(access->variable());
+        }
+    }
+    hashOfControlFlow = controlFlow.hash();
+    hashOfValues = values.hash();
+}
+
+enum class After : uint8_t { Phase, AnythingElse };
+
+void validate(Procedure& procedure, UTF8CStringView dumpBefore, After after)
+{
+    // Whoever turns validation on with an option gets what upstream does.
+    if (procedure.policy().validation.level != ValidationLevel::AtEachPhase) {
+        ValidatedForm form;
+        Validater(procedure, dumpBefore, ViolationAction::Crash, form).run();
+        return;
+    }
+
+    uint64_t hashOfControlFlow;
+    uint64_t hashOfValues;
+    hashProcedure(procedure, hashOfControlFlow, hashOfValues);
+    std::unique_ptr<ValidatedForm>& form = procedure.validatedForm();
+    if (!form || form->hashOfControlFlow != hashOfControlFlow)
+        form = makeUnique<ValidatedForm>();
+    else if (after == After::Phase && form->hashOfValues == hashOfValues)
+        return;
+    form->hashOfControlFlow = hashOfControlFlow;
+    form->hashOfValues = hashOfValues;
+    Validater(procedure, dumpBefore, ViolationAction::Crash, *form).run();
+}
+
 } // anonymous namespace
+
+ValidatedForm::ValidatedForm() = default;
+ValidatedForm::~ValidatedForm() = default;
 
 void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
-    Validater validater(procedure, dumpBefore, ViolationAction::Crash);
-    validater.run();
+    validate(procedure, dumpBefore, After::AnythingElse);
+}
+
+void validateAfterPhase(Procedure& procedure, UTF8CStringView dumpBefore)
+{
+    validate(procedure, dumpBefore, After::Phase);
 }
 
 std::optional<ValidationRule> findViolatedRule(Procedure& procedure)
 {
-    Validater validater(procedure, { }, ViolationAction::Record);
+    ValidatedForm form;
+    Validater validater(procedure, { }, ViolationAction::Record, form);
     validater.run();
     return validater.violatedRule();
 }

@@ -1864,7 +1864,7 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
         });
     };
 
-    switch (static_cast<OutlinedIteration>(key.node)) {
+    switch (kindOfOutlinedBody(key.node)) {
     case OutlinedIteration::AppendIterable:
         return buildSharedFunction(inputs, "appendIterable"_s, { inputs.types.intern(Type::builtinClass(BuiltinClasses::Array)), TypeTable::anything }, { TypeTable::undefined }, [&](IterationExpansion& expansion, Parameters parameters) {
             expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(ExpectedType(inputs.types.intern(iterablesExpectedBy(key, inputs.types))));
@@ -1903,6 +1903,8 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
         return buildClose("closeStringOrIteratorAfterThrow"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Throw);
     case OutlinedIteration::CallWithElements:
         return buildCallWithElements(key, inputs);
+    case OutlinedIteration::CallWithSharedArms:
+        return buildCallWithSharedArms(key, inputs);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -3439,7 +3441,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
         replaced.add(pass.analyses.effectContext(), function, value);
         ValueID array = value.arrayOperand();
         ValueID source = value.iterableOperand();
-        value.become(Opcode::AppendElements);
+        value.become(plan.arms.first().form == IterationForm::Set ? Opcode::AppendMembers : Opcode::AppendElements);
         value.setArrayOperand(array);
         value.setSourceOperand(source);
         pass.analyses.didChangeValues();
@@ -3560,6 +3562,33 @@ static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const Spread
     builder.emitJump(header);
 }
 
+// Nothing but casts has read the list that the spread appends to, and it stands in the block of the spread.
+static bool isFirstUseOfEmptyLiteral(FunctionPassContext& pass, const ValueSite& site)
+{
+    const Function& function = pass.function;
+    const UseLists& useLists = pass.analyses.useLists();
+    ValueID list = function.at(site.value).arrayOperand();
+    ValueID cast = function.at(list).opcode == Opcode::AssumeType ? list : ValueID();
+    ValueID id = cast ? function.at(cast).valueOperand() : list;
+    const Value& literal = function.at(id);
+    if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
+        return false;
+    if (useLists.locationOf(id).block != site.block)
+        return false;
+    auto isReadBehindSpreadOnly = [&](ValueID value) {
+        return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
+            // The end of a block stands behind all its values, and its handler is handed only what is there at its head.
+            if (use.kind != Use::Kind::Operand)
+                return true;
+            if (use.user == cast || use.user == site.value)
+                return true;
+            ValueLocation location = useLists.locationOf(use.user);
+            return location.block != site.block || location.index > site.index;
+        });
+    };
+    return isReadBehindSpreadOnly(id) && (!cast || isReadBehindSpreadOnly(cast));
+}
+
 static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
     Vector<SpreadSite> sites;
@@ -3567,9 +3596,15 @@ static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, 
         ValueID iterable = pass.function.at(site.value).iterableOperand();
         Arms arms = findClassArms(pass, PlannedValue { iterable, site.block, { PristineAspects::Storage, PristineAspects::Names } });
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
-        arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
+        arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array && arm.form != IterationForm::Set; });
+        IterationPlan plan = planWithClassArms(pass, iterable, Arms(arms));
+        // `[...set]`: the list is made with the members in it. A list that holds something already has no room for them, and the loop makes room as it goes.
+        if (!plan.hasClassArm() || plan.arms.first().form != IterationForm::Set || !plan.arms.first().needsNoTest() || !isFirstUseOfEmptyLiteral(pass, site)) {
+            arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
+            plan = planWithClassArms(pass, iterable, WTF::move(arms));
+        }
         bool hasFailedStringTest = pass.analyses.findEarlierTest(makeTypeTest(iterable, TypeTable::string), site.block) == EarlierTest::Failed;
-        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest, findMakerOfArgumentsToTakeApart(pass, iterable) });
+        sites.append({ ProgramPoint { site.block, site.index }, WTF::move(plan), hasFailedStringTest, findMakerOfArgumentsToTakeApart(pass, iterable) });
     });
     if (sites.isEmpty())
         return PassOutcome::Unchanged;

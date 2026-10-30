@@ -39,7 +39,8 @@ static bool markersAreEncodedValues(const SlotTraits& traits)
         && (!traits.hasNull || traits.nullBits == boxedMarkers.null);
 }
 
-static void loadSlotBits(StubAssembler& jit, unsigned width, Address slot, GPRReg bits)
+template<typename AddressOfSlot>
+static void loadSlotBits(StubAssembler& jit, unsigned width, AddressOfSlot slot, GPRReg bits)
 {
     switch (width) {
     case 1:
@@ -151,6 +152,16 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     JumpList returnsNull;
     JumpList returnsNaN;
 
+    RELEASE_ASSERT(!r.slot || (known && representationWithCodeForRead(*known) <= representationsReadAsInt32.back()));
+    auto loadBitsInto = [&](GPRReg bits, unsigned width) {
+        if (r.slot)
+            loadSlotBits(jit, width, *r.slot, bits);
+        else
+            loadSlotBits(jit, width, Address(r.field.address), bits);
+    };
+    auto loadBits = [&](unsigned width) {
+        loadBitsInto(r.value, width);
+    };
     auto returnValue = [&] {
         jit.move(r.value, r.result);
         jit.returnToCaller();
@@ -180,7 +191,7 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     };
     auto readEncodedValue = [&](const SlotTraits& traits) {
         RELEASE_ASSERT(traits.width == sizeof(EncodedJSValue) && markersAreEncodedValues(traits));
-        jit.load64(Address(r.field.address), r.value);
+        loadBits(traits.width);
         if (traits.hasAbsent)
             exits.isAbsent.append(jit.branchTest64(CCallHelpers::Zero, r.value));
         returnValue();
@@ -189,7 +200,7 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
         RELEASE_ASSERT(traits.hasAbsent && markersAreEncodedValues(traits));
         const bool mayBeLiteralString = traits.valueKind == SlotValueKind::LiteralString;
 
-        loadSlotBits(jit, traits.width, Address(r.field.address), r.value);
+        loadBits(traits.width);
         Jump notCell;
         if (traits.isNarrowReference) {
             notCell = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
@@ -256,16 +267,18 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     };
     auto readOptionalInt32 = [&](const SlotTraits& traits) {
         RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
-        jit.load32(Address(r.field.address), r.value);
+        // A slot that is always filled has no markers, so nothing leaves behind the load.
+        if (known == SlotRepresentation::Int32) {
+            loadBitsInto(r.result, traits.width);
+            boxExactInt32(jit, r.result, r.result);
+            jit.returnToCaller();
+            return;
+        }
+        loadBits(traits.width);
         Jump isMarker = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
         Label isNumber = jit.label();
         returnInt32();
         isMarker.link(&jit);
-        // A slot that is always filled has no markers.
-        if (known == SlotRepresentation::Int32) {
-            jit.jump().linkTo(isNumber, &jit);
-            return;
-        }
         if (!known)
             jit.branch32(CCallHelpers::Equal, r.field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Int32))).linkTo(isNumber, &jit);
         branchOnMarkers(traits);
@@ -344,7 +357,7 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     if (known)
         readAndReturn(representationWithCodeForRead(*known));
     else
-        emitDispatchOnRepresentationForRead(jit, r.field.representation, readAndReturn);
+        emitDispatchOnRepresentationForRead(jit, r.field.representation, r.commonRepresentations, readAndReturn);
 
     returnsUndefined.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), r.result);
@@ -471,6 +484,13 @@ void generatePrivateGet(StubAssembler& jit)
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     JumpList goesToRunTime;
     const std::optional<SlotRepresentation> knownRepresentation = representationKnownTo(jit.key());
+    const FieldReadRegisters registers {
+        .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T12 },
+        .value = T10,
+        .result = jit.result(),
+        .number = number,
+        .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
+    };
 
     // By the record of the Structure of `object`, which is no compiled object.
     auto readAtKnownLocationAndReturn = [&](JumpList& isNotKnown) {
@@ -503,10 +523,10 @@ void generatePrivateGet(StubAssembler& jit)
     goesToRunTime.append(jit.branchIfNotCell(object));
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, object);
     Jump isOfOtherClass;
+    Label readsFieldOfRecord;
     {
         const GPRReg layout = T12;
         const GPRReg record = T11;
-        constexpr uint32_t flagsLeftToRunTime = fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsAccessor;
         loadStructure(jit, object, layout);
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
         // The number is an int32 in a JSValue: its lower half is the number.
@@ -519,32 +539,59 @@ void generatePrivateGet(StubAssembler& jit)
             jit.zeroExtend32ToWord(field, record);
             jit.lshift64(TrustedImm32(fieldSizeShift), record);
             jit.addPtr(layout, record);
-            goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToRunTime)));
+            jit.addPtr(TrustedImm32(sizeof(LayoutData)), record);
         }
 
-        const FieldReadRegisters registers {
-            .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T12 },
-            .value = T10,
-            .result = jit.result(),
-            .number = number,
-            .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
-        };
         FieldReadExits exits;
         if (knownRepresentation) {
             jit.urshift32(field, TrustedImm32(bitsOfFieldInPrivateGet), registers.field.address);
             jit.addPtr(object, registers.field.address);
         } else {
-            jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), registers.field.slotData);
+            readsFieldOfRecord = jit.label();
+            goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(fieldMayExistWithoutStorage | fieldIsAccessor)));
+            jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), registers.field.slotData);
+            Jump isOutOfLine = jit.branchTest32(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(fieldIsOutOfLine));
             computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+            Jump hasAddress = jit.jump();
+            isOutOfLine.link(&jit);
+            loadExtensionWordOffset(jit, object, registers.field.extensionWordOffset);
+            computeFieldAddress(jit, registers.field, true, exits.isAbsent);
+            hasAddress.link(&jit);
         }
         readFieldAndReturn(jit, registers, exits, knownRepresentation);
         goesToRunTime.append(exits.isAbsent);
         goesToRunTime.append(exits.cannot);
     }
 
-    // An instance of a class below this one. Where the compiler does not know the parent of that class, its layout lacks the names of this one, and they lie among the extra properties.
+    // An instance of a class below this one, whose parent the compiler does not know.
     isOfOtherClass.link(&jit);
-    {
+    if (knownRepresentation) {
+        jit.and32(TrustedImm32((1 << bitsOfFieldInPrivateGet) - 1), field);
+        jit.jumpToStub(privateGet());
+    } else {
+        // Its layout has a field for the name, which the run time has found before.
+        const GPRReg layout = T12;
+        const GPRReg layouts = T11;
+        const GPRReg place = T12;
+        const GPRReg record = T11;
+        JumpList hasNoPlace;
+        jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, index)), layouts);
+        jit.lshift64(TrustedImm32(32), layouts);
+        jit.or64(T10, layouts);
+        jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, index)), T10);
+        jit.xor32(field, T10);
+        jit.and32(TrustedImm32(numberOfPrivateFieldPlaces - 1), T10);
+        jit.lshift32(TrustedImm32(shiftOfPrivateFieldPlace), T10);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.privateFieldPlaces)), place);
+        jit.addPtr(T10, place);
+        hasNoPlace.append(jit.branch64(CCallHelpers::NotEqual, layouts, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, layouts))));
+        hasNoPlace.append(jit.branch32(CCallHelpers::NotEqual, field, Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, declaredField))));
+        jit.loadPtr(Address(place, OBJECT_OFFSETOF(PrivateFieldPlace, field)), record);
+        jit.jump().linkTo(readsFieldOfRecord, &jit);
+        hasNoPlace.link(&jit);
+    }
+    // Its layout lacks the names of this class, and they lie among the extra properties.
+    if (!knownRepresentation) {
         const GPRReg extraProperties = T10;
         const GPRReg hiddenWordOffset = T11;
         const FPRReg instance = number;
@@ -554,8 +601,6 @@ void generatePrivateGet(StubAssembler& jit)
         goesToRunTime.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
         jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
         loadExtraProperties(jit, object, hiddenWordOffset, extraProperties, goesToRunTime);
-        if (knownRepresentation)
-            jit.and32(TrustedImm32((1 << bitsOfFieldInPrivateGet) - 1), field);
         jit.move64ToDouble(object, instance);
         jit.move(extraProperties, object);
         JumpList isNotKnown;

@@ -1,0 +1,30 @@
+# The built-in toJSON reads valueOf by name and, for a valid date, toISOString, and each first read adds its member to Date.prototype. Inline code leaves those reads where the program lists the keys.
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Date
+    v1 = Integer integer=5
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="toJSON"
+    v4 = Call v3, v2 calleeKey="toJSON"
+    v5 = Builtin builtin=Object
+    v6 = PropGet v5 key="getOwnPropertyNames"
+    v7 = Builtin builtin=DatePrototype
+    v8 = Call v6, v5, v7
+    v9 = NewArray v4, v8 contents=anything
+    Return v9
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: InitializeBuiltin builtin=DatePrototypeToJSON
+# CHECK-NEXT: InitializeBuiltin builtin=DatePrototypeValueOf
+# CHECK-NEXT: TryCallInline {{*}} inlineBuiltin=DateToISOString overload=DatePrototypeToJSON/0 {{*}}-> done [[answered]](), miss [[missed]]()
+# CHECK: [[missed]]() frequency=Rare:
+# CHECK-NEXT: CallBuiltin {{*}} overload=DatePrototypeToJSON/0
+# CHECK: [[answered]]([[text]]: {{*}}):
+# CHECK-NEXT: InitializeBuiltin builtin=DatePrototypeToISOString
+# CHECK-NEXT: Jump -> next {{*}}([[text]])

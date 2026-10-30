@@ -37,12 +37,14 @@ struct ValueFlowGraph::Worker {
         if (latest.low == low) [[likely]]
             return latest.set;
         latest.low = low;
-        latest.set = setsOfLowMembers.ensure(low, [&] {
+        auto make = [&] {
             Vector<ValueFlowObjectID, 16> list;
             for (uint64_t rest = low; rest; rest &= rest - 1)
                 list.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
             return maker.of(list.span());
-        }).iterator->value;
+        };
+        // The table keeps the two highest keys for itself: all sixty-four members, and all but the first.
+        latest.set = low >= std::numeric_limits<uint64_t>::max() - 1 ? make() : setsOfLowMembers.ensure(low, make).iterator->value;
         return latest.set;
     }
 
@@ -289,9 +291,12 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
             *bits = WTF::move(grown);
         }
         m_hasMoved.grow(m_numberOfNodes, capacity);
+    }
+    if (size > m_numberOfNodesWithBitsOfCoverings) {
+        m_numberOfNodesWithBitsOfCoverings = size + size / 8;
         for (Covering& covering : m_coverings) {
-            covering.isRetired.ensureSize(capacity);
-            covering.hasStoppedAt.ensureSize(capacity);
+            covering.isRetired.ensureSize(m_numberOfNodesWithBitsOfCoverings);
+            covering.hasStoppedAt.ensureSize(m_numberOfNodesWithBitsOfCoverings);
         }
     }
     m_numberOfNodes = size;
@@ -554,6 +559,43 @@ size_t ValueFlowGraph::addEdges(std::span<const ValueFlowEdge> edges)
     return m_edgesNotInLists.size() - before;
 }
 
+void ValueFlowGraph::removeEdges(std::span<const ValueFlowEdge> edges)
+{
+    AOT_THRESHOLD(size_t, fewestEdgesForThreads, 4096);
+    auto removeSuccessor = [&](ValueFlowEdge edge) {
+        return m_shards[shardOf(edge.from.index())]->successors.remove(m_successors[edge.from.index()], edge.to.index());
+    };
+    auto removePredecessor = [&](ValueFlowEdge edge) {
+        return m_shards[shardOf(edge.to.index())]->predecessors.remove(m_predecessors[edge.to.index()], edge.from.index());
+    };
+    if (edges.size() < fewestEdgesForThreads || m_loops.width() == 1) {
+        for (ValueFlowEdge edge : edges) {
+            if (!removeSuccessor(edge))
+                continue;
+            RELEASE_ASSERT(removePredecessor(edge));
+            ++m_counters.edgesRemoved;
+        }
+        return;
+    }
+    std::array<Vector<ValueFlowEdge>, numberOfShards> edgesBySource;
+    std::array<Vector<ValueFlowEdge>, numberOfShards> edgesByTarget;
+    for (ValueFlowEdge edge : edges) {
+        edgesBySource[shardOf(edge.from.index())].append(edge);
+        edgesByTarget[shardOf(edge.to.index())].append(edge);
+    }
+    std::array<size_t, numberOfShards> successorsRemoved { };
+    std::array<size_t, numberOfShards> predecessorsRemoved { };
+    m_team->run(numberOfShards, [&](unsigned number, unsigned) {
+        for (ValueFlowEdge edge : edgesBySource[number])
+            successorsRemoved[number] += removeSuccessor(edge);
+        for (ValueFlowEdge edge : edgesByTarget[number])
+            predecessorsRemoved[number] += removePredecessor(edge);
+    });
+    size_t removed = std::accumulate(successorsRemoved.begin(), successorsRemoved.end(), static_cast<size_t>(0));
+    RELEASE_ASSERT(removed == std::accumulate(predecessorsRemoved.begin(), predecessorsRemoved.end(), static_cast<size_t>(0)));
+    m_counters.edgesRemoved += removed;
+}
+
 void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdge> edges)
 {
     m_numberOfEdges += edges.size();
@@ -654,8 +696,8 @@ void ValueFlowGraph::append(Covering&& covering)
 {
     RELEASE_ASSERT(m_coverings.size() < mostCoverings);
     covering.bitInGates = 1 << m_coverings.size();
-    covering.isRetired.ensureSize(m_capacity);
-    covering.hasStoppedAt.ensureSize(m_capacity);
+    covering.isRetired.ensureSize(m_numberOfNodesWithBitsOfCoverings);
+    covering.hasStoppedAt.ensureSize(m_numberOfNodesWithBitsOfCoverings);
     m_coverings.append(WTF::move(covering));
 }
 
@@ -1548,7 +1590,7 @@ void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
     bytes.add("graph: rows of nodes"_s, numberOfNodes * sizeof(Row));
     bytes.add("graph: successors of nodes"_s, numberOfNodes * sizeof(uint32_t));
     bytes.add("graph: predecessors of nodes"_s, numberOfNodes * sizeof(uint32_t));
-    bytes.add("graph: bits of nodes"_s, (3 + 2 * m_coverings.size()) * (m_capacity / 8));
+    bytes.add("graph: bits of nodes"_s, 3 * (m_capacity / 8) + 2 * m_coverings.size() * (m_numberOfNodesWithBitsOfCoverings / 8));
     bytes.addList("graph: masks"_s, m_masks);
     for (const std::unique_ptr<Worker>& worker : m_workers)
         bytes.addMap("graph: sets of low members"_s, worker->setsOfLowMembers);

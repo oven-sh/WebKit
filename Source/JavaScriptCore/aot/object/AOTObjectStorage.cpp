@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
@@ -377,6 +378,12 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
     return object.state().objects->layouts.nameOf(vm, field);
 }
 
+// Pending stars go on waiting unless one of them binds the name of the field.
+static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldData& field)
+{
+    return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfMade(object);
+}
+
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
 {
     // readInline() called read() for a field that is stored out of line.
@@ -385,7 +392,7 @@ FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& f
         value = object.read(field);
     if (value)
         return { value, object.attributesOf(field), true };
-    JSObject* extra = object.extraProperties();
+    JSObject* extra = extraPropertiesThatMayHold(object, field);
     if (!extra)
         return { };
     unsigned attributes;
@@ -397,7 +404,9 @@ FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& f
 
 bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field)
 {
-    JSObject* extra = object.extraProperties();
+    if (std::optional<bool> isBound = isBoundByPendingStar(object, field))
+        return *isBound;
+    JSObject* extra = extraPropertiesIfMade(object);
     return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
 }
 

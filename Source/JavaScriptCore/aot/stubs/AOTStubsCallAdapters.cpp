@@ -258,6 +258,31 @@ void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 #endif
 }
 
+// VMState::restoreImageBelowAdapter().
+static void emitRestoreImageBelowAdapter(StubAssembler& jit, GPRReg vm, GPRReg end, GPRReg parts)
+{
+    constexpr int32_t sizeOfEntry = sizeof(VMState::ImageBelowAdapter);
+    jit.loadPtr(addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()), end);
+    jit.subPtr(TrustedImm32(sizeOfEntry), end);
+    jit.storePtr(end, addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()));
+    jit.loadPtr(Address(end, OBJECT_OFFSETOF(VMState::ImageBelowAdapter, parts)), parts);
+    jit.loadPtr(Address(end, static_cast<int32_t>(OBJECT_OFFSETOF(VMState::ImageBelowAdapter, adapterFrame)) - sizeOfEntry), end);
+    jit.storePtr(end, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()));
+    emitRunImage(jit, vm, parts, end);
+}
+
+void emitLeaveAdapterCalledByOtherImage(StubAssembler& jit, GPRReg adapterFrame, GPRReg vm, GPRReg end, GPRReg parts, JumpList& isNotCalledByOtherImage)
+{
+    RELEASE_ASSERT(jit.options().sharesRealms && noOverlap(adapterFrame, vm, end, parts));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+    isNotCalledByOtherImage.append(jit.branchPtr(CCallHelpers::NotEqual, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()), adapterFrame));
+    jit.loadPtr(addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()), end);
+    jit.loadPtr(Address(end, static_cast<int32_t>(OBJECT_OFFSETOF(VMState::ImageBelowAdapter, parts)) - static_cast<int32_t>(sizeof(VMState::ImageBelowAdapter))), parts);
+    jit.loadPtr(Address(parts, VMState::offsetOfReturnAddressOfEngineCalleeInParts()), parts);
+    isNotCalledByOtherImage.append(jit.branchPtr(CCallHelpers::NotEqual, parts, Address(adapterFrame, CallFrame::returnPCOffset())));
+    emitRestoreImageBelowAdapter(jit, vm, end, parts);
+}
+
 void emitAdapterEpilogue(StubAssembler& jit)
 {
     if (jit.options().sharesRealms) {
@@ -270,15 +295,7 @@ void emitAdapterEpilogue(StubAssembler& jit)
         Label hasRestoredImage = jit.label();
         jit.addOutOfLinePart([=](StubAssembler& jit) {
             restoresImage.link(&jit);
-            // VMState::restoreImageBelowAdapter().
-            constexpr int32_t sizeOfEntry = sizeof(VMState::ImageBelowAdapter);
-            jit.loadPtr(addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()), end);
-            jit.subPtr(TrustedImm32(sizeOfEntry), end);
-            jit.storePtr(end, addressInVMState(vm, VMState::offsetOfEndOfImagesBelowAdapters()));
-            jit.loadPtr(Address(end, OBJECT_OFFSETOF(VMState::ImageBelowAdapter, parts)), parts);
-            jit.loadPtr(Address(end, static_cast<int32_t>(OBJECT_OFFSETOF(VMState::ImageBelowAdapter, adapterFrame)) - sizeOfEntry), end);
-            jit.storePtr(end, addressInVMState(vm, VMState::offsetOfAdapterFrameThatRestoresImage()));
-            emitRunImage(jit, vm, parts, end);
+            emitRestoreImageBelowAdapter(jit, vm, end, parts);
             jit.jump().linkTo(hasRestoredImage, &jit);
         });
     }
@@ -603,6 +620,7 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), operationArgumentGPR(1));
     jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), operationArgumentGPR(2));
     jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(StubFrameKind::ConstructAdapterMakesThis);
     Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
     jit.store64(GPRInfo::returnValueGPR, Address(fp, offsetOfConstructThis));
     Jump hasThis = jit.jump();
@@ -724,7 +742,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     jit.load64(newTarget, operationArgumentGPR(2));
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
-    jit.bindReturnLabel(StubFrameKind::BelowSpilledArguments);
+    jit.bindReturnLabel(StubFrameKind::PlainFunctionConstructMakesThis);
     Jump createThisThrew = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
     jit.move(GPRInfo::returnValueGPR, thisGPR);
     Jump hasThis = jit.jump();

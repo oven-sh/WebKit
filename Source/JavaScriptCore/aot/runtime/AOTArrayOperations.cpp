@@ -13,6 +13,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTCompactTable.h"
 #include "AOTConvention.h"
 #include "AOTFrameArrays.h"
 #include "AOTInstance.h"
@@ -34,6 +35,7 @@
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSObjectVisitInlines.h"
+#include "JSSetInlines.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -467,6 +469,99 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfElements, JSCell*, (Instance* ins
     appendElements(globalObject, vm, array, source);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, array);
+}
+
+// The members in the order of a walk from the first entry on.
+template<typename Functor>
+static void forEachMember(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
+{
+    JSCell* storage = set->storageOrSentinel(vm);
+    if (storage == vm.orderedHashTableSentinel())
+        return;
+    if (JSSet::Helper::isCompact(*storage)) {
+        CompactTable::forEachInColumn(vm, storage, 0, true, functor);
+        return;
+    }
+    auto* table = uncheckedDowncast<JSSet::Storage>(storage);
+    for (JSSet::Helper::Entry entry = 0; ; entry = JSSet::Helper::iterationEntry(*table) + 1) {
+        JSCell* next = JSSet::Helper::nextAndUpdateIterationEntry(vm, *table, entry);
+        if (next == vm.orderedHashTableSentinel())
+            return;
+        table = uncheckedDowncast<JSSet::Storage>(next);
+        functor(JSSet::Helper::getIterationEntryKey(*table));
+    }
+}
+
+// Of the kind asked for, or of the least kind that takes every member.
+static JSArray* newArrayOfMembers(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSSet* source, IndexingType indexingType)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // As the first step of a walk does: the next list is made by the stub.
+    if (CompactTable* table = source->hasCompactStorage() ? uncheckedDowncast<CompactTable>(source->storage()) : nullptr; table && table->isLive() && table->isInImage()) {
+        DeferTerminationForAWhile deferTermination(vm);
+        auto moving = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        CompactTable::tryMoveToHeap(globalObject, source);
+        moving.clearException();
+    }
+    unsigned length = 0;
+    static_assert(ArrayWithInt32 < ArrayWithDouble && ArrayWithDouble < ArrayWithContiguous);
+    forEachMember(vm, source, [&](JSValue member) {
+        // NaN would read as a hole among doubles.
+        bool isStoredAsDouble = member.isDouble() && member.asDouble() == member.asDouble();
+        indexingType = std::max<IndexingType>(indexingType, member.isInt32() ? ArrayWithInt32 : isStoredAsDouble ? ArrayWithDouble : ArrayWithContiguous);
+        ++length;
+    });
+    RELEASE_ASSERT(indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous);
+    if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    JSArray* array = newArrayOfHoles(instance, globalObject, vm, length, length | 1, indexingType);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (array->indexingType() != indexingType) [[unlikely]] {
+        unsigned index = 0;
+        MarkedArgumentBuffer members;
+        forEachMember(vm, source, [&](JSValue member) { members.append(member); });
+        if (members.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        for (; index < length; ++index) {
+            array->putDirectIndex(globalObject, index, members.at(index));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        return array;
+    }
+    // A new array is written without barriers while nothing is allocated.
+    DeferGCForAWhile deferGC(vm);
+    Butterfly* butterfly = array->butterfly();
+    unsigned index = 0;
+    if (indexingType == ArrayWithDouble) {
+        forEachMember(vm, source, [&](JSValue member) { butterfly->contiguousDouble().atUnsafe(index++) = member.asNumber(); });
+        return array;
+    }
+    forEachMember(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
+    vm.writeBarrier(array);
+    return array;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfMembers, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t indexingType))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfMembers);
+    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTNewArrayOfMembers);
+    RELEASE_ASSERT(indexingType == ArrayWithInt32 || indexingType == ArrayWithDouble || indexingType == ArrayWithContiguous);
+    OPERATION_RETURN(scope, newArrayOfMembers(instance, globalObject, vm, source, static_cast<IndexingType>(indexingType)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
+    JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers);
+    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers);
+    JSArray* members = newArrayOfMembers(instance, globalObject, vm, source, ArrayWithInt32);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    appendElements(globalObject, vm, target, members);
+    OPERATION_RETURN(scope);
 }
 
 // JSObject::ensureLengthSlow() for a full vector with nothing in front of it: the same new length, the same rounding, and a vector with an allocation of its own is reallocated, so a grown array takes the memory it takes in JSArray::push().

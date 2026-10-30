@@ -69,18 +69,24 @@ std::span<const uint8_t> Program::copyBorrowedBytes(std::span<const uint8_t> byt
     return m_bytes.owned.span();
 }
 
-void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
+void Program::copyBorrowedWordsOfPositions(const ParallelLoops& loops)
 {
-    Vector<size_t> firstLineStarts(modules.size());
+    Vector<size_t> firstWords(modules.size());
     size_t count = 0;
-    for (size_t index = 0; index < modules.size(); ++index)
-        firstLineStarts[index] = std::exchange(count, count + modules[index].positions.lineStarts.size());
-    m_bytes.lineStarts.grow(count);
+    for (size_t index = 0; index < modules.size(); ++index) {
+        const SourcePositions& positions = modules[index].positions;
+        firstWords[index] = std::exchange(count, count + positions.lineStarts.size() + positions.whereThisIsMade.size());
+    }
+    m_bytes.wordsOfPositions.grow(count);
     forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
-        std::span<const uint32_t>& lineStarts = modules[index].positions.lineStarts;
-        std::span<uint32_t> copy = m_bytes.lineStarts.mutableSpan().subspan(firstLineStarts[index], lineStarts.size());
-        memcpySpan(copy, lineStarts);
-        lineStarts = copy;
+        SourcePositions& positions = modules[index].positions;
+        size_t first = firstWords[index];
+        for (std::span<const uint32_t>* words : { &positions.lineStarts, &positions.whereThisIsMade }) {
+            std::span<uint32_t> copy = m_bytes.wordsOfPositions.mutableSpan().subspan(first, words->size());
+            memcpySpan(copy, *words);
+            *words = copy;
+            first += copy.size();
+        }
     });
 }
 

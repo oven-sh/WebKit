@@ -36,9 +36,12 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, co
     unsigned numberOfGPRs = 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
-        RELEASE_ASSERT(arguments[i].representation == location.representation);
+        RELEASE_ASSERT(isPassedAs(arguments[i].representation, location.representation));
         // Null where the callee may find anything: nothing is put there.
         LValue argument = arguments[i].value;
+        // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
+        if (argument && argument->type() == B3::Int64 && !argument->hasInt64() && inputs().conventions.letsGoOfParameter(function, i))
+            placed.letGoByCallee.append(argument);
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
             break;
@@ -101,7 +104,7 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
+    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
     if (const Function& callee = m_program.at(function); options.constructs && callee.kind == FunctionKind::Plain && callee.role != FunctionRole::ConstructBody)
         options.constructedCallee = function;
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);

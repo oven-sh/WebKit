@@ -216,6 +216,7 @@ static BitVector findParametersWithoutObjects(const Program& program, const Func
 static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
 {
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
+    policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
@@ -425,6 +426,13 @@ bool FunctionCodeGenerator::reportBackEnd()
     build.statistics().count(StatisticID::NarrowReferencesAcrossSafepoints, m_narrowReferenceFindings.numberOfReferencesAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferenceGuards, m_numberOfLateReferenceGuards);
     build.statistics().count(StatisticID::NarrowReferencesStoredInFrames, m_narrowReferenceFindings.numberOfReferencesStoredInFrame);
+    if (uint32_t kept = report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplit); kept && Options::airDumpPhaseStats()) [[unlikely]] {
+        const Program& program = m_inputs.program;
+        // The body of a module has no name.
+        auto textOf = [&](StringID id) { return id ? byteCast<char8_t>(program.strings[id]) : std::span<const char8_t>(); };
+        dataLogLn("cold uses kept through a second split: ", kept, ", between two defs: ", report.countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs), ", in f", m_id.index(), " ",
+            textOf(m_function.name), " (", textOf(program.pathForLineColumns(m_function.module)), ":", program.lineColumnFor(m_function.module, m_function.position).line, ")");
+    }
     return AOT::reportBackEnd(build, m_id, m_function, collected, report);
 }
 

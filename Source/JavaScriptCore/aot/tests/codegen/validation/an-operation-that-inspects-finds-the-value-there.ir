@@ -3,9 +3,9 @@
 # RUN: generate-code calls
 # OPTIONS: validate
 # CHECK-LABEL: f0: size=
-# CHECK: operation operationAOTReportValidationFailure x3
+# CHECK: operation operationAOTReportValidationFailure x4
 # CHECK-LABEL: f1: size=
-# CHECK: operation operationAOTReportValidationFailure x1
+# CHECK: operation operationAOTReportValidationFailure x2
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="value" declared={type=anything}}]

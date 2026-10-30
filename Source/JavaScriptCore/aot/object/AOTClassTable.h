@@ -125,6 +125,7 @@ public:
     void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, JSValue parent, JSValue prototypeParent);
     void createClassPart(JSGlobalObject*, Closure* classObject, ClassPart);
+    void forgetEvaluationOf(const LayoutData&);
     JSObject* createMethodClosure(VM&, Closure* classObject, const LayoutData&, const MethodData&);
 
     uint64_t* guardWords(const LayoutData&, ClassSide) const;
@@ -201,6 +202,7 @@ public:
     };
     enum class MemberCreation : uint8_t { Allowed, Forbidden };
     std::optional<LazyPrototypeLookupResult> findThroughLazyPrototypes(VM&, JSObject* base, UniquedStringImpl*, bool isAbsentFromBase, MemberCreation = MemberCreation::Allowed);
+    Structure* structureOfDeclaredMemberHolders() const { return m_declaredMemberHolders.isEmpty() ? nullptr : m_declaredMemberHolders[0]->structure(); }
 
     JSObject* createThis(JSGlobalObject*, JSObject* constructor, JSObject* newTarget);
     JSObject* prototypeForInstancesOf(VM&, JSObject* compiledCallee);
@@ -258,6 +260,7 @@ private:
     HashMap<uint32_t, Symbol*> m_brandsOfInstances;
     HashMap<UniquedStringImpl*, const LayoutData*> m_classesByBrand;
     std::array<uint32_t, structureNameCacheSize> m_structureNameCache { };
+    std::array<PrivateFieldPlace, numberOfPrivateFieldPlaces> m_privateFieldPlaces { };
     struct StructureWithBrand {
         JSCell* parent;
         JSCell* newTarget;

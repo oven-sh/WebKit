@@ -326,6 +326,10 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
         // Both describe cells with the same header.
         ASSERT(source.structure()->typeInfoBlob() == structure.typeInfoBlob());
         setStructureIDDirectly(source.structureID());
+        // The stub in front makes the next copy of this kind.
+        State& state = this->state();
+        if (const MappedCopy*& place = state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(orderAndShapeWords(), source.orderAndShapeWords(), 0)]; !place)
+            place = &state.objects->caches->assignmentPlans.copyOfNoSource();
     }
     at<uint32_t>(offsetOfOrderWord) = orderWordOfSource & orderAndCountMask;
     vm.writeBarrier(this);

@@ -89,12 +89,13 @@ struct ModuleData {
     uint8_t loadedByLoader : 1;
     uint8_t faceOfFile : 1;
     uint8_t importedByModule : 1;
+    // Of a data file the bit says that the loader answers a require() of it with its namespace object.
     uint8_t importedWhileItRunsOrAsNamespace : 1;
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
-    // For a library module with a body: the code was compiled for a body that is entered once.
-    // For a file of the program: the code that asks for it was compiled for a file that may be taken out of require.cache and load again.
-    uint8_t bodyRunsAtMostOnceOrMayBeEvicted : 1;
+    // The code that asks for the file was compiled for a file that may be taken out of require.cache and load again.
+    // Of a module of the library the bit says that a require() of the program that names it without `node:` was compiled for the module, whatever require.cache holds under that name.
+    uint8_t evictableOrHeldUnderNameWithoutPrefix : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -117,8 +118,8 @@ struct ModuleData {
     // Its first request is the CommonJS file that it stands for where ES modules import the file.
     bool isFaceOfFile() const { return faceOfFile; }
     bool hasFace() const { return shownByFace; }
-    bool bodyRunsAtMostOnce() const { return kind == ModuleKind::RuntimeSource && bodyRunsAtMostOnceOrMayBeEvicted; }
-    bool mayBeEvicted() const { return kind != ModuleKind::RuntimeSource && bodyRunsAtMostOnceOrMayBeEvicted; }
+    bool mayBeEvicted() const { return !isOfLibrary() && evictableOrHeldUnderNameWithoutPrefix; }
+    bool isHeldUnderNameWithoutPrefix() const { return isOfLibrary() && evictableOrHeldUnderNameWithoutPrefix; }
     // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
     bool isImportedByModule() const { return importedByModule; }
     // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().
@@ -127,6 +128,8 @@ struct ModuleData {
     bool mayBeImportedWhileItRuns() const { return kind == ModuleKind::CommonJs && importedWhileItRunsOrAsNamespace; }
     // An ES module that another module imports with `import * as`. In plain Bun the link of that importer creates the namespace object.
     bool isImportedAsNamespace() const { return kind == ModuleKind::SourceText && importedWhileItRunsOrAsNamespace; }
+    // A file that stands for a string. `bun build` puts the string where it links a require(), which is what requireResult says. Every other require() goes to the loader, as in `bun run`.
+    bool answersLoaderWithNamespace() const { return kind == ModuleKind::Data && importedWhileItRunsOrAsNamespace; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.
@@ -386,23 +389,28 @@ struct ExportStatementData {
 
 // A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
 // Where `export { .. as name } from "specifier"` asks for what the module lacks: what the statement is written from stands in the place of the importer, and the name that it exports in that of the specifier.
+// Behind the failures, which code names by their place in the table, stand the modules that cannot load, sorted: each in the place of the importer, and in that of the specifier the number of the failure that its load ends with.
 struct ModuleFailureData {
     static constexpr uint32_t isAbsentExportBit = 1u << 31;
     static constexpr uint32_t isAskedByExportStatementBit = 1u << 30;
-    static constexpr uint32_t bits = isAbsentExportBit | isAskedByExportStatementBit;
+    static constexpr uint32_t isLoadOfModuleBit = 1u << 29;
+    static constexpr uint32_t bits = isAbsentExportBit | isAskedByExportStatementBit | isLoadOfModuleBit;
 
     static ModuleFailureData ofAbsentExport(ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name }; }
     static ModuleFailureData ofExportStatement(uint32_t exportSpecifier, uint32_t exportName)
     {
         RELEASE_ASSERT(!(exportSpecifier & bits));
-        return { exportSpecifier | bits, exportName };
+        return { exportSpecifier | isAbsentExportBit | isAskedByExportStatementBit, exportName };
     }
+    static ModuleFailureData ofLoad(ModuleID module, ModuleFailureID failure) { return { module.index() | isLoadOfModuleBit, failure.index() }; }
 
     uint32_t importer;
     uint32_t specifier;
 
     bool isAbsentExport() const { return importer & isAbsentExportBit; }
     bool isAskedByExportStatement() const { return importer & isAskedByExportStatementBit; }
+    bool isLoadOfModule() const { return importer & isLoadOfModuleBit; }
+    ModuleFailureID failureOfLoad() const { ASSERT(isLoadOfModule()); return ModuleFailureID(specifier); }
     ModuleID importerModule() const { ASSERT(!isAskedByExportStatement()); return ModuleID(importer & ~bits); }
     StringID exportSpecifierString() const { ASSERT(isAskedByExportStatement()); return StringID(importer & ~bits); }
     StringID specifierString() const { return StringID(specifier); }
@@ -416,9 +424,46 @@ struct ImportOfHeldFileData {
     uint32_t importer;
 };
 
+// What a heap snapshot shows under the name of a module's variable.
+struct NamedVariableData {
+    enum class Place : uint32_t { Word, NarrowWord, Closure };
+    static constexpr unsigned placeBits = 2;
+
+    static constexpr NamedVariableData inStatics(uint32_t name, uint32_t offset, bool isNarrow) { return { name, offset | static_cast<uint32_t>(isNarrow ? Place::NarrowWord : Place::Word) }; }
+    static constexpr NamedVariableData closureOf(uint32_t name, uint32_t function) { return { name, function << placeBits | static_cast<uint32_t>(Place::Closure) }; }
+
+    uint32_t name;
+    uint32_t placeAndNumber;
+
+    StringID nameString() const { return StringID(name); }
+    Place place() const { return static_cast<Place>(placeAndNumber & ((1u << placeBits) - 1)); }
+    uint32_t offset() const { return placeAndNumber & ~((1u << placeBits) - 1); }
+    FunctionID function() const { return FunctionID(placeAndNumber >> placeBits); }
+};
+
+// The last record names no module and ends the list of the one before.
+struct ModuleWithNamedVariablesData {
+    uint32_t module;
+    uint32_t firstVariable;
+};
+
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
     uint32_t module;
+};
+
+struct StateOfLibraryModuleData {
+    enum class Kind : uint32_t { Classes, Closures, Variables };
+    static constexpr unsigned kindBits = 2;
+
+    static constexpr StateOfLibraryModuleData create(uint32_t module, Kind kind, uint32_t first, uint32_t count) { return { module << kindBits | static_cast<uint32_t>(kind), first, count }; }
+
+    uint32_t moduleAndKind;
+    uint32_t first;
+    uint32_t count;
+
+    uint32_t module() const { return moduleAndKind >> kindBits; }
+    Kind kind() const { return static_cast<Kind>(moduleAndKind & ((1u << kindBits) - 1)); }
 };
 
 struct CompiledRuntimeFunctionData {
@@ -441,6 +486,9 @@ static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
+static_assert(sizeof(NamedVariableData) == 8 && isImageRecord<NamedVariableData>);
+static_assert(sizeof(ModuleWithNamedVariablesData) == 8 && isImageRecord<ModuleWithNamedVariablesData>);
+static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
 static_assert(sizeof(ModuleData::Flag) == sizeof(ModuleData::flags));
@@ -476,7 +524,10 @@ struct HashOfDirectory {
     v(directoriesOfModulesByPath, uint32_t) \
     v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
+    v(namedVariables, NamedVariableData) \
+    v(modulesWithNamedVariables, ModuleWithNamedVariablesData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
+    v(stateOfLibraryModules, StateOfLibraryModuleData) \
     v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)
 
 } } // namespace JSC::AOT

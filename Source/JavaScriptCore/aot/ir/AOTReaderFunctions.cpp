@@ -264,6 +264,10 @@ void BodyDecoder::decodeValue(Block& block)
         if (isForCallers || constructsWhereWritten(value)) {
             m_function.constructionStarts.append({ value.position, written, isWrittenAsReflectConstruct(value), isForCallers });
             value.isPartOfConstruction = true;
+        } else if (opcode == Opcode::IteratorOpen) {
+            m_function.constructionStarts.append({ .reported = written, .start = value.position, .isShownAtStart = true });
+            value.position = written;
+            value.isPartOfConstruction = true;
         } else
             m_function.writtenPositions.append({ id, written });
     }

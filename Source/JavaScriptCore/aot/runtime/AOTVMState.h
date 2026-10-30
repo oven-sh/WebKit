@@ -87,10 +87,14 @@ public:
         std::unique_ptr<CallSiteCache> callSiteCache;
         std::unique_ptr<FunctionTables> functionTables;
         std::unique_ptr<RegExpLiterals> regExpLiterals;
+        // Where a function of the engine returns to when code of the image has called it: StubFrameKind::EngineCallee.
+        const void* returnAddressOfEngineCallee { nullptr };
         // The sets of mocked modules that the last realm went through, in that order.
         Vector<Box<MockedModules>> mockedModules;
         // By the number of a module of the image that stands for a file of an image below: Modules::resolvedKey(). Images do not change, and each realm would make the keys anew.
         Vector<Identifier> keysOfFilesInImagesBelow;
+        // By the same number: Modules::placeInRealm().
+        Vector<uint32_t> filesInImagesBelow;
     };
 
     void attachImage(VM&);
@@ -127,6 +131,7 @@ public:
     static constexpr ptrdiff_t offsetOfCurrentImageOfThread() { return OBJECT_OFFSETOF(VMState, currentImageOfThread); }
     static constexpr ptrdiff_t offsetOfAdapterFrameThatRestoresImage() { return OBJECT_OFFSETOF(VMState, adapterFrameThatRestoresImage); }
     static constexpr ptrdiff_t offsetOfEndOfImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfImagesBelowAdapters); }
+    static constexpr ptrdiff_t offsetOfReturnAddressOfEngineCalleeInParts() { return OBJECT_OFFSETOF(PartsOfImage, returnAddressOfEngineCallee); }
     static constexpr ptrdiff_t offsetOfEndOfRoomForImagesBelowAdapters() { return OBJECT_OFFSETOF(VMState, endOfRoomForImagesBelowAdapters); }
     static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }

@@ -122,6 +122,9 @@ struct ConstructionStart {
     bool isWrittenAsCall { false };
     // No construction: an operation that reports its own errors at one place, and at `start` whatever it calls.
     bool isForCallers { false };
+    // No construction: a list that takes values, as in `const [[x]] = v`. Several lists are reported at one place, and an error quotes the one that failed.
+    // So the position of what opens a list is where the list is written, which is `reported` here, and a stack trace shows it at `start`.
+    bool isShownAtStart { false };
 };
 
 struct Function : FunctionRecord {

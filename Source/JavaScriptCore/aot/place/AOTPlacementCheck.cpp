@@ -1794,18 +1794,32 @@ static void checkSiteCaches(const PlacementCheckContext& context)
     std::span<const SiteCacheUse> placed = uses.span().first(numberOfPlacedCaches);
     std::span<const SiteCacheUse> sitesWithoutCache = uses.span().subspan(numberOfPlacedCaches);
 
-    for (size_t index = 0; index < placed.size(); ++index) {
-        expect(placed[index].cache.index() == (index ? placed[index - 1].cache.index() + 1 : 0), PlacementRule::SiteCacheNotDistinct, placed[index]);
-        expect(!index || !(positionOf(placed[index]) < positionOf(placed[index - 1])), PlacementRule::SiteCacheOrder, placed[index]);
+    uint32_t numberOfCaches = 0;
+    uint64_t lowestPlacedWeight = UINT64_MAX;
+    const SiteCacheUse* previousOwner = nullptr;
+    for (size_t first = 0; first < placed.size();) {
+        const SiteCacheUse& owner = placed[first];
+        expect(owner.cache.index() == numberOfCaches++, PlacementRule::SiteCacheNotDistinct, owner);
+        expect(!previousOwner || !(positionOf(owner) < positionOf(*previousOwner)), PlacementRule::SiteCacheOrder, owner);
+        previousOwner = &owner;
+        const Function& function = context.program.at(owner.user.function);
+        uint64_t weight = owner.weight.predicted();
+        size_t next = first + 1;
+        for (; next < placed.size() && placed[next].cache == owner.cache; ++next) {
+            const SiteCacheUse& copy = placed[next];
+            expect(copy.user.function == owner.user.function && mayShareSiteCache(function, function.at(owner.user.value), function.at(copy.user.value)), PlacementRule::SiteCacheNotDistinct, copy);
+            weight = std::max(weight, copy.weight.predicted());
+        }
+        lowestPlacedWeight = std::min(lowestPlacedWeight, weight);
+        first = next;
     }
-    context.expect(placed.size() == context.siteCaches.count(), PlacementRule::SiteCacheNotDistinct);
+    context.expect(numberOfCaches == context.siteCaches.count(), PlacementRule::SiteCacheNotDistinct);
 
     if (sitesWithoutCache.empty())
         return;
     expect(context.siteCaches.count() == context.build.limit(LimitID::MaxSiteCaches), PlacementRule::SiteCacheOrder, sitesWithoutCache.front());
-    SiteWeight lowestPlacedWeight = placed.empty() ? 0 : std::ranges::min(placed, { }, [](const SiteCacheUse& use) { return use.weight.predicted(); }).weight;
     for (const SiteCacheUse& use : sitesWithoutCache)
-        expect(placed.empty() || (use.weight <= lowestPlacedWeight).predicted(), PlacementRule::SiteCacheOrder, use);
+        expect(use.weight.predicted() <= lowestPlacedWeight, PlacementRule::SiteCacheOrder, use);
 }
 
 void checkPlacement(const Program& program, const PlacementInputs& inputs, const Placement& placement, const SiteCaches& siteCaches, BuildContext& build)

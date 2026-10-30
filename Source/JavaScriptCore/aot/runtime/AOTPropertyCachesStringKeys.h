@@ -131,11 +131,47 @@ public:
     void cacheKeyByParts(const KeyByParts&, JSString*);
 
     // The key of two parts that were joined before. A part is compared as it is encoded: a cell by its address, any other value by its bits. The stub ConcatenateKeyOfPair looks it up.
+    // Beside the key: what KeyedValuePlace says of the key and one Structure, so that a read by the two parts asks one table. The stub GetByValOfKeyOfPair copies it from there.
+    // It holds for as long as the place it was copied from would: forgetPlacesOfPairs().
     struct KeyOfPair {
+        // The two top bits of slotOfPlace say how the value is read, so that the usual reads compare nothing. x86-64 gets both from the flags of one shift.
+        // Under the first three kinds lies half the offset of the word in the cell, which is even.
+        enum class Read : uint32_t {
+            // A field with the SlotRepresentation of that name.
+            Int32,
+            OptionalInt32,
+            // A whole word that holds an encoded value: a field with SlotRepresentation::JSValue or Cell, or an own value that lies in the cell.
+            // With isNarrowReference: a field with SlotRepresentation::Cell32 or OptionalCell32.
+            EncodedValueOrNarrowReference,
+            Other,
+        };
+        static constexpr uint32_t isNarrowReference = 1;
+        // The next two bits of Read::Other, above 28 bits.
+        enum class OtherRead : uint32_t {
+            // Any other field that lies in the cell: its offset above the eight bits of its representation.
+            Field,
+            // Slot::wordIndexFor() of an own value out of line, which is below zero.
+            ValueOutOfLine,
+            // PropertyCacheWords::timesAbsencesWereForgotten as it was when nothing was found.
+            Absence,
+            // hiddenWordOffset above wordIndex of a KeyedValuePlace::ExtraProperty.
+            ExtraProperty,
+        };
+        static constexpr unsigned bitsBelowRead = 30;
+        static constexpr unsigned bitsBelowOtherRead = 28;
+        static constexpr uint32_t maskBelowOtherRead = (1u << bitsBelowOtherRead) - 1;
+        static constexpr unsigned bitsOfRepresentation = 8;
+        static constexpr uint32_t maxOffsetOfOtherField = (1u << (bitsBelowOtherRead - bitsOfRepresentation)) - 1;
+        static constexpr uint32_t markOf(Read read) { return static_cast<uint32_t>(read) << bitsBelowRead; }
+        static constexpr uint32_t markOf(OtherRead read) { return markOf(Read::Other) | static_cast<uint32_t>(read) << bitsBelowOtherRead; }
+        // The place of one Structure gives way at every eighth read of an object of another. Objects of two that are read in turns would else write over one another at every read.
+        static constexpr int32_t stepOfMisses = (UINT8_MAX + 1) / 8;
+
         EncodedJSValue first { 0 };
         EncodedJSValue second { 0 };
         JSString* key { nullptr };
-        uint64_t unused { 0 };
+        uint32_t structureIDOfPlace { 0 };
+        uint32_t slotOfPlace { 0 };
     };
     static constexpr size_t waysOfKeysOfPairs = 2;
     static constexpr unsigned keyOfPairSetShift = 6;
@@ -152,6 +188,7 @@ public:
     // One empty set, for an instance that has joined nothing yet.
     JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
     void cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second, JSString* key);
+    void forgetPlacesOfPairs();
     // What the last lookup by parts took and did not find, for whoever makes the key. No parts: countAndKinds is zero.
     KeyByParts& lastLookupByParts() { return m_lastLookupByParts; }
 

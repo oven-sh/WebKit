@@ -73,6 +73,7 @@ class CFG;
 class CompilationScratch;
 class ConstPtrValue;
 class Dominators;
+struct ValidatedForm;
 class FrequencyEstimate;
 class MemoryValue;
 class NaturalLoops;
@@ -178,6 +179,8 @@ public:
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
     // should call this anytime you call resetReachability().
     JS_EXPORT_PRIVATE void invalidateCFG();
+
+    std::unique_ptr<ValidatedForm>& validatedForm() LIFETIME_BOUND { return m_validatedForm; }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -328,6 +331,8 @@ public:
     // A load is not folded into an instruction that comes after a write to this range.
     const HeapRange& heapThatLoadsStayInFrontOf() const { return m_heapThatLoadsStayInFrontOf; }
     void setHeapThatLoadsStayInFrontOf(const HeapRange& range) { m_heapThatLoadsStayInFrontOf = range; }
+    const HeapRange& heapOfStackSlots() const { return m_heapOfStackSlots; }
+    void setHeapOfStackSlots(const HeapRange& range) { m_heapOfStackSlots = range; }
     uint64_t limit(Limit limit) const { return m_policy.limits.get(limit); }
     HeapSetTable& heapSets() LIFETIME_BOUND { return m_heapSets; }
     Arena* arenaOrNull() LIFETIME_BOUND { return m_policy.allocation.usesArena ? &m_arena : nullptr; }
@@ -343,7 +348,7 @@ public:
     }
     void didAddOpcode(Opcode opcode) { m_opcodesEverAdded.set(opcode); }
 
-    JS_EXPORT_PRIVATE void fail(FailureKind, Origin = Origin());
+    JS_EXPORT_PRIVATE void fail(FailureKind, Origin = Origin(), String detail = { });
     const CompilationReport& report() const { return m_report; }
     void didReachLimit(Limit limit, Origin origin = Origin()) const
     {
@@ -458,6 +463,7 @@ private:
     SparseCollection<Value> m_values;
     std::unique_ptr<CFG> m_cfg;
     std::unique_ptr<Dominators> m_dominators;
+    std::unique_ptr<ValidatedForm> m_validatedForm;
     std::unique_ptr<NaturalLoops> m_naturalLoops;
     std::unique_ptr<BackwardsCFG> m_backwardsCFG;
     std::unique_ptr<BackwardsDominators> m_backwardsDominators;
@@ -478,6 +484,7 @@ private:
     unsigned m_optLevel { 2 };
     Policy m_policy;
     HeapRange m_heapThatLoadsStayInFrontOf;
+    HeapRange m_heapOfStackSlots { HeapRange::top() };
     CompilationScratch* m_scratch { nullptr };
     mutable CompilationReport m_report;
     HeapSetTable m_heapSets;

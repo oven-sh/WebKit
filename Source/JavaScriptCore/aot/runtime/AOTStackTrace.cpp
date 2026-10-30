@@ -25,6 +25,7 @@
 #include "AOTModuleHost.h"
 #include "AOTModules.h"
 #include "AOTProgramTables.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubFrames.h"
@@ -247,6 +248,8 @@ struct RunStart {
     bool calleeWasEntered;
     // CompiledFrameIterator::plainFunctionConstructFrameLeft().
     CallFrame* plainFunctionConstructFrame { nullptr };
+    // CompiledFrameIterator::constructFrameLeftMakesThis().
+    bool constructFrameMakesThis { false };
 };
 
 // Goes over the machine frames of one run of compiled code as CompiledFrameIterator does. It reads the frame records and the call site cache and keeps only what a capture asks for.
@@ -261,6 +264,7 @@ public:
         , m_entryFrame(start.entryFrame)
         , m_isAtFirstReadSite(start.isAtFirstReadSite)
         , m_plainFunctionConstructFrame(start.plainFunctionConstructFrame)
+        , m_constructFrameMakesThis(start.constructFrameMakesThis)
     {
         ASSERT(m_framePointer);
         findFunctionFrame();
@@ -278,6 +282,14 @@ public:
     // The function that site() has constructed, where the stack says which.
     FunctionID constructedFunction() const { return functionConstructedAt(m_image, site(), m_plainFunctionConstructFrame); }
     bool hasLeftPlainFunctionConstructFrame() const { return m_plainFunctionConstructFrame; }
+    // The stub of that frame has yet to enter the function.
+    bool constructFrameLeftMakesThis() const { return m_constructFrameMakesThis; }
+    JSObject* calleeInConstructFrameLeft() const { return *std::bit_cast<JSObject**>(std::bit_cast<uintptr_t>(m_plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee); }
+    // What is listed for a function that was constructed and has no frame. `codeAbove` is what stands in its place, if compiled code does.
+    std::optional<TraceFrame> frameOfConstructedFunctionWithoutFrame(FunctionID constructed, CompiledFunctionID codeAbove) const
+    {
+        return m_constructFrameMakesThis ? frameOfFunctionWhoseThisIsMade(m_image, constructed) : frameOfConstructedFunctionThatLeft(m_image, constructed, codeAbove);
+    }
     void* callerStackPointer() const { return stackPointerOfCaller(m_callFrame, bytesAboveReturnAddressOf(site())); }
     CallFrame* machineFrame() const { return m_callFrame; }
     RunStart position() const { return { m_stackPointer, m_framePointer, m_rawPC, m_entryFrame, m_isAtFirstReadSite, true }; }
@@ -305,6 +317,7 @@ public:
         ASSERT(!isAtEnd());
         m_isAtFirstReadSite = false;
         m_plainFunctionConstructFrame = nullptr;
+        m_constructFrameMakesThis = false;
         if (passOverFrame())
             findFunctionFrame();
     }
@@ -360,6 +373,10 @@ private:
         case StubFrameKind::PlainFunctionConstruct:
             m_plainFunctionConstructFrame = m_callFrame;
             break;
+        case StubFrameKind::PlainFunctionConstructMakesThis:
+            m_plainFunctionConstructFrame = m_callFrame;
+            m_constructFrameMakesThis = true;
+            break;
         case StubFrameKind::MethodRead:
             return passOverMethodReadFrame();
         case StubFrameKind::FirstOfTwoReads:
@@ -373,6 +390,9 @@ private:
             m_runEnd.adapterFrame = m_callFrame;
             leaveRun();
             return false;
+        case StubFrameKind::ConstructAdapterMakesThis:
+            m_runEnd.makesThis = true;
+            [[fallthrough]];
         case StubFrameKind::ConstructAdapter:
             m_runEnd.adapterFrame = m_callFrame;
             m_runEnd.isConstruct = true;
@@ -427,6 +447,7 @@ private:
     CallFrame* m_framePointer;
     CallFrame* m_callFrame { nullptr };
     CallFrame* m_plainFunctionConstructFrame { nullptr };
+    bool m_constructFrameMakesThis { false };
     void* m_rawPC;
     EntryFrame* m_entryFrame;
     bool m_isAtFirstReadSite;
@@ -458,13 +479,35 @@ struct CapturedRun {
     size_t numberShown { 0 };
     size_t numberOmitted { 0 };
     bool foundConstructorToSkip { false };
-    bool hasFrameNamedByCallee { false };
     bool hasFrameListedBehindTailCall { false };
+};
+
+// The function objects that name frames of a CapturedRun. Only a program with a function whose frames are named so makes one.
+struct CalleesOfRun {
+    using Trace = ReturnAddressTrace;
+
+    // `returnAddress`: which of CapturedRun::returnAddresses. No callee: the frame is named by its function.
+    void append(size_t returnAddress, unsigned inlineFrame, std::optional<JSObject*> callee)
+    {
+        if (!callee)
+            return;
+        uint64_t bits = std::bit_cast<uintptr_t>(*callee);
+        // What entered a frame is known once the walk is further down.
+        size_t position = rows.size();
+        while (position && rows[position - 1].returnAddress > returnAddress)
+            --position;
+        rows.insert(position, Trace::Callee { static_cast<uint32_t>(returnAddress), inlineFrame, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });
+    }
+
+    // Laid out as in a ReturnAddressTrace.
+    Vector<Trace::Callee, 4> rows;
 };
 
 struct FramesAboveRun {
     size_t numberShown { 0 };
     bool exist { false };
+    // FrameOnTop::IsLeftOut.
+    size_t numberLeftOut { 0 };
 };
 
 static ALWAYS_INLINE void countLogicalFrame(FunctionID function, TraceVisibility visibility, bool isTailDeleted, ShownFrameFilter& filter, CapturedRun& run, JSCell*& lastConstructorToSkip)
@@ -489,10 +532,85 @@ static NEVER_INLINE void countLogicalFrames(const Image& image, InlineFrameReade
     }
 }
 
-// `mayLieBelowOtherRuns`: in front of its addresses may stand those of the runs above, which are of other images.
-template<bool mayLieBelowOtherRuns>
-static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered, bool hasRecordedCallees)
+static std::optional<JSObject*> findRecordedCallee(VM&, const RunStart& machineFrame, unsigned inlineFrame);
+
+// The frame that a machine frame was entered for, until the walk has come to whoever entered it.
+struct EnteredFrameNamedByCallee {
+    FunctionID sourceFunction;
+    unsigned inlineFrame;
+    size_t returnAddress;
+    RunStart position;
+    void* callerStackPointer;
+};
+
+// What forEachShownFrameOfRun() finds out about each frame that it shows, of the machine frame that the walk is at. `returnAddress`: the address of the frame is the next that the run gets.
+static NEVER_INLINE void captureCalleesKeptInFrame(VM& vm, const RunWalk& walk, size_t returnAddress, CalleesOfRun& calleesOfRun, std::optional<EnteredFrameNamedByCallee>& entered)
 {
+    FunctionTables& tables = FunctionTables::of(vm);
+    const CallSiteCache::CalleesOfFrames& callees = vm.aotState().callSiteCache->calleesOfFramesAt(walk.image(), walk.site());
+    for (const auto& kept : callees.keptInFrame) {
+        if (kept.recordsCallee || tables.recordsCalleesOf(kept.sourceFunction))
+            calleesOfRun.append(returnAddress, kept.inlineFrame, tables.calleeKeptInFrame(vm, walk.machineFrame(), kept.callee, kept.sourceFunction));
+    }
+    // A frame through which the frame above was entered is not listed below it.
+    if (!entered && callees.sourceFunctionEntered && (callees.enteredRecordsCallee || tables.recordsCalleesOf(callees.sourceFunctionEntered)))
+        entered = EnteredFrameNamedByCallee { callees.sourceFunctionEntered, callees.inlineFrameEntered, returnAddress, walk.position(), walk.callerStackPointer() };
+}
+
+// The walk has left the machine frame of `entered`, and goes on as CompiledFrameIterator::recordedCallee() does from there. False: it stands at a frame through which the function was entered, and what lies below that says more.
+static NEVER_INLINE bool captureCalleeOfEnteredFrame(VM& vm, RunWalk& walk, CalleesOfRun& calleesOfRun, EnteredFrameNamedByCallee& entered)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    FunctionID sourceFunction = entered.sourceFunction;
+    auto isSaid = [&](std::optional<JSObject*> callee) {
+        calleesOfRun.append(entered.returnAddress, entered.inlineFrame, callee);
+        return true;
+    };
+    auto isKeptInFrame = [&](CalleeOfSite callee) {
+        return isSaid(callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, sourceFunction));
+    };
+    auto isRecorded = [&] {
+        return isSaid(tables.recordedCalleeOfCallFrom(entered.callerStackPointer, sourceFunction));
+    };
+    auto askWalkOfItsOwn = [&] {
+        isSaid(findRecordedCallee(vm, entered.position, entered.inlineFrame));
+        walk.findSiteAgain();
+        return true;
+    };
+    // This walk passes over such frames.
+    if (walk.isAmongFramesThatWait()) [[unlikely]]
+        return askWalkOfItsOwn();
+    if (walk.isAtEnd()) {
+        if (walk.runEnd().resumesSavedFrame)
+            return true;
+        // A function object that the run time has seen get a name is entered through an adapter, whose frame holds it.
+        if (walk.runEnd().adapterFrame && tables.recordsCalleesOf(sourceFunction)) [[unlikely]]
+            return askWalkOfItsOwn();
+        return isRecorded();
+    }
+    const CallSiteCache::Entry& caller = walk.site();
+    const CallSiteCache::CalleesOfFrames& ofCaller = vm.aotState().callSiteCache->calleesOfFramesAt(walk.image(), caller);
+    if (ofCaller.calledAtSite)
+        return isKeptInFrame(*ofCaller.calledAtSite);
+    bool isOfSameFunction = ofCaller.sourceFunctionOfInnermost == sourceFunction;
+    bool isEntrypoint = isOfSameFunction && caller.innermostVisibility != TraceVisibility::Visible;
+    bool isFormThatLeftByTailCall = isOfSameFunction && caller.site.isTailCall();
+    if (!isEntrypoint && (!isFormThatLeftByTailCall || tables.recordedCalleeOfCallFrom(entered.callerStackPointer, sourceFunction)))
+        return isRecorded();
+    if (ofCaller.calleeOfInnermost)
+        return isKeptInFrame(*ofCaller.calleeOfInnermost);
+    if (!ofCaller.innermostHasOnlyEntrypointsBelow)
+        return isRecorded();
+    entered.callerStackPointer = walk.callerStackPointer();
+    return false;
+}
+
+// `mayLieBelowOtherRuns`: in front of its addresses may stand those of the runs above, which are of other images.
+// `namesFramesByCallee`: FunctionTables::framesMayBeNamedByCallee(). A program without such a function pays nothing for them, and hands in no `callees`.
+template<bool mayLieBelowOtherRuns, bool namesFramesByCallee>
+static ALWAYS_INLINE void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, CalleesOfRun* callees, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered)
+{
+    ASSERT(namesFramesByCallee == !!callees);
     using Trace = ReturnAddressTrace;
     ASSERT(!walk.isAtEnd());
     uintptr_t codeStart = std::bit_cast<uintptr_t>(walk.image().code().data());
@@ -526,7 +644,7 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
         // Where nothing on the stack says which function was constructed, it is the one that the frame above was entered for.
         bool isFunctionAbove = codeAbove && (!constructed || isCodeOf(walk.image(), codeAbove, constructed));
         // A function that is constructed waits for what its last call returns, so it is listed though a tail call of its own hides its frame or has taken it from the stack. Return addresses do not say that.
-        if (isFunctionAbove ? functionAboveIsHiddenBehindTailCall() : constructed && frameOfConstructedFunctionThatLeft(walk.image(), constructed, codeAbove)) [[unlikely]] {
+        if (isFunctionAbove ? functionAboveIsHiddenBehindTailCall() : constructed && walk.frameOfConstructedFunctionWithoutFrame(constructed, codeAbove)) [[unlikely]] {
             run.hasFrameListedBehindTailCall = true;
             return false;
         }
@@ -535,8 +653,13 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
         return true;
     };
 
+    std::optional<EnteredFrameNamedByCallee> entered;
     for (;; walk.advance(), calleeWasEntered = true) {
         bool isAtEnd = walk.isAtEnd();
+        if constexpr (namesFramesByCallee) {
+            if (entered && captureCalleeOfEnteredFrame(vm, walk, *callees, *entered))
+                entered = std::nullopt;
+        }
         if (isAtEnd ? walk.runEnd().isConstruct : walk.site().site.isConstruct()) {
             FunctionID constructed = isAtEnd ? walk.runEnd().constructedFunction() : walk.constructedFunction();
             if (isAtEnd && !constructed) {
@@ -552,9 +675,9 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
         if (!codeAbove || !site.isOfEntrypointAtTailCall())
             codeAbove = outermostCode;
         // Whoever keeps the callee of a frame, only a function that is named by its callee needs it.
-        if (hasRecordedCallees && (site.hasInlinedFrameRecordingCallee || (site.hasInlinedFrameRecordingCalleeOnceRenamed && FunctionTables::of(vm).recordsCalleesOfCallsByValue()) || FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index())))) [[unlikely]] {
-            run.hasFrameNamedByCallee = true;
-            return;
+        if constexpr (namesFramesByCallee) {
+            if (site.hasFrameRecordingCallee || (site.hasFrameRecordingCalleeOnceRenamed && FunctionTables::of(vm).recordsCalleesOfCallsByValue()))
+                captureCalleesKeptInFrame(vm, walk, run.returnAddresses.size(), *callees, entered);
         }
 
         run.append(Trace::encode(site.address, codeStart));
@@ -580,7 +703,27 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
             countLogicalFrames(walk.image(), vm.aotState().callSiteCache->inlineFrames(), site, calleeWasEntered, filter, run, lastConstructorToSkip);
     }
 
+    // The walk ended at the limit, in a frame through which the last frame was entered.
+    if constexpr (namesFramesByCallee) {
+        if (entered) [[unlikely]]
+            callees->append(entered->returnAddress, entered->inlineFrame, findRecordedCallee(vm, entered->position, entered->inlineFrame));
+    }
     run.foundConstructorToSkip = !lastConstructorToSkip;
+}
+
+template<bool namesFramesByCallee>
+static NEVER_INLINE void captureRunBelowOtherRuns(VM& vm, RunWalk& walk, CapturedRun& run, CalleesOfRun* callees, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered)
+{
+    captureRun<true, namesFramesByCallee>(vm, walk, run, callees, maxStackSize, lastConstructorToSkip, framesAbove, calleeWasEntered);
+}
+
+// Each image says of its own functions how their frames are named.
+static ALWAYS_INLINE void captureRunAmongSeveral(VM& vm, RunWalk& walk, CapturedRun& run, CalleesOfRun& callees, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered)
+{
+    if (FunctionTables::of(vm).framesMayBeNamedByCallee())
+        captureRunBelowOtherRuns<true>(vm, walk, run, &callees, maxStackSize, lastConstructorToSkip, framesAbove, calleeWasEntered);
+    else
+        captureRunBelowOtherRuns<false>(vm, walk, run, nullptr, maxStackSize, lastConstructorToSkip, framesAbove, calleeWasEntered);
 }
 
 static bool isSameFrame(const StackFrame& expected, const StackFrame& actual)
@@ -604,10 +747,10 @@ static FunctionID compiledFunctionAt(const WTF::Vector<StackFrame>& frames, size
     return frames[index].compiledFrame().function;
 }
 
-void validateFrames(VM& vm, JSCell* owner, const WTF::Vector<StackFrame>& actual, size_t maxStackSize, JSCell* lastConstructorToSkip)
+void validateFrames(VM& vm, JSCell* owner, const WTF::Vector<StackFrame>& actual, size_t maxStackSize, JSCell* lastConstructorToSkip, size_t framesToSkip)
 {
     WTF::Vector<StackFrame> expected;
-    vm.interpreter.appendStackTrace(owner, expected, { .callFrame = vm.topCallFrame, .caller = lastConstructorToSkip, .visitsEachCompiledFrame = true }, maxStackSize);
+    vm.interpreter.appendStackTrace(owner, expected, { .callFrame = vm.topCallFrame, .framesToSkip = framesToSkip, .caller = lastConstructorToSkip, .visitsEachCompiledFrame = true }, maxStackSize);
 
     size_t numberCompared = std::min(expected.size(), actual.size());
     size_t index = 0;
@@ -621,22 +764,23 @@ void validateFrames(VM& vm, JSCell* owner, const WTF::Vector<StackFrame>& actual
     crashOnValidationFailure(vm, { ValidationFailureKind::StackTraceDiffers, function, { }, { } });
 }
 
-static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>& otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
+static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>& otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip, size_t framesToSkip)
 {
     WTF::Vector<StackFrame> actual;
     size_t firstOtherFrame = trace.numberOfFramesOnTop;
     actual.append(otherFrames.span().first(firstOtherFrame));
-    forEachShownFrame(trace, [&](const TraceFrame& frame) {
-        actual.append(StackFrame(frame));
+    forEachShownFrame(trace, [&](const TraceFrame& frame, JSObject* callee) {
+        actual.append(StackFrame(frame, callee, WriteBarrierEarlyInit));
     });
     actual.append(otherFrames.span().subspan(firstOtherFrame));
-    validateFrames(vm, owner, actual, maxStackSize, lastConstructorToSkip);
+    validateFrames(vm, owner, actual, maxStackSize, lastConstructorToSkip, framesToSkip);
 }
 
 static void fillTrace(ReturnAddressTrace& trace, Instance* instance, const CapturedRun& run, size_t maxStackSize, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered)
 {
     trace.instance = instance;
     trace.limit = std::min<size_t>(maxStackSize, ReturnAddressTrace::maxLimit);
+    trace.hasCallees = false;
     trace.isFull = false;
     trace.omittedFrameCount = run.numberOmitted;
     trace.numberOfReturnAddresses = run.returnAddresses.size();
@@ -646,6 +790,14 @@ static void fillTrace(ReturnAddressTrace& trace, Instance* instance, const Captu
     ASSERT(run.flagWords.size() == ReturnAddressTrace::numberOfFlagWords(run.returnAddresses.size()));
     memcpySpan(trace.returnAddresses(), run.returnAddresses.span());
     memcpySpan(trace.flagWords(), run.flagWords.span());
+}
+
+static NEVER_INLINE void fillCallees(ReturnAddressTrace& trace, const CalleesOfRun& callees)
+{
+    trace.hasCallees = true;
+    uint32_t* table = trace.calleeTable();
+    *table = callees.rows.size();
+    memcpySpan(std::span(reinterpret_cast<ReturnAddressTrace::Callee*>(table + 1), callees.rows.size()), callees.rows.span());
 }
 
 static bool fitsInTrace(const CapturedRun& run)
@@ -661,16 +813,18 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
     return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
 }
 
-// A built-in function that makes an error stands in one frame on top of the code that called it.
-static std::optional<RunStart> findRunBelowHostFunction(VM& vm)
+// A built-in function that makes an error stands in one frame on top of the code that called it. The engine's own constructors of errors leave their frame out of the trace.
+static std::optional<RunStart> findRunBelowHostFunction(VM& vm, FrameOnTop frameOnTop)
 {
     CallFrame* top = vm.topCallFrame;
     if (top->callerFrameOrEntryFrame() == vm.topEntryFrame || top->isZombieFrame() || top->isNativeCalleeFrame() || top->codeBlock() || vm.aotState().classCalledWithoutNew == top)
         return std::nullopt;
-    JSCell* callee = top->callee().asCell();
-    auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
-    if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
-        return std::nullopt;
+    if (frameOnTop == FrameOnTop::IsListed) {
+        JSCell* callee = top->callee().asCell();
+        auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
+        if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
+            return std::nullopt;
+    }
     const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
@@ -681,9 +835,9 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCe
 {
     std::optional<CompiledFrameIterator> frames;
     vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
-    if (!frames || frames->isAtEnd() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
+    if (!frames || frames->isAtEnd() || frames->hasNoMachineFrame() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
         return std::nullopt;
-    return RunStart { frames->stackPointer(), frames->framePointer(), const_cast<void*>(frames->callSite().address), frames->entryFrame(), frames->isAtFirstReadSite(), frames->calleeWasEntered(), frames->plainFunctionConstructFrameLeft() };
+    return RunStart { frames->stackPointer(), frames->framePointer(), const_cast<void*>(frames->callSite().address), frames->entryFrame(), frames->isAtFirstReadSite(), frames->calleeWasEntered(), frames->plainFunctionConstructFrameLeft(), frames->constructFrameLeftMakesThis() };
 }
 
 static NEVER_INLINE Instance* findInstanceAmongSeveral(VM& vm, const RunStart& start)
@@ -718,16 +872,21 @@ static ALWAYS_INLINE void appendFramesBelow(VM& vm, JSCell* owner, WTF::Vector<S
     vm.interpreter.getAsyncStackTrace(owner, results, awaiter, maxStackSize < std::numeric_limits<size_t>::max() - results.size() ? results.size() + maxStackSize : std::numeric_limits<size_t>::max());
 }
 
-// What is left to do once the return addresses are there. `runs`: none in a VM of one image.
-static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate, Instance* instance, const CapturedRun& run, std::span<const ReturnAddressTrace::Run> runs, const RunWalk& walk, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered, EntryFrame* entryFrameOfLastRun)
+// What is left to do once the return addresses are there. `callees`: none where no frame is named by its callee. `runs`: none in a VM of one image.
+static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate, Instance* instance, const CapturedRun& run, const CalleesOfRun* callees, std::span<const ReturnAddressTrace::Run> runs, const RunWalk& walk, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered, EntryFrame* entryFrameOfLastRun)
 {
-    if (run.hasFrameNamedByCallee || run.hasFrameListedBehindTailCall || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
+    if (run.hasFrameListedBehindTailCall || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run)) {
+        countStackListingAfterGivenUpCapture(vm);
         return nullptr;
+    }
 
-    auto* trace = static_cast<ReturnAddressTrace*>(allocate(ReturnAddressTrace::allocationSize(run.returnAddresses.size()) + ReturnAddressTrace::sizeOfRunTable(runs.size())));
+    size_t numberOfCallees = callees ? callees->rows.size() : 0;
+    auto* trace = static_cast<ReturnAddressTrace*>(allocate(ReturnAddressTrace::allocationSize(run.returnAddresses.size()) + ReturnAddressTrace::sizeOfCalleeTable(numberOfCallees) + ReturnAddressTrace::sizeOfRunTable(runs.size())));
     if (!trace)
         return nullptr;
     fillTrace(*trace, instance, run, maxStackSize, framesAbove, calleeOfFirstFrameWasEntered);
+    if (numberOfCallees)
+        fillCallees(*trace, *callees);
     if (!runs.empty()) {
         uint32_t* table = trace->runTable();
         *table = runs.size();
@@ -745,7 +904,7 @@ static ALWAYS_INLINE ReturnAddressTrace* tryMakeTrace(VM& vm, JSCell* owner, siz
     trace->isFull = numberOfFramesAbove - framesAbove.numberShown + otherFrames.size() >= maxStackSize;
 
     if (validatesRuntime(vm)) [[unlikely]]
-        validateCapturedTrace(vm, owner, *trace, otherFrames, maxStackSize, lastConstructorToSkip);
+        validateCapturedTrace(vm, owner, *trace, otherFrames, maxStackSize, lastConstructorToSkip, framesAbove.numberLeftOut);
     return trace;
 }
 
@@ -785,17 +944,25 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
     VMState& state = vm.aotState();
     std::optional<RunWalk> walk;
     walk.emplace(state, start);
-    if (walk->isAtEnd())
+    // `text => new Error(text)`, called from another image: the tail call has left the only function of the run on top, and its adapter is still there.
+    bool runOnTopIsEmpty = walk->isAtEnd();
+    if (runOnTopIsEmpty && (!walk->runEnd().adapterFrame || walk->runEnd().makesThis))
         return nullptr;
     CapturedRun run;
-    captureRun<true>(vm, *walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start.calleeWasEntered, FunctionTables::of(vm).framesMayBeNamedByCallee());
+    CalleesOfRun callees;
+    if (runOnTopIsEmpty) {
+        run.numberShown = framesAbove.numberShown;
+        run.foundConstructorToSkip = !lastConstructorToSkip;
+    } else
+        captureRunAmongSeveral(vm, *walk, run, callees, maxStackSize, lastConstructorToSkip, framesAbove, start.calleeWasEntered);
     Instance* instance = instanceAtEndOf(*walk);
     if (!instance)
         instance = findInstanceAmongSeveral(vm, start);
     if (!instance)
         return nullptr;
     Vector<ReturnAddressTrace::Run, 8> runs;
-    runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
+    if (!runOnTopIsEmpty)
+        runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
     EntryFrame* entryFrameOfLastRun = start.entryFrame;
     {
         // The tables of a run are asked while its image runs.
@@ -804,7 +971,7 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
             if (state.image != imageOnTop)
                 state.run(*imageOnTop);
         });
-        while (!run.hasFrameNamedByCallee && !run.hasFrameListedBehindTailCall && walk->isAtEnd()) {
+        while (!run.hasFrameListedBehindTailCall && walk->isAtEnd()) {
             const Image* imageOfCaller = nullptr;
             std::optional<RunStart> caller = findRunThatCalled(vm, *walk, entryFrameOfLastRun, imageOfCaller);
             if (!caller)
@@ -818,28 +985,43 @@ static NEVER_INLINE ReturnAddressTrace* tryCaptureRunsOfImages(VM& vm, JSCell* o
             walk.emplace(walkOfCaller);
             entryFrameOfLastRun = caller->entryFrame;
             // A tail call has left the only function of the run, and its adapter is still there.
-            if (walk->isAtEnd())
+            if (walk->isAtEnd()) {
+                // Or the adapter has yet to enter the function, which is listed. Return addresses do not say that.
+                run.hasFrameListedBehindTailCall |= walk->runEnd().makesThis;
                 continue;
-            captureRun<true>(vm, *walk, run, maxStackSize, run.foundConstructorToSkip ? nullptr : lastConstructorToSkip, { run.numberShown, true }, true, FunctionTables::of(vm).framesMayBeNamedByCallee());
+            }
+            captureRunAmongSeveral(vm, *walk, run, callees, maxStackSize, run.foundConstructorToSkip ? nullptr : lastConstructorToSkip, { run.numberShown, framesAbove.exist || !runs.isEmpty() }, true);
             runs.append({ static_cast<uint32_t>(run.returnAddresses.size()), walk->image().position() });
         }
     }
-    return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, runs.span(), *walk, framesAbove, start.calleeWasEntered, entryFrameOfLastRun);
+    return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, &callees, runs.span(), *walk, framesAbove, start.calleeWasEntered, entryFrameOfLastRun);
+}
+
+// tryCaptureRun() from the walk on, in a program with a function whose frames are named by the function object that runs in them.
+static NEVER_INLINE ReturnAddressTrace* tryCaptureRunNamingFramesByCallee(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate, Instance* instance, RunWalk& walk, const RunStart& start, const FramesAboveRun& framesAbove)
+{
+    CapturedRun run;
+    CalleesOfRun callees;
+    captureRun<false, true>(vm, walk, run, &callees, maxStackSize, lastConstructorToSkip, framesAbove, start.calleeWasEntered);
+    return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, &callees, { }, walk, framesAbove, start.calleeWasEntered, start.entryFrame);
 }
 
 // `otherFrames` gets the frames on top of the run, then those below it. `allocate` gives the memory of the trace.
-static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate)
+static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, FrameOnTop frameOnTop, const Invocable<void*(size_t)> auto& allocate)
 {
     if (!vm.hasCompiledCode() || !vm.topCallFrame || !maxStackSize || vm.aotState().stackPointerOfImport)
         return nullptr;
 
-    FramesAboveRun framesAbove;
-    std::optional<RunStart> start = findRunAtTop(vm);
+    FramesAboveRun framesAbove { .numberLeftOut = frameOnTop == FrameOnTop::IsLeftOut };
+    // Native code that an operation of compiled code has called makes errors of that kind too: the loader, of an import() whose text does not parse. No host frame stands on top there.
+    if (frameOnTop == FrameOnTop::IsLeftOut && isTopFrameCompiled(vm))
+        return nullptr;
+    std::optional<RunStart> start = frameOnTop == FrameOnTop::IsListed ? findRunAtTop(vm) : findRunBelowHostFunction(vm, frameOnTop);
     if (!start) {
-        if (lastConstructorToSkip)
+        if (lastConstructorToSkip || frameOnTop == FrameOnTop::IsLeftOut)
             return nullptr;
         if (maxStackSize >= 2)
-            start = findRunBelowHostFunction(vm);
+            start = findRunBelowHostFunction(vm, frameOnTop);
         if (start) {
             if (!otherFrames.capacity())
                 otherFrames.reserveInitialCapacity(1);
@@ -850,9 +1032,6 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
             return nullptr;
         framesAbove = { otherFrames.size(), true };
     }
-    // A return address does not say which function object runs in the frame.
-    FunctionTables& tables = FunctionTables::of(vm);
-    bool hasRecordedCallees = tables.framesMayBeNamedByCallee();
     Instance* instance = vm.aotState().onlyInstance;
     if (!instance) [[unlikely]] {
         if (vm.aotState().hasSeveralImages)
@@ -865,16 +1044,18 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
     RunWalk walk(vm.aotState(), *start);
     if (walk.isAtEnd())
         return nullptr;
+    if (FunctionTables::of(vm).framesMayBeNamedByCallee())
+        return tryCaptureRunNamingFramesByCallee(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, walk, *start, framesAbove);
     CapturedRun run;
-    captureRun<false>(vm, walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered, hasRecordedCallees);
-    return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, { }, walk, framesAbove, start->calleeWasEntered, start->entryFrame);
+    captureRun<false, false>(vm, walk, run, nullptr, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered);
+    return tryMakeTrace(vm, owner, maxStackSize, otherFrames, lastConstructorToSkip, allocate, instance, run, nullptr, { }, walk, framesAbove, start->calleeWasEntered, start->entryFrame);
 }
 
-ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)
+ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip, FrameOnTop frameOnTop)
 {
     std::optional<AssertNoGC> assertNoGC { std::in_place };
     WTF::Vector<StackFrame> results;
-    auto* trace = tryCaptureRun(vm, owner, maxStackSize, results, lastConstructorToSkip, [&](size_t size) {
+    auto* trace = tryCaptureRun(vm, owner, maxStackSize, results, lastConstructorToSkip, frameOnTop, [&](size_t size) {
         assertNoGC.reset();
         void* memory = vm.auxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull);
         assertNoGC.emplace();
@@ -1036,13 +1217,36 @@ static ALWAYS_INLINE bool showRunOf(const ReturnAddressTrace& trace, size_t begi
     const Image& image = *Image::current();
     CallSiteCache& cache = *trace.instance->vm->aotState().callSiteCache;
     uintptr_t codeStart = imageCodeStart();
+    // Those of the address that the loop is at and of the ones behind it.
+    std::span<const ReturnAddressTrace::Callee> callees = trace.callees();
+    size_t i = begin;
+    // Of the one frame that the lister has not handed on.
+    JSObject* callee = nullptr;
     auto didShow = [&](TraceFrame& frame, const LogicalFrame& logicalFrame) ALWAYS_INLINE_LAMBDA {
         frame.calleeLiesInFrame = isCopiedForOwnFunctionObject(image, cache.inlineFrames(), frame.code, logicalFrame);
+        callee = nullptr;
+        // As in forEachShownFrameOfRun().
+        if (callees.empty() || logicalFrame.isOfCalledBuiltin || logicalFrame.isListedBehindTailCall || frame.isAtFailedTailCall) [[likely]]
+            return;
+        for (const ReturnAddressTrace::Callee& row : callees) {
+            if (row.returnAddress != i)
+                break;
+            if (row.inlineFrame != logicalFrame.inlineFrame)
+                continue;
+            callee = row.object();
+            frame.calleeLiesInFrame = !callee;
+            break;
+        }
     };
-    ShownFrameLister lister(image, cache.inlineFrames(), filter, numberToOmit, didShow, emit);
+    auto emitWithCallee = [&](const TraceFrame& frame) ALWAYS_INLINE_LAMBDA {
+        return emit(frame, callee);
+    };
+    ShownFrameLister lister(image, cache.inlineFrames(), filter, numberToOmit, didShow, emitWithCallee);
 
     auto returnAddresses = trace.returnAddresses();
-    for (size_t i = begin; i < end; ++i) {
+    for (; i < end; ++i) {
+        while (!callees.empty() && callees.front().returnAddress < i) [[unlikely]]
+            callees = callees.subspan(1);
         auto flags = trace.flagsAt(i);
         const CallSiteCache::Entry* entry = cache.resolve(image, ReturnAddressTrace::decode(returnAddresses[i], codeStart));
         RELEASE_ASSERT(entry && !entry->isStubReturnSite());
@@ -1058,13 +1262,20 @@ static ALWAYS_INLINE bool showRunOf(const ReturnAddressTrace& trace, size_t begi
     return wantsMore;
 }
 
-void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(const TraceFrame&)>& functor)
+bool hasUnmarkedCallee(VM& vm, const ReturnAddressTrace& trace)
+{
+    return std::ranges::any_of(trace.callees(), [&](const ReturnAddressTrace::Callee& callee) {
+        return callee.object() && !vm.heap.isMarked(callee.object());
+    });
+}
+
+void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(const TraceFrame&, JSObject*)>& functor)
 {
     size_t numberShown = trace.numberOfFramesOnTop;
     if (numberShown >= trace.limit)
         return;
-    auto emit = [&](const TraceFrame& frame) {
-        functor(frame);
+    auto emit = [&](const TraceFrame& frame, JSObject* callee) {
+        functor(frame, callee);
         return ++numberShown < trace.limit;
     };
     ShownFrameFilter filter(trace.isBelowOtherFrames || trace.omittedFrameCount);
@@ -1137,6 +1348,9 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
         shown.callee = nullptr;
         shown.isAboveFramesThatWait = false;
         isOutermostOfMachineFrame = !logicalFrame.hasCallerInMachineFrame();
+        // The stub that makes `this` holds the function object.
+        if (namesFramesByCallee && logicalFrame.isListedBehindTailCall && walk.constructFrameLeftMakesThis() && tables.framesAreNamedByCallee(frame.function)) [[unlikely]]
+            shown.callee = walk.calleeInConstructFrameLeft();
         if (!namesFramesByCallee || logicalFrame.isOfCalledBuiltin || logicalFrame.isListedBehindTailCall || frame.isAtFailedTailCall) [[likely]]
             return;
         FunctionID sourceFunction = FunctionDescription(frame.function).sourceFunction();
@@ -1171,13 +1385,15 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
     auto didFindConstructionOf = [&](FunctionID constructed) {
         std::optional<TraceFrame> frameIfGone;
         if (constructed && (!codeAbove || !isCodeOf(walk.image(), codeAbove, constructed)))
-            frameIfGone = frameOfConstructedFunctionThatLeft(walk.image(), constructed, codeAbove);
+            frameIfGone = walk.frameOfConstructedFunctionWithoutFrame(constructed, codeAbove);
         return lister.didFindCallerThatConstructed(constructed, frameIfGone);
     };
     auto didFindConstructSite = [&]() NEVER_INLINE {
         return didFindConstructionOf(walk.constructedFunction());
     };
-    // What was constructed has left by a tail call of something that is no compiled function.
+    // Bytecode has entered the function by the time `this` is made.
+    calleeWasEntered |= walk.constructFrameLeftMakesThis();
+    // What was constructed has left by a tail call of something that is no compiled function, or has yet to be entered.
     if (walk.hasLeftPlainFunctionConstructFrame() && walk.site().site.isConstruct() && !didFindConstructSite()) [[unlikely]]
         return false;
     for (bool isCaller = calleeWasEntered;; isCaller = true) {
@@ -1215,10 +1431,10 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
     return true;
 }
 
-static ALWAYS_INLINE bool appendShownFramesOfRun(VM& vm, RunWalk& walk, bool calleeWasEntered, ShownFrameFilter& filter, WTF::Vector<StackFrame>& results, RunListing& listing)
+static ALWAYS_INLINE auto appenderOfShownFrames(VM& vm, WTF::Vector<StackFrame>& results, RunListing& listing)
 {
     void* stackPointerOfImport = vm.aotState().stackPointerOfImport;
-    return forEachShownFrameOfRun(vm, walk, calleeWasEntered, filter, [&](const ShownFrameOfRun& shown) ALWAYS_INLINE_LAMBDA {
+    return [&vm, &results, &listing, stackPointerOfImport](const ShownFrameOfRun& shown) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= listing.maxResultsSize)
             return IterationStatus::Done;
         if (listing.framesToSkip) {
@@ -1244,14 +1460,36 @@ static ALWAYS_INLINE bool appendShownFramesOfRun(VM& vm, RunWalk& walk, bool cal
         if (shown.isAboveFramesThatWait && FunctionDescription(shown.frame.function).isAsync())
             listing.isAboveFramesThatWait = true;
         return results.size() < listing.maxResultsSize ? IterationStatus::Continue : IterationStatus::Done;
-    });
+    };
+}
+
+static ALWAYS_INLINE bool appendShownFramesOfRun(VM& vm, RunWalk& walk, bool calleeWasEntered, ShownFrameFilter& filter, WTF::Vector<StackFrame>& results, RunListing& listing)
+{
+    return forEachShownFrameOfRun(vm, walk, calleeWasEntered, filter, appenderOfShownFrames(vm, results, listing));
+}
+
+// The run has no frame: its adapter has yet to enter the function.
+static NEVER_INLINE IterationStatus appendFunctionWhoseThisTheAdapterMakes(VM& vm, const CompiledFrameIterator::RunEnd& runEnd, ShownFrameFilter& filter, WTF::Vector<StackFrame>& results, RunListing& listing)
+{
+    FunctionID constructed = runEnd.constructedFunction();
+    std::optional<TraceFrame> frame = constructed ? frameOfFunctionWhoseThisIsMade(*vm.aotState().image, constructed) : std::nullopt;
+    if (!frame)
+        return IterationStatus::Continue;
+    filter = ShownFrameFilter(true);
+    JSObject* callee = FunctionTables::of(vm).framesAreNamedByCallee(frame->function) ? runEnd.adapterFrame->jsCallee() : nullptr;
+    return appenderOfShownFrames(vm, results, listing)({ *frame, callee, runEnd.adapterFrame });
 }
 
 IterationStatus appendShownFramesOfRun(VM& vm, CompiledFrameIterator& frames, ShownFrameFilter& filter, WTF::Vector<StackFrame>& results, RunListing& listing)
 {
-    if (frames.isAtEnd() || frames.isAmongFramesThatWait())
+    if (frames.isAtEnd()) {
+        if (frames.runEnd().makesThis) [[unlikely]]
+            return appendFunctionWhoseThisTheAdapterMakes(vm, frames.runEnd(), filter, results, listing);
         return IterationStatus::Continue;
-    RunWalk walk(vm.aotState(), { frames.stackPointer(), frames.framePointer(), const_cast<void*>(frames.callSite().address), frames.entryFrame(), frames.isAtFirstReadSite(), frames.calleeWasEntered(), frames.plainFunctionConstructFrameLeft() });
+    }
+    if (frames.isAmongFramesThatWait())
+        return IterationStatus::Continue;
+    RunWalk walk(vm.aotState(), { frames.stackPointer(), frames.framePointer(), const_cast<void*>(frames.callSite().address), frames.entryFrame(), frames.isAtFirstReadSite(), frames.calleeWasEntered(), frames.plainFunctionConstructFrameLeft(), frames.constructFrameLeftMakesThis() });
     if (!appendShownFramesOfRun(vm, walk, frames.calleeWasEntered(), filter, results, listing))
         return IterationStatus::Done;
     frames.leaveRunAt(walk.exit(), walk.runEnd());
@@ -1267,7 +1505,7 @@ bool tryGetStackTrace(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& results, s
     std::optional<RunStart> start = findRunAtTop(vm);
     bool isBelowHostFunction = !start;
     if (isBelowHostFunction) {
-        start = findRunBelowHostFunction(vm);
+        start = findRunBelowHostFunction(vm, FrameOnTop::IsListed);
         if (!start)
             return false;
     }
@@ -1358,6 +1596,10 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
             position->lineColumn = position->constructionStart;
         position->constructionStart = { 0, 0 };
         position->startIsForCallers = false;
+    }
+    if (position && position->startIsWhereWritten) {
+        position->constructionStart = { 0, 0 };
+        position->startIsWhereWritten = false;
     }
     if (image.sharesRealms() && position && position->source) [[unlikely]]
         position->source = moduleIDForHost(image, position->source);

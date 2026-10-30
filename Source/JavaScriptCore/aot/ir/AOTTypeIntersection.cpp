@@ -343,11 +343,11 @@ static void subtractLiterals(Type& result, const Type& removed, LiteralPart<T> p
 
 static void subtractCallables(Type& result, const Type& removed, const BuiltinTable& builtins)
 {
-    if (removed.anyFunction)
+    if (removed.anyFunction) {
         result.anyFunction = false;
-    removeAllMatching(result.functions, [&](FunctionID function) {
-        return includesFunction(removed, function);
-    });
+        result.functions.clear();
+    } else
+        result.functions.subtract(removed.functions);
     removeAllMatching(result.builtins, [&](BuiltinID builtin) {
         return includesBuiltin(removed, builtin, builtins);
     });

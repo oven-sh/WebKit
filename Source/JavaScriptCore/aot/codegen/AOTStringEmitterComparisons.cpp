@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
@@ -133,7 +134,35 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
 
-void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString)
+// `if (s === "get") .. else if (s === "put") .. else if (s === "post") ..`: the first comparison stands in front of the others.
+// What it does for them costs it a few instructions, which two comparisons behind it earn back and one does not.
+bool StringEmitter::isSubjectComparedAgain(const ValueContext& value)
+{
+    if (!m_comparisonsOfSharedSubjects) {
+        static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
+        m_comparisonsOfSharedSubjects.emplace();
+        HashMap<ValueID, Vector<ValueID, 4>> comparisonsBehindFirst;
+        for (BlockID block : analyses().cfg().reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                const Value& comparison = m_function.at(id);
+                if (!comparisonsWithLiteral.contains(comparison.opcode))
+                    continue;
+                Vector<ValueID, 4>& comparisons = comparisonsBehindFirst.add(analyses().identityOf(comparison.operand(0)), Vector<ValueID, 4>()).iterator->value;
+                if (comparisons.isEmpty() || analyses().dominates(comparisons[0], analyses().useLists().pointOf(id)))
+                    comparisons.append(id);
+            }
+        }
+        for (const Vector<ValueID, 4>& comparisons : comparisonsBehindFirst.values()) {
+            if (comparisons.size() < 3)
+                continue;
+            for (ValueID id : comparisons)
+                m_comparisonsOfSharedSubjects->add(id);
+        }
+    }
+    return m_comparisonsOfSharedSubjects->contains(value.id());
+}
+
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
 {
     String text = textOf(literal);
     if (text.isEmpty()) {
@@ -158,6 +187,23 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.
     // What nobody has read yet is read where it is asked for, so that it becomes the memory operand of the compare that uses it.
     LBasicBlock slow = newBlock();
+    if (subjectIsComparedAgain && !subjectIsFlat) {
+        // One word says how long the string is and one whether the stub has to answer, for a rope as for a flat string. The next comparison asks the same two words,
+        // so B3 sends each way out of this one past the tests whose answer it knows, and whoever has called the stub once goes from stub to stub.
+        // In place of the flags of a rope stands a pointer, whose low bits are zero.
+        static_assert(StringImpl::flagIs8Bit() < alignof(VM));
+        Pointer word = loadField<Pointer>(string, m_heaps.JSString_value);
+        Condition isFlat = hasNoBits(word, JSString::isRopeInPointer);
+        Pointer holderOfLength = select(isFlat, word, offsetBy(asPointer(string), JSRopeString::offsetOfLength() - StringImpl::lengthMemoryOffset()));
+        continueIf(equal(loadField<Word32>(holderOfLength, m_heaps.StringImpl_length), text.length()), targets.notTaken);
+        Pointer holderOfFlags = select(isFlat, word, offsetBy(instance(), m_heaps.AOTInstance_vm.offset() - static_cast<ptrdiff_t>(StringImpl::flagsOffset())));
+        continueIf(hasBits(loadField<Word32>(holderOfFlags, m_heaps.StringImpl_hashAndFlags), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
+        branchOnBytesAt(loadField<Pointer>(word, m_heaps.StringImpl_data), asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
+
+        m_out.appendTo(slow);
+        branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
+        return;
+    }
     auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
     const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
     Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
@@ -172,14 +218,14 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
 }
 
-Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString)
+Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
 {
     String text = textOf(literal);
     if (text.isEmpty())
         return equal(Boxed(subject), boxCell(emptyString()));
     if (fitsInRegister(text) || comparesLiteralInPlace(context, text)) {
         return asBoolean([&](BranchTargets targets) {
-            branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString);
+            branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
         });
     }
     return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first));
@@ -187,11 +233,12 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
 
 void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, bool subjectIsFlat, bool everyCellIsString)
 {
+    bool subjectIsComparedAgain = !subjectIsFlat && isSubjectComparedAgain(value);
     if (value.isBranchCondition()) {
-        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), subjectIsFlat, everyCellIsString);
+        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
         return;
     }
-    define(value, equalsLiteral(value, operand, subject, value->literal(), subjectIsFlat, everyCellIsString));
+    define(value, equalsLiteral(value, operand, subject, value->literal(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain));
 }
 
 void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)

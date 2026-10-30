@@ -19,6 +19,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyListCache.h"
 #include "AOTRuntimeFunctions.h"
@@ -227,6 +228,8 @@ static Presence compiledObjectHasProperty(const Object& typed, UniquedStringImpl
             return Presence::Present;
     } else
         state.objects->layouts.didReadAbsentField(*state.instance.vm, typed.layout(), name);
+    if (std::optional<Object*> source = sourceOfPendingBinding(typed.vm(), typed, name))
+        return *source ? Presence::Present : Presence::Absent;
     JSObject* extra = typed.extraProperties();
     if (!extra)
         return Presence::Absent;

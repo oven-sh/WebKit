@@ -145,3 +145,75 @@ function f6 name="awaitsTheValueOnOneWay" flags=[IsAsync] thisType={type=anythin
 # CHECK-NEXT: ReleaseHint v3 @170
 # CHECK-NEXT: Await v0, v0 @160
 # CHECK-NOT: ReleaseHint
+
+function f7 name="letsGoInAFinallyThatIsEnteredFromAReader" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CleanupHandler:
+    v6 = CatchException
+    v7 = Await v0 @180
+    ReleaseHint v3 @190
+    Rethrow v6
+}
+# What a handler catches stays at its head: by it the handler is known for a `finally`.
+# CHECK-LABEL: function f7 name="letsGoInAFinallyThatIsEnteredFromAReader"
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: CatchException
+# CHECK-NEXT: ReleaseHint v3 @190
+# CHECK-NEXT: Await {{*}} @180
+# CHECK-NOT: ReleaseHint
+
+function f8 name="letsGoInAFinallyThatReadsWhatWasThrown" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CleanupHandler:
+    v6 = CatchException
+    v7 = CatchValue
+    v8 = Await v7 @200
+    ReleaseHint v3 @210
+    Rethrow v6
+}
+# CHECK-LABEL: function f8 name="letsGoInAFinallyThatReadsWhatWasThrown"
+# CHECK: b3() role=CleanupHandler:
+# CHECK-NEXT: CatchException
+# CHECK-NEXT: CatchValue
+# CHECK-NEXT: ReleaseHint v3 @210
+# CHECK-NEXT: Await {{*}} @200
+# CHECK-NOT: ReleaseHint
+
+function f9 name="letsGoInACatchThatIsEnteredFromAReader" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=function}, {type=number}] results=[{type=Promise}] {
+  b0(v0: object, v1: function, v2: number):
+    v3 = NewArray v2 contents=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    v5 = ElemGet v3, v2
+    Return v5
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = Await v0 @220
+    ReleaseHint v3 @230
+    Return v6
+}
+# CHECK-LABEL: function f9 name="letsGoInACatchThatIsEnteredFromAReader"
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: CatchValue
+# CHECK-NEXT: ReleaseHint v3 @230
+# CHECK-NEXT: Await {{*}} @220
+# CHECK-NOT: ReleaseHint

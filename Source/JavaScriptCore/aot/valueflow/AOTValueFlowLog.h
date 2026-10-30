@@ -74,6 +74,8 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey named(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowName name) { return { kind, static_cast<uint8_t>(name.kind), name.payload, set }; }
     // What it answers is only called on the object that it was asked of.
     static ValueFlowNodeKey lookupForCall(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Lookup, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isForCall), name.payload, set }; }
+    // Asked for by native code that walks what it was handed, or by another such lookup.
+    static ValueFlowNodeKey lookupByNativeWalk(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Lookup, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isByNativeWalk), name.payload, set }; }
     // An edge stays in the graph when the statement that logged it asks for something else. So this read shares no node with the read of the same objects that a statement has connected whole.
     static ValueFlowNodeKey readOfWhatLetsInUnseenCode(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Read, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isOfWhatLetsInUnseenCode), name.payload, set }; }
     static ValueFlowNodeKey underKind(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowNameKind nameKind) { return { kind, static_cast<uint8_t>(nameKind), 0, set }; }
@@ -89,8 +91,9 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey objectsWithRareWrite(ValueFlowRareWrite write) { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 2 + static_cast<uint32_t>(write), { } }; }
     static ValueFlowNodeKey holdersOfLibraryExportsWrittenUnder(PropertyKeyID key) { return { ValueFlowMadeNodeKind::Marked, 1, key.index(), { } }; }
 
-    ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail & ~isForCall), payload }; }
+    ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail & ~(isForCall | isByNativeWalk)), payload }; }
     bool isLookupForCall() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isForCall); }
+    bool isLookupByNativeWalk() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isByNativeWalk); }
     bool readsOnlyWhatLetsInUnseenCode() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOfWhatLetsInUnseenCode); }
     ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }
     ValueFlowObjectID markerOfCallGroup() const { return payload ? ValueFlowObjectID(payload - 1) : ValueFlowObjectID(); }
@@ -113,6 +116,7 @@ struct ValueFlowNodeKey {
 
     static constexpr unsigned numberOfNodesOfCallGroup = 6 + numberOfGroupedArguments;
     static constexpr uint8_t isForCall = 0x80;
+    static constexpr uint8_t isByNativeWalk = 0x40;
     static constexpr uint8_t isOfWhatLetsInUnseenCode = isForCall;
 
     ValueFlowMadeNodeKind kind { ValueFlowMadeNodeKind::Constant };
@@ -125,7 +129,7 @@ struct ValueFlowNodeKey {
 };
 static_assert(sizeof(ValueFlowNodeKey) == 12);
 
-static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isForCall);
+static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isByNativeWalk);
 
 inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
 {

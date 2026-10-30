@@ -7,8 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFunctionData.h"
 #include "AOTRecordTypes.h"
 #include "JSExportMacros.h"
+#include "LineColumn.h"
+#include <optional>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -35,6 +38,19 @@ std::span<const Latin1Character> functionSourceBytes(FunctionID);
 std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID);
 // The lines of that text above the place where the function begins: none but for the constructor of a class.
 unsigned linesOfTextAboveSource(FunctionID);
+// Where the line and the column of the file of the module lie in the text that is kept, counted from the start of sourceBytesOfAllFunctions().
+// What is searched around the place is the text of the function. The body of a module has none: there it is the piece of the file that holds the place.
+struct PlaceInKeptText {
+    size_t startOfSearched;
+    size_t endOfSearched;
+    size_t at;
+};
+std::optional<PlaceInKeptText> findInKeptText(FunctionID, ModuleID, LineColumn);
+// The text of every function, which functionSourceBytes() answers a part of.
+std::span<const Latin1Character> sourceBytesOfAllFunctions();
+// What `bun run` has in place of pieces of the text of the module. Nothing where the image counts from elsewhere than the caller.
+enum class StartOfPrintedText : uint8_t { SourceBytesOfAllFunctions, File };
+Vector<TextPrintedInPlace> textPrintedInPlaceOf(ModuleID, StartOfPrintedText);
 
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);

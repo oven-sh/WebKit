@@ -304,6 +304,24 @@ void ClosureTable::registerClosureOfMember(FunctionID function, JSCell* closure)
     didCreateClosureFor(function, closure);
 }
 
+void ClosureTable::forgetClosures(uint32_t firstCell, uint32_t numberOfCells)
+{
+    RELEASE_ASSERT(firstCell && static_cast<uint64_t>(firstCell) + numberOfCells <= m_tables.numberOfClosureCells);
+    if (m_state.instance.options().useWideReferences()) {
+        std::ranges::fill(std::span { static_cast<JSCell**>(m_state.instance.closureCells) + firstCell, numberOfCells }, nullptr);
+        return;
+    }
+    for (RememberedSlot<uint32_t>& cell : std::span { narrowClosureCells(m_state.instance) + firstCell, numberOfCells }) {
+        uint32_t entry = cell.get();
+        if (!entry)
+            continue;
+        // Compiled code holds the cells of the table without keeping them alive.
+        m_state.immortalCells->add(MarkedBlockCage::decode(m_state.instance.cellCageBase, entry + 1));
+        Locker locker { m_state.caches->lock() };
+        cell.set(m_writtenRegions, 0);
+    }
+}
+
 JSCell* ClosureTable::closure(VM& vm, FunctionID function)
 {
     if (JSCell* cell = closureIfCreated(function))

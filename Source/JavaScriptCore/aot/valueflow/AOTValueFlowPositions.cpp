@@ -353,6 +353,27 @@ TypeID ValueFlowPositions::withStringsWithinLimit(TypeID id)
     return m_types.intern(WTF::move(within));
 }
 
+// `value instanceof Error` asks for nothing but the chain above the value, so only what it is asked of says this much.
+void ValueFlowPositions::addPrototypesThatAreKept(ValueSetID held, Type& type)
+{
+    if (ValueSets::isComplement(held) || type.classes.isEmpty() || !m_inputs.containers || !isEnabled(FlowResultKind::PristineInstances))
+        return;
+    bool areAllKept = true;
+    m_inputs.sets().forEachMember(maker().intersect(held, m_inputs.universe().objects()), [&](ValueFlowObjectID member) {
+        // An object with a layout is no part of a class, but where its layout is one of dictionaries: then it counts as an Object.
+        if (!areAllKept || (m_inputs.universe().layoutOf(member) && !m_inputs.isDictionary(member)))
+            return;
+        const ValueFlowContainerFacts* facts = m_inputs.containers->find(member);
+        areAllKept = facts && facts->pristine.containsAny({ PristineAspects::Names, PristineAspects::Prototype });
+    });
+    if (!areAllKept)
+        return;
+    for (ClassPart& part : type.classes) {
+        if (!part.provenPristine.contains(PristineAspects::Names))
+            part.provenPristine.add(PristineAspects::Prototype);
+    }
+}
+
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);
@@ -366,7 +387,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
         if (isEnabled(FlowResultKind::ArrayStorageKinds) && part.contentsAreProven)
             part.arrayStorage = facts->arrayStorage;
         if (isEnabled(FlowResultKind::PristineInstances))
-            part.provenPristine = facts->pristine;
+            part.provenPristine = facts->pristine - PristineAspects::Prototype;
     }
     bool isRegExp = builtinClass == BuiltinClasses::RegExp;
     if (isRegExp && site && site->origin == ValueFlowSiteOrigin::Operation) {

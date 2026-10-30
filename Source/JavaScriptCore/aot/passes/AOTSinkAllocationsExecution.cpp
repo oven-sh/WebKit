@@ -12,6 +12,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
+#include "AOTFrameAllocationPlanner.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -3037,7 +3038,16 @@ void ObjectInterpreter::didBuild(VirtualObjectID object, const BuildCause& cause
         Expected<BlockFrequency> frequency = frequencies.classOf(m_state.block);
         if (m_enteredEdge.edge)
             frequency = rarerOf(frequencies.classOf(m_enteredEdge.edge->edge.from), frequencies.classOf(m_enteredEdge.edge->edge));
-        bool isBorrowed = isBorrowingCall(cause);
+        const VirtualFamily& family = m_sinking.familyOf(object);
+        bool isBorrowed = isBorrowingCall(cause) && std::ranges::none_of(state.variants, [&](const ObjectVariant& variant) {
+            const VirtualShape& shape = shapeOf(object, variant);
+            if (shape.kind != VirtualShapeKind::Fields || family.descriptionOf(shape).kind != VirtualObjectKind::Object)
+                return false;
+            size_t numberOfFields = 0;
+            for (size_t field : shape.stored)
+                numberOfFields += family.fieldAt(static_cast<uint32_t>(field)).isProperty();
+            return hasUnprovenField(family, shape) || mayCreateFieldsLater(program().at(family.descriptionOf(shape).layout), numberOfFields);
+        });
         auto countBuilds = [&](VirtualObjectID built, unsigned numberOfBuilds) {
             Candidate& candidate = m_sinking.at(built);
             candidate.numberOfBuilds += numberOfBuilds;

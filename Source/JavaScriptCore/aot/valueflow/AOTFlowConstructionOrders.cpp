@@ -112,6 +112,7 @@ struct SolvedConstruction {
     ConstructionNames readNames;
     ConstructionNames selfReferenceNames;
     Vector<ConstructionName> initialOrder;
+    ConstructionNames namesInInitialOrder;
 };
 
 struct ResolvedConstructionEvent {
@@ -901,6 +902,46 @@ struct ConstructionGraphBuilder {
         }).iterator->value;
     }
 
+    std::optional<ValueSetID> prototypeObjectsExpectedAbove(ValueFlowObjectID object)
+    {
+        if (universe.kindOf(object) != ValueFlowObjectKind::Instance)
+            return std::nullopt;
+        ValueSetID expected = ValueSets::nothing;
+        LayoutID current = universe.layoutOf(object);
+        for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps) {
+            const Layout& layout = program.at(current);
+            std::optional<ValueSetID> prototypes = prototypesGivenAtCreation(universe.instanceOf(current));
+            std::optional<LayoutID> base = layout.base ? std::optional(layout.base) : findBaseLinkedByProgram(inputs, current);
+            if (!prototypes || !base || (!*base && layout.has(LayoutFlags::HasHeritage)))
+                return std::nullopt;
+            // The guards watch the link of the prototype object that the class is born with, and of no other object.
+            ValueSetID born = maker.of(universe.prototypeOf(current));
+            expected = maker.unite(expected, maker.unite(born, heap.chainOf(maker.intersect(*prototypes, ValueSets::complement(born)))));
+            current = *base;
+        }
+        return current ? std::nullopt : std::optional(expected);
+    }
+
+    // A store behind its guards: each prototype object still has above it what the compiler expects there.
+    const std::optional<ChainOfReceivers>& chainWhileLinksAreAsExpected(ValueSetID receivers, const ChainOfReceivers& chainBeforeLeak)
+    {
+        return chainsWhileLinksAreAsExpected.ensure(receivers.index(), [&]() -> std::optional<ChainOfReceivers> {
+            ValueSetID objects = maker.intersect(chainBeforeLeak.chain, ValueSets::complement(chainBeforeLeak.above));
+            std::optional<ValueSetID> expected = ValueSets::nothing;
+            sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+                std::optional<ValueSetID> above = expected ? prototypeObjectsExpectedAbove(object) : std::nullopt;
+                expected = above ? std::optional(maker.unite(*expected, *above)) : std::nullopt;
+            });
+            if (!expected)
+                return std::nullopt;
+            ChainOfReceivers result;
+            result.above = maker.intersect(chainBeforeLeak.above, *expected);
+            result.chain = maker.unite(objects, result.above);
+            result.isKnown = true;
+            return result;
+        }).iterator->value;
+    }
+
     void resolveAccess(const FunctionConstruction& construction, bool isEnteredByNew, const ConstructionEvent& event, ResolvedConstructionEvent& resolved)
     {
         const Function& function = construction.analyses->function();
@@ -918,25 +959,34 @@ struct ConstructionGraphBuilder {
         ValueSetID receivers = operands[*receiverOf(access.opcode)];
         bool isExactStore = event.kind == ConstructionEventKind::Store && event.isExact && access.opcode == Opcode::PropSet;
         std::optional<ChainOfReceivers> chainOfRoot;
+        ValueSetID roots = isEnteredByNew ? universe.objectsWith(function.constructedClass) : receivers;
         if (event.isExact)
-            chainOfRoot = chainOfObjectsBeforeTheyLeak(isEnteredByNew ? universe.objectsWith(function.constructedClass) : receivers);
-        const ChainOfReceivers& chain = chainOfRoot ? *chainOfRoot : chainOf(receivers);
-        resolved.mayLeak = resolved.otherCodeMayRun = !chain.isKnown && !(unknownChains == UnknownChains::HoldNothingUnderName && isExactStore);
-        if (!chain.isKnown)
+            chainOfRoot = chainOfObjectsBeforeTheyLeak(roots);
+        const ChainOfReceivers* chain = chainOfRoot ? &*chainOfRoot : &chainOf(receivers);
+        bool standsBehindGuards = unknownChains == UnknownChains::HoldNothingUnderName && isExactStore;
+        resolved.mayLeak = resolved.otherCodeMayRun = !chain->isKnown && !standsBehindGuards;
+        if (!chain->isKnown)
             return;
 
+        bool mayBeStopped = isExactStore && !isPrivateKey(program, key) && mayBeStoppedAbove(*chain, key);
+        if (mayBeStopped && standsBehindGuards && chainOfRoot) {
+            if (const std::optional<ChainOfReceivers>& expected = chainWhileLinksAreAsExpected(roots, *chainOfRoot)) {
+                chain = &*expected;
+                mayBeStopped = mayBeStoppedAbove(*chain, key);
+            }
+        }
         if (kind == Access::Read || kind == Access::Store) {
             bool getters = kind == Access::Read;
             ValueSetID accessors;
             if (chainOfRoot) {
-                ValueSetID own = accessorsUnder(maker.intersect(chain.chain, ValueSets::complement(chain.above)), key, getters);
-                accessors = maker.unite(maker.intersect(own, ValueSets::complement(universe.placeholdersAlone())), accessorsUnder(chain.above, key, getters));
+                ValueSetID own = accessorsUnder(maker.intersect(chain->chain, ValueSets::complement(chain->above)), key, getters);
+                accessors = maker.unite(maker.intersect(own, ValueSets::complement(universe.placeholdersAlone())), accessorsUnder(chain->above, key, getters));
             } else
-                accessors = accessorsUnder(chain.chain, key, getters);
-            resolved.mayLeak = !builtinMembersArePlainValues(chain.chain, key);
+                accessors = accessorsUnder(chain->chain, key, getters);
+            resolved.mayLeak = !builtinMembersArePlainValues(chain->chain, key);
             enterWithObjectAsThis(accessors, resolved);
         }
-        resolved.otherCodeMayRun |= isExactStore && !isPrivateKey(program, key) && mayBeStoppedAbove(chain, key);
+        resolved.otherCodeMayRun |= mayBeStopped;
     }
 
     static bool collectsArgument(const Function& callee, uint32_t argument)
@@ -1096,6 +1146,7 @@ struct ConstructionGraphBuilder {
     std::optional<ValueSetID> objectsOfProgramThatStopStores { };
     MapByNumber<uint32_t, bool> holdersOfNamesNobodyLists { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
+    MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsWhileLinksAreAsExpected { };
     ConstructionGraph graph { };
 };
 
@@ -1172,8 +1223,13 @@ struct StoredNamesProblem {
         }
         if (!stateAfterCall)
             return;
-        if (runsOneOfThem)
-            state.stored.unite(stateAfterCall->stored);
+        if (runsOneOfThem) {
+            bool holdsWhatWasStoredBefore = state.stored.size() == stateBeforeOperation.stored.size();
+            if (holdsWhatWasStoredBefore)
+                state.stored = WTF::move(stateAfterCall->stored);
+            else
+                state.stored.unite(stateAfterCall->stored);
+        }
         state.selfReferences.unite(stateAfterCall->selfReferences);
     }
 
@@ -1265,7 +1321,8 @@ void solveStoredNames(const ConstructionGraph& graph, ConstructionNode& node)
     node.construction->analyses->solveForward(problem);
     node.solved = WTF::move(problem.solved);
     if (problem.storedAtExit) {
-        problem.storedBeforeLeak->subtract(node.solved.readBeforeStore);
+        if (!node.solved.readBeforeStore.isEmpty())
+            problem.storedBeforeLeak->subtract(node.solved.readBeforeStore);
         node.solved.storedBeforeLeak = WTF::move(*problem.storedBeforeLeak);
         node.solved.storedAtExit = WTF::move(*problem.storedAtExit);
     }
@@ -1293,6 +1350,7 @@ struct InitialOrderBuilder {
             }
         }
         node.solved.storesOnlyInInitialOrder = !node.solved.mayLeak && everyPointAccepted;
+        node.solved.namesInInitialOrder = WTF::move(acceptedNames);
     }
 
     const ConstructionEvent& eventAt(uint32_t position) const { return summary.events[position]; }
@@ -1432,8 +1490,11 @@ struct InitialOrderBuilder {
         });
         if (!calleesAgree)
             return false;
-        for (const ConstructionName& name : first.initialOrder)
-            addToOrder(name);
+        for (const ConstructionName& name : first.initialOrder) {
+            if (!acceptedNames.contains(name))
+                node.solved.initialOrder.append(name);
+        }
+        acceptedNames.unite(first.namesInInitialOrder);
         return first.storesOnlyInInitialOrder;
     }
 
@@ -1457,12 +1518,14 @@ struct InitialOrderBuilder {
     ConstructionNames acceptedNames { };
 };
 
-void solveConstructions(ConstructionGraph& graph)
+void solveConstructions(ConstructionGraph& graph, const BitVector* nodesThatAreRead = nullptr)
 {
     StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.nodes.size(), [&](unsigned node) -> const Vector<uint32_t>& {
         return graph.nodes[node].callees;
     });
     for (uint32_t index : components.members) {
+        if (nodesThatAreRead && !nodesThatAreRead->quickGet(index))
+            continue;
         ConstructionNode& node = graph.nodes[index];
         if (components.isInCycle.get(index))
             node.summary = nullptr;
@@ -1689,7 +1752,7 @@ Vector<uint32_t, 2> findMakers(const ValueFlowResultInputs& inputs, const Constr
 void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const uint32_t> makers, Vector<PropertyKeyID>& keys, Vector<FieldReference>& fields, Vector<PropertyKeyID>* keysStoredWithValue)
 {
     ConstructionNames stored = graph.nodes[makers[0]].solved.storedBeforeLeak;
-    for (uint32_t maker : makers)
+    for (uint32_t maker : makers.subspan(1))
         stored.intersect(graph.nodes[maker].solved.storedBeforeLeak);
     for (ConstructionName name : stored) {
         if (name.standsForValue) {
@@ -2089,15 +2152,34 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         AOT::sort(keys);
     }
 
+    graph.nodes.clear();
     ConstructionGraph graphUnderGuards = ConstructionGraphBuilder { inputs, heap, functions, UnknownChains::HoldNothingUnderName }.build();
-    solveConstructions(graphUnderGuards);
+    Vector<std::pair<uint32_t, Vector<uint32_t, 2>>> makersOfLayouts;
+    BitVector nodesThatAreRead(graphUnderGuards.nodes.size());
+    Vector<uint32_t> nodesToFollow;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::HasHeritage))
             continue;
+        Vector<uint32_t, 2> makers = findMakers(inputs, graphUnderGuards, LayoutID(index));
+        if (makers.isEmpty())
+            continue;
+        for (uint32_t maker : makers) {
+            if (!nodesThatAreRead.quickSet(maker))
+                nodesToFollow.append(maker);
+        }
+        makersOfLayouts.append({ index, WTF::move(makers) });
+    }
+    while (!nodesToFollow.isEmpty()) {
+        for (uint32_t callee : graphUnderGuards.nodes[nodesToFollow.takeLast()].callees) {
+            if (!nodesThatAreRead.quickSet(callee))
+                nodesToFollow.append(callee);
+        }
+    }
+    solveConstructions(graphUnderGuards, &nodesThatAreRead);
+    for (auto& [index, makers] : makersOfLayouts) {
         ValueFlowConstructions::OfLayout& construction = result.layouts[index];
-        if (Vector<uint32_t, 2> makers = findMakers(inputs, graphUnderGuards, LayoutID(index)); !makers.isEmpty())
-            listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, &construction.keysStoredWithValueAtBirth);
+        listNamesStoredByEveryMaker(graphUnderGuards, makers.span(), construction.keysStoredAtBirth, construction.fieldsStoredAtBirth, &construction.keysStoredWithValueAtBirth);
     }
     addBirthsOfLiterals(inputs, tables, result);
     for (const TaggedFamily& family : program.taggedFamilies) {

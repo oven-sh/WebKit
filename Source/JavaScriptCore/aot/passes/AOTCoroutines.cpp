@@ -855,6 +855,10 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
         Origin origin;
     };
     Vector<MovedHint, 8> moved;
+    // What a handler catches stands at its head, and by it the handler is known for a `catch` or a `finally`.
+    auto behindCaughtValues = [&](ProgramPoint point) {
+        return ProgramPoint { point.block, std::max(point.index, indexAfterCaughtValues(function, function.at(point.block))) };
+    };
     BitVector dropped;
     for (BlockID block : cfg.reversePostOrder()) {
         const BlockValues& values = function.at(block).values;
@@ -884,11 +888,11 @@ static PassOutcome moveReleaseHintsInFrontOfSuspensions(FunctionPassContext& con
                 continue;
             dropped.set(values[index].index());
             for (ProgramPoint point : way.behindLastReads)
-                moved.append(MovedHint { point, released, value.origin() });
+                moved.append(MovedHint { behindCaughtValues(point), released, value.origin() });
             for (BlockID entered : way.enteredFromReaders) {
                 // A hint there is read on every way into the block.
                 if (!walkBackToLastReads(released, ProgramPoint::atHeadOf(entered), &isInFrontOfReads, Asked::WhetherSuspended).isSuspended)
-                    moved.append(MovedHint { ProgramPoint::atHeadOf(entered), released, value.origin() });
+                    moved.append(MovedHint { behindCaughtValues(ProgramPoint::atHeadOf(entered)), released, value.origin() });
             }
         }
     }
@@ -2099,6 +2103,7 @@ struct HeapFramePlan {
     Vector<YieldInFrame, 4> yields;
     Vector<ReleaseInFrame, 2> releases;
     Vector<uint32_t> wordOf;
+    Vector<std::optional<uint32_t>> allocationGroupOf;
     uint32_t numberOfWords { 1 };
     // Where whoever starts the generator fills the frame himself: the entry parameter of the body that each word takes at the initial yield.
     struct WordAtStart {
@@ -2183,6 +2188,56 @@ static void assignWords(HeapFramePlan& plan, FunctionAnalyses& analyses, unsigne
         }
     }
     plan.numberOfWords = yieldsOfWord.size();
+}
+
+static void findAllocationGroups(HeapFramePlan& plan, FunctionAnalyses& analyses, unsigned numberOfValues)
+{
+    plan.allocationGroupOf.fill(std::nullopt, numberOfValues);
+    const EscapeAnalysis& escape = analyses.escape();
+    if (escape.gaveUp())
+        return;
+
+    Vector<uint32_t> parentOf(escape.numberOfObjects(), [](size_t index) { return static_cast<uint32_t>(index); });
+    auto groupOf = [&](ObjectID object) {
+        uint32_t group = object.index();
+        while (parentOf[group] != group)
+            group = parentOf[group] = parentOf[parentOf[group]];
+        return group;
+    };
+    auto forEachValueOfAllocations = [&](NOESCAPE const Invocable<void(ValueID, ObjectSet)> auto& functor) {
+        for (const YieldInFrame& yield : plan.yields) {
+            for (ValueID id : yield.stored) {
+                PointsToSet set = escape.pointsTo(id);
+                bool namesOnlyAllocations = !set.mayBeUntracked && !set.objects.isEmpty();
+                for (ObjectID object : set.objects)
+                    namesOnlyAllocations &= escape.at(object).kind == ObjectKind::Allocation;
+                if (namesOnlyAllocations)
+                    functor(id, set.objects);
+            }
+        }
+    };
+    forEachValueOfAllocations([&](ValueID, ObjectSet objects) {
+        uint32_t first = groupOf(*objects.begin());
+        for (ObjectID object : objects)
+            parentOf[groupOf(object)] = first;
+    });
+    forEachValueOfAllocations([&](ValueID id, ObjectSet objects) {
+        plan.allocationGroupOf[id.index()] = groupOf(*objects.begin());
+    });
+}
+
+static std::optional<uint32_t> allocationGroupOfWord(const HeapFramePlan& plan, const YieldInFrame& yield, uint32_t word)
+{
+    std::optional<uint32_t> group;
+    for (ValueID id : yield.stored) {
+        if (plan.wordOf[id.index()] != word)
+            continue;
+        std::optional<uint32_t> groupOfName = plan.allocationGroupOf[id.index()];
+        if (!groupOfName || (group && group != groupOfName))
+            return std::nullopt;
+        group = groupOfName;
+    }
+    return group;
 }
 
 // What a run that begins behind a yield may find filled when it comes to another: the words of each yield from which that one is reached without passing a third.
@@ -2386,6 +2441,7 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
     assignWords(plan, analyses, function.values.size());
     if (plan.numberOfWords > maxWordsOfHeapFrame)
         return std::nullopt;
+    findAllocationGroups(plan, analyses, function.values.size());
     findWordsToClear(plan, function, analyses);
     plan.isStartedByCallers = findWordsAtStart(plan, function, analyses);
     return plan;
@@ -2644,6 +2700,13 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
         repair.addDefinition(*variable, definition);
     };
     TypeID anythingOrUnspecified = types.intern(types.at(TypeTable::anything).withPrimitives(Primitive::Unspecified));
+    // A word is read once behind a yield, however its names are typed. Read twice it would be two values, and what a test proves of the one would not hold of the other.
+    struct WordRead {
+        ValueID word;
+        bool mayBeEmpty { false };
+        bool definesName { false };
+    };
+    Vector<WordRead> wordsRead(plan.numberOfWords);
     Vector<std::pair<int64_t, Target>> cases;
     for (unsigned index = 0; index < plan.yields.size(); ++index) {
         const YieldInFrame& yield = plan.yields[index];
@@ -2664,30 +2727,26 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             }
             defineLive(id, builder.append(Value(function.at(id))));
         }
-        struct WordRead {
-            uint32_t index;
-            TypeID type;
-            ValueID word;
-            bool definesName { false };
-        };
-        Vector<WordRead, 8> wordsRead;
+        for (ValueID id : yield.stored)
+            wordsRead[plan.wordOf[id.index()]] = { };
+        for (ValueID id : yield.stored)
+            wordsRead[plan.wordOf[id.index()]].mayBeEmpty |= types.at(function.at(id).type).mayBeUnspecified();
+        ValueID wordsAreFilled;
         for (ValueID id : yield.stored) {
             TypeID type = function.at(id).type;
-            // Where the value is not made yet the word is empty, and only what has a fact behind it reads the value.
             uint32_t index = plan.wordOf[id.index()];
-            TypeID typeOfWord = types.at(type).mayBeUnspecified() ? anythingOrUnspecified : TypeTable::anything;
-            size_t earlier = wordsRead.findIf([&](const WordRead& read) { return read.index == index && read.type == typeOfWord; });
-            if (earlier == notFound) {
+            if (!wordsRead[index].word) {
+                // Where the value is not made yet the word is empty, and only what has a fact behind it reads the value.
                 Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
                 read.setIndex(index);
-                read.setValueType(typeOfWord);
-                earlier = wordsRead.size();
-                wordsRead.append({ index, typeOfWord, builder.append(WTF::move(read)), false });
+                read.setValueType(wordsRead[index].mayBeEmpty ? anythingOrUnspecified : TypeTable::anything);
+                read.setAllocationGroup(allocationGroupOfWord(plan, yield, index));
+                wordsRead[index].word = builder.append(WTF::move(read));
             }
-            ValueID word = wordsRead[earlier].word;
-            if (type == TypeTable::anything) {
+            ValueID word = wordsRead[index].word;
+            if (type == TypeTable::anything && !wordsRead[index].mayBeEmpty) {
                 // A value defines one name. A further name of the word is a cast of what was read, which is still the one value.
-                if (std::exchange(wordsRead[earlier].definesName, true)) {
+                if (std::exchange(wordsRead[index].definesName, true)) {
                     Value further = IRBuilder::make(Opcode::Upcast, { word });
                     further.setCastType(TypeTable::anything);
                     word = builder.append(WTF::move(further));
@@ -2697,6 +2756,12 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             }
             Value cast = IRBuilder::make(Opcode::AssumeType);
             cast.becomeAssumeType(word, Proven::byConstruction(type));
+            // A name whose type says that the value is made lives across this yield, so its word is filled.
+            if (wordsRead[index].mayBeEmpty && !types.at(type).mayBeUnspecified()) {
+                if (!wordsAreFilled)
+                    wordsAreFilled = builder.append(IRBuilder::make(Opcode::Specified));
+                cast.setFactOperand(wordsAreFilled);
+            }
             cast.setExpected(function.at(id).expected());
             defineLive(id, builder.append(WTF::move(cast)));
         }
@@ -3096,6 +3161,40 @@ static void removeValuesGuardedAcrossReads(const Program& program, const Functio
     auto locate = [&](ValueID parameter) {
         return analyses.useLists().locationOf(parameter);
     };
+    auto visitGuarded = [&](ValueID guarded, uint32_t stretchOfUser, std::span<const ValueID> guards, std::span<const GuardOrigin> guardsMadeOnEdge) {
+        ValueID identity = analyses.identityOf(guarded);
+        if (!isIdentityOfKept.quickGet(identity.index()))
+            return;
+        Root root = rootOf(guarded, stretchOfUser);
+        auto compare = [&](ValueID tested, uint32_t stretchOfTest) {
+            if (analyses.identityOf(tested) == identity && rootOf(tested, stretchOfTest) != root)
+                isIdentityToRemove.quickSet(identity.index());
+        };
+        auto visitOrigin = [&](const GuardOrigin& origin) {
+            switch (origin.source) {
+            case GuardSource::Test:
+                forEachValueLookedAt(function.at(origin.test), [&](ValueID tested) {
+                    compare(tested, stretches.inFrontOfValue[origin.test.index()]);
+                });
+                break;
+            case GuardSource::SwitchCase:
+                forEachValueLookedAt(function.at(origin.switchBlock).terminator, [&](ValueID tested) {
+                    compare(tested, stretches.atTail[origin.switchBlock.index()]);
+                });
+                break;
+            case GuardSource::Allocation:
+                compare(origin.test, stretches.behind(origin.test));
+                break;
+            }
+        };
+        std::ranges::for_each(guardsMadeOnEdge, visitOrigin);
+        for (ValueID guard : guards) {
+            forEachGuardOrigin(program, function, analyses.cfg(), locate, guard, [&](Proof, const GuardOrigin& origin) {
+                visitOrigin(origin);
+                return isIdentityToRemove.quickGet(identity.index()) ? IterationStatus::Done : IterationStatus::Continue;
+            });
+        }
+    };
     auto visitUser = [&](const auto& user, uint32_t stretchOfUser) {
         Vector<ValueID, 2> guards;
         for (uint32_t index = 0; index < user.numberOfOperands(); ++index) {
@@ -3105,40 +3204,44 @@ static void removeValuesGuardedAcrossReads(const Program& program, const Functio
         if (guards.isEmpty())
             return;
         forEachValueLookedAt(user, [&](ValueID guarded) {
-            ValueID identity = analyses.identityOf(guarded);
-            if (!isIdentityOfKept.quickGet(identity.index()))
-                return;
-            Root root = rootOf(guarded, stretchOfUser);
-            auto compare = [&](ValueID tested, uint32_t stretchOfTest) {
-                if (analyses.identityOf(tested) == identity && rootOf(tested, stretchOfTest) != root)
-                    isIdentityToRemove.quickSet(identity.index());
-            };
-            for (ValueID guard : guards) {
-                forEachGuardOrigin(program, function, analyses.cfg(), locate, guard, [&](Proof, const GuardOrigin& origin) {
-                    switch (origin.source) {
-                    case GuardSource::Test:
-                        forEachValueLookedAt(function.at(origin.test), [&](ValueID tested) {
-                            compare(tested, stretches.inFrontOfValue[origin.test.index()]);
-                        });
-                        break;
-                    case GuardSource::SwitchCase:
-                        forEachValueLookedAt(function.at(origin.switchBlock).terminator, [&](ValueID tested) {
-                            compare(tested, stretches.atTail[origin.switchBlock.index()]);
-                        });
-                        break;
-                    case GuardSource::Allocation:
-                        compare(origin.test, stretches.behind(origin.test));
-                        break;
-                    }
-                    return isIdentityToRemove.quickGet(identity.index()) ? IterationStatus::Done : IterationStatus::Continue;
-                });
-            }
+            visitGuarded(guarded, stretchOfUser, guards.span(), { });
         });
     };
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        for (ValueID id : function.at(block).values)
-            visitUser(function.at(id), stretches.inFrontOfValue[id.index()]);
-        visitUser(function.at(block).terminator, stretches.atTail[block.index()]);
+    // A block that is handed a guard beside a value takes the guard to speak of its parameter, so the edge uses the guard as an operation does.
+    auto visitEdge = [&](const Target& target, uint32_t stretchOfEdge, std::span<const GuardOrigin> guardsMadeOnEdge) {
+        Vector<ValueID, 2> guards;
+        for (ValueID argument : target.arguments) {
+            if (isGuardValue(function, argument))
+                guards.append(argument);
+        }
+        if (guards.isEmpty() && guardsMadeOnEdge.empty())
+            return;
+        for (ValueID argument : target.arguments) {
+            if (argument && !isGuardValue(function, argument))
+                visitGuarded(argument, stretchOfEdge, guards.span(), guardsMadeOnEdge);
+        }
+    };
+    for (BlockID id : analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        for (ValueID value : block.values)
+            visitUser(function.at(value), stretches.inFrontOfValue[value.index()]);
+        uint32_t atTail = stretches.atTail[id.index()];
+        visitUser(block.terminator, atTail);
+        for (uint32_t targetIndex = 0; targetIndex < block.terminator.targets.size(); ++targetIndex) {
+            const Target& target = block.terminator.targets[targetIndex];
+            if (target.arguments.isEmpty())
+                continue;
+            Vector<GuardOrigin, 1> guardsMadeOnEdge;
+            uint32_t numberOfResults = numberOfEdgeResults(function, id, targetIndex);
+            for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
+                std::optional<EdgeResult> result = tryGetEdgeResult(function, { id, targetIndex, resultIndex });
+                if (result && result->kind == EdgeResultKind::Guard)
+                    guardsMadeOnEdge.append(result->caseIndex ? GuardOrigin { GuardSource::SwitchCase, { }, id, *result->caseIndex } : GuardOrigin { GuardSource::Test, result->test, { }, 0 });
+            }
+            visitEdge(target, atTail, guardsMadeOnEdge.span());
+        }
+        if (block.handler)
+            visitEdge(*block.handler, stretches.atHead[id.index()], { });
     }
     if (isIdentityToRemove.isEmpty())
         return;

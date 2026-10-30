@@ -636,7 +636,7 @@ static void appendBoundFunctionsBindingNoArgument(const ValueFlowResultInputs& i
     if (call.opcode != Opcode::Call && call.opcode != Opcode::CallList)
         return;
     inputs.sets().forEachMember(maker.intersect(callees, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
-        if (bindsNoArgument(inputs.program, universe, callee))
+        if (bindsNoArgument(universe, callee))
             boundFunctions.append(callee);
     });
 }
@@ -664,6 +664,51 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
 static ValueFlowCallKind kindOfCallBy(const ValueFlowStatement& call)
 {
     return call.opcode == Opcode::Call || call.opcode == Opcode::CallList ? ValueFlowCallKind::Call : ValueFlowCallKind::Construct;
+}
+
+ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetID among)
+{
+    constexpr uint32_t functionsPerTask = 64;
+    const ValueFlowUniverse& universe = inputs.universe();
+    uint32_t numberOfFunctions = inputs.program.functions.size();
+    std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+    ValueSetMakers makers(inputs);
+    Vector<ValueSetID> handedOverInTask((numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [](size_t) {
+        return ValueSets::nothing;
+    });
+    forEachIndexInParallel(inputs.loops(), handedOverInTask.size(), [&](unsigned task, unsigned worker) {
+        ValueSetMaker& maker = makers.of(worker);
+        auto take = [&](ValueSetID values) {
+            if (!ValueSets::isComplement(values) && inputs.sets().meet(values, among))
+                handedOverInTask[task] = maker.unite(handedOverInTask[task], maker.intersect(values, among));
+        };
+        uint32_t first = task * functionsPerTask;
+        for (uint32_t function = first; function < std::min(first + functionsPerTask, numberOfFunctions); ++function) {
+            if (!inputs.isReached(FunctionID(function)))
+                continue;
+            for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
+                if (!statementCallsValue(statements[index]))
+                    continue;
+                ValueSetID callees = valueSeenByRulesAt(inputs, maker, inputs.bodies().operandsOf(statements[index])[0]);
+                // A function that text made at run time has made is neither a closure of the program nor a built-in function.
+                bool isKnown = !ValueSets::isComplement(callees) && !inputs.sets().contains(callees, ValueFlowUniverse::unknownObject()) && !inputs.sets().contains(callees, ValueFlowUniverse::untrackedObject()) && !inputs.sets().meet(callees, universe.otherCallables());
+                if (isKnown)
+                    continue;
+                ValueFlowBuiltinApplication application;
+                application.kind = kindOfCallBy(statements[index]);
+                findOperandsOf(inputs, heap, maker, statements[index], application);
+                take(application.thisValue);
+                take(application.otherArguments);
+                for (ValueSetID argument : application.arguments)
+                    take(argument);
+            }
+        }
+    });
+    ValueSetID handedOver = ValueSets::nothing;
+    for (ValueSetID found : handedOverInTask)
+        handedOver = makers.of(0).unite(handedOver, found);
+    return handedOver;
 }
 
 void ValueFlowHeapIndex::findOperandsOfCalls(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap)
@@ -771,7 +816,7 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     Vector<ValueFlowObjectID, 4> boundFunctions;
     if (!isConstruction(kind)) {
         inputs.sets().forEachMemberInLine(heap.expandAmong(maker, key.set, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
-            if (bindsNoArgument(inputs.program, universe, callee))
+            if (bindsNoArgument(universe, callee))
                 boundFunctions.append(callee);
         });
     }

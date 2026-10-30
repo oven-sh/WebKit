@@ -32,6 +32,8 @@ void readForReceiver(ValueFlowRuleContext&, const ValueFlowOperand& object, cons
 void listProxiesByTheirTraps(ValueFlowRuleContext&, ClimbingSet proxies);
 ClimbingSet targetsListedInPlaceOf(ValueFlowRuleContext&, ClimbingSet proxies);
 void askProxiesForListedValues(ValueFlowRuleContext&, ClimbingSet proxies, ValueFlowNodeID result);
+// getOwnPropertyDescriptor or defineProperty. The second gets a descriptor that the engine has made.
+void askProxiesAboutOwnProperty(ValueFlowRuleContext&, ClimbingSet proxies, const ValueFlowOperand& property, BuiltinName trap, ValueFlowNodeID descriptor, ValueFlowNodeID result);
 
 ClimbingSet objectsHeldFromCreation(ValueFlowRuleContext&, ClimbingSet objects);
 void readOwnPropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, std::optional<PropertyKeyID>, ValueFlowNodeID result);

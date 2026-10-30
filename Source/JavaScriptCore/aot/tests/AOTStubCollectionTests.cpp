@@ -168,6 +168,17 @@ public:
         at<uint32_t>(CompactTable::offsetOfAliveCount())--;
     }
     Vector<uint8_t> copyOfBytes() const { return Vector<uint8_t>(std::span<const uint8_t>(m_bytes, m_size)); }
+    // A search for a place to insert marks the home slot that it leaves, whoever inserts the key in the end. The mark says that a key may lie elsewhere, and nothing of the entries.
+    Vector<uint8_t> copyOfBytesWithoutMarksOfHomeSlots() const
+    {
+        Vector<uint8_t> bytes = copyOfBytes();
+        if (m_indexBits) {
+            size_t offsetOfTags = CompactTable::tagsOf(slotKind(), index(), m_indexBits) - m_bytes;
+            for (uint8_t& tag : bytes.mutableSpan().subspan(offsetOfTags, static_cast<size_t>(1) << m_indexBits))
+                tag &= ~CompactTable::keyLeftHomeSlot;
+        }
+        return bytes;
+    }
     void setCellState(CellState state) { reinterpret_cast<FakeCell*>(m_bytes)->cellState = static_cast<uint8_t>(state); }
 
     void append(uint64_t key, unsigned hash, uint64_t value)
@@ -658,9 +669,9 @@ static void checkInsertionLeftToOperation(Collections& collections, KeyCompariso
 
 static void checkTableIsUnchanged(Collections& collections, KeyComparison comparison, uint64_t owner, const FakeTable& table, const TableEntry& entry)
 {
-    Vector<uint8_t> bytesBefore = table.copyOfBytes();
+    Vector<uint8_t> bytesBefore = table.copyOfBytesWithoutMarksOfHomeSlots();
     checkInsertionLeftToOperation(collections, comparison, owner, entry);
-    AOT_TEST_CHECK(table.copyOfBytes() == bytesBefore);
+    AOT_TEST_CHECK(table.copyOfBytesWithoutMarksOfHomeSlots() == bytesBefore);
 }
 
 static TableEntry createStringEntry(FakeHeap& heap, const String& text, std::optional<uint64_t> value)

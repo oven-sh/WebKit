@@ -416,13 +416,34 @@ std::optional<TraceFrame> frameOfConstructedFunctionThatLeft(const Image& image,
     forEachTailCallPlace(image.programTables().placesOfTailCalls(), [&](const TailCallPlace& place) {
         if (place.function > function.index())
             return IterationStatus::Done;
-        if (place.function == function.index()) {
+        if (place.function == function.index() && !place.isWhereThisIsMade) {
             if (!found)
                 found = number;
             if (place.callee != TailCallPlace::noCallee && place.callee == calleeOnStack) {
                 found = number;
                 return IterationStatus::Done;
             }
+        }
+        ++number;
+        return IterationStatus::Continue;
+    });
+    if (!found)
+        return std::nullopt;
+    uint32_t numberInFrames = image.header().counts.functions + *found;
+    return TraceFrame { CompiledFunctionID(numberInFrames), function, CallSiteIndex(0), false, true, false, false, true, false };
+}
+
+std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image& image, FunctionID constructed)
+{
+    FunctionID function = sourceFunctionOf(constructed);
+    std::optional<uint32_t> found;
+    uint32_t number = 0;
+    forEachTailCallPlace(image.programTables().placesOfTailCalls(), [&](const TailCallPlace& place) {
+        if (place.function > function.index())
+            return IterationStatus::Done;
+        if (place.function == function.index() && place.isWhereThisIsMade) {
+            found = number;
+            return IterationStatus::Done;
         }
         ++number;
         return IterationStatus::Continue;
@@ -460,7 +481,7 @@ std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreate(VM& vm, co
         return std::nullopt;
     bool calleeWasEntered = operationState == OperationState::HasCalled;
     if (site->isStubReturnSite())
-        calleeWasEntered = (calleeWasEntered || entersCallee(site->stubFrameKind)) && !hasZombieCallee(vm, cursor.framePointer, pc);
+        calleeWasEntered = site->stubFrameKind == StubFrameKind::PlainFunctionConstructMakesThis || ((calleeWasEntered || entersCallee(site->stubFrameKind)) && !hasZombieCallee(vm, cursor.framePointer, pc));
     return std::optional<CompiledFrameIterator>(std::in_place, vm, cursor, calleeWasEntered);
 }
 
@@ -568,11 +589,16 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::PlainFunctionConstruct:
             cursor.plainFunctionConstructFrame = cursor.callFrame;
             break;
+        case StubFrameKind::PlainFunctionConstructMakesThis:
+            cursor.plainFunctionConstructFrame = cursor.callFrame;
+            cursor.constructFrameMakesThis = true;
+            break;
         case StubFrameKind::Adapter:
         case StubFrameKind::HandlerOfJob:
         case StubFrameKind::ConstructAdapter:
+        case StubFrameKind::ConstructAdapterMakesThis:
         case StubFrameKind::SavedFrameAdapter:
-            runEnd = { cursor.callFrame, site->stubFrameKind == StubFrameKind::ConstructAdapter, site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
+            runEnd = { cursor.callFrame, isConstructAdapterFrame(site->stubFrameKind), site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob, site->stubFrameKind == StubFrameKind::ConstructAdapterMakesThis };
             leaveRun(cursor, exit);
             return nullptr;
         }
@@ -622,6 +648,7 @@ std::optional<TraceFrame> CompiledFrameIterator::findConstructedFunctionThatLeft
 {
     Cursor cursor = m_cursor;
     cursor.plainFunctionConstructFrame = nullptr;
+    cursor.constructFrameMakesThis = false;
     Exit exit;
     RunEnd runEnd;
     const CallSiteCache::Entry* caller = findCallerFunctionFrame(cursor, exit, runEnd);
@@ -638,11 +665,32 @@ std::optional<TraceFrame> CompiledFrameIterator::findConstructedFunctionThatLeft
 void CompiledFrameIterator::listConstructedFunctionsThatLeft()
 {
     m_listsConstructedFunctionsThatLeft = true;
-    if (m_isAtEnd || !m_cursor.plainFunctionConstructFrame || !m_callSite.site.isConstruct())
+    if (m_isAtEnd) {
+        if (m_runEnd.makesThis) [[unlikely]]
+            listFunctionWhoseThisTheAdapterMakes();
+        return;
+    }
+    if (!m_cursor.plainFunctionConstructFrame || !m_callSite.site.isConstruct())
         return;
     if (FunctionID constructed = functionConstructedAt(*m_image, m_callSite, m_cursor.plainFunctionConstructFrame))
-        m_constructedFunctionThatLeft = frameOfConstructedFunctionThatLeft(*m_image, constructed, { });
+        m_constructedFunctionThatLeft = m_cursor.constructFrameMakesThis ? frameOfFunctionWhoseThisIsMade(*m_image, constructed) : frameOfConstructedFunctionThatLeft(*m_image, constructed, { });
     m_constructedFunctionLeftOnTop = m_constructedFunctionThatLeft.has_value();
+}
+
+void CompiledFrameIterator::listFunctionWhoseThisTheAdapterMakes()
+{
+    FunctionID constructed = m_runEnd.constructedFunction();
+    if (!constructed)
+        return;
+    m_constructedFunctionThatLeft = frameOfFunctionWhoseThisIsMade(*m_image, constructed);
+    if (!m_constructedFunctionThatLeft)
+        return;
+    m_constructedFunctionLeftOnTop = true;
+    m_hasNoMachineFrame = true;
+    m_isAtEnd = false;
+    m_instance = *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(m_runEnd.adapterFrame) + AdapterFrame::offsetOfInstance);
+    m_frame = { m_instance, m_runEnd.adapterFrame, removeCodePtrTag(m_cursor.rawPC), { }, m_constructedFunctionThatLeft->function, CallSiteIndex(0) };
+    m_hasReadFrame = true;
 }
 
 void CompiledFrameIterator::advance()
@@ -651,8 +699,10 @@ void CompiledFrameIterator::advance()
         return;
     if (m_constructedFunctionThatLeft) [[unlikely]] {
         m_constructedFunctionThatLeft = std::nullopt;
-        if (std::exchange(m_constructedFunctionLeftOnTop, false))
+        if (std::exchange(m_constructedFunctionLeftOnTop, false)) {
+            m_isAtEnd = m_hasNoMachineFrame;
             return;
+        }
         advanceToCallerMachineFrame();
         return;
     }
@@ -706,6 +756,7 @@ void CompiledFrameIterator::advanceToCallerMachineFrame()
     m_cursor.asyncGeneratorBodyFrame = nullptr;
     m_cursor.engineCalleeStubFrame = nullptr;
     m_cursor.plainFunctionConstructFrame = nullptr;
+    m_cursor.constructFrameMakesThis = false;
     m_calleeWasEntered = true;
     enterMachineFrame(findCallerFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
@@ -924,6 +975,8 @@ static bool callsFunction(StubFrameKind kind)
     case StubFrameKind::FirstOfTwoReads:
     case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
         return false;
@@ -1089,16 +1142,17 @@ OutermostVisibleFunction findOutermostVisibleFunction(const Image& image, Inline
     }
 }
 
-static void noteInlinedFramesWithRecordedCallees(const Image& image, InlineFrameReader& reader, CallSiteCache::Entry& entry, LogicalFrame frame)
+static void noteFramesRecordingCallees(const Image& image, InlineFrameReader& reader, CallSiteCache::Entry& entry, LogicalFrame frame)
 {
-    if (!image.hasCalleesOfSites(entry.code.index()))
-        return;
-    for (; frame.inlineFrame; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
-        if (!image.calleeOfSiteAt(entry.code.index(), reader.at(image, entry.code.index(), frame.inlineFrame).callSite))
-            continue;
+    for (;; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
         FunctionDescription description(frame.function);
-        entry.hasInlinedFrameRecordingCallee |= description.recordsCallee();
-        entry.hasInlinedFrameRecordingCalleeOnceRenamed |= description.recordsCalleeOnceRenamed();
+        if (!frame.isOfCalledBuiltin && description.visibility() != TraceVisibility::Hidden) {
+            FunctionDescription written(description.sourceFunction());
+            entry.hasFrameRecordingCallee |= description.recordsCallee() || written.recordsCallee();
+            entry.hasFrameRecordingCalleeOnceRenamed |= description.recordsCalleeOnceRenamed() || written.recordsCalleeOnceRenamed();
+        }
+        if (!frame.hasCallerInMachineFrame())
+            return;
     }
 }
 
@@ -1124,7 +1178,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.innermostIsAsync = innermostDescription.isAsync();
     entry.hasRecordedCallee = image.calleeOfSiteAt(location.function, entry.site.callSite).has_value();
     entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
-    noteInlinedFramesWithRecordedCallees(image, reader, entry, innermost);
+    noteFramesRecordingCallees(image, reader, entry, innermost);
     entry.namesTailCallingBuiltin = entry.site.calledBuiltin && leavesByTailCall(entry.site.calledBuiltin);
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
@@ -1132,6 +1186,41 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     if (entry.site.isTailCall())
         entry.shownFrameCountOnTopBehindTailCall = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), true), CallSiteCache::Entry::tooManyFramesToCount);
     return entry;
+}
+
+const CallSiteCache::CalleesOfFrames& CallSiteCache::calleesOfFramesAt(const Image& image, const Entry& entry)
+{
+    ASSERT(!entry.isStubReturnSite());
+    auto added = m_calleesOfFrames.add(entry.address, nullptr);
+    if (!added.isNewEntry) [[likely]]
+        return *added.iterator->value;
+    auto callees = makeUnique<CalleesOfFrames>();
+    callees->calledAtSite = image.calleeOfSiteAt(entry.code.index(), entry.site.callSite);
+    // As CompiledFrameIterator::recordedCallee() asks about a caller.
+    LogicalFrame innermost { entry.innermostFunction, entry.site.callSite, entry.site.inlineFrame, entry.innermostIsInlinedConstructCall, false };
+    callees->sourceFunctionOfInnermost = FunctionDescription(innermost.function).sourceFunction();
+    callees->calleeOfInnermost = calleeOfCopiedFrame(image, m_inlineFrames, entry.code, innermost);
+    callees->innermostHasOnlyEntrypointsBelow = hasOnlyEntrypointsBelow(image, m_inlineFrames, entry.code, innermost, callees->sourceFunctionOfInnermost);
+    for (LogicalFrame frame = innermostLogicalFrame(image, m_inlineFrames, { entry.code, entry.site.callSite, entry.site.inlineFrame, entry.site.isTailDeleted(true), entry.site.calledBuiltin, true });; frame = callerOfInlinedFrame(image, m_inlineFrames, entry.code, frame)) {
+        FunctionDescription description(frame.function);
+        if (!frame.isOfCalledBuiltin && !frame.isTailDeleted && description.visibility() != TraceVisibility::Hidden) {
+            FunctionID sourceFunction = description.sourceFunction();
+            if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(image, m_inlineFrames, entry.code, frame)) {
+                if (!callee->isOwnFunctionObject())
+                    callees->keptInFrame.append({ frame.inlineFrame, sourceFunction, *callee, FunctionDescription(sourceFunction).recordsCallee() });
+            } else if (!callees->sourceFunctionEntered && hasOnlyEntrypointsBelow(image, m_inlineFrames, entry.code, frame, sourceFunction)) {
+                // A frame below it through which it was entered is listed only where nothing above is.
+                callees->sourceFunctionEntered = sourceFunction;
+                callees->inlineFrameEntered = frame.inlineFrame;
+                callees->enteredRecordsCallee = FunctionDescription(sourceFunction).recordsCallee();
+            }
+        }
+        if (!frame.hasCallerInMachineFrame())
+            break;
+    }
+    callees->keptInFrame.shrinkToFit();
+    added.iterator->value = WTF::move(callees);
+    return *added.iterator->value;
 }
 
 static CallSiteCache::Entry createStubEntry(const CodeLocation& location, const void* returnAddress)

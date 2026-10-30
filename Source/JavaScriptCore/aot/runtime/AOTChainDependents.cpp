@@ -153,6 +153,32 @@ void ChainDependents::dropDependentsOn(JSObject* changed, UniquedStringImpl* uid
         drop(dependent);
 }
 
+void ChainDependents::didCreateMembers(const CreatedMembers& created)
+{
+    if (!m_objectsWithDependents.mayContain(created.prototype))
+        return;
+    auto iterator = m_dependentsByObject.find(created.prototype);
+    if (iterator == m_dependentsByObject.end())
+        return;
+    VM& vm = *m_state.instance.vm;
+    ObjectDependents& all = iterator->value;
+    Vector<ChainDependent, 8> dropped;
+    all.set.removeIf([&](const ChainDependent& dependent) {
+        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, created))
+            return false;
+        dropped.append(dependent);
+        return true;
+    });
+    if (!dropped.isEmpty())
+        all.index = nullptr;
+    if (all.set.isEmpty())
+        m_dependentsByObject.remove(iterator);
+    for (const ChainDependent& dependent : dropped) {
+        ownerOf(dependent).dropChainDependent(vm, dependent.subject, dependent.uidOrNull);
+        count(m_state.instance, RuntimeCounterID::ChainDependentsDropped);
+    }
+}
+
 size_t ChainDependents::numberOfDependents(JSObject* object) const
 {
     auto iterator = m_dependentsByObject.find(object);

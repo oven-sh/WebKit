@@ -551,7 +551,8 @@ static void testVersionLoopsDoesNotCountLoopWithoutRecord()
     CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 0u);
     CHECK_EQ(numberOfRarePathCopies(proc), 2u);
     checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1, 1 });
-    checkValueCountInEachLoop(proc, Below, { 1, 2 });
+    // A turn of the original loop ends in front of the guards, one of which is the hoisted comparison.
+    checkValueCountInEachLoop(proc, Below, { 1, 3 });
     auto code = compileProc(proc);
     constexpr int64_t bound = 2000;
     constexpr int64_t restarts = 200;

@@ -79,6 +79,7 @@ using ParameterLocator = ScopedLambda<ValueLocation(ValueID parameter)>;
 using GuardOriginVisitor = ScopedLambda<IterationStatus(Proof, const GuardOrigin&)>;
 void forEachGuardOrigin(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, ValueID guard, NOESCAPE const GuardOriginVisitor&);
 bool hasGuardForElementProofs(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, const Value& access);
+bool hasGuardForWritableStorage(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, const Value& store);
 bool haveSameCondition(FunctionAnalyses&, const Value& test, const Value& otherTest, uint32_t firstComparedOperand = 0);
 Vector<MemoryLocation, 2> locationsReadBy(const Value& test);
 Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof);
@@ -89,10 +90,25 @@ TestedSlotState slotStateTestedBy(const Value& test);
 TestedSlotState slotStateProvenBy(const Function&, const GuardFact&);
 bool leavesSlotsAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, TestedSlotState);
 
+// The form of storage that was found, where that is all that was asked. Other: something else was asked.
+// For whoever asks how long a proof of the form lasts. The answer of the test, and the length, may change where the form stays: dependenciesOfGuardOf() leaves it Other.
+ArrayStorage arrayStorageTestedBy(const Value& test);
+ArrayStorage arrayStorageProvenBy(const Program&, const Function&, const GuardFact&);
+bool leavesArrayStorageAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, ArrayStorage);
+
 // What these say of an object is about the fields of its layout and about the object as a whole, not about the properties it has beside the fields.
 inline constexpr ProofSet proofsLeftByPropertiesBesideFields { Proof::NoFieldOutsideSlot, Proof::NotFrozen };
 constexpr bool areLeftByPropertiesBesideFields(ProofSet proofs) { return !proofs.isEmpty() && (proofs | proofsLeftByPropertiesBesideFields) == proofsLeftByPropertiesBesideFields; }
+// So is the link to its prototype, where the object itself was asked for it: a class that is asked for its prototype answers from its guards.
+inline bool areLeftByPropertiesBesideFields(ProofSet proofs, std::span<const MemoryLocation> dependsOn)
+{
+    if (proofs == ProofSet { Proof::PrototypeLinkUnchanged })
+        return dependsOn.size() == 1 && dependsOn[0] == MemoryLocation(AbstractHeap::PrototypeLinks);
+    return areLeftByPropertiesBesideFields(proofs);
+}
 bool definesPropertyBesideFields(const Program&, const Value& writer, const Effects& effectsOfWriter, const Value& object);
+// `Object.defineProperty(exports, "__esModule", { value: true })`, whichever object it is called on.
+bool definesDataPropertyAsLayoutDeclares(FunctionAnalyses&, const Value& writer, const Value& object);
 
 struct DependedLocations {
     DependedLocations() = default;
@@ -102,6 +118,7 @@ struct DependedLocations {
     Vector<uint64_t, 2> masksOfLocations;
     LocationMasks masks;
     TestedSlotState slotState { TestedSlotState::None };
+    ArrayStorage arrayStorage { ArrayStorage::Other };
     bool isLeftByPropertiesBesideFields { false };
 };
 

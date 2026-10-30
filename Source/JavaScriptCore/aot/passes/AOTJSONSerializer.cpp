@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBuiltinCallPlan.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTEffectsDescription.h"
 #include "AOTExpandOwnKeysOrders.h"
@@ -334,9 +335,6 @@ struct JSONTextWriter final : Emission {
         const ClassPart* part = instances.singleBuiltinClass();
         RELEASE_ASSERT(part);
         if (pristineTestOf(builtins, part->builtinClass) == PristineTest::NeverPasses)
-            return { };
-        // The host reads toJSON, valueOf and toISOString by name, and each first read adds its member to Date.prototype. Where the program lists those keys, it sees that order.
-        if (part->builtinClass == BuiltinClasses::Date && inputs().flow.listsKeysOf(builtins.canonicalID(builtins.at(BuiltinClasses::Date).prototype)))
             return { };
         if (part->builtinClass == BuiltinClasses::Date && findsMembersOfDateAsBuilt() && findGetTimeOfDate())
             return { .kind = ValueKind::Scalar, .row = Opcode::JSONAppendDate, .tested = types.intern(instances.withoutClassProofs()) };
@@ -757,6 +755,7 @@ struct JSONTextWriter final : Emission {
                 BuiltinOverloadID getTime = findGetTimeOfDate();
                 RELEASE_ASSERT(getTime);
                 narrowed = builder().append(makeBuiltinCall(getTime, BuiltinCallForm::Whole, { narrowed, { } }, { }));
+                appendFirstReadsOfMembersOfDate(narrowed);
             }
             append(make<&Value::setValueOperand>(plan.row, { }, narrowed));
             appendCommaOf(position);
@@ -767,6 +766,30 @@ struct JSONTextWriter final : Emission {
 
         continueAt(generic, start);
         appendGeneric(value, position);
+        jumpTo(done);
+        continueAt(done);
+    }
+
+    // The host reads toJSON and valueOf by name and, for a valid date alone, toISOString. Each first read adds its member to Date.prototype.
+    void appendFirstReadsOfMembersOfDate(ValueID time)
+    {
+        auto tryMakeFirstReadOf = [&](BuiltinID member) {
+            return tryMakeInitializeBuiltin(program().builtins(), inputs().flow, member);
+        };
+        for (BuiltinID member : { BuiltinID(Builtins::DatePrototypeToJSON), BuiltinID(Builtins::DatePrototypeValueOf) }) {
+            if (std::optional<Value> read = tryMakeFirstReadOf(member))
+                builder().append(WTF::move(*read));
+        }
+        std::optional<Value> readOfValidDate = tryMakeFirstReadOf(Builtins::DatePrototypeToISOString);
+        if (!readOfValidDate)
+            return;
+        MergePoint done = createMergePoint();
+        ensureCursor(0);
+        Cursor start = m_cursor;
+        BlockID isInvalid = builder().emitBranch(builder().append(Opcode::StrictEq, { time, time }), currentFrequency(), BlockFrequency::Rare).notTaken;
+        builder().append(WTF::move(*readOfValidDate));
+        jumpTo(done);
+        continueAt(isInvalid, start);
         jumpTo(done);
         continueAt(done);
     }

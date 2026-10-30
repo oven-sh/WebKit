@@ -81,6 +81,8 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_dominators = &dominators;
     m_values.clear();
     m_pureCalls.clear();
+    m_copiesOfPartsOfAddresses.clear();
+    m_firstCopies.clear();
     m_heapEpochs.clear();
     m_replacedLoads.shrink(0);
     m_loadsToLog.shrink(0);
@@ -100,6 +102,7 @@ void MemoryNumbering::enterBlock(BasicBlock* block)
     m_block = block;
     m_values.startLayer();
     m_pureCalls.startLayer();
+    m_copiesOfPartsOfAddresses.startLayer();
     m_heapEpochs.startLayer();
 
     MemoryState& state = m_memoryState;
@@ -162,6 +165,7 @@ void MemoryNumbering::leaveDominatorSubtree()
 {
     m_values.dropLastLayer();
     m_pureCalls.dropLastLayer();
+    m_copiesOfPartsOfAddresses.dropLastLayer();
     m_heapEpochs.dropLastLayer();
 }
 
@@ -196,6 +200,28 @@ Value* MemoryNumbering::ensureRepresentative(Value* value)
     if (!key || value->isConstant())
         return value;
     return m_values.findOrAdd(key, value).value_or(value);
+}
+
+Value* MemoryNumbering::representativeOfOppositeComparison(Value* comparison)
+{
+    if (comparison->opcode() != Equal && comparison->opcode() != NotEqual)
+        return nullptr;
+    Opcode opposite = comparison->opcode() == Equal ? NotEqual : Equal;
+    return m_values.find(ValueKey(opposite, comparison->type(), comparison->child(0), comparison->child(1))).value_or(nullptr);
+}
+
+void MemoryNumbering::numberCopyOfPartOfAddress(Value* copy)
+{
+    Value* left = firstCopyOf(copy->child(0));
+    Value* right = firstCopyOf(copy->child(1));
+    if (copy->opcode() == Add && !right->isConstant() && left->index() > right->index())
+        std::swap(left, right);
+    ValueKey key(copy->kind(), copy->type(), left, right);
+    std::optional<Value*> first = m_values.find(key);
+    if (!first)
+        first = m_copiesOfPartsOfAddresses.findOrAdd(key, copy);
+    if (first && *first != copy)
+        m_firstCopies.set(copy, *first);
 }
 
 bool MemoryNumbering::canBeRecorded(const HeapRange& range)
@@ -394,7 +420,7 @@ unsigned MemoryNumbering::heapEpoch(unsigned heap)
 ValueKey MemoryNumbering::keyForLoad(Kind kind, Type type, MemoryValue* memory)
 {
     v128_t bits;
-    bits.u32x4[0] = memory->lastChild()->index();
+    bits.u32x4[0] = firstCopyOf(memory->lastChild())->index();
     bits.u32x4[1] = static_cast<uint32_t>(memory->offset());
     if (memory->isLoad() && memory->readsMutability() == Mutability::Immutable)
         bits.u32x4[2] = noID;
@@ -424,13 +450,13 @@ MemoryNumbering::PureCallKey MemoryNumbering::keyForPureCall(const PatchpointVal
     return key;
 }
 
-bool MemoryNumbering::isEqualLoad(const MemoryValue* load, const Value* other)
+bool MemoryNumbering::isEqualLoad(const MemoryValue* load, const Value* other) const
 {
     const MemoryValue* otherMemory = other->as<MemoryValue>();
     return otherMemory
         && otherMemory->kind() == load->kind()
         && otherMemory->type() == load->type()
-        && otherMemory->lastChild() == load->lastChild()
+        && firstCopyOf(otherMemory->lastChild()) == firstCopyOf(load->lastChild())
         && otherMemory->offset() == load->offset();
 }
 
@@ -551,8 +577,8 @@ void MemoryNumbering::validateReplacedLoads()
     }
 
     // Loads of one location that got one replacement are checked together: none of them walks over code that another has walked over.
-    auto locationOf = [](const ReplacedLoad& replaced) {
-        return std::tuple(replaced.replacement->index(), replaced.address->foldIdentity()->index(), replaced.offset, replaced.range.begin(), replaced.range.end(), replaced.isImmutable, replaced.isForwardedStore);
+    auto locationOf = [&](const ReplacedLoad& replaced) {
+        return std::tuple(replaced.replacement->index(), firstCopyOf(replaced.address->foldIdentity())->index(), replaced.offset, replaced.range.begin(), replaced.range.end(), replaced.isImmutable, replaced.isForwardedStore);
     };
     std::ranges::sort(m_replacedLoads, { }, locationOf);
     unsigned location = 0;
@@ -604,7 +630,7 @@ bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, ReplacedLoa
 
     unsigned location = check.locationReadBy[replaced.load->index()];
     Value* replacement = replaced.replacement->foldIdentity();
-    Value* address = replaced.address->foldIdentity();
+    Value* address = firstCopyOf(replaced.address->foldIdentity());
     auto isSource = [&](Value* value) {
         if (!replaced.isForwardedStore && value == replaced.replacement)
             return true;
@@ -617,7 +643,7 @@ bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, ReplacedLoa
         MemoryValue* store = value->as<MemoryValue>();
         return !store->hasFence()
             && store->child(0)->foldIdentity() == replacement
-            && store->lastChild()->foldIdentity() == address
+            && firstCopyOf(store->lastChild()->foldIdentity()) == address
             && store->offset() == replaced.offset;
     };
 

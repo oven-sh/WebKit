@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinLocationWatch.h"
 #include "AOTFlowResults.h"
 #include "AOTIRBuilder.h"
 #include "AOTPropertyAccessCache.h"
@@ -301,6 +302,27 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
         return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
+}
+
+BuiltinOverloadID findOwnSlotOfInstances(const BuiltinTable& table, BuiltinClassID builtinClass, BuiltinName name)
+{
+    BuiltinID member = table.findOwnPropertyOfInstances(builtinClass, name);
+    if (!member || table.receiverClassOf(member) != builtinClass)
+        return { };
+    for (BuiltinOverloadID id : table.overloadIDsOf(member)) {
+        if (table.at(id).code.implementation.kind == BuiltinImplementationKind::OwnSlot)
+            return id;
+    }
+    return { };
+}
+
+bool liesAtSamePlace(const BuiltinTable& table, BuiltinOverloadID ownSlot, BuiltinOverloadID otherOwnSlot)
+{
+    auto placeOf = [&](BuiltinOverloadID id) {
+        const BuiltinOverload& overload = table.at(id);
+        return propertyOffsetOfOwnSlot(table.at(table.receiverClassOf(overload.builtin)).type, overload.code.implementation.ownSlot.offset);
+    };
+    return placeOf(ownSlot) == placeOf(otherOwnSlot);
 }
 
 static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)

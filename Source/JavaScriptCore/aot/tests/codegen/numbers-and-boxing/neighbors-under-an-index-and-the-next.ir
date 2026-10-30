@@ -105,5 +105,5 @@ function f1 name="sumOfNeighbors" module=m0 flags=[IsChecked, HasExplicitName] l
 # NONE-NOT: TypeTest
 # NONE-NOT: LoopHint
 # NONE-LABEL: end of loop
-# X64: instructions: 27, patchpoints: 16, {{*}} steps by 8
+# X64: instructions: 26, patchpoints: 16, {{*}} steps by 8
 # ARM64: instructions: 29, patchpoints: 16, {{*}} steps by 8

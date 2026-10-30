@@ -460,6 +460,8 @@ private:
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
         options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
+        options.checksSpillSlots = hasFlag(checks, CheckSet::SpillSlots) || options.recorded.validates || options.validatesBackEnd;
+        options.checksAllocatedRegisters = hasFlag(checks, CheckSet::AllocatedRegisters) || options.recorded.validates || options.validatesBackEnd;
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);

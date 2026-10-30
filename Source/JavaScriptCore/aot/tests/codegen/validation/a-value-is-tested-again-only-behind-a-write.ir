@@ -2,9 +2,9 @@
 # FORM: AsRead
 # OPTIONS: validate
 # RUN: lower-to-b3 f1
-# A report is handed what was found, the kind of failure, the function and the value. The parameter is tested where the function is entered and once behind the call.
-# CHECK-COUNT-2: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, resultConstraints
-# CHECK-NOT: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, resultConstraints
+# A report is handed what was found, the kind of failure, the function and the value. The parameter is tested where the function is entered and once behind the call: each time that it is there, and then its shape.
+# CHECK-COUNT-4: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, ExitsSideways
+# CHECK-NOT: :ColdAny, $0(b@{{*}}):ColdAny, $1(b@{{*}}):ColdAny, $0(b@{{*}}):ColdAny, ExitsSideways
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -420,6 +420,9 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
 
     Object* object = compiledObjectOrNull(base);
     const FieldData* field = object ? object->fieldNamed(object->state(), ident) : nullptr;
+    // As for a read, nothing is filed about an object whose stars wait. A store to one of its fields leaves them waiting.
+    if (field && hasPendingStars(*object))
+        shouldFile = false;
     if (field && access.caches().countsNames()) [[unlikely]]
         access.caches().countNamed(whyStubLeftFieldStore(access, *object, *field, value, mode), uid);
     bool chainLetsStoresPass = false;
@@ -517,6 +520,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
         return;
     LeafOperationScope leaf(*instance->vm);
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
+}
+
+// The question stands ahead of a loop, which may be the first to read the name. A property of a plain object's own is filed by a look that changes nothing.
+// What lies above the object waits for a read by name, which the loop that is entered at a miss makes.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCacheWithValue, void, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+{
+    LeafOperationScope leaf(*instance->vm);
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    Structure* structure = base->structure();
+    if (base->type() == FinalObjectType && !structure->isDictionary()) {
+        Identifier name = identifierAt(instance, key);
+        unsigned attributes;
+        if (!caches.tables().find(structure->id(), { name.impl(), key }, SlotAccess::Read) && isValidOffset(structure->getConcurrently(name.impl(), attributes)))
+            fileReadWithoutCode(instance, asObject(base), name);
+    }
+    instance->state->siteCaches->didMissRepeatedly(cache);
+    caches.fillSiteCacheFromTables(cache, base, key, SlotAccess::Read);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
@@ -764,6 +784,8 @@ static JSValue getFromCellAndCache(Instance* instance, JSValue base, const Ident
     CachedName cachedName { name.impl(), std::nullopt };
     JSObject* object = base.getObject();
     bool shouldFile = !object || caches.shouldFile(object->structureID(), name.impl(), SlotAccess::Read);
+    if (Object* compiledObject = compiledObjectOrNull(base); compiledObject && hasPendingStars(*compiledObject))
+        shouldFile = false;
     if (object && shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object, name.impl());
@@ -843,7 +865,10 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     if (compiledObject && !field && tryStoreExtraPropertyAndCache(instance, *compiledObject, cachedName, nullptr, value, mode, slot))
         return;
 
-    Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
+    if (field && hasPendingStars(*compiledObject))
+        shouldFile = false;
+    else
+        Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
     createClassObjectsOnChain(vm, object, name->impl());
     Structure* structureBefore = WTF::opaque(object->structure());
     bool repeatsAddition = compiledObject || repeatsPropertyAddition(structureBefore, name->impl());
@@ -893,6 +918,18 @@ static bool answerImpliesResult(const PropertyAnswer& answer, Structure* structu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A lookup for a descriptor has to find the accessor, which carries waiting stars out. A compiled object has no traps that could tell the two lookups apart.
+static PropertySlot::InternalMethodType lookupThatFindsOwnProperty(bool starsWait)
+{
+    return starsWait ? PropertySlot::InternalMethodType::HasProperty : PropertySlot::InternalMethodType::GetOwnProperty;
+}
+
+static bool hasStarsThatWait(JSObject* object)
+{
+    Object* compiledObject = compiledObjectOrNull(object);
+    return compiledObject && hasPendingStars(*compiledObject);
+}
+
 static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& name, bool isIn)
 {
     VM& vm = *instance->vm;
@@ -904,6 +941,9 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     if (caches.countsNames()) [[unlikely]]
         caches.countMiss(isIn ? "in"_s : "has own"_s, shouldFile, object, name.uid);
+    // Nothing is filed about an object whose stars wait, as for a read: only a Structure that lists the extra properties says which names are there.
+    bool starsWait = hasStarsThatWait(object);
+    shouldFile &= !starsWait;
     if (shouldFile) {
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
         createClassObjectsOnChain(vm, object, name.uid);
@@ -933,7 +973,7 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
         return result;
     };
     auto hasOwnProperty = [&] {
-        PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+        PropertySlot slot(object, lookupThatFindsOwnProperty(starsWait));
         bool result = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
         RETURN_IF_EXCEPTION(scope, false);
         if (result && shouldFile)
@@ -984,8 +1024,12 @@ static bool hasByValAndCache(Instance* instance, JSObject* object, JSValue prope
     }
     Identifier identifier = property.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if ((!property.isString() && !property.isSymbol()) || parseIndex(identifier))
-        RELEASE_AND_RETURN(scope, isIn ? object->hasProperty(globalObject, identifier) : object->hasOwnProperty(globalObject, identifier));
+    if ((!property.isString() && !property.isSymbol()) || parseIndex(identifier)) {
+        if (isIn)
+            RELEASE_AND_RETURN(scope, object->hasProperty(globalObject, identifier));
+        PropertySlot slot(object, lookupThatFindsOwnProperty(hasStarsThatWait(object)));
+        RELEASE_AND_RETURN(scope, object->methodTable()->getOwnPropertySlot(object, globalObject, identifier, slot));
+    }
     RELEASE_AND_RETURN(scope, hasAndCache(instance, object, { identifier.impl(), std::nullopt }, isIn));
 }
 

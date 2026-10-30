@@ -179,7 +179,11 @@ void testModuleRecords()
         damages.span("Module.requiredNames"_s, module(offsetof(Wire::Module, requiredNames)));
         damages.span("SourcePositions.lineStarts"_s, module(offsetof(Wire::Module, positions.lineStarts)));
         damages.span("SourcePositions.columnAdjustments"_s, module(offsetof(Wire::Module, positions.columnAdjustments)));
+        damages.span("SourcePositions.textPrintedInPlace"_s, module(offsetof(Wire::Module, positions.textPrintedInPlace)));
+        damages.span("SourcePositions.textOfBody"_s, module(offsetof(Wire::Module, positions.textOfBody)));
+        damages.span("SourcePositions.whereThisIsMade"_s, module(offsetof(Wire::Module, positions.whereThisIsMade)));
         damages.span("Module.functionText"_s, module(offsetof(Wire::Module, functionText)));
+        damages.span("Module.typesCutFromFunctionText"_s, module(offsetof(Wire::Module, typesCutFromFunctionText)));
     }
     addModuleListDamages(fixture, damages);
     expectEach(fixture, damages.damages());

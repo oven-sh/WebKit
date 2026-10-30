@@ -13,6 +13,8 @@
 #include "AOTLosses.h"
 #include "AOTUseLists.h"
 #include "AOTVector.h"
+#include <algorithm>
+#include <bit>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -53,47 +55,110 @@ inline bool isOpenContainer(const TrackedObject& object)
     return object.kind == ObjectKind::EntryParameter || !object.reasons.isEmpty();
 }
 
+// A set of objects is a row of bits, one for each object of the function. This holds the words of the row that are not zero, in ascending order.
+// A function that makes thousands of objects has thousands of sets, and nearly every set holds an object or two: whole rows take sets times objects.
+class ObjectWords {
+public:
+    using Word = uint64_t;
+    static constexpr uint32_t objectsPerWord = 64;
+
+    struct Entry {
+        uint32_t index { 0 };
+        Word word { 0 };
+
+        friend bool operator==(const Entry&, const Entry&) = default;
+    };
+
+    static Entry entryOf(ObjectID object) { return { object.index() / objectsPerWord, Word { 1 } << (object.index() % objectsPerWord) }; }
+
+    bool isEmpty() const { return m_entries.isEmpty(); }
+    std::span<const Entry> entries() const LIFETIME_BOUND { return m_entries.span(); }
+    bool contains(ObjectID object) const
+    {
+        Entry wanted = entryOf(object);
+        size_t position = positionOf(wanted.index, 0);
+        return position < m_entries.size() && m_entries[position].index == wanted.index && (m_entries[position].word & wanted.word);
+    }
+
+    bool overlaps(const ObjectWords&) const;
+
+    // What was not there yet is added to `added` as well, which is another set. The entries lie outside both.
+    void add(std::span<const Entry>, ObjectWords& added);
+    void add(const Entry&);
+    void remove(const ObjectWords&);
+    // Keeps the room.
+    void removeAll() { m_entries.shrink(0); }
+
+    friend bool operator==(const ObjectWords&, const ObjectWords&) = default;
+
+private:
+    // Of the first entry from `from` on whose index is not below.
+    size_t positionOf(uint32_t index, size_t from) const
+    {
+        AOT_THRESHOLD(size_t, maxSearchedEntries, 8);
+        std::span<const Entry> rest = m_entries.subspan(from);
+        if (rest.size() > maxSearchedEntries)
+            return from + (std::ranges::lower_bound(rest, index, { }, &Entry::index) - rest.begin());
+        size_t position = 0;
+        while (position < rest.size() && rest[position].index < index)
+            ++position;
+        return from + position;
+    }
+
+    Vector<Entry, 1> m_entries;
+};
+
 class ObjectSet {
 public:
     class Iterator {
     public:
-        explicit Iterator(BitVector::iterator position)
-            : m_position(position)
+        explicit Iterator(std::span<const ObjectWords::Entry> entries)
+            : m_entries(entries)
+            , m_rest(entries.empty() ? 0 : entries.front().word)
         {
         }
 
-        ObjectID operator*() const { return ObjectID(*m_position); }
+        ObjectID operator*() const { return ObjectID(m_entries.front().index * ObjectWords::objectsPerWord + std::countr_zero(m_rest)); }
 
         Iterator& operator++()
         {
-            ++m_position;
+            m_rest &= m_rest - 1;
+            if (!m_rest) {
+                m_entries = m_entries.subspan(1);
+                m_rest = m_entries.empty() ? 0 : m_entries.front().word;
+            }
             return *this;
         }
 
-        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_position == b.m_position; }
+        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_entries.size() == b.m_entries.size() && a.m_rest == b.m_rest; }
 
     private:
-        BitVector::iterator m_position;
+        std::span<const ObjectWords::Entry> m_entries;
+        ObjectWords::Word m_rest;
     };
 
-    explicit ObjectSet(const BitVector& bits LIFETIME_BOUND)
-        : m_bits(bits)
+    explicit ObjectSet(const ObjectWords& words LIFETIME_BOUND)
+        : m_words(words)
     {
     }
 
-    Iterator begin() const { return Iterator(m_bits.begin()); }
-    Iterator end() const { return Iterator(m_bits.end()); }
-    bool isEmpty() const { return m_bits.isEmpty(); }
-    size_t size() const { return m_bits.bitCount(); }
-    bool contains(ObjectID object) const { return m_bits.get(object.index()); }
-    bool overlaps(ObjectSet other) const;
+    Iterator begin() const { return Iterator(m_words.entries()); }
+    Iterator end() const { return Iterator(std::span<const ObjectWords::Entry> { }); }
+    bool isEmpty() const { return m_words.isEmpty(); }
+    size_t size() const;
+    bool contains(ObjectID object) const { return m_words.contains(object); }
+    bool overlaps(ObjectSet other) const { return m_words.overlaps(other.m_words); }
     std::optional<ObjectID> onlyMember() const;
-    const BitVector& bits() const { return m_bits; }
+    void addTo(BitVector& bits) const
+    {
+        for (ObjectID object : *this)
+            bits.set(object.index());
+    }
 
-    friend bool operator==(const ObjectSet& a, const ObjectSet& b) { return a.m_bits == b.m_bits; }
+    friend bool operator==(const ObjectSet& a, const ObjectSet& b) { return a.m_words == b.m_words; }
 
 private:
-    const BitVector& m_bits;
+    const ObjectWords& m_words;
 };
 
 struct PointsToSet {
@@ -263,18 +328,21 @@ public:
 
 private:
     struct StoredSet {
-        BitVector objects;
+        ObjectWords objects;
         // Where some member is an entry parameter: the members that are allocations. Else `objects` are those.
-        BitVector allocationsBesideEntryParameters;
+        ObjectWords allocationsBesideEntryParameters;
         bool mayBeUntracked { true };
         bool holdsEntryParameter { false };
         bool holdsSuperConstructResult { false };
+        bool holdsNothingElseFromOutside { false };
+        Vector<uint32_t, 2> groupsOfFrameWords;
     };
     // What a value may be among the allocations of the function. An entry parameter is an object that nobody tracks.
     struct AllocationSet {
-        const BitVector& objects;
+        const ObjectWords& objects;
         bool mayBeUntracked { true };
         bool existedAtEntryIfUntracked { false };
+        const Vector<uint32_t, 2>* groupsOfFrameWords { nullptr };
     };
     struct TypesOfValue {
         TypeID type;
@@ -326,6 +394,7 @@ private:
     Vector<ValueSetID> m_setOfValue;
     Vector<StoredSet> m_sets;
     BitVector m_noObjects;
+    ObjectWords m_emptySet;
     mutable Vector<ValueID> m_aliases;
     mutable Vector<uint32_t> m_firstAlias;
     // Two entries per use that the solver recorded: not an escape, then an escape. That is all that differs between the objects of one use.
@@ -351,6 +420,9 @@ private:
     Vector<AnswerFromTypes> m_answersFromTypes;
     Vector<TypesOfValue> m_typesWhenAnswered;
 };
+
+// Words of different groups hold different objects.
+bool isFrameWordWithAllocationGroup(const Function&, const Value&);
 
 // False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
 bool mayNameUnescapedAllocation(const Function&, ValueID);
@@ -391,7 +463,7 @@ inline PointsToSet EscapeAnalysis::pointsTo(ValueID value) const
     RELEASE_ASSERT(value.index() < m_setOfValue.size());
     ValueSetID id = m_setOfValue[value.index()];
     if (!id)
-        return { ObjectSet(m_noObjects), true };
+        return { ObjectSet(m_emptySet), true };
     const StoredSet& set = m_sets[id.index()];
     return { ObjectSet(set.objects), set.mayBeUntracked };
 }

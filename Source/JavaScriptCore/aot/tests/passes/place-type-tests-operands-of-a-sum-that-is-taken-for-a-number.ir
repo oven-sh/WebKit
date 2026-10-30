@@ -1,0 +1,109 @@
+# `sum += shape.width + shape.height`, with shapes of which nothing is known, out of JSON.parse() for one. Nothing is expected of either operand and neither stands beside a number, but what the operator makes is added to a number, compared with one or tested for one by the compiler: it is taken for a number, and it is one only where both operands are. So both get a test, the operator reckons with numbers, and its result is never made into a value.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+# sum + (a + b)
+function f0 name="addedToNumber" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+    v3 = Add v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: : number = Add
+# CHECK: : number = Add v2,
+}
+
+# sum + a * b
+function f1 name="productAddedToNumber" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+    v3 = Mul v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: : number = Mul
+}
+
+# a + b < limit
+function f2 name="comparedWithNumber" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=boolean}] {
+    v3 = Add v0, v1
+    v4 = Less v3, v2
+    Return v4
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: : number = Add
+}
+
+# The sum goes through a join to a test that the compiler placed: the side on which it fails is unlikely.
+function f3 name="testedBehindJoin" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=boolean}] results=[{type=number}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v0, v1
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v2)
+  b3(v5: anything):
+    v6 = TypeTest v5 testedType=number
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    Return v7
+  b5() frequency=Unlikely:
+    v8 = Integer integer=0
+    Return v8
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: : number = Add
+# CHECK: = TypeTest v1 testedType=number
+}
+
+# text + (a + b): nothing says that these are numbers
+function f4 name="joinedToText" parameters=[{type=anything}, {type=anything}, {type=string}] results=[{type=string}] {
+    v3 = Add v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: testedType=number
+}
+
+# return a + b
+function f5 name="onlyReturned" parameters=[{type=anything}, {type=anything}] results=[{type=number|string|bigint}] {
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: testedType=number
+}
+
+# typeof (a + b) === "number" ? 1 : 2: the program reckons with both answers
+function f6 name="testedByProgram" parameters=[{type=anything}, {type=anything}] results=[{type=int}] {
+    v2 = Add v0, v1
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Return v4
+  b2():
+    v5 = Integer integer=2
+    Return v5
+# CHECK-NOT: = TypeTest v0
+# CHECK-NOT: = TypeTest v1
+}
+
+# Unlikely code is where such a test has failed already.
+function f7 name="inUnlikelyCode" parameters=[{type=anything}, {type=anything}, {type=number}, {type=boolean}] results=[{type=number|string|bigint}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Unlikely:
+    v4 = Add v0, v1
+    v5 = Add v2, v4
+    Return v5
+# CHECK-NOT: = TypeTest v0
+# CHECK-NOT: = TypeTest v1
+}
+
+# ("a" + b) + 1: what stands beside the number is a text, whatever b is
+function f8 name="textBesideNumber" parameters=[{type=string}, {type=anything}, {type=number}] results=[{type=string}] {
+    v3 = Add v0, v1
+    v4 = Add v3, v2
+    Return v4
+# CHECK-NOT: = TypeTest
+}

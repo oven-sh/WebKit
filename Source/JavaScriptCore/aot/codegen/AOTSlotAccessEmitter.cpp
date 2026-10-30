@@ -15,6 +15,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
@@ -29,6 +30,7 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTSort.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTThreshold.h"
 #include "AOTUseLists.h"
@@ -516,7 +518,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
             });
         }
     };
-    if (!mayCreateListedField(access)) {
+    if (!mayCreateListedField(access) || (newObject && newObject->hasCreated(access.key))) {
         store();
         return;
     }
@@ -541,20 +543,6 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     // The key is listed first, while the slot still says whether the field is missing.
     listCreatedFields(value, cell, access.membersWithField, singleElementSpan(access.key), newObject, isExpectedToCreate(value->accessSite()), listFieldIfMissing);
     store();
-}
-
-static OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> flags)
-{
-    OptionSet<FieldForm> form;
-    if (flags.containsAny({ PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet }))
-        form.add(FieldForm::IsAccessor);
-    else if (!flags.contains(PropertyDescriptorFlags::IsWritable))
-        form.add(FieldForm::IsReadOnly);
-    if (!flags.contains(PropertyDescriptorFlags::IsEnumerable))
-        form.add(FieldForm::IsNotEnumerable);
-    if (!flags.contains(PropertyDescriptorFlags::IsConfigurable))
-        form.add(FieldForm::IsNotConfigurable);
-    return form;
 }
 
 // Compiled code calls the getter found in a filled slot as one of the functions listed in the field's type.
@@ -881,8 +869,10 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfObjectsThatMeet(BlockI
 
 bool SlotAccessEmitter::leavesObjectsAsTheyAre(ValueID id)
 {
+    // A variable of compiled code is no part of an object: `exports` holds the object from the first line of a CommonJS file on. Neither is what the host keeps.
+    constexpr AbstractHeapSet heapsOutsideObjects = heapsWhoseWritesNobodySees | compiledCodeHeaps | AbstractHeapSet { AbstractHeap::ExternalState };
     const Effects& effects = analyses().effectsOf(id).normal;
-    return !effects.mayRunOtherCode() && effects.writes.containsOnly(heapsWhoseWritesNobodySees);
+    return !effects.mayRunOtherCode() && effects.writes.containsOnly(heapsOutsideObjects);
 }
 
 bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& store) const
@@ -893,7 +883,7 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
             return false;
         const FieldAccess& access = m_placement.fieldAccess(id);
         state.mayHaveExtension |= access.slot.isOutOfLine() && needsStorageFor(access.slot, typeOf(stored));
-        if (mayAdd && mayCreateListedField(access))
+        if (mayAdd && mayCreateListedField(access) && !state.hasCreated(access.key))
             createdKeys.append(access.key);
         return true;
     };
@@ -927,6 +917,8 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
     if (!orderWordAfter)
         return false;
     state.orderWord = *orderWordAfter;
+    state.createdKeys.appendVector(createdKeys);
+    AOT::sortInLine(state.createdKeys, { }, &PropertyKeyID::index);
     return true;
 }
 
@@ -951,9 +943,12 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
                 const Value& value = m_function.at(id);
                 // A definition on a newly created object creates its field without calling the runtime, like a store by slot.
                 bool storesBySlotIntoObject = (storesBySlot.contains(value.opcode) || value.opcode == Opcode::DefineOwnProperty) && analyses().identityOf(value.objectOperand()) == object;
-                if (storesBySlotIntoObject)
+                if (storesBySlotIntoObject) {
                     storesOnTheWay.append(id);
-                else if (!leavesObjectsAsTheyAre(id))
+                    // A long row of stores is walked once, not once from each of them.
+                    if (m_lastStateOfNewObject && m_lastStateOfNewObject->object == object && m_lastStateOfNewObject->user == id)
+                        return m_lastStateOfNewObject->before;
+                } else if (!leavesObjectsAsTheyAre(id))
                     return std::nullopt;
             }
             if (std::ranges::contains(m_function.at(block).parameters.span(), object))
@@ -985,6 +980,7 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
     checkClaim(cell, [&] {
         return equal(emitter<ShapeTestEmitter>().orderWordOf(cell), static_cast<int32_t>(state->orderWord));
     });
+    m_lastStateOfNewObject = LastStateOfNewObject { object, user.id(), *state };
     return state;
 }
 

@@ -509,9 +509,11 @@ static bool callsHostFunction(const BuiltinOverload& overload)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the engine a function written inside a built-in function is built-in code too.
+// In the engine a function written inside a built-in function is built-in code too. A module of the library marks the function that it holds in place of such a one.
 static bool isInsideBuiltinFunction(const BuiltinTable& builtins, const Function& source)
 {
+    if (source.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
+        return true;
     if (!source.enclosingRuntimeFunction)
         return false;
     switch (builtins.at(source.enclosingRuntimeFunction).role) {

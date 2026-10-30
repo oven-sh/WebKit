@@ -99,6 +99,8 @@ constexpr StubKey arrayPushDouble() { return StubKey(StubFamily::ArrayPushDouble
 // The operands: an array, and the array whose elements go behind its own as the iterator of an array reads them: a hole as undefined.
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
 constexpr StubKey newArrayOfElements(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfElements).withForm(static_cast<uint8_t>(kind)); }
+// The operand: a Set that is walked as the built-in iterator walks it. A member that the kind does not take makes an array of another kind.
+constexpr StubKey newArrayOfMembers(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayOfMembers).withForm(static_cast<uint8_t>(kind)); }
 // What stands behind the code in line of an access to an element of an array whose holes read as undefined.
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }

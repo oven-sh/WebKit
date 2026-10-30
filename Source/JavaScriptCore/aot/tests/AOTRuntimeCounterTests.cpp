@@ -126,7 +126,7 @@ static void testFiveKindsInOrder(LoadedProgram& program)
     table.didCall(Entry::operationAOTValueAdd);
     branchCounts[5] = 9;
 
-    static constexpr ASCIILiteral kindsInOrder[] = { "counter"_s, "exit"_s, "limit"_s, "operation"_s, "made"_s, "branch"_s };
+    static constexpr ASCIILiteral kindsInOrder[] = { "counter"_s, "exit"_s, "limit"_s, "operation"_s, "made"_s, "flattened"_s, "hashed"_s, "branch"_s };
     size_t kind = 0;
     unsigned numberOfLinesOfKind[std::size(kindsInOrder)] = { };
     for (const CountLine& line : dumpedLines(vm)) {

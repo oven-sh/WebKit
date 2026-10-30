@@ -66,6 +66,7 @@ struct LoopClobbers {
     Vector<MemoryLocation> locations;
     LocationMasks writes;
     bool maySuspend { false };
+    bool otherCodeMayWriteAnything { false };
 };
 
 struct DeadLoop {
@@ -913,6 +914,47 @@ static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& b
     return true;
 }
 
+// `while (i--)` with a counter that is never negative: that it is not zero says that it is above zero, and only a comparison bounds the counter for later code, here and in the back end.
+static bool compareCountersTestedForTruthWithZero(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const UseLists& useLists = analyses.useLists();
+    Vector<ValueID, 2> tests;
+    for (const LoopInduction& induction : analyses.inductionVariables().loops()) {
+        const NaturalLoop& loop = loops.loop(induction.loopIndex);
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID block = loop.at(index);
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Branch || !loops.belongsTo(terminator.taken().block, loop) || loops.belongsTo(terminator.notTaken().block, loop))
+                continue;
+            ValueID id = terminator.conditionOperand();
+            const Value& test = function.at(id);
+            if (test.opcode != Opcode::ToBoolean || useLists.useCount(id) != 1 || useLists.blockOf(id) != block || tests.contains(id))
+                continue;
+            const Type& tested = context.program.typeOf(function, test.operand(0));
+            if (!tested.isInteger() || tested.integers.minimum < 0)
+                continue;
+            const InductionVariable* variable = induction.find(sameNumberThroughConversions(context, test.operand(0)));
+            if (variable && variable->direction == InductionDirection::Decreasing)
+                tests.append(id);
+        }
+    }
+    for (ValueID id : tests) {
+        Use use = *useLists.singleUse(id);
+        ProgramPoint point = useLists.pointOf(id);
+        builder.setOrigin(function.at(id).origin());
+        ValueID zero = builder.insertBefore(point, IRBuilder::make(Opcode::Integer));
+        replaceUse(function, use, builder.insertBefore(point, IRBuilder::make(Opcode::Greater, { function.at(id).operand(0), zero })));
+    }
+    if (tests.isEmpty())
+        return false;
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return true;
+}
+
 // `let sum = i; for (..) sum = (sum + x) | 0`: every turn hands on an int32, and only the first value may be no int32, yet that value makes the sum a double in every turn.
 // So the first value is tested once in front of the loop, and the loop gets a copy whose sum is an integer.
 static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
@@ -1028,12 +1070,9 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         if (!parameterIndex || !isExpectedToRun(context, loop).predicted())
             continue;
         Vector<BlockID> region;
-        uint64_t bytes = 0;
-        for (unsigned index = 0; index < loop.size(); ++index) {
+        for (unsigned index = 0; index < loop.size(); ++index)
             region.append(loop.at(index));
-            bytes += estimatedCodeBytes(program, function, function.at(loop.at(index)));
-        }
-        if (context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes) || RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
+        if (RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
             continue;
 
         for (const SameValueOfNarrowerType& same : sameValuesOfNarrowerType)
@@ -1064,6 +1103,228 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         analyses.didChangeControlFlow();
         ValueID narrowed = function.at(cloner.cloneOf(header)).parameters[*parameterIndex];
         narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, std::span(&narrowed, 1));
+        return true;
+    }
+    return false;
+}
+
+// `for (let i = values.length; i-- > 0;)` over a list that nobody has proven: the counter is of any type until `values` is tested, so the head of the loop asks it for an int32 in every turn.
+// What a turn hands on passes by its type, so only the first value can fail. It is asked once, in front of the loop, and goes where the head would have sent it.
+static bool testFirstValuesInFrontOfLoops(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        BlockID header = loop.header();
+        const Terminator& terminator = function.at(header).terminator;
+        if (function.at(header).frequency.predicted() != BlockFrequency::Normal || terminator.kind != TerminatorKind::Branch)
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::TypeTest || !terminator.notTaken().proofs.isEmpty())
+            continue;
+        BlockID whenPassed = terminator.taken().block;
+        BlockID whenFailed = terminator.notTaken().block;
+        if (!loops.belongsTo(whenPassed, loop) || !analyses.hasSingleIncomingEdge(whenPassed) || function.at(whenFailed).frequency.predicted() == BlockFrequency::Normal)
+            continue;
+        const CompactList<ValueID>& parameters = function.at(header).parameters;
+        // A first value that fails does not come by the head, so where it goes nothing may name what the head defines.
+        auto isNamedOnlyWherePassed = [&](ValueID id) {
+            return std::ranges::all_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+                return use.block == header || analyses.dominators().dominates(whenPassed, use.block);
+            });
+        };
+        if (!std::ranges::all_of(parameters, isNamedOnlyWherePassed) || !std::ranges::all_of(function.at(header).values, isNamedOnlyWherePassed))
+            continue;
+        auto indexAmongParameters = [&](ValueID id) {
+            return static_cast<size_t>(std::ranges::find(parameters, id) - parameters.begin());
+        };
+        size_t parameterIndex = indexAmongParameters(analyses.identityOf(test.valueOperand()));
+        if (parameterIndex == parameters.size())
+            continue;
+        // In front of the test the head only polls. A first value that fails polls too: from where it goes a way may lead back here, and every cycle polls.
+        Vector<ValueID, 1> polls;
+        bool onlyPolls = std::ranges::all_of(function.at(header).values, [&](ValueID id) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::LoopHint)
+                return analyses.isUnobservable(id);
+            polls.append(id);
+            return !value.throwsOwedError() && !value.leavesOwedError() && !value.replacesTailCalls();
+        });
+        std::optional<Edge> entry = loops.findSingleEntry(loop);
+        if (!onlyPolls || !entry || entry->isHandlerEdge() || hasEdgeResults(function, *entry))
+            continue;
+        const Type& tested = context.types.at(test.testedType());
+        bool everyTurnPasses = std::ranges::all_of(analyses.cfg().incomingEdges(header), [&](Edge edge) {
+            if (edge == *entry)
+                return true;
+            return !edge.isHandlerEdge() && !hasEdgeResults(function, edge) && program.typeOf(function, targetOf(function, edge).arguments[parameterIndex]).isSubsetOf(tested, program);
+        });
+        if (!everyTurnPasses || program.typeOf(function, targetOf(function, *entry).arguments[parameterIndex]).isSubsetOf(tested, program))
+            continue;
+        // Whatever its type says, a first value that has passed this very test is not asked again.
+        ValueLocation firstValue = analyses.useLists().locationOf(targetOf(function, *entry).arguments[parameterIndex]);
+        bool hasBeenAsked = firstValue.placement == ValuePlacement::Parameter && firstValue.block != entryBlock && std::ranges::all_of(analyses.cfg().incomingEdges(firstValue.block), [&](Edge edge) {
+            const Terminator& asking = function.at(edge.from).terminator;
+            if (edge.isHandlerEdge() || asking.kind != TerminatorKind::Branch)
+                return false;
+            const Value& asked = function.at(asking.conditionOperand());
+            return asked.opcode == Opcode::TypeTest && asked.testedType() == test.testedType();
+        });
+        if (hasBeenAsked)
+            continue;
+        Arguments first(targetOf(function, *entry).arguments);
+        Arguments handedOnWhenFailed;
+        bool canHandOn = std::ranges::all_of(terminator.notTaken().arguments, [&](ValueID argument) {
+            size_t index = indexAmongParameters(argument);
+            if (index != parameters.size()) {
+                handedOnWhenFailed.append(first[index]);
+                return true;
+            }
+            handedOnWhenFailed.append(argument);
+            return !loops.belongsTo(analyses.useLists().blockOf(argument), loop);
+        });
+        if (!canHandOn)
+            continue;
+
+        TypeID testedType = test.testedType();
+        Expected<BlockFrequency> frequencyWhenFailed = function.at(whenFailed).frequency;
+        IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        builder.setOrigin(test.origin());
+        BlockID front = builder.splitEdge(*entry);
+        Expected<BlockFrequency> frequency = function.at(front).frequency;
+        function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(front);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(first[parameterIndex], testedType), OperandIndex::TypeTest::value, frequency, frequencyWhenFailed);
+        builder.moveToEndOf(branch.notTaken);
+        for (ValueID poll : polls) {
+            builder.setOrigin(function.at(poll).origin());
+            builder.append(Value(function.at(poll)));
+        }
+        builder.emitJump(whenFailed, WTF::move(handedOnWhenFailed));
+        first[parameterIndex] = branch.provenOnTaken;
+        builder.moveToEndOf(branch.taken);
+        builder.emitJump(header, WTF::move(first));
+        analyses.didChangeControlFlow();
+        ValueID narrowed = function.at(header).parameters[parameterIndex];
+        narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, std::span(&narrowed, 1));
+        return true;
+    }
+    return false;
+}
+
+// `for (let i = 0; i < n; i++) { for (..) .. }` with `n: number`. Below an int32 the counter is one. PlaceTypeTests tests such a bound in front of a loop that holds no other loop: its copies hold none.
+// So the bound of a loop that holds one is tested here, once in front of the loop, and the loop gets a copy whose bound is an int32.
+static bool copyLoopWhoseBoundIsTheOnlyNumber(FunctionPassContext& context, IRBuilder& builder)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    if (loops.numLoops() < 2)
+        return false;
+    auto typeOf = [&](ValueID id) -> const Type& {
+        return program.typeOf(function, id);
+    };
+    // A sum or a product costs a number no more than an integer, and a list or a variable of numbers takes a number as it is. What pays is an operator that converts a number first, `(i + k) | 0` or `i % 3`, and a test for an integer.
+    // Beside what may be a fraction the integer is converted in every turn.
+    auto isCheaperAsInteger = [&](const NaturalLoop& loop, const InductionVariable& counter) {
+        constexpr size_t mostValuesReckonedFromCounter = 16;
+        constexpr OpcodeSet sumsAndProducts { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement, Opcode::Negate };
+        Vector<ValueID, mostValuesReckonedFromCounter> reckoned { counter.parameter };
+        for (size_t index = 0; index < reckoned.size(); ++index) {
+            for (const Use& use : analyses.useLists().usesOf(reckoned[index])) {
+                if (use.kind != Use::Kind::Operand || function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
+                    continue;
+                const Value& user = function.at(use.user);
+                if (user.opcode == Opcode::TypeTest && context.types.at(user.testedType()).isInteger())
+                    return true;
+                bool isFollowed = isCastWithoutTest(user.opcode);
+                if (hasOperatorForm(user.opcode) && isLegalOperatorForm(user.opcode, OperatorForm::Integers) && (user.numberOfOperands() != 2 || !(typeOf(user.operand(1 - use.operandIndex)).primitives & Primitive::FractionalNumber))) {
+                    if (mayCallRuntime(user.opcode, OperatorForm::Numbers))
+                        return true;
+                    isFollowed = sumsAndProducts.contains(user.opcode);
+                }
+                if (isFollowed && !reckoned.contains(use.user) && reckoned.size() < mostValuesReckonedFromCounter)
+                    reckoned.append(use.user);
+            }
+        }
+        return false;
+    };
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        BlockID header = loop.header();
+        auto isNumberThatMayBeCounter = [&](ValueID parameter) {
+            return typeOf(parameter).isNumberWithoutFraction() && !typeOf(parameter).isInteger();
+        };
+        if (function.at(header).frequency.predicted() != BlockFrequency::Normal || std::ranges::none_of(function.at(header).parameters, isNumberThatMayBeCounter))
+            continue;
+        bool holdsLoop = false;
+        for (unsigned index = 0; index < loop.size() && !holdsLoop; ++index)
+            holdsLoop = loops.innerMostLoopOf(loop.at(index)) != &loop;
+        if (!holdsLoop)
+            continue;
+        std::optional<Edge> entry = loops.findSingleEntry(loop);
+        if (!entry || entry->isHandlerEdge())
+            continue;
+        ValueID bound;
+        const LoopInduction& induction = analyses.inductionVariables().of(loop);
+        for (const InductionVariable& variable : induction.variables) {
+            if (!isNumberThatMayBeCounter(variable.parameter) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant || !variable.start || !typeOf(variable.start).isInt32())
+                continue;
+            int64_t step = variable.step.constant;
+            if ((step < 0 ? 0 - static_cast<uint64_t>(step) : static_cast<uint64_t>(step)) > context.limit(LimitID::MaxCounterStep))
+                continue;
+            for (const InductionTest& test : variable.tests) {
+                if (test.tested != TestedValue::BeforeStep || test.boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test.relation, variable.direction))
+                    continue;
+                const Value& comparison = function.at(test.comparison);
+                bool isLeftBound = analyses.identityOf(comparison.operand(0)) == analyses.identityOf(test.bound);
+                bool isRightBound = analyses.identityOf(comparison.operand(1)) == analyses.identityOf(test.bound);
+                if (isLeftBound == isRightBound)
+                    continue;
+                ValueID compared = comparison.operand(isLeftBound ? 0 : 1);
+                if (!typeOf(compared).isNumber() || typeOf(compared).isInteger() || loops.belongsTo(analyses.useLists().blockOf(compared), loop))
+                    continue;
+                if (dominatesEveryStepOrItsWayOn(context, induction, test.stayingEdge, variable, comparison.operand(isLeftBound ? 1 : 0)) && isCheaperAsInteger(loop, variable))
+                    bound = compared;
+                break;
+            }
+            if (bound)
+                break;
+        }
+        if (!bound || !isExpectedToRun(context, loop).predicted())
+            continue;
+        // The loop as it was becomes rare and is not looked at again, so a nest of loops is copied once for each of its levels at the most.
+        Vector<BlockID> region;
+        for (unsigned index = 0; index < loop.size(); ++index)
+            region.append(loop.at(index));
+        if (RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
+            continue;
+
+        builder.setOrigin(function.at(entry->from).terminator.origin());
+        BlockID front = builder.splitEdge(*entry);
+        Expected<BlockFrequency> frequency = function.at(front).frequency;
+        Arguments arguments(function.at(front).terminator.next().arguments);
+        function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(front);
+        ValueID test = builder.appendTypeTest(bound, TypeTable::int32);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
+        RegionCloner cloner(builder, function);
+        cloner.mapValue(bound, branch.provenOnTaken);
+        cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitJump(header, Arguments(arguments));
+        builder.moveToEndOf(branch.taken);
+        builder.emitJump(cloner.cloneOf(header), WTF::move(arguments));
+        analyses.didChangeControlFlow();
+        cloner.repairSSA(analyses);
+        analyses.didChangeControlFlow();
+        for (BlockID block : region)
+            function.edit(block, BlockEdit::Rest).frequency = BlockFrequency::Rare;
+        analyses.didChangeControlFlow();
         return true;
     }
     return false;
@@ -1102,6 +1363,9 @@ static bool comparesNoVariableInCycle(FunctionPassContext& context)
             const Type& tested = context.program.typeOf(function, comparison.operand(operandIndex));
             if (!tested.isNumberWithoutFraction() || tested.isInt32() || terminator.taken().proofs.contains(operandIndex))
                 continue;
+            // `++i < values.length` before anybody has tested `values`: the one round that tries is the one in which the bound is an integer.
+            if (comparison.opcode != Opcode::ToBoolean && !context.program.typeOf(function, comparison.operand(1 - operandIndex)).isInteger())
+                continue;
             ValueID number = sameNumberThroughConversions(context, comparison.operand(operandIndex));
             if (analyses.useLists().locationOf(number).placement != ValuePlacement::Parameter ? !!findParameterCountedFrom(context, number) : !findSumsAheadOfTest(context, Edge { block, 0 }, comparison.operand(operandIndex)).isEmpty())
                 return true;
@@ -1123,12 +1387,17 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
         outcome = PassOutcome::Changed;
+    if (compareCountersTestedForTruthWithZero(context, builder))
+        outcome = PassOutcome::Changed;
     // During the rounds, only a counter that has just got its own test, or of whose test the front end has passed on nothing, is converted, before the tests that the round would place on it:
     // one for int32 stays in the loop for good where the counter may pass int32. Other counters have their bound by then or get it after the rounds.
     bool convertsOnlyWhatComparesNoVariable = context.isInRounds && outcome == PassOutcome::Unchanged;
     if (convertsOnlyWhatComparesNoVariable && (context.hasTriedCountersThatCompareNoVariable || !comparesNoVariableInCycle(context)))
         return outcome;
     context.hasTriedCountersThatCompareNoVariable |= convertsOnlyWhatComparesNoVariable;
+    // Typing may cut blocks and renumber the rest, so each search asks the function as it stands. A loop whose first value has been asked hands its head nothing that can fail.
+    while (!convertsOnlyWhatComparesNoVariable && testFirstValuesInFrontOfLoops(context))
+        outcome = PassOutcome::Changed;
     if (Vector<ValueID, 2> narrowed = convertsOnlyWhatComparesNoVariable ? Vector<ValueID, 2> { } : testForIntegersOnWaysBack(context); !narrowed.isEmpty()) {
         outcome = PassOutcome::Changed;
         narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, narrowed.span());
@@ -1169,6 +1438,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         });
     }
 
+    // What a comparison has just been found to say may be all that a turn needed to hand on what passes.
+    while (!convertsOnlyWhatComparesNoVariable && testFirstValuesInFrontOfLoops(context))
+        outcome = PassOutcome::Changed;
+
     if (numberOfConvertedCounters) {
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
         context.hasCountersConvertedSinceTestsWerePlaced = true;
@@ -1179,8 +1452,11 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     }
     // The loop that is copied becomes rare, and its copy carries one number fewer. Where the types do not bear that out, a copy of the copy would fare no better, and so on without end.
     // Typing the copy may cut blocks and renumber the rest, so this asks the function as it stands and keeps no id.
+    // Each number takes a copy of its own, so a loop that carries many would be copied as often. The copies together may not outgrow the function, or what a few small loops come to.
     size_t numbersCarried = convertsOnlyWhatComparesNoVariable ? 0 : countNumbersCarriedByLoops(context);
-    while (numbersCarried && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
+    AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
+    size_t mostValuesWithCopies = context.function.values.size() + std::max(context.function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
+    while (numbersCarried && context.function.values.size() <= mostValuesWithCopies && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
         size_t numbersLeft = countNumbersCarriedByLoops(context);
@@ -1192,6 +1468,25 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;
     return outcome;
+}
+
+// In the rounds a loop inside may yet go: its turns are written out, it is fused, what it walks is sunk. Then PlaceTypeTests tests the bound, and a copy made here would stand in the way.
+PassOutcome testNumbersThatBoundLoopsAroundLoops(FunctionPassContext& context)
+{
+    RELEASE_ASSERT(!context.isInRounds);
+    bool hasCopy = false;
+    {
+        IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+        // All the copies together may not outgrow the function, or what a few small loops come to.
+        AOT_THRESHOLD(size_t, valuesThatCopiesOfLoopsMayAlwaysAdd, 4096);
+        const size_t mostValuesWithCopies = context.function.values.size() + std::max(context.function.values.size(), valuesThatCopiesOfLoopsMayAlwaysAdd);
+        while (context.function.values.size() <= mostValuesWithCopies && copyLoopWhoseBoundIsTheOnlyNumber(context, builder))
+            hasCopy = true;
+    }
+    if (!hasCopy)
+        return PassOutcome::Unchanged;
+    convertCountersToIntegers(context);
+    return PassOutcome::Changed;
 }
 
 static MemoryAccess variableAccessOf(const Function& function, const Value& value)
@@ -1206,7 +1501,7 @@ static void addEffects(const EffectsOnEdges& effects, LoopClobbers& clobbers)
 {
     Effects any = effects.onAnyEdge();
     clobbers.maySuspend |= any.maySuspend;
-    if (any.mayRunOtherCode())
+    if (any.maySuspend || (clobbers.otherCodeMayWriteAnything && any.mayRunOtherCode()))
         clobbers.writes = LocationMasks::top();
     else
         clobbers.writes.merge(any.writes);
@@ -1397,7 +1692,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     Expected<BlockFrequency> frequencyOfPreheader = frequencies.classOf(preheader);
-    LoopClobbers clobbersSinceEntry;
+    LoopClobbers clobbersSinceEntry { .otherCodeMayWriteAnything = true };
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
         if (!body.get(blockID.index()))
             continue;
@@ -1806,7 +2101,7 @@ static bool isCountedAndEnds(FunctionPassContext& context, const NaturalLoop& lo
     if (!counter || counter->step.kind != InductionStepKind::Constant || !counter->step.constant)
         return false;
     const InductionTest* test = counter->controllingTest();
-    if (!test || test->boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test->relation, counter->direction))
+    if (!test || test->boundKind == LoopBoundKind::Unknown || !isBoundingRelation(test->relation, counter->direction))
         return false;
     return context.program.typeOf(context.function, counter->parameter).isInteger() && context.program.typeOf(context.function, test->bound).isInteger();
 }

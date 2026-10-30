@@ -195,6 +195,11 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
         if (cause && !isListed.quickSet(builtin.index()))
             records.append(UnseenCodeRecord { *cause, builtin.index(), noWitness });
     });
+    ValueSetID run = solution.solver().possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
+    for (auto [mark, builtin] : builtins.marked(BuiltinMark::ReadLoadsCodeByName)) {
+        if (loadsCodeOnceRead(builtins, builtin, solution.solver().input().refusedCode) && solution.sets().contains(run, universe.objectOf(builtin)))
+            records.append(UnseenCodeRecord { UnseenCodeCause::LoadsCodeByName, builtin.index(), noWitness });
+    }
     AOT::sort(records.mutableSpan().subspan(first), { }, &UnseenCodeRecord::builtin);
     for (const Loader& loader : loaders) {
         bool hasRecord = std::ranges::any_of(records, [&](const UnseenCodeRecord& record) {

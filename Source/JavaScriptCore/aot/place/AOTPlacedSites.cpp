@@ -638,7 +638,9 @@ private:
             sites.requireEdges.append(RequireEdgeUse { { value.referrer(), value.module() }, value.specifier() });
             break;
         case Opcode::ModuleBuiltin:
-            sites.moduleBuiltins.append(ModuleBuiltinUse { value.builtin(), value.module() });
+            // Each run of a module that runs again has an `import.meta` of its own, so no word holds it for good.
+            if (!m_program.at(value.module()).flags.contains(ModuleFlags::RunsAgain))
+                sites.moduleBuiltins.append(ModuleBuiltinUse { value.builtin(), value.module() });
             break;
         case Opcode::ModuleNamespace:
             if (value.phase() == ImportPhase::Evaluation)

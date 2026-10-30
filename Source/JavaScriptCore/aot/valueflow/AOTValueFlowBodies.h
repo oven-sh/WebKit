@@ -11,6 +11,7 @@
 #include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
+#include "AOTValueFlowListPutAway.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
 #include "AOTVector.h"
 #include <array>
@@ -81,6 +82,9 @@ struct ValueFlowSite {
     BuiltinClassID builtinClass;
     bool namesPrototype { false };
     bool isProxyFromNamedConstructor { false };
+    bool isDenseArrayLiteral { false };
+    // Of what a built-in function answers: f(), f(a). So f.bind(receiver) binds no argument.
+    bool isAnswerOfCallWithOneArgumentAtMost { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -89,6 +93,8 @@ class ValueFlowUniverse {
 public:
     static constexpr ValueFlowObjectID primitive(PrimitiveSet kind) { return ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(static_cast<uint16_t>(kind)))); }
     static constexpr uint32_t numberOfPrimitiveKinds = 16;
+    // ValueFlowGraph keys a table by the mask of the first 64 objects. A number that names nothing keeps every mask off the markers of that table.
+    static_assert(numberOfEnumerators<PrimitiveSet> < numberOfPrimitiveKinds);
 
     static constexpr ValueFlowObjectID unknownObject() { return ValueFlowObjectID(numberOfPrimitiveKinds); }
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }
@@ -203,6 +209,7 @@ public:
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
     ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
+    ValueSetID denseArrayLiterals() const { return m_denseArrayLiterals; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -270,6 +277,7 @@ private:
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
     ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
+    ValueSetID m_denseArrayLiterals { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -380,10 +388,10 @@ enum class ValueFlowHostNode : uint8_t {
     RecordsMadeByParsers,
     BuiltinObjectsThatStatementsWrite,
     FunctionsOfHostTakenFromKnownHolders,
-    NamespacesTiedByStatementsOfBodies,
     ChildrenOfModuleObjects,
     ParentsOfModuleObjects,
     PairsOfSteps,
+    ArraysThatMayHaveHoles,
     CodeOutsideImageIsLoaded,
     NamespacesCarriedOutAsValues,
     ValuesCarriedOut,
@@ -429,10 +437,14 @@ enum class ValueFlowHostNode : uint8_t {
     UnseenCopiesOfFilesMayRun,
     ReachedByUnseenCopiesOfFiles,
     EntriesOfModuleCacheAreRead,
+    ObjectsOfLoadedModules,
+    ExportsOfEntriesStoredInModuleCache,
+    PathOfMainModuleIsStored,
+    LoaderFunctionsSeenToBeStored,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 83;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::EntriesOfModuleCacheAreRead) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 87;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::LoaderFunctionsSeenToBeStored) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -609,6 +621,7 @@ struct ValueFlowBody {
         uint32_t firstGuard { 0 };
         uint32_t guardsOfOperands { 0 };
         PropertyKeyID key;
+        OptionSet<ValueFlowFactOfText> factsOfText;
     };
 
     struct ObservedValue {
@@ -641,6 +654,8 @@ struct ValueFlowBody {
     uint32_t firstStatementLeavingBody { 0 };
     Vector<Operand> operands;
     Vector<ObservedValue> observedValues;
+    Vector<ValueFlowRareFactsOfText> rareFactsOfText;
+    Vector<ValueFlowCopyOfOperation> copiesOfOperations;
     struct ComparedValues {
         Operand left;
         Operand right;
@@ -766,7 +781,22 @@ public:
     const ValueFlowUniverse& universe() const LIFETIME_BOUND { return m_universe; }
     const ValueFlowProgramNodes& nodes() const LIFETIME_BOUND { return m_nodes; }
 
-    // Behind the last solve.
+    // Round the last solve, which reads none of them.
+    void putAwayWhatOnlyResultsRead(const ParallelLoops& loops)
+    {
+        m_observedValuesPutAway.putAway(loops, WTF::move(m_observedValues));
+        m_comparedValuesPutAway.putAway(loops, WTF::move(m_comparedValues));
+        m_valuesAliveForComparisonsOnlyPutAway.putAway(loops, WTF::move(m_valuesAliveForComparisonsOnly));
+    }
+    size_t bytesOfWhatOnlyResultsRead() const { return m_observedValues.sizeInBytes() + m_comparedValues.sizeInBytes() + m_valuesAliveForComparisonsOnly.sizeInBytes(); }
+    size_t bytesOfWhatIsPutAway() const { return m_observedValuesPutAway.sizeInBytes() + m_comparedValuesPutAway.sizeInBytes() + m_valuesAliveForComparisonsOnlyPutAway.sizeInBytes(); }
+    void takeOutWhatWasPutAway(const ParallelLoops& loops)
+    {
+        m_observedValues = m_observedValuesPutAway.takeOut(loops);
+        m_comparedValues = m_comparedValuesPutAway.takeOut(loops);
+        m_valuesAliveForComparisonsOnly = m_valuesAliveForComparisonsOnlyPutAway.takeOut(loops);
+    }
+    // Once the graph of the last solve has them.
     void letGoOfEdgesAndMasks()
     {
         m_edges = { };
@@ -783,6 +813,8 @@ public:
     std::span<const FunctionID> functionsEnteredOnceReached() const LIFETIME_BOUND { return m_functionsEnteredOnceReached.span(); }
     std::span<const ValueFlowBodyRange> ranges() const LIFETIME_BOUND { return m_ranges.span(); }
     std::span<const ValueFlowObservedValue> observedValues() const LIFETIME_BOUND { return m_observedValues.span(); }
+    std::span<const ValueFlowRareFactsOfText> rareFactsOfText() const LIFETIME_BOUND { return m_rareFactsOfText.span(); }
+    std::span<const ValueFlowCopyOfOperation> copiesOfOperations() const LIFETIME_BOUND { return m_copiesOfOperations.span(); }
     std::span<const ValueFlowComparedValues> comparedValues() const LIFETIME_BOUND { return m_comparedValues.span(); }
     std::span<const ValueFlowValueOfFunction> valuesAliveForComparisonsOnly() const LIFETIME_BOUND { return m_valuesAliveForComparisonsOnly.span(); }
     const UnobservedFieldDefinitions& unobservedDefinitions() const LIFETIME_BOUND { return m_unobservedDefinitions; }
@@ -812,8 +844,13 @@ private:
     Vector<ValueFlowNodeSet> m_seedsOnceReached;
     Vector<FunctionID> m_functionsEnteredOnceReached;
     Vector<ValueFlowObservedValue> m_observedValues;
+    Vector<ValueFlowRareFactsOfText> m_rareFactsOfText;
+    Vector<ValueFlowCopyOfOperation> m_copiesOfOperations;
     Vector<ValueFlowComparedValues> m_comparedValues;
     Vector<ValueFlowValueOfFunction> m_valuesAliveForComparisonsOnly;
+    ValueFlowListPutAway<ValueFlowObservedValue> m_observedValuesPutAway;
+    ValueFlowListPutAway<ValueFlowComparedValues> m_comparedValuesPutAway;
+    ValueFlowListPutAway<ValueFlowValueOfFunction> m_valuesAliveForComparisonsOnlyPutAway;
     UnobservedFieldDefinitions m_unobservedDefinitions;
     ValueFlowBodiesTimes m_times;
     Vector<ValueFlowNotedOperations> m_notedOperations;

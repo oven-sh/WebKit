@@ -57,11 +57,8 @@ static std::optional<ValueID> findValueOnEdge(const Function& function, const au
     return passed ? std::optional(passed) : std::nullopt;
 }
 
-static std::optional<ConstantStep> constantStepOf(const Program& program, const Function& function, const Value& value)
+static std::optional<ConstantStep> constantStepOf(const Program& program, const Function& function, const Value& value, const Invocable<bool(ValueID)> auto& isNumber)
 {
-    auto isNumber = [&](ValueID id) {
-        return program.typeOf(function, id).isNumber();
-    };
     auto constantOperand = [&](ValueID id) {
         return constantOf(program.typeOf(function, id));
     };
@@ -83,6 +80,13 @@ static std::optional<ConstantStep> constantStepOf(const Program& program, const 
             return ConstantStep { value.operand(0), -*constant };
     }
     return std::nullopt;
+}
+
+static std::optional<ConstantStep> constantStepOf(const Program& program, const Function& function, const Value& value)
+{
+    return constantStepOf(program, function, value, [&](ValueID id) {
+        return program.typeOf(function, id).isNumber();
+    });
 }
 
 IntegerRelations::IntegerRelations(FunctionAnalyses& analyses)
@@ -442,7 +446,27 @@ bool IntegerRelations::prove(ValueID left, ValueID right, int64_t offset, BlockI
         std::optional<int64_t> remaining = exactValueOf(CheckedInt64(offset) - relationship.offset);
         return remaining && prove(relationship.right, right, *remaining, at, goals);
     });
-    return isProvenByRelationship || proveByInduction(left, right, offset, goals);
+    return isProvenByRelationship || proveByInduction(left, right, offset, goals) || proveRoundedSum(left, right, offset, at, goals);
+}
+
+// Rounding keeps the order: if x + c is at most a number that a double holds exactly, the rounded sum is at most that number too.
+bool IntegerRelations::proveRoundedSum(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals& goals)
+{
+    if (!left)
+        return false;
+    std::optional<ConstantStep> step = constantStepOf(m_program, m_function, m_function.at(left), [&](ValueID id) {
+        return isNumberOrAssumed(id, at);
+    });
+    std::optional<Range> bound = rangeOf(right, at);
+    if (!step || !bound)
+        return false;
+    std::optional<int64_t> lowest = exactValueOf(CheckedInt64(bound->minimum) + offset);
+    std::optional<int64_t> highest = exactValueOf(CheckedInt64(bound->maximum) + offset);
+    if (!lowest || !highest || !Range::exact().contains(*lowest) || !Range::exact().contains(*highest) || !isKnownWhole(step->operand, at))
+        return false;
+    Term operand = normalize(step->operand);
+    std::optional<int64_t> remaining = exactValueOf(CheckedInt64(offset) - step->offset - operand.offset);
+    return remaining && prove(operand.base, right, *remaining, at, goals);
 }
 
 bool IntegerRelations::proveByInduction(ValueID left, ValueID right, int64_t offset, UpperBoundGoals& goals)
@@ -531,6 +555,16 @@ bool IntegerRelations::proveSumAtLeast(const Value& value, int64_t minimum, Bloc
     };
     if (!Range::exact().contains(minimum))
         return false;
+
+    // Rounding keeps the order here too: the minimum is a number that a double holds exactly.
+    std::optional<ConstantStep> step = constantStepOf(m_program, m_function, value, [&](ValueID id) {
+        return isNumberOrAssumed(id, at);
+    });
+    if (step && isKnownWhole(step->operand, at)) {
+        std::optional<int64_t> remaining = exactValueOf(CheckedInt64(minimum) - step->offset);
+        if (remaining && proveValueAtLeast(step->operand, *remaining, at, goals))
+            return true;
+    }
 
     if (value.opcode == Opcode::Increment) {
         ValueID operand = value.operand(0);

@@ -586,7 +586,7 @@ static void printFunctions(const TablesContext& context)
         RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).field("entrypoint"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.constructEntrypoint()))).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
     forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
         RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
-            .field("line"_s, place.line).field("column"_s, place.column);
+            .field("line"_s, place.line).field("column"_s, place.column).field("isWhereThisIsMade"_s, place.isWhereThisIsMade);
         return IterationStatus::Continue;
     });
 }
@@ -610,8 +610,26 @@ static void printFunctionTraces(const TablesContext& context)
     }
 }
 
+static void printTextPrintedInPlace(const TablesContext& context)
+{
+    std::span modules = context.tables.modulesWithTextPrintedInPlace();
+    std::span bytes = context.tables.textPrintedInPlace();
+    if (modules.empty())
+        return;
+    context.out.println("printed in place, from the start of ", bytes[0] ? "the file" : "the text");
+    for (size_t index = 0; index + 1 < modules.size(); ++index) {
+        for (const TextPrintedInPlace& piece : TextPrintedInPlace::readAll(bytes.subspan(modules[index].start, modules[index + 1].start - modules[index].start))) {
+            if (piece.isCopy)
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " copy=", piece.startOfCopied, "..", piece.endOfCopied, piece.isInBrackets ? " inBrackets" : "");
+            else
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " \"", StringView(byteCast<Latin1Character>(piece.bytes)), "\"");
+        }
+    }
+}
+
 static void printFunctionTexts(const TablesContext& context)
 {
+    printTextPrintedInPlace(context);
     auto texts = context.tables.functionTexts();
     if (texts.empty())
         return;
@@ -621,6 +639,29 @@ static void printFunctionTexts(const TablesContext& context)
         context.out.println("f", entry.function, " ", entry.start, "..", entry.end, " \"", StringView(text.subspan(entry.start, entry.end - entry.start)), "\"");
     for (const ConstructorLineData& constructor : context.tables.constructorLines())
         context.out.println("constructor f", constructor.function, " linesOfTextAbove=", constructor.linesOfTextAbove);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    auto modules = unsafeMakeSpan(context.tables.at<PiecesOfModule>(texts[0].modulesWithPiecesOffset), texts[0].numberOfModulesWithPieces + 1);
+    for (size_t index = 0; index + 1 < modules.size(); ++index) {
+        const uint8_t* cursor = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index].start;
+        const uint8_t* end = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index + 1].start;
+        uint64_t endOfLastPiece = 0;
+        uint64_t line = 0;
+        uint64_t cut = 0;
+        while (cursor < end) {
+            uint64_t head = readVarint(cursor);
+            if (head & 1) {
+                cut = endOfLastPiece + zigZagDecode(head >> 1);
+                endOfLastPiece = cut + readVarint(cursor);
+                line += readVarint(cursor);
+                context.out.println("piece m", modules[index].module, " ", cut, "..", endOfLastPiece, " line=", line, " column=", readVarint(cursor));
+                continue;
+            }
+            cut += head >> 1;
+            uint64_t columns = readVarint(cursor);
+            context.out.println("cut ", cut, " lines=", columns & 1 ? readVarint(cursor) : 0, " columns=", columns >> 1);
+        }
+    }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 static void printModuleRecords(const TablesContext& context)
@@ -737,6 +778,10 @@ static void printModules(const TablesContext& context)
     for (const ExportStatementData& statement : tables.exportStatements())
         RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString());
     for (const ModuleFailureData& failure : tables.moduleFailures()) {
+        if (failure.isLoadOfModule()) {
+            RecordLine(context, "loadFailure"_s).field("module"_s, failure.importerModule()).field("failure"_s, failure.failureOfLoad().index());
+            continue;
+        }
         if (failure.isAskedByExportStatement()) {
             RecordLine(context, "failure"_s).field("exportSpecifier"_s, failure.exportSpecifierString()).field("exportName"_s, failure.specifierString());
             continue;
@@ -749,6 +794,13 @@ static void printModules(const TablesContext& context)
     for (const UncompiledModuleData& uncompiled : tables.modulesOfUncompiledCode()) {
         if (uncompiled.typeAttribute != UncompiledModuleData::noTypeAttribute)
             RecordLine(context, "typeAttribute"_s).field("module"_s, ModuleID(uncompiled.module)).field("type"_s, StringID(uncompiled.typeAttribute));
+    }
+    std::span<const ModuleWithNamedVariablesData> modulesWithNamedVariables = tables.modulesWithNamedVariables();
+    for (size_t index = 0; index + 1 < modulesWithNamedVariables.size(); ++index) {
+        uint32_t first = modulesWithNamedVariables[index].firstVariable;
+        for (const NamedVariableData& variable : tables.namedVariables().subspan(first, modulesWithNamedVariables[index + 1].firstVariable - first))
+            RecordLine(context, "namedVariable"_s).field("module"_s, ModuleID(modulesWithNamedVariables[index].module)).field("name"_s, variable.nameString())
+                .flag("isNarrow"_s, variable.place() == NamedVariableData::Place::NarrowWord).flag("isClosure"_s, variable.place() == NamedVariableData::Place::Closure);
     }
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
         RecordLine(context, "runtimeModule"_s).field("id"_s, RuntimeModuleID(runtimeModule.registryID)).field("module"_s, ModuleID(runtimeModule.module));

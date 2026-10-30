@@ -12,6 +12,7 @@
 #include "AOTCompactTable.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
+#include "AOTPendingStars.h"
 #include "DateInstance.h"
 #include "GetterSetter.h"
 #include "JSArrayBuffer.h"
@@ -175,6 +176,17 @@ static void captureFields(const Object& object, OperandSnapshot& state)
     }
 }
 
+// A photograph is no look: the stars go on waiting, as they do in a run that takes none.
+static void capturePendingStars(const Object& object, OperandSnapshot& state)
+{
+    state.hasPendingStars = true;
+    forEachKeyOfPendingStars(object.vm(), object, [&](UniquedStringImpl* key, unsigned attributes) {
+        state.hasTooManyProperties |= state.properties.size() >= maxCheckedProperties;
+        if (!state.hasTooManyProperties)
+            state.properties.append({ key, attributes, 0 });
+    });
+}
+
 template<typename Iterator>
 static void captureInternalFields(JSObject* object, OperandSnapshot& state)
 {
@@ -271,7 +283,9 @@ OperandSnapshot capture(JSObject* object)
     if (Object* compiled = compiledObjectOrNull(object)) {
         state.isExtensible = !compiled->isNotExtensible();
         captureFields(*compiled, state);
-        if (JSObject* extra = compiled->extraProperties())
+        if (hasPendingStars(*compiled))
+            capturePendingStars(*compiled, state);
+        else if (JSObject* extra = compiled->extraProperties())
             capturePropertiesAndElements(extra, state);
     } else {
         // The Structure of a class that overrides isExtensible() says no for every cell.
@@ -336,7 +350,7 @@ static void compareNamedProperties(VM& vm, const Object* compiled, const Operand
             // A value that native code makes at the first read and puts in the place of its getter is the same data property to a script.
             if (old.attributes != (current->attributes | PropertyAttribute::CustomValue))
                 differences.append(differenceAt(OperandChange::AttributesChanged, key, old.value != current->value ? current->value : 0));
-        } else if (old.value != current->value) {
+        } else if (old.value && old.value != current->value) {
             // A native accessor may store what it was given on the object under a private name.
             bool isKeptByNativeAccessor = before.createsPropertiesLazily && key->isSymbol() && static_cast<SymbolImpl*>(key)->isPrivate();
             if (!isKeptByNativeAccessor)
@@ -376,6 +390,9 @@ static void compareFields(VM& vm, const Object& object, const OperandSnapshot& b
 static void compareKeyOrder(const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
 {
     if (before.shapeWord != after.shapeWord || !((before.orderWord ^ after.orderWord) & orderAndCountMask))
+        return;
+    // Stars that are carried out list the fields whose names they bind.
+    if (before.hasPendingStars && !after.hasPendingStars)
         return;
     auto has = [&](OperandChange change) {
         return std::ranges::contains(differences, change, &OperandDifference::change);

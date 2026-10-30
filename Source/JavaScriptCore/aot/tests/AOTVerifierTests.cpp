@@ -303,7 +303,7 @@ void testFlagNotDeclared()
         copy.edit(v2).flags = 1;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
-        copy.edit(v9).flags = 1 << 2;
+        copy.edit(v9).flags = 1 << 3;
     });
     expectFailure(Kind::FlagNotDeclared, [](Typed::Function& copy) {
         copy.edit(b0).terminator.flags = 1;

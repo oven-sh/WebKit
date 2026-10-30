@@ -837,7 +837,7 @@ void CallGraph::Adjacency::addInverseOfLongLists(Adjacency& result) const
     });
 
     result.longListOf.fill(0, count);
-    UncheckedKeyHashMap<unsigned, Vector<std::pair<uint32_t, uint32_t>, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> sourcesOfSameLists;
+    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> sourcesOfSameLists;
     Vector<FunctionID> sources;
     for (unsigned target = 0; target < count; ++target) {
         std::span<const uint32_t> lists = entriesOfGroup(firstListOfTarget, listsOfTargets, target);
@@ -1037,7 +1037,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     CallGraph graph;
     if (someFunctionHasLongList.load(std::memory_order_relaxed)) {
         graph.m_callees.longListOf.fill(0, count);
-        UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> functionsWithList;
+        UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> functionsWithList;
         Vector<FunctionID> list;
         for (unsigned index = 0; index < count; ++index) {
             if (!hasLongList[index])

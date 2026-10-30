@@ -57,6 +57,8 @@ struct CallOptions {
     bool hasLandingOfMisfit { false };
     // Whatever the callee writes, no cell that exists has another header, butterfly or closure word behind it.
     bool convertsNoCells { false };
+    // The caller is suspended as soon as the callee returns, so it has read what it keeps in its saved registers for the last time.
+    bool callerSuspendsAtReturn { false };
 };
 
 struct StubCallResult {

@@ -42,7 +42,9 @@ static std::optional<Opcode> lookupOpcodeFor(InlineBuiltin builtin)
 
 static bool isKeyPart(const Type& type)
 {
-    return type.isAnyString() || type.isInt32();
+    if (type.isNever() || type.isUndefinedOrNull())
+        return false;
+    return type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Integer | Primitive::UndefinedOrNull) && type.integers.isSubsetOf(Range::int32());
 }
 
 static std::optional<KeyPartsMatch> findKeyPartsLookup(SelectionContext& context, ValueID id)

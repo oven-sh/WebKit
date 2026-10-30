@@ -11,18 +11,22 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImage.h"
+#include "AOTPropertyWalk.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTThreshold.h"
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/text/StringHasherInlines.h>
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/SymbolRegistry.h>
 
@@ -302,6 +306,37 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
     return static_cast<AtomStringImpl*>(image.text().identifierAtoms() + *number);
 #endif
 }
+
+AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1Character> characters)
+{
+    if (characters.empty() || characters.size() > String::MaxLength)
+        return nullptr;
+    static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_recentNativeTexts)>));
+    NativeText& recent = m_recentNativeTexts[std::bit_cast<uintptr_t>(characters.data()) * 0x9e3779b97f4a7c15ull >> (64 - std::countr_zero(m_recentNativeTexts.size()))];
+    if (recent.characters == characters.data() && recent.length == characters.size()) [[likely]] {
+        // The address may hold other characters by now. Whoever gets null asks the atom table, which is right whatever stands here.
+        if (!recent.atom)
+            return nullptr;
+        if (WTF::equal(recent.atom->span8().data(), characters)) [[likely]]
+            return recent.atom;
+    }
+    countNativeTextHashed(m_vm);
+    AtomStringImpl* atom = findAtom(StringView(characters), StringHasher::computeHashAndMaskTop8Bits(characters));
+    if (atom && !atom->is8Bit())
+        atom = nullptr;
+    recent = { characters.data(), characters.size(), atom };
+    return atom;
+}
+
+namespace PropertyWalk {
+
+UniquedStringImpl* tryFindName(VM& vm, std::span<const Latin1Character> characters)
+{
+    ProgramIdentifiers* identifiers = vm.aotState().identifiers.get();
+    return identifiers ? identifiers->findAtomOfNativeText(characters) : nullptr;
+}
+
+} // namespace PropertyWalk
 
 String ProgramIdentifiers::textOf(const Image& image, uint32_t number)
 {

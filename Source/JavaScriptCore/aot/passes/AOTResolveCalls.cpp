@@ -25,6 +25,7 @@
 #include "AOTFlowPrototypes.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
 #include "AOTInlineCopy.h"
 #include "AOTLayout.h"
@@ -42,6 +43,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTWrittenFunction.h"
+#include "Interpreter.h"
 #include <algorithm>
 #include <array>
 #include <expected>
@@ -150,10 +152,9 @@ static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& co
     return closures;
 }
 
-// `table[type]` in a copy of a function whose caller spells the type.
-static PropertyKeyID keyThatCalleeWasReadUnder(FunctionPassContext& context, ValueID callee)
+static PropertyKeyID keyOfRead(FunctionPassContext& context, ValueID value)
 {
-    const Value& read = context.function.at(context.analyses.identityOf(callee));
+    const Value& read = context.function.at(context.analyses.identityOf(value));
     if (read.opcode == Opcode::PropGet && !read.isFreeName())
         return read.key();
     if (read.opcode != Opcode::ElemGet)
@@ -163,6 +164,29 @@ static PropertyKeyID keyThatCalleeWasReadUnder(FunctionPassContext& context, Val
         return key.symbol;
     // Flow has made a key of every text that it has followed.
     return context.program.types.find({ .kind = PropertyKeyKind::Text, .text = key.text }).value_or(PropertyKeyID());
+}
+
+// `table[type]` in a copy of a function whose caller spells the type. Where the table itself is found on a likely and on a rare way, each way has a read of its own, and they meet in front of the call.
+static PropertyKeyID keyThatCalleeWasReadUnder(FunctionPassContext& context, ValueID callee)
+{
+    const Function& function = context.function;
+    ValueID joined = context.analyses.identityOf(callee);
+    if (function.at(joined).opcode != Opcode::Parameter)
+        return keyOfRead(context, joined);
+    ValueLocation location = context.analyses.useLists().locationOf(joined);
+    if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+        return { };
+    PropertyKeyID key;
+    for (Edge edge : context.analyses.cfg().incomingEdges(location.block)) {
+        const Target& target = targetOf(function, edge);
+        if (edge.isHandlerEdge() || location.index >= target.arguments.size())
+            return { };
+        PropertyKeyID keyOnThisWay = keyOfRead(context, target.arguments[location.index]);
+        if (!keyOnThisWay || (key && key != keyOnThisWay))
+            return { };
+        key = keyOnThisWay;
+    }
+    return key;
 }
 
 // Also expects the bound function where flow saw the result of one kind of bind reach the call.
@@ -774,6 +798,24 @@ static LayoutID findClassAllocatedBySuperCall(const Program& program, LayoutID h
     return allocatedBelow.size() == 1 ? allocatedBelow[0] : LayoutID();
 }
 
+static Type classObjectsAllocatedAtOrBelow(const Program& program, LayoutID holder)
+{
+    Type classObjects;
+    auto add = [&](LayoutID allocated) {
+        if (FunctionID constructor = program.at(declaredLayoutOf(program, allocated)).constructor)
+            classObjects.functions.add(constructor);
+    };
+    if (program.at(holder).flow.allocation != AllocationState::NeverAllocated)
+        add(holder);
+    std::ranges::for_each(program.layoutsBelow(holder), add);
+    return classObjects;
+}
+
+static bool countsItsArguments(const Function& function)
+{
+    return function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
+}
+
 static uint32_t constructorOperandIndexOf(Opcode construct)
 {
     return construct == Opcode::Construct ? *OperandPosition::callee(construct) : *OperandPosition::parent(construct);
@@ -1306,7 +1348,47 @@ static bool isGenericSpread(const Program& program, const Value& value, uint32_t
     return isOutlinedIteration(callee) && callee.derivation.node == static_cast<uint32_t>(OutlinedIteration::AppendIterable);
 }
 
+bool isCallWithSharedArms(const Function& function)
+{
+    return function.role == FunctionRole::OutlinedBody && kindOfOutlinedBody(function.derivation.node) == OutlinedIteration::CallWithSharedArms;
+}
+
 namespace {
+
+// What tells one function with shared arms from another: the functions that the value it calls may be, and how the places that call it pass `this` and the arguments.
+struct SharedArms {
+    // No convention has more registers for numbers. An argument behind these is passed as any value.
+    static constexpr unsigned numberOfArgumentsPassedAsNumbers = 8;
+    static constexpr unsigned passesThisShift = 8;
+    static constexpr unsigned namesCalleeSetShift = 9;
+    static constexpr unsigned numbersShift = 10;
+    static constexpr unsigned numberOfArgumentsShift = numbersShift + numberOfArgumentsPassedAsNumbers;
+    static constexpr uint32_t maxNumberOfArguments = (1u << (32 - numberOfArgumentsShift)) - 1;
+
+    DerivedFunctionKey key() const
+    {
+        uint32_t node = static_cast<uint32_t>(OutlinedIteration::CallWithSharedArms) | static_cast<uint32_t>(passesThis) << passesThisShift | static_cast<uint32_t>(namesCalleeSet) << namesCalleeSetShift
+            | static_cast<uint32_t>(numbers) << numbersShift | numberOfArguments << numberOfArgumentsShift;
+        return { .role = FunctionRole::OutlinedBody, .target = FunctionID(), .parameter = list, .node = node };
+    }
+    static SharedArms decode(const DerivedFunctionKey& key)
+    {
+        RELEASE_ASSERT(kindOfOutlinedBody(key.node) == OutlinedIteration::CallWithSharedArms);
+        return { key.parameter, !!(key.node >> namesCalleeSetShift & 1), key.node >> numberOfArgumentsShift, !!(key.node >> passesThisShift & 1), static_cast<uint8_t>(key.node >> numbersShift) };
+    }
+    std::span<const FunctionID> functions(const Program& program) const LIFETIME_BOUND
+    {
+        return namesCalleeSet ? program.at(CalleeSetID(list)).written().functions : program.at(TypeID(list)).functions.span();
+    }
+
+    // A record of the program that lists the functions: a type, or a callee set.
+    uint32_t list { 0 };
+    bool namesCalleeSet { false };
+    uint32_t numberOfArguments { 0 };
+    bool passesThis { false };
+    // Bit i: argument i is a number.
+    uint8_t numbers { 0 };
+};
 
 struct CallSite {
     ValueSite position;
@@ -1332,6 +1414,7 @@ struct ConstructArm {
     CallArm call;
     LayoutID allocatedClass;
     bool readsConstructPrototype { false };
+    TypeID testedNewTarget;
 };
 
 struct SpreadOfRest {
@@ -1712,6 +1795,9 @@ struct CallResolver {
     bool seldomRuns(const CallSite& site)
     {
         context.planAsksAboutPlace = true;
+        // It is made for places that run often, and nobody has estimated yet how often it is entered.
+        if (isCallWithSharedArms(function))
+            return false;
         BlockID block = site.position.block;
         return function.at(block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)).predicted();
     }
@@ -1967,6 +2053,35 @@ struct CallResolver {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    bool isUsedByCastsAlone(ValueID read) const
+    {
+        const UseLists& uses = context.analyses.useLists();
+        Vector<ValueID, 4> worklist { read };
+        while (!worklist.isEmpty()) {
+            for (const Use& use : uses.usesOf(worklist.takeLast())) {
+                if (use.kind != Use::Kind::Operand || use.operandIndex || !isCast(function.at(use.user).opcode))
+                    return false;
+                worklist.append(use.user);
+            }
+        }
+        return true;
+    }
+
+    // `super.method()` where the method does nothing that shows: the call goes as soon as its callee and its result are known, and leaves the read of the method behind.
+    Plan planReadOfMethodThatNobodyTakes(const CallSite& site, const MemberAnswer& answer)
+    {
+        if (site.opcode != Opcode::SuperGet || answer.kind != MemberKind::Method || !canCallWithoutClosure(program, answer.method) || !isUsedByCastsAlone(site.position.value))
+            return declined;
+        return [this, &site, method = answer.method, conditions = answer.conditions] {
+            expansion.begin(site.position);
+            branchOnConditions(conditions.span(), { });
+            Value closure = IRBuilder::make(Opcode::NewClosure);
+            closure.setFunction(method);
+            expansion.finishArm(expansion.append(WTF::move(closure)));
+            expansion.end();
+        };
+    }
+
     Plan planHolderMember(const CallSite& site, const MemberAnswer& answer, ValueID thisValue)
     {
         if (!answer.isKnown())
@@ -1976,7 +2091,7 @@ struct CallResolver {
 
         std::optional<FunctionID> entered = findFunctionEnteredFor(site.opcode, answer);
         if (!entered)
-            return declined;
+            return planReadOfMethodThatNobodyTakes(site, answer);
         FunctionID callee = *entered;
         bool isCall = site.opcode == Opcode::Call;
         bool isStore = site.opcode == Opcode::PropSet || site.opcode == Opcode::SuperSet;
@@ -2118,6 +2233,23 @@ struct CallResolver {
         return std::ranges::any_of(callee.results, isNumberInRegister) || std::ranges::any_of(callee.parameters, isNumberInRegister);
     }
 
+    // Proven or only expected: a number that is only expected is passed as any value.
+    bool takesOrReturnsNumbers(FunctionID id) const
+    {
+        auto isNumber = [&](const DeclaredType& declared) {
+            Type type = program.at(declared.written()).withoutNullish();
+            return !type.isNever() && type.isSubsetOf(program.at(TypeTable::number), program);
+        };
+        const Function& callee = program.at(id);
+        return std::ranges::any_of(callee.results, isNumber) || std::ranges::any_of(callee.parameters, isNumber);
+    }
+
+    uint64_t mostArmsWhereNumbersStayInRegisters() const
+    {
+        AOT_THRESHOLD(uint64_t, armFactorWhenNumbersStayInRegisters, 2);
+        return context.limit(LimitID::MaxDispatchCases) * armFactorWhenNumbersStayInRegisters;
+    }
+
     std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID), uint64_t maxExpectedCallees = 1)
     {
         if (!candidates.isDispatchedAtOperation())
@@ -2136,12 +2268,16 @@ struct CallResolver {
 
         // Callees get an arm each or none: arms for some of them would be chosen by id, and the next run would take as many from the rest.
         // An indirect call boxes each number it passes, the callee's entry unboxes it, and the same happens for the result. A few more comparisons cost less than that.
-        AOT_THRESHOLD(uint64_t, armFactorWhenNumbersStayInRegisters, 2);
+        // The function that has the arms for all places has one for each callee.
+        bool hasArmsForAllPlaces = isCallWithSharedArms(function);
         // One member more than any limit below allows decides the answer. Many call sites may list the same thousands of callees.
-        uint64_t mostMembersWithArms = std::max<uint64_t>({ 1, maxExpectedCallees, context.limit(LimitID::MaxDispatchCases) * armFactorWhenNumbersStayInRegisters });
+        uint64_t mostMembersWithArms = hasArmsForAllPlaces ? std::numeric_limits<uint64_t>::max() : std::max<uint64_t>({ 1, maxExpectedCallees, mostArmsWhereNumbersStayInRegisters() });
         Vector<FunctionID, 4> members;
         for (FunctionID member : candidates.listed().predicted()) {
             if (!canEnter(program, member))
+                continue;
+            // Many arms cost no more than few where each tests one word for a constant. A closure that is not slim takes more to tell: it is called as a value behind the arms.
+            if (hasArmsForAllPlaces && closureFormOf(program, flow, member) != ClosureForm::Slim)
                 continue;
             members.append(member);
             if (members.size() > mostMembersWithArms)
@@ -2151,8 +2287,8 @@ struct CallResolver {
             return std::unexpected(CallDeclineReason::CalleeNotCallable);
         // What exceeds a limit is reported, site by site.
         context.planAsksAboutPlace |= listsEveryCallee || members.size() <= 1;
-        bool isWithinWiderLimit = listsEveryCallee && members.size() <= context.limit(LimitID::MaxDispatchCases) * armFactorWhenNumbersStayInRegisters && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); });
-        if ((!listsEveryCallee && members.size() > maxExpectedCallees) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
+        bool isWithinWiderLimit = hasArmsForAllPlaces || (listsEveryCallee && members.size() <= mostArmsWhereNumbersStayInRegisters() && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); }));
+        if ((!listsEveryCallee && !hasArmsForAllPlaces && members.size() > maxExpectedCallees) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
             return std::unexpected(CallDeclineReason::TooManyCallees);
         // The value of a provisional id depends on which thread asked for the function first.
         AOT::sort(members, [&](FunctionID a, FunctionID b) { return context.inputs.derivedFunctions->compare(a, b) < 0; });
@@ -2200,7 +2336,13 @@ struct CallResolver {
                 names.someRecordsCalleeOnlyOnceRenamed |= recordsCalleeOnlyOnceRenamed(member);
                 names.someIsCalledDirectlyWhileNamesAreUnchanged |= whileNamesAreUnchanged;
                 names.someIsCalledDirectlyOnlyWhileNamesAreUnchanged |= whileNamesAreUnchanged && !mayBeCalledDirectly(program, member);
+                // A function without a body is one that nothing enters.
+                if (!program.at(member).hasBody())
+                    continue;
+                names.allTakeOrReturnNumbersInDirectCalls &= mayBeCalledDirectlyWhereCalleeIsKept(program, member) && takesOrReturnsNumbers(member);
+                names.somePassesNumbersInRegisters |= passesNumbersInRegisters(member) && closureFormOf(program, flow, member) == ClosureForm::Slim;
             }
+            names.allComeBack = names.allTakeOrReturnNumbersInDirectCalls && names.somePassesNumbersInRegisters && std::ranges::all_of(listed, [&](FunctionID member) { return !program.at(member).hasBody() || comesBack(member); });
             return names;
         };
         AOT_THRESHOLD(size_t, fewestCalleesAskedOnce, 16);
@@ -2217,9 +2359,73 @@ struct CallResolver {
         if (cache->checksAnswers) {
             Names fresh = ask();
             RELEASE_ASSERT(known->someRecordsCalleeOnlyOnceRenamed == fresh.someRecordsCalleeOnlyOnceRenamed && known->someIsCalledDirectlyWhileNamesAreUnchanged == fresh.someIsCalledDirectlyWhileNamesAreUnchanged
-                && known->someIsCalledDirectlyOnlyWhileNamesAreUnchanged == fresh.someIsCalledDirectlyOnlyWhileNamesAreUnchanged);
+                && known->someIsCalledDirectlyOnlyWhileNamesAreUnchanged == fresh.someIsCalledDirectlyOnlyWhileNamesAreUnchanged && known->allTakeOrReturnNumbersInDirectCalls == fresh.allTakeOrReturnNumbersInDirectCalls
+                && known->somePassesNumbersInRegisters == fresh.somePassesNumbersInRegisters && known->allComeBack == fresh.allComeBack);
         }
         return *known;
+    }
+
+    // The type lists more callees than a place gets arms for. Each of them takes or returns a number, and some of them in a register: a call of the value would box every number on the way there and back.
+    // One function has the arms, for all the places that call one of these functions: a place calls that function, with the numbers in registers. The arms test one word for constants, which makes a jump table.
+    Plan planCallWithSharedArms(const CallSite& site, const CalleeCandidates& candidates)
+    {
+        const Value& call = function.at(site.position.value);
+        if (!candidates.all() || candidates.listed().predicted().size() <= mostArmsWhereNumbersStayInRegisters() || isCallWithSharedArms(function))
+            return declined;
+        std::span<const ValueID> arguments = call.argumentsOperands();
+        // The word of a closure names its function where the program runs once.
+        if (call.calledBuiltin() || arguments.size() > SharedArms::maxNumberOfArguments || flow.programInstances() != ProgramInstances::AtMostOne)
+            return declined;
+        // The function is found under a record of the program that lists the callees: a type that this pass has made means nothing to another function.
+        SharedArms arms { 0, false, static_cast<uint32_t>(arguments.size()), !!call.thisValueOperand(), 0 };
+        TypeID functions = context.types.intern(typeOf(candidates.value).withoutNullish());
+        if (!TypeTable::isProvisional(functions))
+            arms.list = functions.index();
+        else if (TypeID type = function.at(candidates.value).type; !TypeTable::isProvisional(type))
+            arms.list = type.index();
+        else if (call.callees() && !TypeTable::isProvisional(call.callees()) && std::ranges::equal(program.at(call.callees()).written().functions, candidates.listed().predicted())) {
+            arms.list = call.callees().index();
+            arms.namesCalleeSet = true;
+        } else
+            return declined;
+        PropertyAccessCache::NamesOfCallees names = namesOfCallees(candidates);
+        if (!names.allTakeOrReturnNumbersInDirectCalls || !names.somePassesNumbersInRegisters || seldomRuns(site))
+            return declined;
+        // The shared function returns from its call of the value.
+        bool hasToComeBack = isTailCall(function, site.position) && function.at(site.position.block).terminator.requirement() == TailCallRequirement::Required;
+        if (hasToComeBack && !names.allComeBack)
+            return declined;
+
+        for (size_t index = 0; index < std::min<size_t>(arguments.size(), SharedArms::numberOfArgumentsPassedAsNumbers); ++index) {
+            if (typeOf(arguments[index]).isSubsetOf(program.at(TypeTable::number), program))
+                arms.numbers |= 1u << index;
+        }
+        // The call of undefined or null throws where it stands. The test is for those two: what a test for the functions leaves of the type takes a look at each pair of them.
+        Expected<BlockFrequency> frequency = function.at(site.position.block).frequency;
+        ValueSplit split { .value = candidates.value, .arms = { }, .hasRest = true, .restFrequency = frequency };
+        split.arms.append(SplitArm { TypeTable::nullish, rarerOf(frequency, BlockFrequency::Rare) });
+        return [this, &site, proof = candidates.proof(), mayBeNullish = candidates.mayBeNullish, split = WTF::move(split), shared = context.derivedFunction(arms.key())] {
+            expansion.begin(site.position);
+            const Value& original = expansion.original();
+            if (proof == CalleeProof::Type)
+                appendCalleeValidation(builder, split.value);
+            auto callSharedArms = [&](ValueID closure) {
+                Vector<ValueID, 8> passed { closure };
+                if (original.thisValueOperand())
+                    passed.append(original.thisValueOperand());
+                passed.append(original.argumentsOperands());
+                expansion.finishArm(appendDirectCall(builder, { .callee = shared, .arguments = passed.span(), .accessSite = original.accessSite(), .isNeverInlined = true, .isTailCall = expansion.isTailCall() || original.isTailCall }));
+            };
+            if (mayBeNullish) {
+                emitSplit(expansion, split, [&](uint32_t, ValueID nullish) {
+                    expansion.finishArm(expansion.appendOriginal({ OperandIndex::Call::callee, nullish }));
+                }, [&](ValueID closure) {
+                    callSharedArms(closure);
+                });
+            } else
+                callSharedArms(split.value);
+            expansion.end();
+        };
     }
 
     Plan planCalleeDispatch(const CallSite& site)
@@ -2227,6 +2433,8 @@ struct CallResolver {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
+        if (Plan shared = planCallWithSharedArms(site, candidates))
+            return shared;
         // Once a function object gets a name where the compiler cannot see it, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
         if (!isTailCall(function, site.position) && !call.isTailCall) {
             auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhereCalleeIsKept);
@@ -2503,8 +2711,17 @@ struct CallResolver {
         if (!allocatesOwnThis(program.at(member))) {
             if (!(isSuperCall ? construct.layout() : constructed))
                 return std::unexpected(CallDeclineReason::CalleeNotCallable);
-            if (!isOwnNewTarget && !(isSuperCall && isAlwaysClassAtOrBelow(program, typeOf(newTarget), construct.layout())))
+            if (!isOwnNewTarget && !isSuperCall)
                 return declined;
+            if (isSuperCall && !isAlwaysClassAtOrBelow(program, typeOf(newTarget), construct.layout())) {
+                Type classObjects = classObjectsAllocatedAtOrBelow(program, construct.layout());
+                if (!typeOf(newTarget).overlaps(classObjects, program) || classObjects.functions.size() > context.limit(LimitID::MaxDispatchCases) || !isAlwaysClassAtOrBelow(program, classObjects, construct.layout()))
+                    return declined;
+                arm.testedNewTarget = context.types.intern(classObjects);
+                context.planAsksAboutPlace = true;
+                if (!isHot(heatClassOf(context, site.position.block)).predicted() || hasFailedEarlier(makeTypeTest(newTarget, arm.testedNewTarget), site))
+                    return declined;
+            }
             arm.allocatedClass = isSuperCall ? findClassAllocatedBySuperCall(program, construct.layout()) : constructed;
             // Flow may have seen a function arrive here that it follows no construction to. The run time makes the objects of a layout that has none.
             if (!arm.allocatedClass || program.at(arm.allocatedClass).flow.allocation == AllocationState::NeverAllocated)
@@ -2521,6 +2738,20 @@ struct CallResolver {
     {
         const Value& original = expansion.original();
         ValueID newTarget = original.newTargetOperand() ? original.newTargetOperand() : closure;
+        if (!arm.testedNewTarget)
+            return emitConstructArm(arm, closure, newTarget, arguments);
+
+        Expected<BlockFrequency> frequency = expansion.frequency();
+        ValueSplit split { .value = newTarget, .arms = { SplitArm { arm.testedNewTarget, frequency } }, .hasRest = true, .restFrequency = rarerOf(frequency, BlockFrequency::Unlikely) };
+        emitSplit(expansion, split, [&](uint32_t, ValueID classObject) {
+            emitConstructArm(arm, closure, classObject, arguments);
+        }, [&](ValueID) {
+            expansion.finishArm(expansion.appendOriginal({ constructorOperandIndexOf(original.opcode), closure }));
+        });
+    }
+
+    void emitConstructArm(const ConstructArm& arm, ValueID closure, ValueID newTarget, std::span<const ValueID> arguments)
+    {
         ValueID thisValue = arm.allocatedClass ? appendThis(builder, arm.allocatedClass, arm.readsConstructPrototype ? newTarget : ValueID()) : ValueID();
         ValueID returned = appendCallOfArm(arm.call, thisValue, closure, arguments, newTarget);
 
@@ -3047,7 +3278,7 @@ struct CallResolver {
         unsigned numberOfArguments = 0;
         if (areCalleesKnown) {
             for (FunctionID id : all->value()) {
-                if (program.at(id).hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }))
+                if (countsItsArguments(program.at(id)))
                     return declined;
                 numberOfArguments = std::max(numberOfArguments, program.at(id).numberOfPositionalParameters());
             }
@@ -3055,7 +3286,7 @@ struct CallResolver {
             return declined;
 
         // Where the callees are not known, only a report reads the answer.
-        if (!isProvenPristine(call.listOperand(), pristineArray, site))
+        if (!isProvenPristine(call.listOperand(), pristineArray, site) && !(site.opcode == Opcode::SuperConstructList && hasPassedPristineTestInFrontOf(site.position, call.listOperand(), pristineArray)))
             return declined;
         if (!areCalleesKnown)
             return std::unexpected(CallDeclineReason::UnknownCallee);
@@ -3414,8 +3645,42 @@ struct CallResolver {
         if (read.opcode != Opcode::PropGet || read.key() != call.calleeKey() || read.isFreeName() || classOfClassObject(program, typeOf(read.objectOperand())))
             return std::nullopt;
         ReceiverCandidates candidates = receiverCandidates(program, function, read.objectOperand(), { });
+        if (candidates.proof == ReceiverProof::Unknown)
+            return findReceiversByNameOfMethod(position, read);
         if (candidates.proof != ReceiverProof::Type || candidates.hasOtherParts || candidates.proven.size() > context.limit(LimitID::MaxAccessPlanMembers))
             return std::nullopt;
+        return candidates;
+    }
+
+    // `emitter.on(name, listener)` in a loop, and nothing says what `emitter` is. One test tells the objects that find a method of the program under the name from everything else.
+    std::optional<ReceiverCandidates> findReceiversByNameOfMethod(const ValueSite& position, const Value& read) const
+    {
+        PropertyKeyID key = read.key();
+        if (!typeOf(read.objectOperand()).anyObject || program.at(key).kind != PropertyKeyKind::Text || program.layoutsWithName(key).empty())
+            return std::nullopt;
+        if (function.at(position.block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest())
+            return std::nullopt;
+        // The test and the second way to call are paid for once, in bytes. In a loop that runs often the lookup is paid for at every turn.
+        if (!isHot(heatClassByOwnLoops(context, position.block)).predicted() || !isHot(heatClassOf(context, position.block)).predicted())
+            return std::nullopt;
+        // `list.push(x)`, `text.slice(1)`: the receiver is likelier to be what the language makes.
+        if (BuiltinMemberName name = builtinMemberNameOf(program, key)) {
+            for (const MemberOfClasses& method : methodsNamed(program, name.name)) {
+                if (program.builtins().at(method.member).origin != BuiltinOrigin::Host)
+                    return std::nullopt;
+            }
+        }
+        size_t maxLayouts = context.limit(LimitID::MaxAccessPlanMembers);
+        ReceiverCandidates candidates = receiverCandidates(program, function, read.objectOperand(), read.receivers());
+        if (candidates.proof != ReceiverProof::Unknown)
+            return std::nullopt;
+        // What was seen to arrive need not be all that arrives: the test costs the same for every object that finds something under the name.
+        LayoutList layouts = allocatedLayoutsWith(program, singleElementSpan(key), maxLayouts);
+        for (LayoutID layout : candidates.expected.predicted())
+            layouts.add(layout);
+        if (layouts.isEmpty() || layouts.size() > maxLayouts)
+            return std::nullopt;
+        candidates.expected = WTF::move(layouts);
         return candidates;
     }
 
@@ -3443,9 +3708,16 @@ struct CallResolver {
     Plan planTableCall(const CallSite& site)
     {
         const Value* read = site.opcode == Opcode::Call ? findMethodRead(site, Opcode::PropGet) : nullptr;
-        std::optional<ReceiverCandidates> candidates = read && site.memberRead.canSinkToCall ? findReceiversOfTableCall(site.position) : std::nullopt;
+        std::optional<ReceiverCandidates> candidates = read ? findReceiversOfTableCall(site.position) : std::nullopt;
         if (!candidates)
             return declined;
+        bool isGuess = candidates->proof == ReceiverProof::Unknown;
+        bool sinksRead = site.memberRead.canSinkToCall;
+        if (!sinksRead && (!isGuess || !findsSameMethodAtCall(site)))
+            return declined;
+        if (isGuess && isTailCall(function, site.position))
+            return declined;
+        std::span<const LayoutID> layoutsOfReceiver = isGuess ? candidates->expected.predicted().span() : candidates->proven.span();
 
         const Value& call = function.at(site.position.value);
         MethodSelector selector { read->key(), static_cast<uint32_t>(call.argumentsOperands().size()), ArgumentForm::Typed };
@@ -3458,9 +3730,12 @@ struct CallResolver {
         if (selector.form == ArgumentForm::Boxed)
             parameters = parameterTypesOf(program, context.types, selector);
 
+        // The receivers of a method that flow has seen arrive at the call are told from the others: their call is direct, and can be inlined.
+        Vector<LayoutSetID, 2> receiversOfMethodsSeen;
+        std::span<const FunctionID> functionsSeen = isGuess && call.callees() ? program.at(call.callees()).seen().predicted().functions : std::span<const FunctionID>();
         using Targets = PropertyAccessCache::TableCallTargets;
         auto findTargets = [&] {
-            MemberPartition partition = partitionMembers(accessContext(), candidates->proven.span(), selector.key, Access::Read);
+            MemberPartition partition = partitionMembers(accessContext(), layoutsOfReceiver, selector.key, Access::Read);
             Targets targets;
             // The layouts of the family that find something else under the name than a method that the table can enter: a field, an accessor, nothing.
             targets.otherLayouts = LayoutList(partition.rest.span());
@@ -3469,6 +3744,11 @@ struct CallResolver {
                 const MemberAnswer& answer = arm.answer;
                 bool isEnteredThroughTable = answer.kind == MemberKind::Method && answer.receiverProofs.isEmpty() && canRetireMemberRead(site, answer.method)
                     && canHaveTableEntrypoint(program, context.types, answer.method, parameters.span());
+                if (answer.kind == MemberKind::Method && answer.receiverProofs.isEmpty() && std::ranges::contains(functionsSeen, answer.method) && canRetireMemberRead(site, answer.method)
+                    && receiversOfMethodsSeen.size() + 1 < context.limit(LimitID::MaxDispatchCases) && std::ranges::none_of(arm.layouts, [&](LayoutID layout) { return !!builtinBaseClassOf(program, layout); })) {
+                    receiversOfMethodsSeen.append(context.types.completeLayoutSet(arm.layouts.span()));
+                    continue;
+                }
                 // A method that only objects of classes below a built-in class find is entered by no receiver of the table.
                 bool hasReceiverOfTable = false;
                 for (LayoutID layout : arm.layouts) {
@@ -3490,7 +3770,7 @@ struct CallResolver {
         PropertyAccessCache* cache = program.propertyAccessCache();
         auto typesOfMemberRead = site.memberRead.links.map<Vector<TypeID, 2>>([&](const ValueSite& link) { return function.at(link.value).type; });
         bool namesOnlyRecordsOfProgram = !TypeTable::isProvisional(selector.key) && !std::ranges::any_of(typesOfMemberRead, [](TypeID type) { return TypeTable::isProvisional(type); });
-        if (cache && namesOnlyRecordsOfProgram && candidates->proven.size() >= PropertyAccessCache::fewestLayouts) {
+        if (cache && !isGuess && namesOnlyRecordsOfProgram && candidates->proven.size() >= PropertyAccessCache::fewestLayouts) {
             PropertyAccessCache::TableCallKey key { cache->lists.idOf(candidates->proven.span()), selector.key, selector.numberOfArguments, selector.form == ArgumentForm::Typed, WTF::move(typesOfMemberRead), &flow };
             Hasher hasher;
             add(hasher, key.receivers, key.key, key.numberOfArguments, key.passesTypedArguments, key.flow);
@@ -3504,7 +3784,9 @@ struct CallResolver {
             found = &ownTargets.emplace(findTargets());
         const Targets& targets = *found;
         // One method: a test of one bit in front of a direct call, which can be inlined, costs less than the load of an entry and an indirect call.
-        if (targets.methods.size() < 2 || (!targets.hasConditions && targets.numberOfArms <= context.limit(LimitID::MaxDispatchCases)))
+        bool paysToGoThroughTable = targets.methods.size() >= 2 && (targets.hasConditions || targets.numberOfArms > context.limit(LimitID::MaxDispatchCases));
+        // A name with one method is left to PlaceTypeTests, which guesses the receiver from the name and whose test serves what else is asked of it.
+        if (isGuess ? targets.layoutsOfTable.isEmpty() || targets.methods.size() + receiversOfMethodsSeen.size() < 2 : !paysToGoThroughTable)
             return declined;
         if (isTailCall(function, site.position)) {
             // Once a method is replaced the table enters the lookup, which keeps a frame while it calls what the receiver has under the name.
@@ -3516,20 +3798,24 @@ struct CallResolver {
         }
 
         LayoutSetID receivers = context.types.completeLayoutSet(targets.layoutsOfTable.span());
-        LayoutSetID otherReceivers = targets.otherLayouts.isEmpty() ? LayoutSetID() : context.types.completeLayoutSet(targets.otherLayouts.span());
-        bool checksReceiverAtRead = candidates->mayBeNullish;
+        LayoutSetID otherReceivers = targets.otherLayouts.isEmpty() || isGuess ? LayoutSetID() : context.types.completeLayoutSet(targets.otherLayouts.span());
+        // Undefined and null pass no test: they throw at the read of the arm that stays by name, as before.
+        bool checksReceiverAtRead = candidates->mayBeNullish && !isGuess;
         ValueID receiver = checksReceiverAtRead ? site.memberRead.read().value : read->objectOperand();
 
-        return [this, &site, selector, receiver, receivers, otherReceivers, checksReceiverAtRead, methods = targets.methods] {
+        return [this, &site, selector, receiver, receivers, otherReceivers, checksReceiverAtRead, isGuess, sinksRead, paysToGoThroughTable, methods = targets.methods, receiversOfMethodsSeen = WTF::move(receiversOfMethodsSeen)] {
             expansion.begin(site.position);
-            retireReads(site.memberRead, checksReceiverAtRead, selector.key);
+            if (sinksRead)
+                retireReads(site.memberRead, checksReceiverAtRead, selector.key);
+            else
+                expansion.setOperationsBeforeOriginal(site.memberRead.links.map<Vector<Value, 2>>([&](const ValueSite& link) { return function.at(link.value); }), OperandIndex::Call::callee);
 
-            FunctionID lookup = context.derivedFunction(tableLookupKey(selector));
-            // Many calls enter the same entrypoints, so a call names their set.
-            CalleeSet entered = CalleeSet::complete(methods.map<Vector<FunctionID>>([&](FunctionID method) { return context.derivedFunction(tableEntrypointKey(method, selector)); }), { });
-            canonicalize(entered);
-            CalleeSetID entrypoints = context.types.intern(WTF::move(entered));
             auto finishWithTableCall = [&](uint32_t, ValueID narrowed) {
+                FunctionID lookup = context.derivedFunction(tableLookupKey(selector));
+                // Many calls enter the same entrypoints, so a call names their set.
+                CalleeSet entered = CalleeSet::complete(methods.map<Vector<FunctionID>>([&](FunctionID method) { return context.derivedFunction(tableEntrypointKey(method, selector)); }), { });
+                canonicalize(entered);
+                CalleeSetID entrypoints = context.types.intern(WTF::move(entered));
                 const Value& original = expansion.original();
                 Vector<ValueID, 8> operands { narrowed };
                 operands.append(original.argumentsOperands());
@@ -3545,15 +3831,59 @@ struct CallResolver {
                 expansion.finishArm(expansion.append(WTF::move(tableCall)));
             };
 
-            if (otherReceivers) {
-                ValueSplit split { .value = receiver, .arms = { }, .hasRest = true, .restFrequency = expansion.frequency() };
+            if (otherReceivers || isGuess) {
+                ValueSplit split { .value = receiver, .arms = { }, .hasRest = true, .restFrequency = isGuess ? Expected<BlockFrequency>(BlockFrequency::Unlikely) : expansion.frequency() };
+                for (LayoutSetID receiversOfMethod : receiversOfMethodsSeen)
+                    split.arms.append(SplitArm { context.types.intern(Type::forLayoutSet(receiversOfMethod)), expansion.frequency() });
                 split.arms.append(SplitArm { context.types.intern(Type::forLayoutSet(receivers)), expansion.frequency() });
-                emitSplit(expansion, split, finishWithTableCall, [&](ValueID narrowed) { expansion.finishArm(expansion.appendOriginal({ OperandIndex::Call::thisValue, narrowed, otherReceivers, { } })); });
+                auto finishWithCallByName = [&](ValueID narrowed, LayoutSetID stamp) { expansion.finishArm(expansion.appendOriginal({ OperandIndex::Call::thisValue, narrowed, stamp, { } })); };
+                // ResolveCalls, which is next, knows what to make of a receiver that finds few methods.
+                emitSplit(expansion, split, [&](uint32_t index, ValueID narrowed) {
+                    if (index < receiversOfMethodsSeen.size())
+                        finishWithCallByName(narrowed, receiversOfMethodsSeen[index]);
+                    else if (paysToGoThroughTable)
+                        finishWithTableCall(index, narrowed);
+                    else
+                        finishWithCallByName(narrowed, receivers);
+                }, [&](ValueID narrowed) {
+                    // The read has run where it is written.
+                    if (!sinksRead)
+                        expansion.setOperationsBeforeOriginal({ }, OperandIndex::Call::callee);
+                    finishWithCallByName(narrowed, otherReceivers);
+                });
             } else
                 finishWithTableCall(0, receiver);
             expansion.end();
-            context.build.statistics().count(StatisticID::TableCalls);
+            if (paysToGoThroughTable)
+                context.build.statistics().count(StatisticID::TableCalls);
+            if (sinksRead)
+                return;
+
+            // An object that passes the test is not asked where the read is written: what it finds under the name is looked for at the call.
+            expansion.begin(site.memberRead.read());
+            ValueSplit split { .value = receiver, .arms = { }, .hasRest = true, .restFrequency = BlockFrequency::Unlikely };
+            Type receiversOfAllArms = Type::forLayoutSet(receivers);
+            for (LayoutSetID receiversOfMethod : receiversOfMethodsSeen)
+                receiversOfAllArms = receiversOfAllArms.unionWith(Type::forLayoutSet(receiversOfMethod), context.types);
+            split.arms.append(SplitArm { context.types.intern(receiversOfAllArms), expansion.frequency() });
+            emitSplit(expansion, split, [&](uint32_t, ValueID) { expansion.finishArm(builder.appendUndefined()); }, [&](ValueID narrowed) { expansion.finishArm(expansion.appendOriginal({ *receiverOf(Opcode::PropGet), narrowed })); });
+            expansion.end();
         };
+    }
+
+    // Between the read and the call nothing changes what an object finds under a name, and nobody else's code runs.
+    bool findsSameMethodAtCall(const CallSite& site) const
+    {
+        const MemberRead& reads = site.memberRead;
+        if (!reads.validations.isEmpty() || std::ranges::any_of(reads.links, [&](const ValueSite& link) { return link.block != site.position.block; }))
+            return false;
+        const BlockValues& values = function.at(site.position.block).values;
+        for (uint32_t index = reads.read().index + 1; index < site.position.index; ++index) {
+            const Effects& effects = context.analyses.effectsOf(values[index]).normal;
+            if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsWhoseWritesNobodySees))
+                return false;
+        }
+        return true;
     }
 };
 
@@ -3584,6 +3914,7 @@ struct RefusedMemberUse {
         content = contentOfUse();
         isCached = content && cache->refusedContents.find(*content);
         unshareableEventCountBefore = types.unshareableEventCount();
+        useCountOfRecordsOfPhaseBefore = types.useCountOfRecordsOfPhase();
     }
 
     bool isKnown() const { return isCached && !cache->checksAnswers; }
@@ -3591,7 +3922,7 @@ struct RefusedMemberUse {
     // in the memo skips that: which thread came first would decide the numbers of new layout sets and types.
     void didRefuse(bool hasFailedTest)
     {
-        RELEASE_ASSERT(!isCached || types.unshareableEventCount() == unshareableEventCountBefore);
+        RELEASE_ASSERT(!isCached || types.useCountOfRecordsOfPhase() == useCountOfRecordsOfPhaseBefore);
         if (content && !isCached && !hasFailedTest && types.unshareableEventCount() == unshareableEventCountBefore)
             cache->refusedContents.add(*content);
     }
@@ -3601,6 +3932,7 @@ struct RefusedMemberUse {
     TypeArena& types;
     std::optional<SiteContent> content;
     uint64_t unshareableEventCountBefore { 0 };
+    uint64_t useCountOfRecordsOfPhaseBefore { 0 };
     bool isCached { false };
 };
 
@@ -3609,6 +3941,62 @@ struct RefusedMemberUse {
 PassOutcome resolveCalls(FunctionPassContext& context)
 {
     return CallResolver { context, false }.run();
+}
+
+Function buildCallWithSharedArms(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
+{
+    const Program& program = inputs.program;
+    SharedArms arms = SharedArms::decode(key);
+
+    Function function;
+    function.name = inputs.strings.intern(StringView("callWithSharedArms"_s));
+    function.kind = FunctionKind::Plain;
+    function.role = FunctionRole::OutlinedBody;
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+    Type callees;
+    for (FunctionID callee : arms.functions(program))
+        callees.functions.add(callee);
+    // It takes any function and expects these. So a test looks at the word of a closure that is as it was made, and a closure that has got a property or another name since is called as a value behind the arms.
+    Vector<TypeID, 8> parameterTypes { TypeTable::function };
+    if (arms.passesThis)
+        parameterTypes.append(TypeTable::anything);
+    for (uint32_t index = 0; index < arms.numberOfArguments; ++index)
+        parameterTypes.append(index < SharedArms::numberOfArgumentsPassedAsNumbers && (arms.numbers >> index & 1) ? TypeTable::number : TypeTable::anything);
+    function.length = static_cast<uint32_t>(parameterTypes.size());
+    for (TypeID type : parameterTypes) {
+        function.parameters.append(DeclaredType(Proven::byPosition(type)));
+        function.derivation.parameterMap.append(ParameterOrigin { });
+    }
+    // What a call of the value returns is what one of the functions returns.
+    TypingContext typing { program, function, inputs.types };
+    Type returned;
+    for (FunctionID callee : arms.functions(program))
+        returned = returned.unionWith(onlyCalleeOf(program, Type::forFunction(callee)) ? typing.typeOf(program.at(callee).result()) : Type::anything(), inputs.types);
+    TypeID resultType = returned.isNever() ? TypeTable::anything : inputs.types.intern(returned);
+    function.results.append(DeclaredType(Proven::byPosition(resultType)));
+    function.capabilities = initialCapabilitiesOf(function);
+
+    IRBuilder builder({ inputs.build, program, &inputs.flow, nullptr }, function, inputs.types);
+    BlockID entry = builder.addBlock();
+    Vector<ValueID, 8> parameters;
+    for (TypeID type : parameterTypes)
+        parameters.append(builder.addParameter(entry, type));
+    builder.moveToEndOf(entry);
+    function.edit(parameters[0], ValueEdit::Type).setExpected(ExpectedType(inputs.types.intern(callees)));
+
+    Value call = IRBuilder::make(Opcode::Call);
+    call.setCalleeOperand(parameters[0]);
+    if (arms.passesThis)
+        call.setThisValueOperand(parameters[1]);
+    call.setArgumentsOperands(parameters.span().subspan(1 + arms.passesThis));
+    ValueID result = builder.append(WTF::move(call));
+    if (resultType != TypeTable::anything) {
+        if (inputs.build.validates())
+            builder.append(makeValidateType(result, resultType));
+        result = builder.append(makeAssumeType(result, Proven::byPosition(resultType)));
+    }
+    builder.emitReturn(result);
+    return function;
 }
 
 DerivedFunctionKey keyOfCallWithElements(VariableID variable)
@@ -3897,33 +4285,7 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
 // The function that a call enters is read before its arguments are computed, so which function it is is decided where the read stands, whatever the arguments do.
 static bool canBecomeMethodClosure(FunctionPassContext& context, ValueID read)
 {
-    const Function& function = context.function;
-    const UseLists& useLists = context.analyses.useLists();
-
-    bool isCalled = false;
-    BitVector isSeen(function.values.size());
-    Vector<ValueID, 4> worklist { read };
-    while (!worklist.isEmpty()) {
-        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-            ValueID next;
-            if (use.kind == Use::Kind::Operand) {
-                Opcode user = function.at(use.user).opcode;
-                if (isCast(user) && !use.operandIndex)
-                    next = use.user;
-                else if ((user == Opcode::Call && use.operandIndex == OperandIndex::Call::callee) || (user == Opcode::CallList && use.operandIndex == OperandIndex::CallList::callee)) {
-                    isCalled = true;
-                    continue;
-                } else
-                    return false;
-            } else if (use.kind == Use::Kind::EdgeArgument || use.kind == Use::Kind::HandlerArgument)
-                next = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
-            else
-                return false;
-            if (!isSeen.quickSet(next.index()))
-                worklist.append(next);
-        }
-    }
-    return isCalled;
+    return isOnlyCalledBehindJoins(context.analyses, read);
 }
 
 static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite& site)
@@ -4019,17 +4381,39 @@ static void reportSuperAccessTests(TestSiteReporter& reporter)
     reporter.report({ makeConditionsTest(context.types, access.conditions.span()) }, effects);
 }
 
+static void reportTestsOfListCall(TestSiteReporter& reporter, ValueID callee, FunctionID function)
+{
+    ValueID list = reporter.useValue().listOperand();
+    PristineRequirement pristineArray { BuiltinClasses::Array, { PristineAspects::Names, PristineAspects::Storage } };
+    Vector<Value, 2> tests { makeClosureTest(callee, function) };
+    if (pristineProofOf({ reporter.program(), reporter.function(), &reporter.analyses() }, list, pristineArray, reporter.point()) != PristineProof::Proven)
+        tests.append(makePristineTest(list, pristineArray.builtinClass, pristineArray.aspects));
+    reporter.report(tests.span(), reporter.analyses().effectsOf(reporter.use()).normal);
+}
+
 // With several expected callees the call of the value stays as it is: chooseDispatchedCallees() says why.
 static void reportCalleeTest(TestSiteReporter& reporter)
 {
     const Program& program = reporter.program();
     const Value& call = reporter.useValue();
-    ValueID callee = call.opcode == Opcode::SuperConstruct ? call.parentOperand() : call.calleeOperand();
+    ValueID callee = OperandPosition::parent(call.opcode) ? call.parentOperand() : call.calleeOperand();
 
     CalleeCandidates candidates = calleeCandidatesOf(reporter.context(), call, callee, reporter.point().block);
     if (!candidates.hasOneExpectedCallee())
         return;
     FunctionID member = candidates.expected().predicted()[0];
+    bool leavesThisToCaller = OperandPosition::parent(call.opcode) && !allocatesOwnThis(program.at(member));
+    if (leavesThisToCaller && !isAlwaysClassAtOrBelow(program, reporter.typeOf(call.newTargetOperand()), call.layout()) && !isHot(heatClassOf(reporter.context(), reporter.point().block)).predicted())
+        return;
+    if (call.opcode == Opcode::SuperConstructList || call.opcode == Opcode::ConstructSuperForwardVarargs) {
+        if (!leavesThisToCaller || !canConstructDirectly(program, member) || countsItsArguments(program.at(member)))
+            return;
+        if (call.opcode == Opcode::SuperConstructList)
+            reportTestsOfListCall(reporter, callee, member);
+        else if (static_cast<uint64_t>(call.firstArgument()) + program.at(member).numberOfPositionalParameters() <= maxArguments)
+            reportClosureTest(reporter, callee, member);
+        return;
+    }
     if (call.opcode != Opcode::Call ? canConstructDirectly(program, member) : mayBeCalledDirectlyAt(reporter, member))
         reportClosureTest(reporter, callee, member);
 }
@@ -4086,7 +4470,7 @@ static void reportInstanceOfTests(TestSiteReporter& reporter)
 void reportCallTests(TestSiteReporter& reporter)
 {
     static constexpr OpcodeSet operations {
-        Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::PropGet, Opcode::PropSet, Opcode::SuperGet, Opcode::SuperSet,
+        Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::ConstructSuperForwardVarargs, Opcode::PropGet, Opcode::PropSet, Opcode::SuperGet, Opcode::SuperSet,
         Opcode::CallBuiltin, Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject,
     };
     reporter.forEachCandidate(operations, [&](const Value& value) {
@@ -4098,6 +4482,8 @@ void reportCallTests(TestSiteReporter& reporter)
             break;
         case Opcode::Construct:
         case Opcode::SuperConstruct:
+        case Opcode::SuperConstructList:
+        case Opcode::ConstructSuperForwardVarargs:
             reportCalleeTest(reporter);
             break;
         case Opcode::PropGet:
@@ -4216,8 +4602,27 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
     }
     case Opcode::Construct:
     case Opcode::SuperConstruct:
+    case Opcode::SuperConstructList:
     case Opcode::CallBuiltin:
         return;
+    case Opcode::ConstructSuperForwardVarargs: {
+        const Value forwarding = rewriter.useValue();
+        Vector<ValueID, 8> arguments;
+        for (uint32_t position = 0; position < context.program.at(rewriter.tests()[0].function()).numberOfPositionalParameters(); ++position) {
+            Value read = IRBuilder::make(Opcode::GetArgument);
+            read.setArgumentIndex(forwarding.firstArgument() + position);
+            arguments.append(rewriter.insertBeforeUse(WTF::move(read)));
+        }
+        Value& construct = rewriter.useValue();
+        construct.become(Opcode::SuperConstruct);
+        construct.setLayout(forwarding.layout());
+        construct.setParentOperand(forwarding.parentOperand());
+        construct.setNewTargetOperand(forwarding.newTargetOperand());
+        construct.setAccessSite(forwarding.accessSite());
+        construct.setCallees(forwarding.callees());
+        construct.setArgumentsOperands(arguments.span());
+        break;
+    }
     case Opcode::PropGet:
     case Opcode::PropSet: {
         std::optional<TestedMemberUse> use = planTestedAccess(context, site, established);

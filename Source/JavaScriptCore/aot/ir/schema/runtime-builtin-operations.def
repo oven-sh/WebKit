@@ -105,6 +105,7 @@ runtime StringIndexOfCharacter : size_t (JSCell* string, uint32_t character, int
 runtime StringsAreEqual : size_t (JSCell* first, JSCell* second) ; reads(all) writes(StringStorage, AllocatorState, RuntimeState) collects
 runtime StringTrim : JSCell* (JSCell* string, uint32_t ends) ; RuntimeCreatesString
 runtime StringLastIndexOf : size_t (JSCell* string, JSCell* other, int32_t position) ; RuntimeCreatesString
+runtime StringIncludes, StringEndsWith : EncodedJSValue (JSCell* string, JSCell* other) ; RuntimeCreatesString
 runtime StringLocaleCompare : size_t (JSCell* string, JSCell* other) ; RuntimeCreatesString
 runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; RuntimeCreatesString
 runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
@@ -125,6 +126,7 @@ runtime RegExpFlags, RegExpSource : JSCell* (JSCell* regExp) ; reads(all) writes
 runtime StringReplaceString, StringReplaceAllString : JSCell* (JSCell* string, JSCell* search, JSCell* replacement) ; RuntimeCreatesString
 runtime StringReplaceRegExp, StringReplaceAllRegExp : JSCell* (JSCell* string, JSCell* regExp, EncodedJSValue replacement) ; unknownCode
 runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement, uint32_t oneBehindStartOfFirstMatch) ; unknownCode
+runtime StringReplaceRegExpWithFunction : EncodedJSValue (JSCell* string, JSCell* regExp, JSCell* replacement, JSCell* hostFunction) ; unknownCode
 runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
 runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
 runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode

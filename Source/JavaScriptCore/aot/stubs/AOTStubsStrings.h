@@ -55,6 +55,9 @@ void returnResult(StubAssembler& jit, auto value)
     jit.returnToCaller();
 }
 
+// AOTStubsStringConversions.cpp set gets the address of the StringKeyCache::KeyOfPair that may have the two parts. x86-64 leaves the scratch register alone.
+void locateKeysOfPair(StubAssembler&, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch);
+
 // AOTStubsStrings.cpp fiber holds the value word of string. length may be fiber.
 void loadStringLength(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg length);
 struct OrderedFlatStrings {

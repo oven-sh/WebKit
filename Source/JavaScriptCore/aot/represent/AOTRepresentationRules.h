@@ -68,6 +68,8 @@ inline constexpr OpcodeSet operationsThatMayRunBarrier = [] {
 }();
 
 bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
+// Whether it is an operator on numbers that looks at the tag of a boxed number by itself.
+bool takesNumberAsItIs(const RepresentationInputs&, const Value& user, ValueID operand);
 
 bool picksOwnRepresentation(const RepresentationInputs&, ValueID);
 bool isForwardedOperand(const Value& user, uint32_t operandIndex);
@@ -75,6 +77,10 @@ bool readsDoubleOutOfBytes(const Value&);
 bool readsDoubleOutOfBytes(const Terminator&);
 // A read that does not keep the bits, and the built-in that an inline read falls back on.
 bool makesTheOneNaNOfBytes(const RepresentationInputs&, const Value&);
+
+enum class NaNUse : uint8_t { Purifies, Ignores, Propagates };
+NaNUse nanUseBeforeSelection(const Program&, const Value& user, uint32_t operandIndex, OperatorForm formOfOperator);
+bool readsDoubleOutOfBytesBeforeSelection(const Program&, const Value&);
 
 Representation wantedRepresentationOf(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);

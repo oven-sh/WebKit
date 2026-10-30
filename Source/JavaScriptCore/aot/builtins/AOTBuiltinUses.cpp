@@ -167,6 +167,9 @@ static BuiltinUsePlan planByOpcode(const BuiltinUseInputs& inputs, ValueID use, 
 
     switch (opcode) {
     case Opcode::PropGet:
+        // It has been moved as a read that runs nothing. The read behind its failing side is the one that becomes the call of a getter.
+        if (inputs.function.at(use).asksOnlyTables())
+            return { };
         return planBuiltinRead(inputs, use, point);
     case Opcode::PropSet:
         return planBuiltinStore(inputs, use, point);

@@ -30,7 +30,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool isBodyThatOnlyStartOfProgramEnters(const Program& program, const FlowResults& flow, FunctionID id)
 {
-    return program.entries.size() == 1 && program.at(program.entries[0].module).body == id && runsAtMostOnce(flow, id);
+    const Function& function = program.at(id);
+    FunctionID body = function.role == FunctionRole::GenericEntrypoint ? function.derivation.source : id;
+    return program.entries.size() == 1 && program.at(program.entries[0].module).body == body && runsAtMostOnce(flow, body);
 }
 
 static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults& flow, FunctionID id, const Function& function, const StoredBodySummary& body)

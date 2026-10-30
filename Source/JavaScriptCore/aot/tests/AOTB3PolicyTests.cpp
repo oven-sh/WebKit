@@ -145,8 +145,10 @@ static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
 
     const B3::Air::LiveRangeSplitPolicy defaults { };
     AOT_TEST_CHECK(air.splitting.splitsAroundClobbersEarly);
+    AOT_TEST_CHECK(air.splitting.splitsAroundClobbersThatRead);
+    AOT_TEST_CHECK(air.splitting.keepsUnusedTmpsOnStackThroughLoops);
     AOT_TEST_CHECK(air.splitting.spansStretchesOfClobbers);
-    AOT_TEST_CHECK(air.splitting.limitsClobberSitesPerSplit);
+    AOT_TEST_CHECK(air.splitting.leastCostOfSplitAroundClobber > 0);
     AOT_TEST_CHECK(air.splitting.splitsIntoClustersOverBlocks);
     AOT_TEST_CHECK(air.splitting.splitsAroundFrame);
     AOT_TEST_CHECK(air.splitting.splitsAroundLoops == defaults.splitsAroundLoops);

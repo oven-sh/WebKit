@@ -242,6 +242,24 @@ constexpr size_t secondPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return
 // With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
 constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
 
+struct FieldData;
+
+// Where the objects of a layout keep a private name that the class of another layout declares: `class B extends either {}` has a field for each name of each parent it may have.
+// Layouts and their fields are data of the image, so a place never goes stale. Only the names of a class that is evaluated once have places.
+struct PrivateFieldPlace {
+    // The number of the layout of the object above the number of the declaring class. They differ, so no place that is in use holds nought.
+    uint64_t layouts;
+    // In the declaring layout.
+    uint32_t declaredField;
+    uint32_t unused;
+    // Of the layout of the object.
+    const FieldData* field;
+    uint64_t alsoUnused;
+};
+constexpr uint32_t numberOfPrivateFieldPlaces = 64;
+constexpr unsigned shiftOfPrivateFieldPlace = 5;
+constexpr size_t indexOfPrivateFieldPlace(uint32_t layoutOfObject, uint32_t declaredField) { return (layoutOfObject ^ declaredField) & (numberOfPrivateFieldPlaces - 1); }
+
 struct ClassWords {
     JSCell** classPrototypes;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
@@ -251,12 +269,14 @@ struct ClassWords {
     UniquedStringImpl** brandsOfInstances;
     // The ID of a Structure that carries a class's brand and has no properties other than the class's fields and those the built-in constructor adds. With structureHasOtherNames set, it has others.
     uint32_t* structureNameCache;
+    PrivateFieldPlace* privateFieldPlaces;
 };
 
 constexpr uint32_t structureNameCacheSize = 64;
 constexpr uint32_t structureNameCacheShift = 7;
 constexpr uint32_t structureHasOtherNames = 1;
 
+static_assert(sizeof(PrivateFieldPlace) == 1u << shiftOfPrivateFieldPlace && !(numberOfPrivateFieldPlaces & (numberOfPrivateFieldPlaces - 1)));
 static_assert(sizeof(KeyOrderTransition) == 16);
 static_assert(sizeof(KeyListCacheEntry) == 16);
 static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));

@@ -49,6 +49,8 @@ public:
 
     Value* representativeOf(Value*);
     Value* ensureRepresentative(Value*);
+    Value* representativeOfOppositeComparison(Value*);
+    void numberCopyOfPartOfAddress(Value*);
 
 private:
     static constexpr unsigned noID = 0;
@@ -145,7 +147,12 @@ private:
     unsigned heapEpoch(unsigned heap);
     ValueKey keyForLoad(Kind, Type, MemoryValue*);
     static PureCallKey keyForPureCall(const PatchpointValue*);
-    static bool isEqualLoad(const MemoryValue*, const Value*);
+    bool isEqualLoad(const MemoryValue*, const Value*) const;
+    Value* firstCopyOf(Value* value) const
+    {
+        Value* first = m_firstCopies.isEmpty() ? nullptr : m_firstCopies.get(value);
+        return first ? first : value;
+    }
     Result replaceIfRedundant(Value*);
     Result replacePureCallIfRedundant(Value* current, PatchpointValue*);
     void validateReplacedLoads();
@@ -166,6 +173,8 @@ private:
     IndexSet<BasicBlock*> m_blocksOnLikelyPaths;
     LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_values;
     LayeredHashMap<PureCallKey, Value*, PureCallKeyHash> m_pureCalls;
+    LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_copiesOfPartsOfAddresses;
+    UncheckedKeyHashMap<Value*, Value*> m_firstCopies;
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
     const bool m_validates;
     Vector<ReplacedLoad> m_replacedLoads;

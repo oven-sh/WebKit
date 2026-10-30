@@ -122,6 +122,7 @@ public:
     bool turnsAwayObjectMadeForOtherClass(ValueSetID, const Type&);
     bool turnsAwayEveryObject(ValueSetID, const Type&);
     bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
+    void addPrototypesThatAreKept(ValueSetID held, Type&);
 
     Type typeOfObject(ValueFlowObjectID);
 

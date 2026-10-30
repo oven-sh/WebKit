@@ -22,7 +22,8 @@ struct HashTableRegisterPlan {
     StubRegister keys;
     StubRegister entry;
     StubRegister candidate;
-    std::optional<StubRegister> copyOfOwner;
+    // Where the owner arrives and stays, if not in the register of a receiver: on x86-64 a multiplication writes that one.
+    std::optional<StubRegister> owner;
 };
 
 inline constexpr HashTableRegisterPlan hashTableRegisterPlan =
@@ -31,6 +32,8 @@ inline constexpr HashTableRegisterPlan hashTableRegisterPlan =
 #else
     { StubRegister::T13, StubRegister::T11, StubRegister::T12, StubRegister::T15, StubRegister::T14, StubRegister::T9, std::nullopt };
 #endif
+
+inline constexpr GPRReg ownerOfHashTableGPR = hashTableRegisterPlan.owner ? gprOf(*hashTableRegisterPlan.owner) : thisGPR;
 
 struct HashTableRegisters {
     // The emitters preserve owner and key.
@@ -80,6 +83,10 @@ struct HashTableExits {
 ptrdiff_t offsetOfHashTableStorage();
 // Never falls through.
 void emitFindInHashTable(StubAssembler&, const HashTableRegisters&, HashTableLookup, HashTableExits&);
+// hash = CompactTable::tagOfSlot(hash).
+void emitLoadTagOfSlot(StubAssembler&, GPRReg hash);
+// A key that has this slot for its home goes elsewhere.
+void emitMarkThatKeyLeftHomeSlot(StubAssembler&, BaseIndex tagAtHome);
 // hash = rapidHashMix64(key). On x86-64 hash is rax and scratch is rdx.
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
 // Only at a found exit of a compact table or a table in the image. values may be keys. Overwrites cursor. Whoever knows that the keys are narrow comes in behind the test, which is left out where nobody falls in from above.

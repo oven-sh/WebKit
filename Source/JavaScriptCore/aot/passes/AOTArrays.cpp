@@ -389,7 +389,7 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     return step;
 }
 
-Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone)
+Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone, BlockID onlyBlock)
 {
     const Program& program = context.program;
     const Function& function = context.function;
@@ -582,7 +582,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         chains.append(WTF::move(chain));
     };
 
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
+    auto searchBlock = [&](BlockID block) {
         const BlockValues& values = function.at(block).values;
         for (size_t index = values.size(); index--;) {
             if (isInChain.get(values[index].index()))
@@ -590,6 +590,12 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             if (std::optional<ArrayMethodCall> call = arrayMethodCallOf(program, function, values[index]))
                 tryChain(block, *call);
         }
+    };
+    if (onlyBlock)
+        searchBlock(onlyBlock);
+    else {
+        for (BlockID block : analyses.cfg().reversePostOrder())
+            searchBlock(block);
     }
     return chains;
 }
@@ -639,22 +645,24 @@ static bool mayAccessSameMemory(const Effects& a, const Effects& b)
         || (b.mayRunOtherCode() && !a.reads.restrictedTo(orderedHeaps).isEmpty());
 }
 
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain)
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs)
 {
     const Program& program = context.program;
     FunctionAnalyses& analyses = context.analyses;
     std::optional<ArrayMethodCall> last = arrayMethodCallOf(program, context.function, chain.lastCall);
     RELEASE_ASSERT(last);
 
-    PristineQuery query { program, context.function, &analyses };
-    PristineRequirement requirement { BuiltinClasses::Array, { PristineAspects::Names, PristineAspects::Storage } };
     ProgramPoint point { chain.block, analyses.useLists().locationOf(chain.firstCall()).index };
-    if (pristineProofOf(query, chain.source, requirement, point) != PristineProof::Proven)
-        return ArrayChainDeclineReason::SourceIsNotPristine;
-    for (const ChainCallback& callback : chain.callbacks) {
-        const Type& type = program.typeOf(context.function, callback.function);
-        if (!type.isObject() || !type.isSubsetOf(Type::function(), program))
-            return ArrayChainDeclineReason::CallbackIsNotAFunction;
+    if (proofs == ChainOperandProofs::Required) {
+        PristineQuery query { program, context.function, &analyses };
+        PristineRequirement requirement { BuiltinClasses::Array, { PristineAspects::Names, PristineAspects::Storage } };
+        if (pristineProofOf(query, chain.source, requirement, point) != PristineProof::Proven)
+            return ArrayChainDeclineReason::SourceIsNotPristine;
+        for (const ChainCallback& callback : chain.callbacks) {
+            const Type& type = program.typeOf(context.function, callback.function);
+            if (!type.isObject() || !type.isSubsetOf(Type::function(), program))
+                return ArrayChainDeclineReason::CallbackIsNotAFunction;
+        }
     }
     for (size_t step = chain.rangeCall ? 0 : 1; step < chain.callbacks.size(); ++step) {
         const ChainCallback& callback = chain.callbacks[step];

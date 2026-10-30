@@ -1989,6 +1989,18 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             stored = maker.unite(stored, inputs.universe().undefinedValue());
             result = resultWith(stored);
         }
+        // NarrowFieldTypes settles the slot of a field by the stores that name it. `{ id: 0, ...defaults }`: no store names what only copies bring. Every integer that arrives fits an int32 slot,
+        // so the field is one, as a field that the analysis appends is.
+        constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
+        bool holdsIntegersThatFitSlot = !storedNumbers.isEmpty() && !storedNumbers.mayBeOtherThanIntegers && storedNumbers.integers.isSubsetOf(integersOfSlots);
+        if (result.proof == ValueFlowProof::Proven && result.narrowed && result.narrowed->primitives & Primitive::Integer && !(result.narrowed->primitives & Primitive::Double)
+            && holdsIntegersThatFitSlot && !result.narrowed->integers.isSubsetOf(integersOfSlots)) {
+            bool isWrittenByCopiesAlone = std::ranges::all_of(ledger.writersOf(Place::field(program, id, index))->seen().predicted(), [](const Write& write) {
+                return write.actor == Actor::KeysNobodyKnows;
+            });
+            if (isWrittenByCopiesAlone)
+                result.narrowed->integers = integersOfSlots;
+        }
         update.fields[index].position = positions.updateFrom(result, asRead);
         if (declared != field.declared && !update.fields[index].position.type)
             update.fields[index].position.type = declared.written();
@@ -2327,10 +2339,16 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     }
     auto aliveForComparisonsOnly = std::ranges::equal_range(inputs.bodies().valuesAliveForComparisonsOnly(), id, { }, &ValueFlowValueOfFunction::function);
     // The step that finds no further name answers with the empty text, which flow leaves out: nobody reads it.
+    // The names are for flow to follow what is read and stored under them. A read under the name of its own loop is selected as one, which a list of names would take apart.
     auto isNameOfEnumeration = [&](ValueID value) {
-        const Value& definition = function.at(value);
+        const Value& definition = function.at(definitionThroughSameValues(function, value));
         return definition.opcode == Opcode::ResultAt && definition.index() == static_cast<uint32_t>(ForInStepResult::Key) && function.at(definition.resultsOperand()).opcode == Opcode::ForInStep;
     };
+    BitVector isAskedForItsChain;
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+        if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::InstanceOf)
+            isAskedForItsChain.set(definitionThroughSameValues(function, function.at(statement.site).valueOperand()).index());
+    }
     auto prove = [&](ValueID value, NOESCAPE const Invocable<ValueSetID()> auto& findHeld) {
         if (std::ranges::binary_search(aliveForComparisonsOnly, value, { }, &ValueFlowValueOfFunction::value) || isNameOfEnumeration(value))
             return;
@@ -2358,6 +2376,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         ProvenType typeByRules = Proven::byRulesBehindChecks(keepsTypeAsRead ? function.at(value).type : TypeTable::anythingOrAbsent);
         ValueFlowPositionResult result = positions.resultAt(typeByRules, held, DeadZone::MayBeObserved, answered ? &*answered : nullptr);
         std::optional<Type>& narrowed = result.narrowed;
+        if (narrowed && isAskedForItsChain.get(value.index()))
+            positions.addPrototypesThatAreKept(held, *narrowed);
         bool isTestedLookup = narrowed && inputs.build.validates() && function.at(value).opcode == Opcode::PropGet && !asRead.isSubsetOf(*narrowed, program);
         bool readsNoObject = narrowed && isReadByName && asRead.hasObjects() && !narrowed->hasObjects();
         if (!narrowed || (!isTestedLookup && !readsNoObject && !isWorthNarrowing(program, asRead, *narrowed))) {
@@ -2428,7 +2448,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
         size_t numberOfClaimsBefore = update.claims.size();
-        if (mayComeFromUnseenCaller(test.operand(0))) {
+        if (mayComeFromUnseenCaller(test.operand(0)) || isNameOfEnumeration(test.operand(0))) {
         } else if (positions.isSurelyInside(held, program.at(test.expectedType().predicted()), test.expectedType().predicted()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true, .holdsInEveryVersion = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {

@@ -344,6 +344,8 @@ export interface HostObjectDeclaration {
   internalFields: readonly HostObjectInternalFieldSpec[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly string[];
+  /** The systems on which native code makes it. */
+  platforms: readonly TargetPlatform[];
 }
 
 /** What native code passes to a member that it finds under the name on an operand and calls. */

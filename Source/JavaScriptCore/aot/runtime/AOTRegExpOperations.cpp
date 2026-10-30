@@ -685,6 +685,32 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     OPERATION_RETURN(scope, replaceFromFirstMatch(globalObject, vm, subject, pattern, replacement, replacementText, offsets.data()));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpWithFunction, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacement, JSCell* hostFunction))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceRegExpWithFunction);
+    auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringReplaceRegExpWithFunction);
+    auto* regExpObject = cellArgument<RegExpObject>(regExp, Entry::operationAOTStringReplaceRegExpWithFunction);
+    RegExp* pattern = regExpObject->regExp();
+    if (!pattern->sticky() && regExpObject->getLastIndex().isNumber() && (!pattern->global() || regExpObject->lastIndexIsWritable())) {
+        auto input = subject->view(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        MatchResult first = pattern->matchInline<Yarr::MatchFrom::VMThread>(globalObject, vm, input, 0);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (!first) {
+            if (pattern->global())
+                regExpObject->setLastIndex(globalObject, 0);
+            OPERATION_RETURN(scope, JSValue::encode(subject));
+        }
+    }
+    auto callData = JSC::getCallData(hostFunction);
+    ASSERT(callData.type == CallData::Type::Native);
+    auto args = WTF::toArray<EncodedJSValue>({
+        JSValue::encode(regExpObject),
+        JSValue::encode(replacement),
+    });
+    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, hostFunction, callData, subject, ArgList { args.data(), args.size() })));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringSplitRegExp, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, uint32_t limit))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringSplitRegExp);

@@ -57,6 +57,11 @@ struct ObjectCreation {
     ValueSetID layoutSelectors { ValueSets::nothing };
 };
 
+struct LayoutsOfObjectsInSets {
+    BitVector withInstances;
+    BitVector withObjectsMadeForSuperCalls;
+};
+
 } // anonymous namespace
 
 static constexpr MutationCause mutationCauses[] {
@@ -68,7 +73,14 @@ static constexpr MutationCause mutationCauses[] {
     { ObjectMutation::ChangeIntegrity, UnprovenCause::IntegrityChanged },
 };
 
-static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
+// super() names the layout of the object that a built-in class or unknown code above the class makes. Above a class of the program that object is never made.
+static bool isMadeForSuperCall(const ValueFlowUniverse& universe, ValueFlowObjectID object)
+{
+    const ValueFlowSite* site = universe.siteOf(object);
+    return site && site->origin == ValueFlowSiteOrigin::BuiltinResult && site->layout;
+}
+
+static LayoutsOfObjectsInSets findLayoutsOfObjectsInSets(const ValueFlowResultInputs& inputs)
 {
     struct FoundByWorker {
         ValueSetsMet seenSets;
@@ -82,6 +94,10 @@ static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
     Vector<ValueFlowObjectID> everyInstance(inputs.program.layouts.size(), [&](size_t layout) {
         return universe.instanceOf(LayoutID(static_cast<uint32_t>(layout)));
     });
+    for (uint32_t position = 0; position < universe.numberOfSiteObjects(); ++position) {
+        if (isMadeForSuperCall(universe, universe.siteObjectAt(position)))
+            everyInstance.append(universe.siteObjectAt(position));
+    }
     ValueSetID instances = makers.of(0).of(everyInstance.span());
 
     Vector<FoundByWorker> foundByWorker(inputs.loops().width());
@@ -98,9 +114,10 @@ static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
         instancesInSets.appendVector(WTF::move(found.instancesInSets));
     sortAndRemoveDuplicates(inputs.loops(), instancesInSets);
 
-    BitVector layouts(inputs.program.layouts.size());
+    LayoutsOfObjectsInSets layouts { BitVector(inputs.program.layouts.size()), BitVector(inputs.program.layouts.size()) };
     inputs.sets().forEachMember(makers.of(0).uniteAll(instancesInSets.span()), [&](ValueFlowObjectID instance) {
-        layouts.quickSet(universe.layoutOf(instance).index());
+        BitVector& found = universe.kindOf(instance) == ValueFlowObjectKind::Instance ? layouts.withInstances : layouts.withObjectsMadeForSuperCalls;
+        found.quickSet(universe.layoutOf(instance).index());
     });
     return layouts;
 }
@@ -197,7 +214,7 @@ static OptionSet<ObjectMutation> possibleMutationsOf(const ValueFlowResultInputs
     return links.mayBeLinkedAbove(object) ? possible | ObjectMutation::BecomePrototype : possible;
 }
 
-static bool isAllocatedObject(const ValueFlowResultInputs& inputs, const BitVector& layoutsWithInstances, ValueFlowObjectID object)
+static bool isAllocatedObject(const ValueFlowResultInputs& inputs, const LayoutsOfObjectsInSets& layoutsInSets, ValueFlowObjectID object)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     ValueFlowObjectKind kind = universe.kindOf(object);
@@ -207,7 +224,9 @@ static bool isAllocatedObject(const ValueFlowResultInputs& inputs, const BitVect
     if (!layout || isSiteOfTypedResultThatNothingAllocates(inputs, object))
         return false;
     if (kind == ValueFlowObjectKind::Instance)
-        return inputs.program.at(layout).constructor && layoutsWithInstances.quickGet(layout.index());
+        return inputs.program.at(layout).constructor && layoutsInSets.withInstances.quickGet(layout.index());
+    if (isMadeForSuperCall(universe, object))
+        return layoutsInSets.withObjectsMadeForSuperCalls.quickGet(layout.index());
     return universe.siteOf(object)->origin == ValueFlowSiteOrigin::TypedResult || inputs.isReached(universe.functionOf(object));
 }
 
@@ -224,8 +243,9 @@ static Vector<Allocation> findAllocations(const ValueFlowResultInputs& inputs, c
     });
 }
 
-static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, const PrototypeLinks& links, const BitVector& layoutsWithInstances)
+static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, const PrototypeLinks& links, const LayoutsOfObjectsInSets& layoutsInSets)
 {
+    const BitVector& layoutsWithInstances = layoutsInSets.withInstances;
     struct Found {
         LayoutID layout;
         uint32_t placeholder;
@@ -271,12 +291,23 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
         return layout.has(LayoutFlags::IsConstructorFunction) && layout.fields.isEmpty() && !layout.base && layout.supertypes.isEmpty() && !layoutsWithLayoutsBelow.quickGet(index)
             && !layoutsWithInstances.quickGet(index) && !program.at(layout.constructor).has(FunctionFlags::HasThis) && !isConstructedByProgram(layout.constructor);
     };
+    // `class Middle extends Base` that runs only for super() of a class below: each object is made with the layout of the class that `new` named.
+    auto isConstructedOnlyForClassesBelow = [&](uint32_t index) {
+        const Layout& layout = program.layouts[index];
+        if (!isClassLayout(layout) || program.at(layout.constructor).kind != FunctionKind::DerivedConstructor)
+            return false;
+        if (layoutsWithInstances.quickGet(index) || layoutsInSets.withObjectsMadeForSuperCalls.quickGet(index))
+            return false;
+        return std::ranges::none_of(std::array { universe.closureOf(layout.constructor), universe.prototypeOf(LayoutID(index)) }, [&](ValueFlowObjectID object) {
+            return inputs.hasEscaped(object) || inputs.isLost(object);
+        });
+    };
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
         bool isUnsolved = constructor && isUnsolvedCode(inputs, tables, constructor);
         if (!constructor || (!isUnsolved && !inputs.isReached(constructor)))
             continue;
-        if (!isUnsolved && hasNothingToKeepInSlots(index))
+        if (!isUnsolved && (hasNothingToKeepInSlots(index) || isConstructedOnlyForClassesBelow(index)))
             continue;
         if (isUnsolved)
             objects.add(LayoutID(index), allObjectMutations, true);
@@ -290,7 +321,7 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
     ValueFlowHeapView heap(inputs);
     Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfSiteAndLayoutObjects(), [&](unsigned position, ValueSetMaker& maker, Vector<Found>& found) {
         ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
-        if (!isAllocatedObject(inputs, layoutsWithInstances, object))
+        if (!isAllocatedObject(inputs, layoutsInSets, object))
             return;
         LayoutID layout = universe.layoutOf(object);
         OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object, links.classesAbove(heap, maker, object));
@@ -365,7 +396,7 @@ static Vector<AllocationClassID> createAllocationClasses(const ValueFlowResultIn
     return classOfLayout;
 }
 
-static void recordWitnesses(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, const BitVector& layoutsWithInstances, FlowResultTables& tables)
+static void recordWitnesses(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, const LayoutsOfObjectsInSets& layoutsInSets, FlowResultTables& tables)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueFlowSolver& solver = inputs.solver();
@@ -381,7 +412,7 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, const Prototype
     Vector<ValueFlowObjectID> objectsAskedAbout[std::size(mutationCauses)];
     for (uint32_t position = 0; position < universe.numberOfSiteAndLayoutObjects(); ++position) {
         ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
-        if (!isAllocatedObject(inputs, layoutsWithInstances, object) || flowOf(object).allocationClasses.isEmpty() || hasFunction(flowOf(object).witness))
+        if (!isAllocatedObject(inputs, layoutsInSets, object) || flowOf(object).allocationClasses.isEmpty() || hasFunction(flowOf(object).witness))
             continue;
         if (const MutationCause* cause = std::ranges::find(mutationCauses, flowOf(object).cause, &MutationCause::cause); cause != std::end(mutationCauses))
             objectsAskedAbout[cause - mutationCauses].append(object);
@@ -507,8 +538,9 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             });
         });
     };
-    bool escapedClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
-    bool lostClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
+    bool otherProgramsOfRealmMayRename = inputs.build.options().sharesRealms();
+    bool escapedClosuresMayBeRenamed = otherProgramsOfRealmMayRename || isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
+    bool lostClosuresMayBeRenamed = otherProgramsOfRealmMayRename || isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
 
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());
@@ -687,13 +719,13 @@ void computeObjectResults(const ValueFlowResultInputs& inputs, const ValueFlowSt
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     const LedgerOfClassesAndClosures* links = inputs.classesAndClosures;
-    BitVector layoutsWithInstances = findLayoutsWithInstances(inputs);
+    LayoutsOfObjectsInSets layoutsInSets = findLayoutsOfObjectsInSets(inputs);
     times.didFinish("objects: layouts with instances"_s);
-    ObjectsOfLayouts objects = collectObjectsOfLayouts(inputs, tables, *links, layoutsWithInstances);
+    ObjectsOfLayouts objects = collectObjectsOfLayouts(inputs, tables, *links, layoutsInSets);
     times.didFinish("objects: objects of layouts"_s);
     Vector<AllocationClassID> classOfLayout = createAllocationClasses(inputs, objects, tables);
     if (inputs.solver().input().remembersWhoLoggedEachEdge)
-        recordWitnesses(inputs, *links, layoutsWithInstances, tables);
+        recordWitnesses(inputs, *links, layoutsInSets, tables);
     times.didFinish("objects: allocation classes, witnesses"_s);
 
     for (Allocation allocation : findAllocations(inputs, tables, Opcode::NewClosure, ValueFlowNotedOperation::NewClosure)) {

@@ -106,8 +106,8 @@ public:
     Condition areBoth8Bit(CellPointer, CellPointer);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
-    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false);
-    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false);
+    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
     // For a subject that the comparison in place cannot answer: a rope, a 16-bit string.
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
     Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
@@ -137,6 +137,7 @@ private:
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);
     bool comparesLiteralInPlace(const OperationContext&, const String& text) const;
+    bool isSubjectComparedAgain(const ValueContext&);
     void branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const B3::AbstractHeap&, CellPointer owner, BranchTargets);
     Integer truncateToInteger(Number position);
     StringPosition truncatedPositionOf(Number position, StringRangeMethod);
@@ -148,6 +149,8 @@ private:
     };
     // What FlattenString has read where it made the flat string, which is in front of every reader of it.
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
+    // The comparisons with a literal whose subject another one compares too, in front of it or behind it on every way.
+    std::optional<HashSet<ValueID>> m_comparisonsOfSharedSubjects;
 };
 
 template<typename T>

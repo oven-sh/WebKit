@@ -1047,49 +1047,66 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
     }
 }
 
+namespace {
+
+// A write through an object that flow has lost is filed on every holder that has escaped, function objects and prototype objects alike.
+// A helper that links the prototype objects of classes writes through no function object.
+struct HoldersThatLinksGoThrough {
+    bool areKnown(ValueSetID through)
+    {
+        if (ValueSets::isComplement(through))
+            return false;
+        return answersBySet.ensure(through.index(), [&] {
+            return !inputs.sets().meet(through, inputs.universe().closures()) && !inputs.sets().meet(through, inputs.universe().placeholdersAlone());
+        }).iterator->value;
+    }
+
+    const ValueFlowResultInputs& inputs;
+    UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answersBySet { };
+};
+
+} // anonymous namespace
+
+static std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, HoldersThatLinksGoThrough& holders, LayoutID derived)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    if (!inputs.program.at(derived).has(LayoutFlags::IsConstructorFunction))
+        return LayoutID();
+    LayoutID found;
+    bool hasSeveral = false;
+    bool isNamedThroughKnownHolders = false;
+    for (const Write& write : ledger.writersOfPrototypeLink(universe.prototypeOf(derived)).seen().predicted()) {
+        if (ValueSets::isComplement(write.seenToArrive))
+            continue;
+        inputs.sets().forEachMemberInLine(write.seenToArrive, [&](ValueFlowObjectID linked) {
+            LayoutID base = universe.kindOf(linked) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(linked) : LayoutID();
+            // A factory that is handed its own result links two functions of the same text.
+            if (!base || base == derived)
+                return;
+            hasSeveral |= found && found != base;
+            found = base;
+            isNamedThroughKnownHolders |= holders.areKnown(write.through);
+        });
+    }
+    if (found && (hasSeveral || !isNamedThroughKnownHolders))
+        return std::nullopt;
+    return found;
+}
+
+std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs& inputs, LayoutID derived)
+{
+    HoldersThatLinksGoThrough holders { inputs };
+    return findBaseLinkedByProgram(inputs, *inputs.classesAndClosures, holders, derived);
+}
+
 // `Object.setPrototypeOf(Derived.prototype, Base.prototype)`, where Base is a parameter of a factory, so no type names a base.
 // Returns, by layout of a constructor function, the one other class whose prototype object the program links above its prototype object.
 static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger)
 {
-    const Program& program = inputs.program;
-    const ValueFlowUniverse& universe = inputs.universe();
-    Vector<LayoutID> bases(program.layouts.size());
-    auto classOfPrototypeObject = [&](ValueFlowObjectID object) {
-        return universe.kindOf(object) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(object) : LayoutID();
-    };
-    // A write through an object that flow has lost is filed on every holder that has escaped, function objects and prototype objects alike.
-    // A helper that links the prototype objects of classes writes through no function object.
-    UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answersBySet;
-    auto goesThroughKnownHolders = [&](ValueSetID through) {
-        if (ValueSets::isComplement(through))
-            return false;
-        return answersBySet.ensure(through.index(), [&] {
-            return !inputs.sets().meet(through, universe.closures()) && !inputs.sets().meet(through, universe.placeholdersAlone());
-        }).iterator->value;
-    };
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        LayoutID derived(index);
-        if (!program.at(derived).has(LayoutFlags::IsConstructorFunction))
-            continue;
-        bool hasSeveral = false;
-        bool isNamedThroughKnownHolders = false;
-        for (const Write& write : ledger.writersOfPrototypeLink(universe.prototypeOf(derived)).seen().predicted()) {
-            if (ValueSets::isComplement(write.seenToArrive))
-                continue;
-            inputs.sets().forEachMemberInLine(write.seenToArrive, [&](ValueFlowObjectID linked) {
-                LayoutID base = classOfPrototypeObject(linked);
-                // A factory that is handed its own result links two functions of the same text.
-                if (!base || base == derived)
-                    return;
-                hasSeveral |= bases[index] && bases[index] != base;
-                bases[index] = base;
-                isNamedThroughKnownHolders |= goesThroughKnownHolders(write.through);
-            });
-        }
-        if (hasSeveral || !isNamedThroughKnownHolders)
-            bases[index] = LayoutID();
-    }
-    return bases;
+    HoldersThatLinksGoThrough holders { inputs };
+    return Vector<LayoutID>(inputs.program.layouts.size(), [&](size_t index) {
+        return findBaseLinkedByProgram(inputs, ledger, holders, LayoutID(static_cast<uint32_t>(index))).value_or(LayoutID());
+    });
 }
 
 // Every walk up the expected bases must end, so a linked base that closes a cycle is dropped.

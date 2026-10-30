@@ -50,6 +50,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     if (storesThroughSetters) {
         forEachKeyOfSource([&](const HeapKey& key) {
             replaceMembersThroughSettersFoundFrom(targets, key, PropertySearch::WholeChain, nullptr, true);
+            if (key.keyClass != HeapKeyClass::Name)
+                return;
+            if (ClimbingSet holders = m_context.restrict(targets, holdersWithMemberUnder(key)); holdsAnything(holders))
+                m_context.lookup(holders, ValueFlowName { ValueFlowNameKind::MemberWritten, key.name.index() });
         });
     }
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
@@ -266,7 +270,11 @@ void HeapRule::changePrototype(ClimbingSet objects, const ValueFlowOperand& prot
 void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, PropertySearch search)
 {
     ClimbingSet receivers = m_context.valueOf(object);
-    ClimbingSet searched = search == PropertySearch::OwnProperty ? receivers : ClimbingSet(m_universe.knownObjects());
+    ClimbingSet searched = receivers;
+    if (search == PropertySearch::WholeChain) {
+        HeapChain chain = chainFrom(receivers);
+        searched = chain.holdsUnknownObject || chain.holdsUntrackedObject ? ClimbingSet(m_universe.knownObjects()) : m_context.unite(receivers, chain.objects);
+    }
     bool mayFindAccessorOfArguments = key.mayNameNonEnumerable(m_tables.calleeKey()) && m_context.meet(searched, m_tables.argumentsObjects());
     auto addFunctionNobodyFollows = [&] {
         add(m_statement.result, m_context.restrict(ClimbingSet(undescribedValueThatIsNoBuffer(m_context)), m_universe.objects()));

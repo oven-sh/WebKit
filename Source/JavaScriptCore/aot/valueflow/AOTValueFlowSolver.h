@@ -7,8 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTParkedBodies.h"
 #include "AOTBackgroundTask.h"
 #include "AOTCompactList.h"
+#include "AOTSystemResources.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
@@ -37,6 +39,8 @@ class ValueFlowInstancedFunctions;
 
 using ValueFlowRule = void (*)(const ValueFlowStatement&, ValueFlowRuleContext&);
 
+class ValueFlowBodies;
+
 struct ValueFlowSolverInput {
     const Program* program { nullptr };
     const ValueFlowUniverse* universe { nullptr };
@@ -50,8 +54,12 @@ struct ValueFlowSolverInput {
     uint32_t numberOfNodes { 0 };
     std::span<const ValueFlowEdge> edges;
     std::span<const ValueFlowNodeMask> masks;
+    // Where no later solve reads them: the owner of the two lists above, which lets go of them once the graph has them.
+    ValueFlowBodies* ownerOfEdgesAndMasks { nullptr };
     std::span<const ValueFlowStatement> statements;
     std::span<const ValueFlowOperand> operands;
+    std::span<const ValueFlowRareFactsOfText> rareFactsOfText;
+    std::span<const ValueFlowCopyOfOperation> copiesOfOperations;
     std::span<const ValueFlowEdge> edgesOnceReached;
     std::span<const ValueFlowNodeSet> seedsOnceReached;
     std::span<const FunctionID> functionsEnteredOnceReached;
@@ -280,6 +288,70 @@ private:
     size_t m_size { 0 };
 };
 
+// From the hash of a key to the number of the record that holds the key. A slot holds one more than the number, below five bits of the hash.
+class ValueFlowNumbersOfRecords {
+public:
+    static uint64_t hashOf(uint64_t key)
+    {
+        uint64_t hash = (key + 1) * 0x9e3779b97f4a7c15ull;
+        return (hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull;
+    }
+
+    ALWAYS_INLINE std::optional<uint32_t> find(uint64_t hash, NOESCAPE const Invocable<bool(uint32_t number)> auto& holdsKey) const
+    {
+        if (!m_slots)
+            return std::nullopt;
+        size_t size = m_slots.span().size();
+        for (size_t position = firstPositionOf(hash, size);; position = position + 1 == size ? 0 : position + 1) {
+            uint32_t slot = m_slots[position];
+            if (!slot)
+                return std::nullopt;
+            if (!((slot ^ bitsOfHashIn(hash)) & ~maskOfNumber) && holdsKey((slot & maskOfNumber) - 1))
+                return (slot & maskOfNumber) - 1;
+        }
+    }
+    // The key is not in the table.
+    void add(uint64_t hash, uint32_t number, NOESCAPE const Invocable<uint64_t(uint32_t number)> auto& hashOfRecord)
+    {
+        if (isFullFor(m_size + 1))
+            grow(hashOfRecord);
+        put(hash, number);
+        ++m_size;
+    }
+    size_t bytesInUse() const { return m_size * sizeof(uint32_t); }
+    size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
+
+private:
+    static constexpr unsigned bitsOfNumber = 27;
+    static constexpr uint32_t maskOfNumber = (1u << bitsOfNumber) - 1;
+    static uint32_t bitsOfHashIn(uint64_t hash) { return static_cast<uint32_t>(hash) << bitsOfNumber; }
+    static size_t firstPositionOf(uint64_t hash, size_t size) { return static_cast<size_t>(static_cast<UInt128>(hash) * size >> 64); }
+    bool isFullFor(size_t numberOfKeys) const { return numberOfKeys * 4 > m_slots.span().size() * 3; }
+    void put(uint64_t hash, uint32_t number)
+    {
+        if (number + 1 > maskOfNumber) [[unlikely]]
+            exitProgramTooLarge();
+        size_t size = m_slots.span().size();
+        size_t position = firstPositionOf(hash, size);
+        while (m_slots[position])
+            position = position + 1 == size ? 0 : position + 1;
+        m_slots[position] = bitsOfHashIn(hash) | (number + 1);
+    }
+    void grow(NOESCAPE const Invocable<uint64_t(uint32_t number)> auto& hashOfRecord)
+    {
+        size_t size = std::max<size_t>(m_slots.span().size() + m_slots.span().size() / 2, 64);
+        MallocSpan<uint32_t> previous = std::exchange(m_slots, MallocSpan<uint32_t>::malloc(size * sizeof(uint32_t)));
+        zeroSpan(m_slots.mutableSpan());
+        for (uint32_t slot : previous.span()) {
+            if (slot)
+                put(hashOfRecord((slot & maskOfNumber) - 1), (slot & maskOfNumber) - 1);
+        }
+    }
+
+    MallocSpan<uint32_t> m_slots;
+    size_t m_size { 0 };
+};
+
 class ValueFlowSolver {
     WTF_MAKE_NONCOPYABLE(ValueFlowSolver);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowSolver);
@@ -375,6 +447,10 @@ public:
         return found == all.end() || found->node != node ? ValueSets::nothing : found->set;
     }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
+    // From the first round until the rows are released the bodies of functions may be parked. A record of a function is read as ever; whoever reads blocks or values
+    // takes the function from here, or has asked here first: the body comes back in place.
+    void readBodiesThrough(ParkedBodies& parked) { m_parkedBodies = &parked; }
+    const Function& functionWithBody(FunctionID id) const { return m_parkedBodies ? m_parkedBodies->at(id) : m_input.program->at(id); }
     bool lacksLibraryFunction(RuntimeFunctionID function) const { return m_libraryFunctionsLacked.get(function.index()); }
     const BitVector& libraryFunctionsLacked() const LIFETIME_BOUND { return m_libraryFunctionsLacked; }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
@@ -414,6 +490,15 @@ public:
     };
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
     const LoggedEdge* findLoggedEdge(ValueFlowEdge) const LIFETIME_BOUND;
+    // A node keeps what an edge brought it after the edge is removed.
+    void forEachPredecessorIncludingRemoved(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
+    {
+        m_graph.forEachPredecessor(node, functor);
+        if (auto removed = m_sourcesOfRemovedEdges.find(node.index()); removed != m_sourcesOfRemovedEdges.end()) {
+            for (ValueFlowNodeID predecessor : removed->value)
+                functor(predecessor);
+        }
+    }
     // For a statement created by a rule: the statement whose run first requested it.
     ValueFlowStatementID firstRequesterOf(ValueFlowStatementID) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
@@ -659,13 +744,18 @@ private:
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
+    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const LIFETIME_BOUND
+    {
+        size_t number = statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey) ? 1 : statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey) ? 2 : 0;
+        return m_input.operands.subspan(statement.firstOperand + statement.operandCount, number);
+    }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
     bool isKnownWatcher(ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement) const
     {
         if (ValueFlowRoundLog::isNumberedByLog(node))
             return false;
         const WatchShard& shard = m_watchShards[watchShardOf(node, within)];
-        const uint32_t* watch = shard.watchOfPart.find(static_cast<uint64_t>(node.index()) << 32 | within.index());
+        std::optional<uint32_t> watch = shard.findWatchOf(node, within);
         return watch && shard.isReaderOf(*watch, statement);
     }
     uint32_t numberOfName(ValueFlowName name) const
@@ -818,8 +908,13 @@ private:
     Vector<UsesOfThread> m_usesOfThreads;
     template<typename T> void growAndFill(ListWithRoomToFill<T>&, size_t size, T value);
     void takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& madeNodes);
-    void letGoOf(Vector<uint32_t>&& madeNodes);
+    enum class WhatIsLetGo : bool { Records, PartsOfReadsAtRest };
+    void letGoOf(Vector<uint32_t>&& madeNodes, WhatIsLetGo);
+    static bool isReadMadeOfParts(const MadeNodes&);
+    void letGoOfPartsOfReadsAtRest(NOESCAPE const Invocable<bool(const MadeNodes&)> auto& isLetGo);
+    Vector<uint32_t> m_readsAtRestWhosePartsAreAwake;
     void forgetReadersOf(std::span<const ValueFlowNodeID>);
+    bool isLaidByRule(ValueFlowEdge) const;
     void makeReadersDue(std::span<const ValueFlowNodeID> moved);
     struct WatchShard;
     void watch(WatchShard&, ValueFlowNodeID, ValueSetID within, ValueFlowStatementID, bool isAskedLast);
@@ -969,6 +1064,7 @@ private:
     ListWithRoomToFill<uint32_t> m_usesOfStatement;
     ListThatStaysInPlace<uint32_t> m_uses;
     bool m_knowsRecordsAskedFor { true };
+    Vector<ValueFlowNodeSet> m_declaredMasksOfBodies;
     bool m_knowsNumbersOfUsers { true };
     // Filled behind the rounds.
     BitVector m_isStatementMadeByRuleAtRest;
@@ -1004,13 +1100,30 @@ private:
     StepTimes m_stepTimes;
 
     ValueFlowSharedBits m_isReached;
+    ParkedBodies* m_parkedBodies { nullptr };
     ValueFlowSharedBits m_hasStatementOfBodyRun;
     uint64_t m_numberOfTurn { 0 };
     ValueFlowNodeID nodeAwaitedBy(ValueFlowStatementID, const ValueFlowStatement&) const;
     static constexpr uint32_t doesNotWait = UINT32_MAX;
     static constexpr uint32_t hasWaitedAndNotRun = UINT32_MAX - 1;
     bool m_statementsWait { false };
-    ListWithRoomToFill<uint32_t> m_firstStatementWaitingForNode;
+    struct StatementsWaitingForNodes {
+        // One more than the statement, or 0.
+        uint32_t exchangeFirst(ValueFlowNodeID node, uint32_t first)
+        {
+            Locker locker { lock };
+            if (!first)
+                return firstOfNode.take(node.index());
+            auto added = firstOfNode.add(node.index(), first);
+            return added.isNewEntry ? 0 : std::exchange(added.iterator->value, first);
+        }
+
+        Lock lock;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstOfNode WTF_GUARDED_BY_LOCK(lock);
+    };
+    static constexpr unsigned numberOfTablesOfStatementsWaiting = 64;
+    StatementsWaitingForNodes& statementsWaitingFor(ValueFlowNodeID node) const LIFETIME_BOUND { return m_statementsWaitingForNodes[node.index() * 0x9e3779b1u >> 26]; }
+    mutable Vector<StatementsWaitingForNodes> m_statementsWaitingForNodes;
     ListWithRoomToFill<uint32_t> m_nextStatementWaiting;
     Vector<ValueFlowReachWitness> m_reachedBy;
     Vector<RunsAndEdges> m_runsAndEdges;
@@ -1020,6 +1133,7 @@ private:
     Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
     HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_positionOfLoggedEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
+    HashMap<uint32_t, Vector<ValueFlowNodeID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sourcesOfRemovedEdges;
     HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstRequesterOfMadeNodes;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
@@ -1032,6 +1146,8 @@ private:
     uint32_t m_numberOfNodesGivenMore { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     Vector<ValueFlowStatementID> m_statementsThatRunOften;
+    BitVector m_waitsForLaterRound;
+    void takeBackStatementsThatRunOften();
     Vector<uint8_t> m_timesRunOfStatement;
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_roundOfNextRun;
     void findStatementsWithLongRowsBehindThem();
@@ -1079,7 +1195,7 @@ private:
         ValueSetID within;
         uint32_t readers { 0 };
         uint32_t readersAskingLast { 0 };
-        uint32_t watchedNode { 0 };
+        ValueFlowNodeID node;
     };
     struct WatchedNode {
         ValueFlowNodeID node;
@@ -1104,9 +1220,23 @@ private:
 
         ValueFlowNumberLists readersOfWatches;
         Vector<Watch> watches;
-        ValueFlowNumbersByKey watchOfPart;
+        static uint64_t hashOfPart(ValueFlowNodeID node, ValueSetID within) { return ValueFlowNumbersOfRecords::hashOf(static_cast<uint64_t>(node.index()) << 32 | within.index()); }
+        std::optional<uint32_t> findWatchOf(ValueFlowNodeID node, ValueSetID within) const
+        {
+            return watchOfPart.find(hashOfPart(node, within), [&](uint32_t number) {
+                return watches[number].node == node && watches[number].within == within;
+            });
+        }
+        std::optional<uint32_t> findWatchedNode(ValueFlowNodeID node) const
+        {
+            return watchedNodeOfNode.find(ValueFlowNumbersOfRecords::hashOf(node.index()), [&](uint32_t number) {
+                return watchedNodes[number].node == node;
+            });
+        }
+
+        ValueFlowNumbersOfRecords watchOfPart;
         Vector<WatchedNode> watchedNodes;
-        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> watchedNodeOfNode;
+        ValueFlowNumbersOfRecords watchedNodeOfNode;
         ValueFlowNumbersByKey firstWatchOfMember;
         Vector<ChainedWatch> watchesOfMembers;
         HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberOfSetWatchedForCover;
@@ -1138,7 +1268,11 @@ private:
         return node.index() / 64 % numberOfWatchShardsByNode;
     }
     std::array<WatchShard, numberOfWatchShards> m_watchShards;
-    Vector<uint32_t> m_firstSetWatchedForCoverOfMember;
+    // A range of members owns whole words of the bits.
+    static_assert(!(1024 % 64));
+    Vector<uint64_t> m_hasSetWatchedForCoverOfMember;
+    bool hasSetWatchedForCover(uint32_t member) const { return member / 64 < m_hasSetWatchedForCoverOfMember.size() && (m_hasSetWatchedForCoverOfMember[member / 64] >> member % 64 & 1); }
+    std::array<ValueFlowNumbersByKey, numberOfRangesOfMembers> m_firstSetWatchedForCoverOfMember;
     std::array<Vector<ChainedWatch>, numberOfRangesOfMembers> m_setsWatchedForCoverOfMembers;
     ValueSetID m_seenByWatchersOfEscaped;
     ValueSetID m_seenByWatchersOfLost;
@@ -1146,6 +1280,8 @@ private:
     HashMap<uint32_t, Vector<ValueFlowStatementID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_readersOfFunction;
     HashMap<uint32_t, Vector<ValueFlowNodeSet, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesShownToStatement;
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
+    // By object: the object and what a walk up its chain of prototypes has seen above it. The chain of the object begins with that.
+    ZeroFilledPages<std::atomic<uint32_t>> m_seenFromObjectUp;
     std::unique_ptr<std::atomic<uint32_t>[]> m_roundThatTiedNamespace;
 
     Vector<Covering, 2> m_coverings;
@@ -1259,8 +1395,10 @@ private:
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
     bool wakeReadersOfNodesThatShowSomethingElse();
     Vector<ValueSetID> m_uncoveredAtLastReaderWake;
-    uint16_t m_stateOfCoverings { 0 };
-    mutable ListWithRoomToFill<uint16_t> m_coveringStateOfShownView;
+    // It starts over behind the last state, and every node forgets then.
+    static constexpr uint8_t noStateOfCoverings = UINT8_MAX;
+    uint8_t m_stateOfCoverings { 0 };
+    mutable ListWithRoomToFill<uint8_t> m_coveringStateOfShownView;
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

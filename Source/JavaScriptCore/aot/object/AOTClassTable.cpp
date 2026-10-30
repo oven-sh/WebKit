@@ -89,6 +89,7 @@ ClassTable::ClassTable(State& state)
     state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
     state.caches->addClearedEachCollection("structures with brands"_s, asWritableBytes(std::span { m_structuresWithBrands }));
     state.instance.classes.structureNameCache = m_structureNameCache.data();
+    state.instance.classes.privateFieldPlaces = m_privateFieldPlaces.data();
     state.caches->addClearedEachCollection("structures whose names are known"_s, asWritableBytes(std::span { m_structureNameCache }));
 }
 
@@ -1303,6 +1304,22 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
     defineClass(globalObject, classObject, *classObject->classData(), parent, prototypeParent);
 }
 
+void ClassTable::forgetEvaluationOf(const LayoutData& classLayout)
+{
+    FunctionID constructor(classLayout.classData().classConstructor);
+    if (!classPrototypeIfExists(classLayout) && !(constructor && m_state.objects->closures.hasCellFor(constructor) && m_state.objects->closures.closureIfCreated(constructor)))
+        return;
+    ImageOfInstanceScope ownImage(m_state.instance);
+    disarmMemberGuards(classLayout);
+    prototypeCellOf(m_state, classLayout) = nullptr;
+    m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index);
+    for (std::span<const MethodData> methods : { classLayout.methods(), classLayout.staticMethods() }) {
+        for (const MethodData& method : methods)
+            m_declaredMemberLocations.remove(method.function);
+    }
+    m_state.objects->structures.forgetStructuresOf(classLayout);
+}
+
 void ClassTable::createClassPart(JSGlobalObject* globalObject, Closure* classObject, ClassPart part)
 {
     ASSERT(part != ClassPart::Everything);
@@ -1379,11 +1396,17 @@ void ClassPrototype::createMembers(JSObject* object)
     ClassTable& classes = state.objects->classes;
     Closure* classObject = uncheckedDowncast<Closure>(uncheckedDowncast<ClassPrototype>(object)->classObject());
     VMPropertyCaches::UnreportedChange change(*vm.aotState().propertyCaches, object);
+    bool answersAsBefore = !object->butterfly();
     classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::PrototypeMembers);
     RELEASE_ASSERT(object->type() == FinalObjectType);
+    CreatedMembers created { object, classes.structureOfDeclaredMemberHolders() };
     // Every image of the realm may have filed what it found above an instance of the class.
     for (Instance* instance = state.instance.globalObject->aotInstance(); instance; instance = instance->above) {
-        if (instance->state && instance->state->chainDependents)
+        if (!instance->state || !instance->state->chainDependents)
+            continue;
+        if (answersAsBefore)
+            instance->state->chainDependents->didCreateMembers(created);
+        else
             instance->state->chainDependents->didChange(object, nullptr);
     }
 }

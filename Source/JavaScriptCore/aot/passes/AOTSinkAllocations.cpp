@@ -821,7 +821,7 @@ static bool isFrameAllocatableObject(const AllocationSinking& sinking, const Val
         break;
     }
 
-    if (object.prototypeOperand() || layout.has(LayoutFlags::IsOfCreatedObject) || layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (object.prototypeOperand() || layout.has(LayoutFlags::IsOfCreatedObject))
         return false;
     // The verifier allows an on-demand closure exactly one use, so the allocation that lists it cannot be duplicated.
     for (uint32_t field = 0; field < layout.fields.size(); ++field) {

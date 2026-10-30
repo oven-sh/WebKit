@@ -46,6 +46,7 @@ public:
     void addCopiedBlock(BlockID block) { m_requiredBlocks.append(block); }
     void addStart(BlockID block) { m_starts.append(block); }
     void addEntry(BlockID block) { m_entries.append(block); }
+    void addRedirectedEdge(Edge edge) { m_redirectedEdges.append({ edge.from.index(), edge.targetIndex }); }
     void addRejoinBlock(BlockID block) { m_isRejoinBlock.set(block.index()); }
     void addRejoinBlockWithoutTests(BlockID block) { m_isRejoinBlockWithoutTests.set(block.index()); }
     // The copy comes back here even where the tested code knows more about a live value. Behind the block that value has the type of both.
@@ -129,6 +130,7 @@ private:
     void computeNarrowedValues();
     bool hasValueAtHead(BlockID, const BitVector& values, AnswersByBlock&) const;
     void computeRegion(Extent);
+    BitVector computeBlocksReachingBackEdges() const;
     bool addsLoopEntry(BlockID) const;
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
@@ -156,6 +158,7 @@ private:
     Vector<BlockID, 8> m_requiredBlocks;
     Vector<BlockID, 8> m_starts;
     Vector<BlockID, 8> m_entries;
+    Vector<std::pair<uint32_t, uint32_t>, 8> m_redirectedEdges;
     Vector<ValueID, 8> m_valuesToBeNarrowed;
     Vector<ValueID, 8> m_valuesNarrowedInUnknownWay;
     Vector<ValueID, 8> m_valuesKnownBeyondTheirTypes;
@@ -180,6 +183,7 @@ private:
     Vector<BlockID, 4> m_untestedRejoins;
     Vector<BlockID, 4> m_testedRejoinBlocks;
     mutable std::optional<BitVector> m_allocationsThatSink;
+    mutable std::optional<BitVector> m_reachesBackEdge;
     Vector<TestedRejoin, 4> m_testedRejoins;
 
     BitVector m_hasPlaceholder;

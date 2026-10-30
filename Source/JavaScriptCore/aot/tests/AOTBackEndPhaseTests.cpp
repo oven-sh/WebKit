@@ -12,11 +12,14 @@
 #include "AOTFrameAddressValidation.h"
 #include "AOTImpliedBranchMerging.h"
 #include "AOTIntegerUpdatesInMemory.h"
+#include "AOTMutatorFenceMerging.h"
 #include "AOTPhiNarrowing.h"
 #include "AOTPureOperations.h"
 #include "AOTSlotPlan.h"
 #include "AOTStackSlotPoisoning.h"
 #include "AOTVector.h"
+#include "AirAllocateRegistersByGreedy.h"
+#include "AirCheckSpillSlots.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
 #include "AirOptimizePairedLoadStore.h"
@@ -24,11 +27,13 @@
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"
+#include "B3FenceValue.h"
 #include "B3FixSSA.h"
 #include "B3Generate.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
+#include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
 #include "B3RegionCloner.h"
@@ -1701,6 +1706,169 @@ static void checkPhiNarrowing(bool hasWideUser)
     AOT_TEST_CHECK(inputFrom(constantCase)->isInt32(7));
 }
 
+namespace {
+
+struct FencedAllocations {
+    FencedAllocations()
+        : block(proc.addBlock())
+        , argument(block->appendNew<B3::ArgumentRegValue>(proc, B3::Origin(), GPRInfo::argumentGPR0))
+    {
+    }
+
+    B3::Value* allocate()
+    {
+        B3::Value* cell = block->appendNew<B3::PatchpointValue>(proc, B3::pointerType(), B3::Origin());
+        records.allocations.set(cell->index());
+        return cell;
+    }
+
+    void initialize(B3::Value* pointer, B3::Value* stored)
+    {
+        records.initializingStores.set(store(pointer, stored)->index());
+    }
+
+    B3::Value* store(B3::Value* pointer, B3::Value* stored)
+    {
+        return block->appendNew<B3::MemoryValue>(proc, B3::Store, B3::Origin(), stored, pointer, 16);
+    }
+
+    void fence()
+    {
+        B3::BasicBlock* fenceCase = proc.addBlock();
+        B3::BasicBlock* continuation = proc.addBlock();
+        branch(fenceCase, continuation);
+        fenceCase->appendNew<B3::FenceValue>(proc, B3::Origin());
+        appendJump(proc, fenceCase, continuation);
+        records.fences.append({ block, continuation });
+        block = continuation;
+    }
+
+    B3::Value* allocateFenced()
+    {
+        B3::Value* cell = allocate();
+        initialize(cell, argument);
+        fence();
+        return cell;
+    }
+
+    void branch(B3::BasicBlock* taken, B3::BasicBlock* notTaken)
+    {
+        block->appendNew<B3::Value>(proc, B3::Branch, B3::Origin(), block->appendNew<B3::MemoryValue>(proc, B3::Load8Z, B3::Origin(), argument));
+        block->setSuccessors(B3::FrequentedBlock(taken), B3::FrequentedBlock(notTaken));
+    }
+
+    unsigned numberOfFencesLeft()
+    {
+        appendReturn(proc, block);
+        mergeMutatorFences(proc, records);
+        proc.resetReachability();
+        B3::validate(proc);
+        unsigned count = 0;
+        for (B3::Value* value : proc.values())
+            count += value->opcode() == B3::Fence;
+        return count;
+    }
+
+    B3::Procedure proc;
+    MutatorFenceRecords records;
+    B3::BasicBlock* block;
+    B3::Value* argument;
+};
+
+} // anonymous namespace
+
+static void testMergeMutatorFencesOfNestedCells()
+{
+    FencedAllocations code;
+    B3::Value* first = code.allocateFenced();
+    B3::Value* second = code.allocateFenced();
+    B3::Value* outer = code.allocate();
+    code.initialize(outer, first);
+    code.initialize(outer, second);
+    code.fence();
+    AOT_TEST_CHECK(code.numberOfFencesLeft() == 1);
+}
+
+static void testMergeMutatorFencesOfCellAndItsStorage()
+{
+    FencedAllocations code;
+    B3::Value* element = code.allocateFenced();
+    B3::Value* array = code.allocate();
+    code.initialize(code.block->appendNew<B3::MemoryValue>(code.proc, B3::Load, B3::pointerType(), B3::Origin(), array, 8), element);
+    code.fence();
+    AOT_TEST_CHECK(code.numberOfFencesLeft() == 1);
+}
+
+static void testMutatorFenceStaysInFrontOfStoreIntoOlderCell()
+{
+    FencedAllocations code;
+    B3::Value* older = code.allocateFenced();
+    B3::Value* newer = code.allocateFenced();
+    code.initialize(older, newer);
+    code.allocateFenced();
+    AOT_TEST_CHECK(code.numberOfFencesLeft() == 2);
+}
+
+static void testMutatorFenceStaysInFrontOfOrdinaryStore()
+{
+    {
+        FencedAllocations intoNewCell;
+        B3::Value* first = intoNewCell.allocateFenced();
+        intoNewCell.store(intoNewCell.allocate(), first);
+        intoNewCell.fence();
+        AOT_TEST_CHECK(intoNewCell.numberOfFencesLeft() == 2);
+    }
+    {
+        FencedAllocations intoArgument;
+        intoArgument.store(intoArgument.argument, intoArgument.allocateFenced());
+        intoArgument.allocateFenced();
+        AOT_TEST_CHECK(intoArgument.numberOfFencesLeft() == 2);
+    }
+}
+
+static void testMutatorFenceStaysInFrontOfCall()
+{
+    FencedAllocations code;
+    code.allocateFenced();
+    code.block->appendNew<B3::PatchpointValue>(code.proc, B3::Void, B3::Origin());
+    code.allocateFenced();
+    AOT_TEST_CHECK(code.numberOfFencesLeft() == 2);
+}
+
+static void testMergeMutatorFencesAcrossBranch()
+{
+    for (bool oneSideReturns : { false, true }) {
+        FencedAllocations code;
+        code.allocateFenced();
+        B3::BasicBlock* taken = code.proc.addBlock();
+        B3::BasicBlock* notTaken = code.proc.addBlock();
+        B3::BasicBlock* continuation = code.proc.addBlock();
+        code.branch(taken, notTaken);
+        if (oneSideReturns)
+            appendReturn(code.proc, taken);
+        else
+            appendJump(code.proc, taken, continuation);
+        appendJump(code.proc, notTaken, continuation);
+        code.block = continuation;
+        code.allocateFenced();
+        AOT_TEST_CHECK(code.numberOfFencesLeft() == (oneSideReturns ? 2 : 1));
+    }
+}
+
+static void testMutatorFenceStaysInLoop()
+{
+    FencedAllocations code;
+    B3::BasicBlock* loop = code.proc.addBlock();
+    B3::BasicBlock* exit = code.proc.addBlock();
+    appendJump(code.proc, code.block, loop);
+    code.block = loop;
+    code.allocateFenced();
+    code.branch(loop, exit);
+    code.block = exit;
+    code.allocateFenced();
+    AOT_TEST_CHECK(code.numberOfFencesLeft() == 2);
+}
+
 static void testNarrowTruncatedPhis()
 {
     checkPhiNarrowing(false);
@@ -1788,6 +1956,508 @@ static void testLoadsAreNotPairedAcrossStoreThatMayLieOverThem()
     AOT_TEST_CHECK(!pairsLoads(true, false));
     AOT_TEST_CHECK(pairsLoads(true, true));
 #endif
+}
+
+namespace {
+
+enum class ValueIsBorn : bool { InTheBlockOfTheCalls, InTheBlockBefore };
+
+struct LiveRangeSplitTwice {
+    // [value = argument;] then in one block: [value = argument | value += value]; call(value); call(value); value += value; then two busier values are born, value is read twice
+    // more, and calls follow that the two live across. No register outlives both of the first calls but the two that the busier values take. So value is split into one cluster
+    // over the blocks, which finds no register either, and that cluster into one for each block. The operands of the first calls lie between two writes, and the slot is
+    // written behind the second.
+    LiveRangeSplitTwice(const B3::Policy& policy, ValueIsBorn valueIsBorn)
+        : proc(policy)
+    {
+        using namespace B3::Air;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+
+        RegisterSet lostAtFirstCall { GPRInfo::argumentGPR0, GPRInfo::argumentGPR1 };
+        RegisterSet lostAtSecondCall { GPRInfo::argumentGPR2, GPRInfo::argumentGPR3 };
+        RegisterSet lostAtLaterCalls = lostAtFirstCall;
+        lostAtLaterCalls.merge(lostAtSecondCall);
+        RegisterSet allowed = lostAtLaterCalls;
+        allowed.merge(RegisterSet { GPRInfo::regCS0, GPRInfo::regCS1 });
+        for (Reg reg : Vector<Reg>(code.regsInPriorityOrder(B3::GP))) {
+            if (!allowed.contains(reg, IgnoreVectors))
+                code.pinRegister(reg);
+        }
+
+        Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
+        auto appendCall = [&](B3::Air::BasicBlock* block, const RegisterSet& lost, Tmp operand = Tmp()) {
+            auto* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
+            patchpoint->clobberLate(lost);
+            patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+            if (!operand) {
+                block->appendInst(Inst(Patch, patchpoint, Arg::special(special)));
+                return;
+            }
+            patchpoint->append(proc.addConstant(B3::Origin(), B3::Int64, 0), B3::ValueRep::ColdAny);
+            block->appendInst(Inst(Patch, patchpoint, Arg::special(special), operand));
+        };
+
+        B3::Air::BasicBlock* before = valueIsBorn == ValueIsBorn::InTheBlockBefore ? code.addBlock() : nullptr;
+        first = code.addBlock();
+        B3::Air::BasicBlock* between = code.addBlock();
+        B3::Air::BasicBlock* last = code.addBlock();
+        Tmp value = code.newTmp(B3::GP);
+        Tmp addend = code.newTmp(B3::GP);
+        Tmp sum = code.newTmp(B3::GP);
+
+        if (before) {
+            before->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), value);
+            before->append(Jump, nullptr);
+            before->setSuccessors(first);
+            first->append(Add64, nullptr, value, value);
+        } else
+            first->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), value);
+        appendCall(first, lostAtFirstCall, value);
+        appendCall(first, lostAtSecondCall, value);
+        first->append(Add64, nullptr, value, value);
+        first->append(Jump, nullptr);
+        first->setSuccessors(between);
+
+        between->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 16), addend);
+        between->append(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), 24), sum);
+        between->append(Jump, nullptr);
+        between->setSuccessors(last);
+
+        last->append(Add64, nullptr, value, sum);
+        last->append(Add64, nullptr, value, sum);
+        for (unsigned call = 0; call < 2; ++call) {
+            appendCall(last, lostAtLaterCalls);
+            for (unsigned use = 0; use < 6; ++use)
+                last->append(Add64, nullptr, addend, sum);
+        }
+        last->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+        last->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+        code.resetReachability();
+
+        allocateRegistersByGreedy(code);
+    }
+
+    static B3::Policy policy(bool checksSpillSlots, bool overlooksColdUses)
+    {
+        B3::Policy policy;
+        policy.air.splitting.splitsIntoClustersOverBlocks = true;
+        policy.validation.checksSpillSlots = checksSpillSlots;
+        policy.validation.overlooksColdUsesOfClustersOverBlocks = overlooksColdUses;
+        return policy;
+    }
+
+    static B3::Policy policy(B3::MoveLeftOutByRegisterAllocator moveLeftOut, bool checksSpillSlots, bool checksAllocatedRegisters)
+    {
+        B3::Policy policy = LiveRangeSplitTwice::policy(checksSpillSlots, false);
+        policy.validation.checksAllocatedRegisters = checksAllocatedRegisters;
+        policy.validation.moveLeftOutByRegisterAllocator = moveLeftOut;
+        return policy;
+    }
+
+    unsigned numberOfCallsThatReadTheStack()
+    {
+        unsigned result = 0;
+        for (B3::Air::Inst& inst : *first) {
+            if (inst.kind.opcode == B3::Air::Patch)
+                result += std::ranges::any_of(inst.args(), [](const B3::Air::Arg& arg) { return arg.isStack(); });
+        }
+        return result;
+    }
+
+    bool failedTheCheck() const { return proc.report().failure && proc.report().failure->kind == B3::FailureKind::SpillSlotLacksItsValue; }
+    String detail() const { return proc.report().failure->detail; }
+
+    B3::Procedure proc;
+    B3::Air::BasicBlock* first { nullptr };
+};
+
+} // anonymous namespace
+
+static void testOperandOfCallIsFoundWhenLiveRangeIsSplitTwice()
+{
+    using namespace B3::Air;
+    LiveRangeSplitTwice split(LiveRangeSplitTwice::policy(false, false), ValueIsBorn::InTheBlockOfTheCalls);
+
+    Vector<StackSlot*> written;
+    for (Inst& inst : *split.first) {
+        inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank, Width) {
+            if (arg.isStack() && Arg::isAnyUse(role))
+                AOT_TEST_CHECK(written.contains(arg.stackSlot()));
+        });
+        inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank, Width) {
+            if (arg.isStack() && Arg::isAnyDef(role))
+                written.append(arg.stackSlot());
+        });
+    }
+    // The value is held in a register in the first block and stored once, for the last block.
+    AOT_TEST_CHECK(written.size() == 1);
+    AOT_TEST_CHECK(split.first->at(0).args()[1].isReg());
+    // Both operands are counted, and both lie between the two writes.
+    AOT_TEST_CHECK(split.proc.report().countOf(B3::Counter::ColdUsesKeptThroughSecondSplit) == 2);
+    AOT_TEST_CHECK(split.proc.report().countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) == 2);
+}
+
+static void testCheckOfSpillSlotsSeesOperandLeftBehindBySecondSplit()
+{
+    for (ValueIsBorn valueIsBorn : { ValueIsBorn::InTheBlockOfTheCalls, ValueIsBorn::InTheBlockBefore }) {
+        LiveRangeSplitTwice sound(LiveRangeSplitTwice::policy(true, false), valueIsBorn);
+        AOT_TEST_CHECK(!sound.proc.report().failure);
+        AOT_TEST_CHECK(!sound.numberOfCallsThatReadTheStack());
+        AOT_TEST_CHECK(sound.proc.report().countOf(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) == 2);
+
+        // Without the check the broken allocator hands both calls the slot and says nothing.
+        LiveRangeSplitTwice brokenAndUnchecked(LiveRangeSplitTwice::policy(false, true), valueIsBorn);
+        AOT_TEST_CHECK(!brokenAndUnchecked.proc.report().failure);
+        AOT_TEST_CHECK(brokenAndUnchecked.numberOfCallsThatReadTheStack() == 2);
+
+        LiveRangeSplitTwice broken(LiveRangeSplitTwice::policy(true, true), valueIsBorn);
+        AOT_TEST_CHECK(broken.failedTheCheck());
+        AOT_TEST_CHECK(broken.detail().contains("behind register allocation"_s));
+        AOT_TEST_CHECK(broken.detail().contains("has changed the value it stands for"_s));
+    }
+
+    // Where the value is born in the block before, the slot has been written by then: it holds the value from before the first addition. That every read follows a write on every
+    // path does not show it.
+    LiveRangeSplitTwice stale(LiveRangeSplitTwice::policy(false, true), ValueIsBorn::InTheBlockBefore);
+    AOT_TEST_CHECK(stale.numberOfCallsThatReadTheStack() == 2);
+    AOT_TEST_CHECK(B3::Air::checkSpillSlotsAreWritten(stale.proc.code(), B3::Air::PlacesOfValues::Words::OfSlots, "by the writes alone"_s));
+    LiveRangeSplitTwice neverWritten(LiveRangeSplitTwice::policy(false, true), ValueIsBorn::InTheBlockOfTheCalls);
+    AOT_TEST_CHECK(!B3::Air::checkSpillSlotsAreWritten(neverWritten.proc.code(), B3::Air::PlacesOfValues::Words::OfSlots, "by the writes alone"_s));
+    AOT_TEST_CHECK(neverWritten.detail().contains("nothing writes it on the path #0"_s));
+}
+
+namespace {
+
+// entry branches to left and right, which both jump to join; join jumps to itself or leaves.
+struct SlotInDiamond {
+    SlotInDiamond()
+    {
+        using namespace B3::Air;
+        Code& code = proc.code();
+        entry = code.addBlock();
+        left = code.addBlock();
+        right = code.addBlock();
+        join = code.addBlock();
+        leave = code.addBlock();
+        slot = code.addStackSlot(8, StackSlotKind::Spill);
+        special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
+    }
+
+    void write(B3::Air::BasicBlock* block, B3::Air::Opcode opcode = B3::Air::Move) { block->append(opcode, nullptr, B3::Air::Tmp(GPRInfo::argumentGPR0), B3::Air::Arg::stack(slot)); }
+    void read(B3::Air::BasicBlock* block, B3::Air::Opcode opcode = B3::Air::Move) { block->append(opcode, nullptr, B3::Air::Arg::stack(slot), B3::Air::Tmp(GPRInfo::argumentGPR1)); }
+    void readByCall(B3::Air::BasicBlock* block, B3::ValueRep rep)
+    {
+        auto* patchpoint = proc.add<B3::PatchpointValue>(B3::Void, B3::Origin());
+        patchpoint->clobberLate(RegisterSet { GPRInfo::argumentGPR0, GPRInfo::argumentGPR1 });
+        patchpoint->append(proc.addConstant(B3::Origin(), B3::Int64, 0), rep);
+        block->appendInst(B3::Air::Inst(B3::Air::Patch, patchpoint, B3::Air::Arg::special(special), B3::Air::Arg::stack(slot)));
+    }
+    void writeByCall(B3::Air::BasicBlock* block)
+    {
+        auto* patchpoint = proc.add<B3::PatchpointValue>(B3::Int64, B3::Origin());
+        patchpoint->resultConstraints = { B3::ValueRep::WarmAny };
+        block->appendInst(B3::Air::Inst(B3::Air::Patch, patchpoint, B3::Air::Arg::special(special), B3::Air::Arg::stack(slot)));
+    }
+
+    bool isSound()
+    {
+        using namespace B3::Air;
+        entry->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+        entry->setSuccessors(left, right);
+        left->append(Jump, nullptr);
+        left->setSuccessors(join);
+        right->append(Jump, nullptr);
+        right->setSuccessors(join);
+        join->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
+        join->setSuccessors(join, leave);
+        leave->append(RetVoid, nullptr);
+        proc.code().resetReachability();
+        return checkSpillSlotsAreWritten(proc.code(), PlacesOfValues::Words::OfSlots, "in the test"_s);
+    }
+
+    String detail() const { return proc.report().failure->detail; }
+
+    B3::Procedure proc;
+    B3::Air::BasicBlock* entry;
+    B3::Air::BasicBlock* left;
+    B3::Air::BasicBlock* right;
+    B3::Air::BasicBlock* join;
+    B3::Air::BasicBlock* leave;
+    B3::Air::StackSlot* slot;
+    B3::Air::Special* special;
+};
+
+} // anonymous namespace
+
+static void testSpillSlotIsWrittenOnEveryPathToRead()
+{
+    {
+        SlotInDiamond both;
+        both.write(both.left);
+        both.write(both.right);
+        both.read(both.join);
+        AOT_TEST_CHECK(both.isSound());
+    }
+    {
+        SlotInDiamond oneArm;
+        oneArm.write(oneArm.left);
+        oneArm.read(oneArm.join);
+        AOT_TEST_CHECK(!oneArm.isSound());
+        AOT_TEST_CHECK(oneArm.proc.report().failure->kind == B3::FailureKind::SpillSlotLacksItsValue);
+        AOT_TEST_CHECK(oneArm.detail().contains("nothing writes it on the path #0 > #2 > #3"_s));
+    }
+    {
+        SlotInDiamond above;
+        above.write(above.entry);
+        above.read(above.leave);
+        AOT_TEST_CHECK(above.isSound());
+    }
+    {
+        SlotInDiamond never;
+        never.read(never.entry);
+        AOT_TEST_CHECK(!never.isSound());
+        AOT_TEST_CHECK(never.detail().contains("nothing writes it on the path #0"_s));
+    }
+    {
+        // The first turn of the loop reads what only the turn itself writes further down.
+        SlotInDiamond firstTurn;
+        firstTurn.read(firstTurn.join);
+        firstTurn.write(firstTurn.join);
+        AOT_TEST_CHECK(!firstTurn.isSound());
+    }
+    {
+        SlotInDiamond everyTurn;
+        everyTurn.write(everyTurn.join);
+        everyTurn.read(everyTurn.join);
+        everyTurn.read(everyTurn.leave);
+        AOT_TEST_CHECK(everyTurn.isSound());
+    }
+    {
+        SlotInDiamond lowerHalf;
+        lowerHalf.write(lowerHalf.entry, B3::Air::Move32);
+        lowerHalf.read(lowerHalf.leave, B3::Air::Move32);
+        AOT_TEST_CHECK(lowerHalf.isSound());
+    }
+    {
+        // lowerStackArgs stores a zero into the upper half behind a 32-bit write that extends with zeros.
+        SlotInDiamond upperHalf;
+        upperHalf.write(upperHalf.entry, B3::Air::Move32);
+        upperHalf.read(upperHalf.leave);
+        AOT_TEST_CHECK(upperHalf.isSound());
+    }
+}
+
+static void testOperandsAndResultsOfCallsAreReadsAndWritesOfSpillSlots()
+{
+    // An operand that a call only reads is a read, early or late. What the call clobbers is registers: it writes no slot.
+    for (B3::ValueRep rep : { B3::ValueRep(B3::ValueRep::ColdAny), B3::ValueRep(B3::ValueRep::LateColdAny), B3::ValueRep(B3::ValueRep::WarmAny) }) {
+        SlotInDiamond unwritten;
+        unwritten.readByCall(unwritten.leave, rep);
+        AOT_TEST_CHECK(!unwritten.isSound());
+
+        SlotInDiamond twice;
+        twice.readByCall(twice.entry, rep);
+        twice.readByCall(twice.leave, rep);
+        AOT_TEST_CHECK(!twice.isSound());
+        AOT_TEST_CHECK(twice.detail().contains("(#0, instruction 0)"_s));
+
+        SlotInDiamond written;
+        written.write(written.entry);
+        written.readByCall(written.leave, rep);
+        AOT_TEST_CHECK(written.isSound());
+    }
+    SlotInDiamond result;
+    result.writeByCall(result.entry);
+    result.read(result.leave);
+    AOT_TEST_CHECK(result.isSound());
+
+    SlotInDiamond resultOnOneArm;
+    resultOnOneArm.writeByCall(resultOnOneArm.right);
+    resultOnOneArm.readByCall(resultOnOneArm.join, B3::ValueRep::ColdAny);
+    AOT_TEST_CHECK(!resultOnOneArm.isSound());
+    AOT_TEST_CHECK(resultOnOneArm.detail().contains("on the path #0 > #1 > #3"_s));
+}
+
+static void testSpillSlotsAreJudgedByBytesOfFrameBehindStackAllocation()
+{
+    using namespace B3::Air;
+    auto isSound = [](intptr_t offsetOfWritten, unsigned sizeOfWritten, intptr_t offsetOfRead, unsigned sizeOfRead, ASCIILiteral expectedInDetail = { }) {
+        B3::Procedure proc;
+        Code& code = proc.code();
+        B3::Air::BasicBlock* block = code.addBlock();
+        StackSlot* written = code.addStackSlot(sizeOfWritten, StackSlotKind::Spill);
+        StackSlot* read = code.addStackSlot(sizeOfRead, StackSlotKind::Spill);
+        written->setOffsetFromFP(offsetOfWritten);
+        read->setOffsetFromFP(offsetOfRead);
+        block->append(sizeOfWritten == 4 ? Move32 : Move, nullptr, Tmp(GPRInfo::argumentGPR0), Arg::stack(written));
+        block->append(sizeOfRead == 4 ? Move32 : Move, nullptr, Arg::stack(read), Tmp(GPRInfo::argumentGPR1));
+        block->append(RetVoid, nullptr);
+        code.resetReachability();
+        bool result = checkSpillSlotsAreWritten(code, PlacesOfValues::Words::OfFrame, "behind stack allocation"_s);
+        AOT_TEST_CHECK(result == !proc.report().failure);
+        if (!result && !expectedInDetail.isNull())
+            AOT_TEST_CHECK(proc.report().failure->detail.contains(expectedInDetail));
+        return result;
+    };
+
+    AOT_TEST_CHECK(!isSound(-8, 8, -16, 8, "behind stack allocation: the bytes -16 to -13 from the frame pointer"_s));
+    AOT_TEST_CHECK(!isSound(-16, 8, -8, 8, "the bytes -8 to -5 from the frame pointer"_s));
+    // Two slots that are never live together are given the same bytes. Whoever wrote them, they are written: here less is seen than by the slots.
+    AOT_TEST_CHECK(isSound(-8, 8, -8, 8));
+    AOT_TEST_CHECK(isSound(-8, 8, -8, 4));
+    AOT_TEST_CHECK(isSound(-8, 8, -4, 4));
+    AOT_TEST_CHECK(!isSound(-8, 4, -8, 8, "the bytes -4 to -1 from the frame pointer"_s));
+    AOT_TEST_CHECK(!isSound(-4, 4, -8, 4, "the bytes -8 to -5 from the frame pointer"_s));
+}
+
+static void testValueThatChangesInRegisterLeavesSpillSlotStale()
+{
+    using namespace B3::Air;
+    enum Where : uint8_t { Entry, Left, Right, Join, Leave };
+    enum class Kind : uint8_t { Read, Write, ValueChanges };
+    struct Step {
+        Where where;
+        Kind kind;
+    };
+    auto isSound = [](std::initializer_list<Step> steps, ASCIILiteral expectedInDetail = { }) {
+        SlotInDiamond diamond;
+        B3::Air::BasicBlock* blocks[] = { diamond.entry, diamond.left, diamond.right, diamond.join, diamond.leave };
+        // Instructions to name in a report.
+        for (const Step& step : steps)
+            blocks[step.where]->append(Nop, nullptr);
+        AOT_TEST_CHECK(diamond.isSound());
+        PlacesOfValues places(diamond.proc.code(), PlacesOfValues::Words::OfSlots);
+        Inst read(Move, nullptr, Arg::stack(diamond.slot), Tmp(GPRInfo::argumentGPR1));
+        Inst write(Move, nullptr, Tmp(GPRInfo::argumentGPR0), Arg::stack(diamond.slot));
+        for (unsigned where = Entry; where <= Leave; ++where) {
+            places.beginBlock(blocks[where]);
+            unsigned instIndex = 0;
+            for (const Step& step : steps) {
+                if (step.where != where)
+                    continue;
+                if (step.kind == Kind::Read)
+                    places.addReadsOfSlots(read, instIndex);
+                else if (step.kind == Kind::Write)
+                    places.addWritesOfSlots(write, instIndex);
+                else
+                    places.addChangeOfValue(diamond.slot, instIndex);
+                ++instIndex;
+            }
+        }
+        bool result = places.check("in the test"_s);
+        AOT_TEST_CHECK(result || diamond.proc.report().failure->kind == B3::FailureKind::SpillSlotLacksItsValue);
+        if (!result && !expectedInDetail.isNull())
+            AOT_TEST_CHECK(diamond.detail().contains(expectedInDetail));
+        return result;
+    };
+
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::Write }, { Entry, Kind::Read } }));
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::Write }, { Entry, Kind::ValueChanges }, { Entry, Kind::Read } }, "has changed the value it stands for"_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::Write }, { Entry, Kind::ValueChanges }, { Entry, Kind::Write }, { Entry, Kind::Read } }));
+    // A value that is born in a register and never read from the slot needs no store.
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::ValueChanges }, { Join, Kind::ValueChanges } }));
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::Write }, { Left, Kind::ValueChanges }, { Leave, Kind::Read } }, "on the path #1 > #3 > #4"_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::Write }, { Left, Kind::ValueChanges }, { Left, Kind::Write }, { Leave, Kind::Read } }));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::ValueChanges }, { Left, Kind::Write }, { Right, Kind::Write }, { Join, Kind::Read } }));
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::ValueChanges }, { Left, Kind::Write }, { Join, Kind::Read } }, "on the path #0 > #2 > #3"_s));
+    // Around the loop: the read at the top of the second turn meets the change at the bottom of the first.
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::Write }, { Join, Kind::Read }, { Join, Kind::ValueChanges } }, "on the path #3 > #3"_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::Write }, { Join, Kind::Read }, { Join, Kind::ValueChanges }, { Join, Kind::Write } }));
+}
+
+static void testRegisterHoldsTmpThatWasDefinedIntoItLast()
+{
+    using namespace B3::Air;
+    enum Where : uint8_t { Entry, Left, Right, Join, Leave };
+    enum class Kind : uint8_t { ReadFirst, WriteFirst, ReadSecond, WriteSecond, Clobber, ClobberOther };
+    struct Step {
+        Where where;
+        Kind kind;
+    };
+    auto isSound = [](std::initializer_list<Step> steps, ASCIILiteral expectedInDetail = { }) {
+        SlotInDiamond diamond;
+        B3::Air::BasicBlock* blocks[] = { diamond.entry, diamond.left, diamond.right, diamond.join, diamond.leave };
+        for (const Step& step : steps)
+            blocks[step.where]->append(Nop, nullptr);
+        AOT_TEST_CHECK(diamond.isSound());
+        // Two Tmps that have been given one register.
+        Tmp first = diamond.proc.code().newTmp(B3::GP);
+        Tmp second = diamond.proc.code().newTmp(B3::GP);
+        Reg reg = GPRInfo::regCS0;
+        PlacesOfValues places(diamond.proc.code(), PlacesOfValues::Words::OfSlots);
+        for (unsigned where = Entry; where <= Leave; ++where) {
+            places.beginBlock(blocks[where]);
+            unsigned instIndex = 0;
+            for (const Step& step : steps) {
+                if (step.where != where)
+                    continue;
+                switch (step.kind) {
+                case Kind::ReadFirst:
+                    places.addRead(reg, first, instIndex);
+                    break;
+                case Kind::WriteFirst:
+                    places.addWrite(reg, first, instIndex);
+                    break;
+                case Kind::ReadSecond:
+                    places.addRead(reg, second, instIndex);
+                    break;
+                case Kind::WriteSecond:
+                    places.addWrite(reg, second, instIndex);
+                    break;
+                case Kind::Clobber:
+                    places.addClobber(reg, instIndex);
+                    break;
+                case Kind::ClobberOther:
+                    places.addClobber(GPRInfo::regCS1, instIndex);
+                    break;
+                }
+                ++instIndex;
+            }
+        }
+        bool result = places.check("in the test"_s);
+        AOT_TEST_CHECK(result || diamond.proc.report().failure->kind == B3::FailureKind::RegisterLacksItsValue);
+        if (!result && !expectedInDetail.isNull())
+            AOT_TEST_CHECK(diamond.detail().contains(expectedInDetail));
+        return result;
+    };
+
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Leave, Kind::ReadFirst } }));
+    AOT_TEST_CHECK(!isSound({ { Leave, Kind::ReadFirst } }, "and nothing writes it on the path #0 > "_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Left, Kind::ClobberOther }, { Leave, Kind::ReadFirst } }));
+    // A call on one arm, with nothing behind it that brings the value back.
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::WriteFirst }, { Left, Kind::Clobber }, { Leave, Kind::ReadFirst } }, "has written the register, and nothing brings the value back on the path #1 > #3 > #4"_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Left, Kind::Clobber }, { Left, Kind::WriteFirst }, { Leave, Kind::ReadFirst } }));
+    // The register goes from one Tmp to the other and back.
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Entry, Kind::ReadFirst }, { Entry, Kind::WriteSecond }, { Join, Kind::ReadSecond }, { Leave, Kind::WriteFirst }, { Leave, Kind::ReadFirst } }));
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::WriteFirst }, { Entry, Kind::WriteSecond }, { Entry, Kind::ReadFirst } }, "has written the register"_s));
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::WriteFirst }, { Right, Kind::WriteSecond }, { Join, Kind::ReadFirst } }, "on the path #2 > #3"_s));
+    // Both are read from outside in one block: one of them cannot be there.
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::WriteFirst }, { Leave, Kind::ReadFirst }, { Leave, Kind::ReadSecond } }));
+    // Around the loop.
+    AOT_TEST_CHECK(!isSound({ { Entry, Kind::WriteFirst }, { Join, Kind::ReadFirst }, { Join, Kind::Clobber } }, "on the path #3 > #3"_s));
+    AOT_TEST_CHECK(isSound({ { Entry, Kind::WriteFirst }, { Join, Kind::ReadFirst }, { Join, Kind::Clobber }, { Join, Kind::WriteFirst } }));
+}
+
+static void testMoveThatRegisterAllocatorLeavesOutIsSeen()
+{
+    using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
+    for (ValueIsBorn valueIsBorn : { ValueIsBorn::InTheBlockOfTheCalls, ValueIsBorn::InTheBlockBefore }) {
+        LiveRangeSplitTwice sound(LiveRangeSplitTwice::policy(MoveLeftOut::None, true, true), valueIsBorn);
+        AOT_TEST_CHECK(!sound.proc.report().failure);
+
+        // A store is missed by whoever reads the slot, a load by whoever reads the register. Each check sees its own and not the other's.
+        LiveRangeSplitTwice withoutStore(LiveRangeSplitTwice::policy(MoveLeftOut::StoreBehindCluster, true, false), valueIsBorn);
+        AOT_TEST_CHECK(withoutStore.proc.report().failure && withoutStore.proc.report().failure->kind == B3::FailureKind::SpillSlotLacksItsValue);
+        LiveRangeSplitTwice withoutStoreByRegisters(LiveRangeSplitTwice::policy(MoveLeftOut::StoreBehindCluster, false, true), valueIsBorn);
+        AOT_TEST_CHECK(!withoutStoreByRegisters.proc.report().failure);
+
+        LiveRangeSplitTwice withoutLoad(LiveRangeSplitTwice::policy(MoveLeftOut::LoadAheadOfCluster, false, true), valueIsBorn);
+        AOT_TEST_CHECK(withoutLoad.proc.report().failure && withoutLoad.proc.report().failure->kind == B3::FailureKind::RegisterLacksItsValue);
+        AOT_TEST_CHECK(withoutLoad.detail().contains("behind register allocation"_s));
+        LiveRangeSplitTwice withoutLoadBySlots(LiveRangeSplitTwice::policy(MoveLeftOut::LoadAheadOfCluster, true, false), valueIsBorn);
+        AOT_TEST_CHECK(!withoutLoadBySlots.proc.report().failure);
+    }
 }
 
 // entry branches to left and right, which both jump to join.
@@ -1943,8 +2613,23 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merge-test-for-nan-into-length-test"_s, testMergeTestForNaNIntoLengthTest },
         { "update-integers-in-memory"_s, testUpdateIntegersInMemory },
         { "narrow-truncated-phis"_s, testNarrowTruncatedPhis },
+        { "merge-mutator-fences-of-nested-cells"_s, testMergeMutatorFencesOfNestedCells },
+        { "merge-mutator-fences-of-cell-and-its-storage"_s, testMergeMutatorFencesOfCellAndItsStorage },
+        { "mutator-fence-stays-in-front-of-store-into-older-cell"_s, testMutatorFenceStaysInFrontOfStoreIntoOlderCell },
+        { "mutator-fence-stays-in-front-of-ordinary-store"_s, testMutatorFenceStaysInFrontOfOrdinaryStore },
+        { "mutator-fence-stays-in-front-of-call"_s, testMutatorFenceStaysInFrontOfCall },
+        { "merge-mutator-fences-across-branch"_s, testMergeMutatorFencesAcrossBranch },
+        { "mutator-fence-stays-in-loop"_s, testMutatorFenceStaysInLoop },
         { "load-is-not-folded-across-write-it-stays-in-front-of"_s, testLoadIsNotFoldedAcrossWriteItStaysInFrontOf },
         { "loads-are-not-paired-across-store-that-may-lie-over-them"_s, testLoadsAreNotPairedAcrossStoreThatMayLieOverThem },
+        { "operand-of-call-is-found-when-live-range-is-split-twice"_s, testOperandOfCallIsFoundWhenLiveRangeIsSplitTwice },
+        { "check-of-spill-slots-sees-operand-left-behind-by-second-split"_s, testCheckOfSpillSlotsSeesOperandLeftBehindBySecondSplit },
+        { "spill-slot-is-written-on-every-path-to-read"_s, testSpillSlotIsWrittenOnEveryPathToRead },
+        { "operands-and-results-of-calls-are-reads-and-writes-of-spill-slots"_s, testOperandsAndResultsOfCallsAreReadsAndWritesOfSpillSlots },
+        { "value-that-changes-in-register-leaves-spill-slot-stale"_s, testValueThatChangesInRegisterLeavesSpillSlotStale },
+        { "register-holds-tmp-that-was-defined-into-it-last"_s, testRegisterHoldsTmpThatWasDefinedIntoItLast },
+        { "move-that-register-allocator-leaves-out-is-seen"_s, testMoveThatRegisterAllocatorLeavesOutIsSeen },
+        { "spill-slots-are-judged-by-bytes-of-frame-behind-stack-allocation"_s, testSpillSlotsAreJudgedByBytesOfFrameBehindStackAllocation },
     };
     return tests;
 }

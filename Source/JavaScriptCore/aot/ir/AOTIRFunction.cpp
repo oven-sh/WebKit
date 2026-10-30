@@ -11,14 +11,18 @@
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
 #include "AOTObservableOperations.h"
+#include "AOTParkedBodies.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
+#include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/ParkingLot.h>
+#include <wtf/SIMDHelpers.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -79,25 +83,86 @@ static ALWAYS_INLINE uint32_t unpackWord(const uint8_t*& source, unsigned size, 
     return ((written >> 1) ^ (0 - (written & 1))) + wordInFront;
 }
 
+struct TablesOfPackedWords {
+    alignas(16) std::array<std::array<uint8_t, 16>, 256> bytesToWrite;
+    alignas(16) std::array<std::array<uint8_t, 16>, 256> bytesToRead;
+    std::array<uint8_t, 256> numberOfBytes;
+};
+static constexpr TablesOfPackedWords tablesOfPackedWords = [] {
+    constexpr uint8_t zero = 0x80;
+    TablesOfPackedWords tables { };
+    for (unsigned sizes = 0; sizes < 256; ++sizes) {
+        tables.bytesToWrite[sizes].fill(zero);
+        tables.bytesToRead[sizes].fill(zero);
+        uint8_t position = 0;
+        for (unsigned word = 0; word < 4; ++word) {
+            for (unsigned byte = 0; byte < bytesOfPackedWord[sizes >> word * 2 & 3]; ++byte, ++position) {
+                tables.bytesToWrite[sizes][position] = static_cast<uint8_t>(word * 4 + byte);
+                tables.bytesToRead[sizes][word * 4 + byte] = position;
+            }
+        }
+        tables.numberOfBytes[sizes] = position;
+    }
+    return tables;
+}();
+
+using FourWords = simde_uint32x4_t;
+static constexpr size_t bytesReadForFourWords = 1 + sizeof(FourWords);
+
+static ALWAYS_INLINE FourWords shuffleBytes(FourWords words, const std::array<uint8_t, 16>& positions)
+{
+#if CPU(X86_64)
+    return simde_uint32x4_from_m128i(simde_mm_shuffle_epi8(simde_uint32x4_to_m128i(words), simde_mm_load_si128(reinterpret_cast<const simde__m128i*>(positions.data()))));
+#else
+    return simde_vreinterpretq_u32_u8(simde_vqtbl1q_u8(simde_vreinterpretq_u8_u32(words), simde_vld1q_u8(positions.data())));
+#endif
+}
+
+static ALWAYS_INLINE FourWords signOf(FourWords words) { return simde_vreinterpretq_u32_s32(simde_vshrq_n_s32(simde_vreinterpretq_s32_u32(words), 31)); }
+
+static ALWAYS_INLINE void packFourWords(uint8_t*& target, FourWords words, FourWords wordsInFront)
+{
+    alignas(16) static constexpr std::array<uint8_t, 16> lowestByteOfEach { 0, 4, 8, 12, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80 };
+    FourWords zero = simde_vdupq_n_u32(0);
+    FourWords difference = simde_vsubq_u32(words, wordsInFront);
+    FourWords written = simde_veorq_u32(simde_vshlq_n_u32(difference, 1), signOf(difference));
+    FourWords isZero = simde_vceqq_u32(written, zero);
+    FourWords fitsOneByte = simde_vceqq_u32(simde_vshrq_n_u32(written, 8), zero);
+    FourWords fitsTwoBytes = simde_vceqq_u32(simde_vshrq_n_u32(written, 16), zero);
+    FourWords size = simde_vaddq_u32(simde_vaddq_u32(simde_vdupq_n_u32(3), isZero), simde_vaddq_u32(fitsOneByte, fitsTwoBytes));
+    uint32_t sizeInEachByte = simde_vgetq_lane_u32(shuffleBytes(size, lowestByteOfEach), 0);
+    unsigned sizes = sizeInEachByte * 0x01041040u >> 24;
+    *target++ = static_cast<uint8_t>(sizes);
+    simde_vst1q_u8(target, simde_vreinterpretq_u8_u32(shuffleBytes(written, tablesOfPackedWords.bytesToWrite[sizes])));
+    target += tablesOfPackedWords.numberOfBytes[sizes];
+}
+
+static ALWAYS_INLINE FourWords unpackFourDifferences(const uint8_t*& source)
+{
+    unsigned sizes = *source++;
+    FourWords written = shuffleBytes(simde_vreinterpretq_u32_u8(simde_vld1q_u8(source)), tablesOfPackedWords.bytesToRead[sizes]);
+    source += tablesOfPackedWords.numberOfBytes[sizes];
+    return simde_veorq_u32(simde_vshrq_n_u32(written, 1), signOf(simde_vshlq_n_u32(written, 31)));
+}
+
 // The first `stride` words have zero in front of them. What is left over behind the last four takes a byte of sizes too.
 static uint8_t* packWords(uint8_t* target, std::span<const uint32_t> span, size_t stride)
 {
     const uint32_t* words = span.data();
     size_t count = span.size();
     size_t index = 0;
-    auto packUpTo = [&](size_t end, auto wordInFrontOf) ALWAYS_INLINE_LAMBDA {
-        for (; index + 4 <= end; index += 4) {
-            uint8_t* sizes = target++;
-            unsigned first = packWord(target, words[index], wordInFrontOf(index));
-            unsigned second = packWord(target, words[index + 1], wordInFrontOf(index + 1));
-            unsigned third = packWord(target, words[index + 2], wordInFrontOf(index + 2));
-            unsigned fourth = packWord(target, words[index + 3], wordInFrontOf(index + 3));
-            *sizes = static_cast<uint8_t>(first | second << 2 | third << 4 | fourth << 6);
-        }
-    };
+    for (; index + 4 <= std::min(count, stride); index += 4)
+        packFourWords(target, simde_vld1q_u32(words + index), simde_vdupq_n_u32(0));
     auto checked = [&](size_t at) ALWAYS_INLINE_LAMBDA { return at >= stride ? words[at - stride] : 0; };
-    packUpTo(std::min(count, (stride + 3) & ~static_cast<size_t>(3)), checked);
-    packUpTo(count, [&](size_t at) ALWAYS_INLINE_LAMBDA { return words[at - stride]; });
+    if (index < stride && index + 4 <= count) {
+        uint8_t* sizes = target++;
+        unsigned sizesOfFour = 0;
+        for (unsigned shift = 0; shift < 8; ++index, shift += 2)
+            sizesOfFour |= packWord(target, words[index], checked(index)) << shift;
+        *sizes = static_cast<uint8_t>(sizesOfFour);
+    }
+    for (; index + 4 <= count; index += 4)
+        packFourWords(target, simde_vld1q_u32(words + index), simde_vld1q_u32(words + index - stride));
     if (index < count) {
         uint8_t* sizes = target++;
         unsigned sizesOfRest = 0;
@@ -108,26 +173,40 @@ static uint8_t* packWords(uint8_t* target, std::span<const uint32_t> span, size_
     return target;
 }
 
-static const uint8_t* unpackWords(const uint8_t* source, uint32_t* words, size_t count, size_t stride)
+// Nothing at or behind `limit` is read.
+static const uint8_t* unpackWords(const uint8_t* source, const uint8_t* limit, uint32_t* words, size_t count, size_t stride)
 {
     size_t index = 0;
-    auto unpackUpTo = [&](size_t end, auto wordInFrontOf) ALWAYS_INLINE_LAMBDA {
-        for (; index + 4 <= end; index += 4) {
-            unsigned sizes = *source++;
-            words[index] = unpackWord(source, sizes & 3, wordInFrontOf(index));
-            words[index + 1] = unpackWord(source, sizes >> 2 & 3, wordInFrontOf(index + 1));
-            words[index + 2] = unpackWord(source, sizes >> 4 & 3, wordInFrontOf(index + 2));
-            words[index + 3] = unpackWord(source, sizes >> 6, wordInFrontOf(index + 3));
-        }
-    };
+    auto mayReadFour = [&]() ALWAYS_INLINE_LAMBDA { return static_cast<size_t>(limit - source) >= bytesReadForFourWords; };
     auto checked = [&](size_t at) ALWAYS_INLINE_LAMBDA { return at >= stride ? words[at - stride] : 0; };
-    unpackUpTo(std::min(count, (stride + 3) & ~static_cast<size_t>(3)), checked);
-    unpackUpTo(count, [&](size_t at) ALWAYS_INLINE_LAMBDA { return words[at - stride]; });
-    if (index < count) {
+    auto unpackOneByOne = [&](size_t end) ALWAYS_INLINE_LAMBDA {
         unsigned sizes = *source++;
-        for (; index < count; ++index, sizes >>= 2)
+        for (; index < end; ++index, sizes >>= 2)
             words[index] = unpackWord(source, sizes & 3, checked(index));
+    };
+    for (; index + 4 <= std::min(count, stride) && mayReadFour(); index += 4)
+        simde_vst1q_u32(words + index, unpackFourDifferences(source));
+    if (index < stride && index + 4 <= count)
+        unpackOneByOne(index + 4);
+    if (stride >= 4) {
+        for (; index + 4 <= count && mayReadFour(); index += 4)
+            simde_vst1q_u32(words + index, simde_vaddq_u32(unpackFourDifferences(source), simde_vld1q_u32(words + index - stride)));
+    } else if (stride == 1 && index) {
+        FourWords zero = simde_vdupq_n_u32(0);
+        FourWords lastWord = simde_vdupq_n_u32(words[index - 1]);
+        for (; index + 4 <= count && mayReadFour(); index += 4) {
+            FourWords sums = unpackFourDifferences(source);
+            sums = simde_vaddq_u32(sums, simde_vextq_u32(zero, sums, 3));
+            sums = simde_vaddq_u32(sums, simde_vextq_u32(zero, sums, 2));
+            sums = simde_vaddq_u32(sums, lastWord);
+            simde_vst1q_u32(words + index, sums);
+            lastWord = simde_vdupq_laneq_u32(sums, 3);
+        }
     }
+    while (index + 4 <= count)
+        unpackOneByOne(index + 4);
+    if (index < count)
+        unpackOneByOne(count);
     return source;
 }
 
@@ -141,7 +220,7 @@ static std::span<const uint32_t> wordsOf(const Table& table)
 
 // The elements point to what the elements that were written pointed to.
 template<typename Table>
-static const uint8_t* unpackTable(const uint8_t* source, Table& table, size_t size)
+static const uint8_t* unpackTable(const uint8_t* source, const uint8_t* limit, Table& table, size_t size)
 {
     using T = typename Table::ValueType;
     static_assert(sizeof(Table) == sizeof(VectorWords));
@@ -152,7 +231,7 @@ static const uint8_t* unpackTable(const uint8_t* source, Table& table, size_t si
     words.buffer = fastMalloc(size * sizeof(T));
     words.capacity = static_cast<unsigned>(size);
     words.size = static_cast<unsigned>(size);
-    return unpackWords(source, static_cast<uint32_t*>(words.buffer), size * sizeof(T) / sizeof(uint32_t), sizeof(T) / sizeof(uint32_t));
+    return unpackWords(source, limit, static_cast<uint32_t*>(words.buffer), size * sizeof(T) / sizeof(uint32_t), sizeof(T) / sizeof(uint32_t));
 }
 
 ParkedBody::ParkedBody(Function::Blocks::Storage& blocks, Function::Values::Storage& values)
@@ -180,12 +259,13 @@ ParkedBody::ParkedBody(Function::Blocks::Storage& blocks, Function::Values::Stor
 
 void ParkedBody::takeInto(Function::Blocks::Storage& blocks, Function::Values::Storage& values)
 {
-    const uint8_t* source = unpackTable(m_bytes.span().data(), values, m_numberOfValues);
-    source = unpackTable(source, blocks, m_numberOfBlocks);
+    const uint8_t* limit = m_bytes.span().data() + m_bytes.size();
+    const uint8_t* source = unpackTable(m_bytes.span().data(), limit, values, m_numberOfValues);
+    source = unpackTable(source, limit, blocks, m_numberOfBlocks);
     BodyWords parts;
     parts.grow(m_numberOfWordsOfParts);
-    source = unpackWords(source, parts.mutableSpan().data(), parts.size(), 1);
-    RELEASE_ASSERT(source + spareBytesBehindPackedWords == m_bytes.span().data() + m_bytes.size());
+    source = unpackWords(source, limit, parts.mutableSpan().data(), parts.size(), 1);
+    RELEASE_ASSERT(source + spareBytesBehindPackedWords == limit);
     BodyWordsReader reader(parts.span());
     for (Value& value : values)
         value.takeWordsFrom(reader);
@@ -710,6 +790,78 @@ void remapIDs(Function& function, const TypeRemap& types, const StringRemap& str
         forEachReference(block.terminator, rewriter);
     if (valuesAreTypedAsDefined)
         function.setValuesAreTypedAsDefined();
+}
+
+ParkedBodies::ParkedBodies(std::span<Function> functions, const ParallelLoops& loops)
+    : m_functions(functions)
+    , m_loops(loops)
+    , m_bodies(functions.size())
+    , m_states(makeUniqueArray<Atomic<uint8_t>>(functions.size()))
+{
+    std::atomic<size_t> numberOfParkedFunctions { 0 };
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned index) {
+        Function& function = m_functions[index];
+        bool isParked = !function.bodyIsReleased && function.hasBody();
+        m_states[index].store(isParked ? IsParked : WasNeverParked, std::memory_order_relaxed);
+        if (!isParked)
+            return;
+        m_bodies[index] = ParkedBody(function.storageOfBlocks(), function.storageOfValues());
+        function.bodyIsReleased = true;
+        numberOfParkedFunctions.fetch_add(1, std::memory_order_relaxed);
+    });
+    m_numberOfParkedFunctions = numberOfParkedFunctions.load(std::memory_order_relaxed);
+}
+
+ParkedBodies::~ParkedBodies()
+{
+    takeAllBack();
+}
+
+void ParkedBodies::takeBack(FunctionID id)
+{
+    Atomic<uint8_t>& state = m_states[id.index()];
+    if (state.compareExchangeStrong(IsParked, IsBeingTakenBack) == IsParked) {
+        Function& function = m_functions[id.index()];
+        m_bodies[id.index()].takeInto(function.storageOfBlocks(), function.storageOfValues());
+        state.store(IsTakenBack);
+        ParkingLot::unparkAll(&state);
+        m_numberTakenBackAtRead.fetch_add(1, std::memory_order_relaxed);
+        Locker locker { m_takenBackLock };
+        m_takenBackLately.append(id.index());
+        return;
+    }
+    while (state.load() == IsBeingTakenBack)
+        ParkingLot::compareAndPark(&state, static_cast<uint8_t>(IsBeingTakenBack));
+}
+
+void ParkedBodies::parkAgain()
+{
+    Vector<uint32_t> lately;
+    {
+        Locker locker { m_takenBackLock };
+        lately = std::exchange(m_takenBackLately, { });
+    }
+    Vector<uint32_t> earlier = std::exchange(m_takenBackEarlier, WTF::move(lately));
+    forEachIndexInParallel(m_loops, earlier.size(), [&](unsigned position) {
+        uint32_t index = earlier[position];
+        Function& function = m_functions[index];
+        m_bodies[index] = ParkedBody(function.storageOfBlocks(), function.storageOfValues());
+        m_states[index].store(IsParked, std::memory_order_relaxed);
+    });
+}
+
+void ParkedBodies::takeAllBack()
+{
+    forEachIndexInParallel(m_loops, m_functions.size(), [&](unsigned index) {
+        uint8_t state = m_states[index].load(std::memory_order_relaxed);
+        if (state == WasNeverParked)
+            return;
+        Function& function = m_functions[index];
+        if (state == IsParked)
+            m_bodies[index].takeInto(function.storageOfBlocks(), function.storageOfValues());
+        function.bodyIsReleased = false;
+        m_states[index].store(WasNeverParked, std::memory_order_relaxed);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

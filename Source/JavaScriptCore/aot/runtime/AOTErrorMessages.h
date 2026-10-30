@@ -39,10 +39,12 @@ enum class LoaderChange : uint8_t {
     ReplaceInRequireCache,
     ReplaceLoaderFunction,
     TakeOutOfRequireCache,
+    StoreUnderNameOfModuleInRequireCache,
 };
 
 // The engine's own errors, worded by the engine.
-JS_EXPORT_PRIVATE String quotedSourceOfFailedExpression(VM&);
+// The message either ends in "(evaluating '..')" with all that is quoted, or takes the quote apart in a way of its own.
+JS_EXPORT_PRIVATE String quotedSourceOfFailedExpression(VM&, bool messageEndsInQuote);
 // A native constructor runs in the top frame, for a `new` expression of compiled code: the callee as the expression writes it.
 StringView nameOfConstructorThatRunsOnTop(VM&);
 // An operation runs in the top frame, for an `instanceof` of compiled code: the expression as it is written. Null for any other frame and where the site holds no text.
@@ -59,6 +61,8 @@ JSObject* createKeyTestOfNonObjectError(JSGlobalObject*, JSValue base);
 JSObject* createDeletionFromNullishError(JSGlobalObject*, JSValue base);
 // `o.#x`, where `o` is an object without that name. `create` is the engine's function for the kind of name.
 JSObject* createAbsentPrivateNameError(JSGlobalObject*, JSObject* (*create)(JSGlobalObject*));
+// `o.#x`, `o.#x = v` where `o` is null or undefined.
+JSObject* createPrivateNameOfNullishError(JSGlobalObject*, JSValue base);
 // Without a member: the key is a value.
 JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier* member);
 // `o[k]++`, `o[k] += v`, `o[k] ??= v`: bytecode tests `o` by an operation of its own, ahead of the conversion of `k` and of the read.
@@ -75,8 +79,13 @@ struct PlaceInFunctionText {
     // In the file.
     ModuleID module;
     LineColumn position;
+    // `const [[x]] = v`: a stack trace shows both lists at one place. The position is that of the `[` of the list which takes values at this place.
+    bool isWhereListIsWritten { false };
 };
 std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM&);
+// A function of the engine's own C++ runs: in a frame of its own above compiled code, or in an operation that stands for the call, whether or not its site names the built-in. The place is that
+// of the call in the frame that a stack trace lists first, which may be of another image than the one that runs. Its image runs while the functor does.
+void withPlaceOfCallOfNativeFunction(VM&, const ScopedLambda<void(const PlaceInFunctionText&)>&);
 // Where the place on top says nothing: `f.call(receiver)` and `f.apply(receiver, list)` fail in the function of the library that forwards the call, and are written at the place that
 // called it. Where images share realms, that place may be of another image, with nothing but hidden frames of the library above it. Its image runs while the functor does.
 void withPlaceThatCalledLibraryOnTop(VM&, const ScopedLambda<void(const PlaceInFunctionText&)>&);
@@ -114,6 +123,8 @@ String functionNotCompiledMessage();
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
+// `property` may be assigned to where the build sees the assignment.
+String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
 String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);

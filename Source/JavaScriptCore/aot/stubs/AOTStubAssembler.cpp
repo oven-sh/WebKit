@@ -13,6 +13,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
@@ -121,7 +122,23 @@ void StubAssembler::jumpToOperationCallOf(Entry entry)
 {
     recordCall(entry);
     move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
+    // argumentGPROfPreservingCall() has the other half.
+    if (key().family() == StubFamily::CallOperationPreservingRegisters && hasPrelude(entry) && takesArgumentInResultRegister(preservingCallShapes[key().form()]))
+        move(operationArgumentGPR(1), GPRInfo::returnValueGPR);
     jumpToStub(key().withoutImmediate());
+}
+
+void StubAssembler::jumpToCallOfOperation(Entry entry)
+{
+    RELEASE_ASSERT(effectsOf(entry).mayThrow);
+    constexpr StubKey callsOperation = AOT::callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance);
+    if (hasPrelude(entry)) {
+        jumpToStub(callsOperation.withImmediate(offsetInRuntimeTable(entry)));
+        return;
+    }
+    recordCall(entry);
+    move(TrustedImm32(static_cast<int32_t>(offsetInRuntimeTable(entry))), reuseScratch(stubImmediateRegister));
+    jumpToStub(callsOperation);
 }
 
 void StubAssembler::recordSignatureRegisters(StubKey entry)

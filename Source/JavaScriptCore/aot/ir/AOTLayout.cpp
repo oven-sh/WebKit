@@ -689,19 +689,27 @@ void initializeAddedLayout(Program& program, LayoutID id)
     program.setDeclaredMembers(id, program.types.intern(LayoutSet::complete({ id })));
 }
 
-static bool shouldAppendInheritedFields(const Layout& layout)
+static bool listsInheritedFields(const Layout& layout)
 {
-    if (!nearestLayoutAlwaysAbove(layout.flow))
-        return false;
-    return layout.isDerived() || std::ranges::none_of(layout.fields, [](const Field& field) {
+    return std::ranges::any_of(layout.fields, [](const Field& field) {
         return field.flags.contains(FieldFlags::IsInherited);
     });
 }
 
-static void appendBaseFields(Program& program, LayoutID id)
+static bool hasNoObjectsOfItsOwn(const Layout& layout)
 {
-    Layout& layout = program.at(id);
-    LayoutID base = nearestLayoutAlwaysAbove(layout.flow);
+    return !layout.isDerived() && layout.flow.allocation == AllocationState::NeverAllocated;
+}
+
+static bool shouldAppendInheritedFields(const Layout& layout)
+{
+    if (!nearestLayoutAlwaysAbove(layout.flow) || hasNoObjectsOfItsOwn(layout))
+        return false;
+    return layout.isDerived() || !listsInheritedFields(layout);
+}
+
+static void appendFieldsOf(Program& program, Layout& layout, LayoutID base)
+{
     const Layout& baseLayout = program.at(base);
     for (uint32_t i = 0; i < baseLayout.fields.size(); ++i) {
         const Field& baseField = baseLayout.fields[i];
@@ -726,12 +734,31 @@ static void appendBaseFields(Program& program, LayoutID id)
     }
 }
 
+static void appendBaseFields(Program& program, LayoutID id)
+{
+    Layout& layout = program.at(id);
+    size_t steps = 0;
+    for (LayoutID base = nearestLayoutAlwaysAbove(layout.flow); base; base = nearestLayoutAlwaysAbove(program.at(base).flow)) {
+        RELEASE_ASSERT(steps++ < program.layouts.size());
+        appendFieldsOf(program, layout, base);
+        if (!hasNoObjectsOfItsOwn(program.at(base)) || listsInheritedFields(program.at(base)))
+            break;
+    }
+}
+
 void appendInheritedFields(Program& program, LayoutID id)
 {
+    if (hasNoObjectsOfItsOwn(program.at(id)))
+        return;
     Vector<LayoutID, 8> chain;
-    for (LayoutID current = id; shouldAppendInheritedFields(program.at(current)); current = nearestLayoutAlwaysAbove(program.at(current).flow)) {
-        RELEASE_ASSERT(chain.size() < program.layouts.size());
-        chain.append(current);
+    size_t steps = 0;
+    for (LayoutID current = id; current; current = nearestLayoutAlwaysAbove(program.at(current).flow)) {
+        RELEASE_ASSERT(steps++ < program.layouts.size());
+        const Layout& layout = program.at(current);
+        if (shouldAppendInheritedFields(layout))
+            chain.append(current);
+        else if (!hasNoObjectsOfItsOwn(layout) || listsInheritedFields(layout))
+            break;
     }
     while (!chain.isEmpty())
         appendBaseFields(program, chain.takeLast());

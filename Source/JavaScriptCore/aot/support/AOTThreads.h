@@ -241,10 +241,20 @@ Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned c
     return chunks;
 }
 
+JS_EXPORT_PRIVATE void joinChunksAsBytes(const ParallelLoops&, VectorWords& result, std::span<VectorWords> chunks, size_t elementSize);
+
 // Compiled once for a type of element, not once for everyone who collects.
 template<typename T>
 NEVER_INLINE Vector<T> joinChunks(const ParallelLoops& loops, Vector<Vector<T>>&& chunks)
 {
+#if !ASAN_ENABLED
+    if constexpr (movesAsBytes<T>) {
+        static_assert(sizeof(Vector<T>) == sizeof(VectorWords));
+        Vector<T> result;
+        joinChunksAsBytes(loops, result.wordsOfListThatMovesAsBytes(), unsafeMakeSpan(reinterpret_cast<VectorWords*>(chunks.mutableSpan().data()), chunks.size()), sizeof(T));
+        return result;
+    }
+#endif
     size_t size = 0;
     for (auto& chunk : chunks)
         size += chunk.size();

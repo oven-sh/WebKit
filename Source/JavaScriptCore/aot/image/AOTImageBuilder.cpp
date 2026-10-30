@@ -466,7 +466,7 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults()) {
-        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::StoresPathOfMainModule };
         // Any load may name a file outside the image, so only the options say whether one is loaded.
         if (!options.excludesCodeOutsideImage())
             flags.add(ImageFlag::LoadsCodeOutsideImage);
@@ -476,6 +476,8 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
     OptionSet<ImageFlag> flags;
     if (flow.findsFilesOfProgramByName())
         flags.add(ImageFlag::FindsDataFilesByName);
+    if (flow.storesPathOfMainModule())
+        flags.add(ImageFlag::StoresPathOfMainModule);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
@@ -737,6 +739,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         flags.add(ImageFlag::IsObfuscated);
     if (context.options().sharesRealms())
         flags.add(ImageFlag::SharesRealms);
+    if (context.options().holdsLibraryAlone())
+        flags.add(ImageFlag::HoldsLibraryAlone);
     header.numbers = {
         .shapesBelow = context.imagesBelow() ? context.imagesBelow()->numbersOfLast().lastShape : 0,
         .lastShape = parts.inputs.pipeline.placement->shapes().numberOfShapes(),
@@ -749,6 +753,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     };
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))
         flags.add(ImageFlag::ShowsWaysBetweenModuleObjects);
+    if (std::ranges::any_of(parts.inputs.pipeline.program->modules, [](const Typed::Module& module) { return module.flags.contains(Typed::ModuleFlags::RunsAgain); }))
+        flags.add(ImageFlag::RunsEntryPointsAgain);
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
         header.entriesUsed[entry / 32] |= 1u << entry % 32;

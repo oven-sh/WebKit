@@ -20,6 +20,8 @@ constexpr StubKey callValueWithoutThis(unsigned count, CallPosition position = C
 constexpr StubKey callValueCell(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueCell).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callValueCellWithoutThis(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueCellWithoutThis).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callValueNotClosure(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueNotClosure).withCount(count).withForm(static_cast<uint8_t>(position)); }
+// The callee is one that callEngineCallee() calls.
+constexpr StubKey callValueEngineCallee(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueEngineCallee).withCount(count).withForm(static_cast<uint8_t>(position)); }
 // Bit i of lentArguments: argument i is a slim closure that lies in the frame of the caller and that nothing else uses. A callee whose closure word does not say that it borrows all of them gets copies on the heap.
 constexpr unsigned numberOfSetsOfLentArguments = 3;
 constexpr StubKey callValueLending(unsigned count, unsigned lentArguments, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1 + numberOfSetsOfLentArguments * static_cast<unsigned>(position))); }

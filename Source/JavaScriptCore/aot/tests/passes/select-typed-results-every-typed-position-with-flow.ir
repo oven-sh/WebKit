@@ -1,7 +1,7 @@
 # JSON.parse(text) as lowering writes it in front of each typed position: a variable, an argument of a call by value, where only the expected type stands behind the call, a tail call, whose cast names the type, and a field. Flow models the objects at each, so each record type gets its parser.
 # A function with a typed result that reaches the call under no name of its own is not modeled, and its result stays plain
 # FORM: AsRead
-# OPTIONS: report=Declines
+# OPTIONS: report=Declines heat=EverythingIsHot
 # RUN: pipeline SeparateUnlikelyLoopPaths
 # STATISTIC: ParsersCreated = 4
 # CHECK: decline TypedResultNotSelected f6 {{*}} reason=TargetIsNotModeledByFlow

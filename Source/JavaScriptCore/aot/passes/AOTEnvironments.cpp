@@ -2879,7 +2879,7 @@ static const FunctionPlan& withOwnedValues(FunctionPlan& plan, FunctionAnalyses&
         if (value.opcode != Opcode::Results)
             continue;
         value.forEachOperand([&](ValueID operand, uint32_t) {
-            objectsHandedBack.merge(escape.pointsTo(operand).objects.bits());
+            escape.pointsTo(operand).objects.addTo(objectsHandedBack);
         });
     }
     auto isOwned = [&](const PointsToSet& pointsTo) {

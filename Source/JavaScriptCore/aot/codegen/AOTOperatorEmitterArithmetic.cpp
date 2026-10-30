@@ -198,8 +198,12 @@ public:
             return callLibraryIfNaN(result, RuntimeOperation::Fmod, dividend, divisor);
         }
         std::optional<int64_t> constantWholeDivisor = constantDivisor ? positiveWholeNumberOf(*constantDivisor) : std::nullopt;
-        if (constantDivisor && !constantWholeDivisor)
+        if (constantDivisor && !constantWholeDivisor) {
+            bool hasFraction = *constantDivisor != std::trunc(*constantDivisor);
+            if (std::optional<SplitDivisor> split = hasFraction ? splitDivisor(*constantDivisor) : std::nullopt)
+                return remainderBySplitDivisor(dividend, divisor, *split);
             return callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
+        }
 
         LBasicBlock genericPath = newBlock();
         Join<Number> join(m_out);
@@ -219,6 +223,56 @@ public:
 
 private:
     enum class DividendSign : bool { Any, NonNegative };
+
+    struct SplitDivisor {
+        double magnitude;
+        double high;
+        double low;
+        double reciprocal;
+        double quotientLimit;
+    };
+
+    // A quotient below the limit times either half is exact, and the reciprocal is rounded up, so the quotient is the true one or one more.
+    static std::optional<SplitDivisor> splitDivisor(double divisor)
+    {
+        constexpr unsigned precision = std::numeric_limits<double>::digits;
+        constexpr unsigned lowBits = 27;
+        double magnitude = std::abs(divisor);
+        if (!(magnitude >= 0x1p-500 && magnitude <= 0x1p500))
+            return std::nullopt;
+        uint64_t bits = std::bit_cast<uint64_t>(magnitude);
+        double high = std::bit_cast<double>(bits & ~((1ull << lowBits) - 1));
+        double low = magnitude - high;
+        unsigned significantBits = precision - std::countr_zero(bits | 1ull << (precision - 1));
+        unsigned quotientBits = low ? precision - lowBits : std::min(precision - significantBits, 49u);
+        return SplitDivisor { magnitude, high, low, std::nextafter(1 / magnitude, std::numeric_limits<double>::infinity()), std::ldexp(1.0, quotientBits) };
+    }
+
+    Number remainderBySplitDivisor(Number dividend, Number divisor, const SplitDivisor& split)
+    {
+        Number magnitude = abs(dividend);
+        return selectByBranch<Number>(lessThan(magnitude, split.magnitude), [&] {
+            return dividend;
+        }, [&] {
+            LBasicBlock slowPath = newBlock();
+            Join<Number> join(m_out);
+            Number quotient = trunc(mul(magnitude, split.reciprocal));
+            branchUnless(lessThan(quotient, split.quotientLimit), slowPath);
+            Number difference = sub(magnitude, mul(quotient, split.high));
+            if (split.low)
+                difference = sub(difference, mul(quotient, split.low));
+            Number remainder = either<Number>(greaterThanOrEqual(difference, 0), [&] {
+                return difference;
+            }, [&] {
+                return add(difference, split.magnitude);
+            });
+            join.add(Number(m_out.bitOr(remainder.value(), m_out.bitAnd(dividend.value(), m_out.constDouble(-0.0)))));
+
+            m_out.appendTo(slowPath);
+            join.add(callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor }));
+            return join.finish();
+        });
+    }
 
     template<typename T>
     T constant(int64_t value)

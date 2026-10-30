@@ -560,7 +560,8 @@ bool catchesExceptions(const Image& image, uint32_t function)
     return false;
 }
 
-static_assert(sitesBetweenPositionCheckpoints * (2 + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
+static constexpr size_t maxZerosInFrontOfStart = 3;
+static_assert(sitesBetweenPositionCheckpoints * (maxZerosInFrontOfStart + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
 
 namespace {
 
@@ -570,6 +571,7 @@ struct PositionState {
     uint32_t source { 0 };
     LineColumn constructionStart { 0, 0 };
     bool startIsForCallers { false };
+    bool startIsWhereWritten { false };
 };
 
 struct PositionsEntry {
@@ -589,6 +591,7 @@ struct RememberedPosition {
     uint32_t sourcePlusOne;
     LineColumn constructionStart;
     bool startIsForCallers;
+    bool startIsWhereWritten;
 };
 
 } // anonymous namespace
@@ -603,8 +606,23 @@ static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const S
     uint32_t source = sourceNumber(position);
     bool startsOnSameLine = position.constructionStartLine == position.line;
     bool startsInFront = startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line;
-    // That a site has a place for callers says what the site is, so it is written wherever that place lies.
-    if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
+    if (position.startIsWhereWritten) {
+        // The same row behind three zeros, counted forward from the site.
+        bool startsBehind = startsOnSameLine ? position.constructionStartColumn > position.column : position.constructionStartLine > position.line;
+        if (startsBehind) {
+            for (size_t zeros = 0; zeros < maxZerosInFrontOfStart; ++zeros)
+                stream.append(0);
+            ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
+            if (startsOnSameLine)
+                start.columnsBack = position.constructionStartColumn - position.column;
+            else {
+                start.linesBack = position.constructionStartLine - position.line;
+                start.column = position.constructionStartColumn;
+            }
+            start.append(stream);
+        }
+    } else if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
+        // That a site has a place for callers says what the site is, so it is written wherever that place lies.
         stream.append(0);
         // No row begins with a zero: a start on another line is at least one line back.
         if (position.startIsForCallers)
@@ -657,7 +675,7 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, cons
     for (size_t site = 1; site < count; ++site) {
         if (!(site % sitesBetweenPositionCheckpoints)) {
             size_t bytesSinceLast = positions.size() - lastRunEnd;
-            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * (2 + ConstructionStartRow::maxSize + PositionRow::maxSize));
+            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * (maxZerosInFrontOfStart + ConstructionStartRow::maxSize + PositionRow::maxSize));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast >> 8));
             lastRunEnd = positions.size();
@@ -703,11 +721,14 @@ static void readPosition(const uint8_t*& cursor, PositionState& state)
 {
     std::optional<ConstructionStartRow> start;
     state.startIsForCallers = false;
+    state.startIsWhereWritten = false;
     if (!*cursor) {
         ++cursor;
         if (!*cursor) {
             ++cursor;
-            state.startIsForCallers = true;
+            state.startIsWhereWritten = !*cursor;
+            state.startIsForCallers = !state.startIsWhereWritten;
+            cursor += state.startIsWhereWritten;
         }
         start = ConstructionStartRow::read(cursor);
     }
@@ -723,7 +744,9 @@ static void readPosition(const uint8_t*& cursor, PositionState& state)
     state.constructionStart = { 0, 0 };
     if (!start)
         return;
-    if (start->isOnSameLine)
+    if (state.startIsWhereWritten)
+        state.constructionStart = start->isOnSameLine ? LineColumn { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column + start->columnsBack) } : LineColumn { static_cast<unsigned>(state.line + start->linesBack), start->column };
+    else if (start->isOnSameLine)
         state.constructionStart = { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column - start->columnsBack) };
     else
         state.constructionStart = { static_cast<unsigned>(state.line - start->linesBack), start->column };
@@ -731,7 +754,7 @@ static void readPosition(const uint8_t*& cursor, PositionState& state)
 
 static SourcePosition sourcePositionFor(const PositionState& state)
 {
-    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID(), state.constructionStart, state.startIsForCallers };
+    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID(), state.constructionStart, state.startIsForCallers, state.startIsWhereWritten };
 }
 
 std::optional<SourcePosition> decodePosition(const Image& image, uint32_t function, const uint8_t* entryInSection, OwnPosition ofFunctionInFront, CallSiteIndex site)
@@ -819,7 +842,7 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
     {
         Locker locker { rememberedPositionsLock };
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
-            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers };
+            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers, remembered.startIsWhereWritten };
     }
     unsigned firstReadColumnDelta = site.bits() >> siteNumberBits;
     std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
@@ -827,7 +850,7 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - firstReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
-        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers };
+        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers, position->startIsWhereWritten };
     }
     return position;
 }

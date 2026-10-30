@@ -61,6 +61,7 @@
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTReuseEnvironments.h"
+#include "AOTSelectTypedResultsTargets.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
 #include "AOTStringArena.h"
@@ -171,6 +172,8 @@ constexpr std::array rows {
     addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
+    // It asks for what AllocateInFrames asks for, so that all of it is computed together. A call graph that still lists a call which is gone says no less than before.
+    addingOnly({ }, programPass(RemoveUnusedCalls, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph, Heat }, { }, { })),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
     addingOnly({ }, programPass(SkipAnsweredEntryChecks, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
@@ -440,7 +443,6 @@ constexpr PassesLeftIdle passesThatCanWait[] {
     { EliminateRedundantReads, { RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { FoldConstants, { RemoveTrivialParameters, EliminateRedundantReads } },
     { FuseConcatenations, { EliminateRedundantReads } },
-    { PlanArrayCapacities, { RetypeValues } },
     { PlanCollectionCapacities, { RetypeValues } },
     { RemoveRedundantHandlers, { ResolveBuiltins, EliminateRedundantReads } },
     { RemoveTrivialParameters, { PlaceTypeTests, SimplifyCasts, SinkAllocations, RemoveTrivialParameters, PropagateBranchConditions, EliminateRedundantReads } },
@@ -799,6 +801,7 @@ static_assert(canRunSimplify(RemoveUnreadFields));
 static_assert(canRunSimplify(RemoveUnusedResults));
 static_assert(canRunSimplify(ProveResults));
 static_assert(canRunSimplify(RemoveUnusedParameters));
+static_assert(canRunSimplify(RemoveUnusedCalls));
 static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
@@ -807,6 +810,8 @@ static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ProveResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ProveResults, SimplifyControlFlow));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(RemoveUnusedCalls, RemoveDeadCountedLoops));
+static_assert(descriptorAt(RemoveUnusedCalls).inputs == descriptorAt(AllocateInFrames).inputs);
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, SinkAllocations));
@@ -1284,10 +1289,15 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, checkTypesAtEntry, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::SplitBehindEntryChecks:
-        // The pass drops the heat that it asks for, and leaves most bodies as they are.
         m_analyses.keepPartsOfBodiesForNextHeat();
-        edit(id, splitBehindEntryChecks, &inputsFor(id).heat, m_build);
+        edit(id, [&](ProgramEditor& editor) {
+            const Heat& heat = inputsFor(id).heat;
+            expectFieldsOutsideTestedCode(editor, heat, m_build);
+            markUnprofitableTypedResults(editor.program(), *output.flow, heat, m_build);
+            splitBehindEntryChecks(editor, &heat, m_build);
+        });
         didAddFunctions();
+        m_analyses.dropHeat();
         return m_runner.lastProgramPassOutcome();
     case PassID::SkipAnsweredEntryChecks:
         edit(id, skipAnsweredEntryChecks, inputsFor(id).heat, m_build);
@@ -1389,6 +1399,9 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, removeUnusedParameters, inputsFor(id), m_runner);
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
+    case PassID::RemoveUnusedCalls:
+        edit(id, removeUnusedCalls, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnreachableFunctions:
         edit(id, [&](ProgramEditor& editor) {
             // Select gives calls by value other forms, and the body that throws is written in the form in front of it.
@@ -1449,6 +1462,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::NumberLiteralStrings:
+        hidePathsOfModules(m_program, flow(), m_build);
         internPiecesOfModulePaths(m_program);
         *output.literalStrings = read(id, numberLiteralStrings, m_program, flow(), m_build);
         return m_runner.lastProgramPassOutcome();
@@ -1691,6 +1705,8 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::KeepValuesInHeapWords);
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
+    // The first pass behind the Optimize schedule for which the effect summaries are brought up to date, and AllocateInFrames reads the same ones.
+    stage.run(PassID::RemoveUnusedCalls);
     stage.run(PassID::AllocateInFrames);
     stage.run(PassID::ReuseEnvironments);
     if (m_build.options().verifiesAfterEveryStage)
@@ -1711,6 +1727,7 @@ void Pipeline::runSlotStage()
         stage.run(PassID::PlanSlots);
         return;
     }
+    hidePathsOfModules(m_program, flow(), m_build);
     internPiecesOfModulePaths(m_program);
     SlotPlanInputs inputs = createSlotPlanInputs(*this);
     inputsFor(PassID::PlanSlots);
@@ -1974,6 +1991,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     if (std::exchange(m_goesOnBehindFlowAnalysis, nullptr) && !goesOn(reportUsesOfLibraryCode(flow())))
         return;
     runOptimizeStage();
+    m_build.destroyLater(m_program.types.takeSavedSharedMemo());
     runSlotStage();
     runSelectStage();
     m_build.giveFreedMemoryBack();

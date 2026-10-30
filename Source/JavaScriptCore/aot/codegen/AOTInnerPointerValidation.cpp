@@ -373,6 +373,12 @@ private:
         return headOf(block, location);
     }
 
+    bool isWordOfPinnedRegister(unsigned value) const
+    {
+        const Facts& facts = m_facts[value];
+        return (facts.memberFlags & IsHead) && isRegister(facts.location) && m_code.isPinned(Reg::fromIndex(facts.location));
+    }
+
     unsigned valueIn(unsigned location)
     {
         if (m_current[location] == none) {
@@ -654,7 +660,7 @@ private:
         if (choosesBetweenLastOperands(inst.kind.opcode)) {
             m_facts[result].nextHeadInBlock = std::exchange(m_firstChoiceOfBlock[m_block], result);
             for (unsigned source : m_operands.span().last(std::min<size_t>(m_operands.size(), 2))) {
-                if (source == clobbered)
+                if (source == clobbered || isWordOfPinnedRegister(source))
                     continue;
                 m_choices.append({ result, source });
                 link(m_facts[result].firstSource, source);
@@ -811,6 +817,8 @@ private:
                 if (m_facts[find(incoming)].classFlags & IsPointer)
                     judge(incoming);
             }
+            if (isWordOfPinnedRegister(incoming) && !isWordOfPinnedRegister(head))
+                continue;
             unite(head, incoming);
         }
     }
@@ -887,10 +895,12 @@ private:
                 m_end[root] = 0;
             m_end[root] = std::max(m_end[root], endOf(m_facts[head]));
         }
-        m_choicesOfNotedBlock.shrink(0);
+        m_valuesMadeInNotedBlock.shrink(0);
         for (unsigned choice = m_firstChoiceOfBlock[block]; choice != none; choice = m_facts[choice].nextHeadInBlock)
-            m_choicesOfNotedBlock.append({ find(choice), choice });
-        AOT::sort(m_choicesOfNotedBlock);
+            m_valuesMadeInNotedBlock.append({ find(choice), choice });
+        for (unsigned owner : std::ranges::equal_range(m_ownersMadeInBlocks, block, { }, [&](unsigned value) { return m_facts[value].block; }))
+            m_valuesMadeInNotedBlock.append({ find(owner), owner });
+        AOT::sort(m_valuesMadeInNotedBlock);
     }
 
     // The load that made a pointer whose owner is last read in front of the position, if there is one.
@@ -920,10 +930,8 @@ private:
                     const Facts& facts = m_facts[value];
                     return facts.block == block && facts.created < position && endOf(facts) >= position;
                 };
-                if (spans(owner.value))
-                    continue;
-                auto choices = std::ranges::equal_range(m_choicesOfNotedBlock, root, { }, &std::pair<unsigned, unsigned>::first);
-                if (std::ranges::any_of(choices, [&](const auto& choice) { return spans(choice.second); }))
+                auto madeHere = std::ranges::equal_range(m_valuesMadeInNotedBlock, root, { }, &std::pair<unsigned, unsigned>::first);
+                if (std::ranges::any_of(madeHere, [&](const auto& made) { return spans(made.second); }))
                     continue;
                 return owner.load;
             }
@@ -1050,6 +1058,11 @@ private:
     void report()
     {
         AOT::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
+        for (const Owner& owner : m_owners) {
+            if (!(m_facts[owner.value].memberFlags & IsHead))
+                m_ownersMadeInBlocks.append(owner.value);
+        }
+        AOT::sort(m_ownersMadeInBlocks, { }, [&](unsigned value) { return m_facts[value].block; });
         m_blockOfEnd.fill(none, m_facts.size());
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());
@@ -1113,7 +1126,8 @@ private:
     Vector<bool> m_isFollowed;
     Vector<unsigned> m_firstHeadOfBlock;
     Vector<unsigned> m_firstChoiceOfBlock;
-    Vector<std::pair<unsigned, unsigned>> m_choicesOfNotedBlock;
+    Vector<unsigned> m_ownersMadeInBlocks;
+    Vector<std::pair<unsigned, unsigned>> m_valuesMadeInNotedBlock;
     Vector<unsigned> m_headOfRegister;
     Vector<unsigned> m_tailOfRegister;
     ValueByBlockAndUnit m_headOfUnit;

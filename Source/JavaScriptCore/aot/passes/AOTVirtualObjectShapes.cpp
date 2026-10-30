@@ -14,6 +14,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
+#include <wtf/Hasher.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -105,12 +106,34 @@ std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static uint64_t hashOf(const VirtualShape& shape)
+{
+    return computeHash(static_cast<uint8_t>(shape.kind), static_cast<uint8_t>(shape.constant), shape.descriptionIndex, shape.length, shape.order.index(), shape.stored.hash());
+}
+
 VirtualShapeID VirtualFamily::intern(VirtualShape&& shape)
 {
-    size_t existing = m_shapes.find(shape);
-    if (existing != notFound)
-        return VirtualShapeID(existing);
+    constexpr size_t mostShapesComparedOneByOne = 8;
+    if (m_shapes.size() <= mostShapesComparedOneByOne) {
+        size_t existing = m_shapes.find(shape);
+        if (existing != notFound)
+            return VirtualShapeID(existing);
+        VirtualShapeID id(m_shapes.size());
+        m_shapes.append(WTF::move(shape));
+        if (m_shapes.size() > mostShapesComparedOneByOne) {
+            for (uint32_t index = 0; index < m_shapes.size(); ++index)
+                m_shapesByHash.add(hashOf(m_shapes[index]), Vector<uint32_t, 1>()).iterator->value.append(index);
+        }
+        return id;
+    }
+
+    Vector<uint32_t, 1>& shapesWithHash = m_shapesByHash.add(hashOf(shape), Vector<uint32_t, 1>()).iterator->value;
+    for (uint32_t existing : shapesWithHash) {
+        if (m_shapes[existing] == shape)
+            return VirtualShapeID(existing);
+    }
     VirtualShapeID id(m_shapes.size());
+    shapesWithHash.append(id.index());
     m_shapes.append(WTF::move(shape));
     return id;
 }

@@ -192,11 +192,13 @@ LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
     return count;
 }
 
-void PrimitiveEmitter::mutatorFence()
+std::optional<MutatorFence> PrimitiveEmitter::mutatorFence()
 {
 #if CPU(X86_64)
     m_out.fence(&m_heaps.root, nullptr);
+    return std::nullopt;
 #else
+    LBasicBlock branchBlock = m_out.m_block;
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
     m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(fence), normalEdge(done));
@@ -204,6 +206,7 @@ void PrimitiveEmitter::mutatorFence()
     m_out.fence(&m_heaps.root, nullptr);
     m_out.jump(done);
     m_out.appendTo(done);
+    return MutatorFence { branchBlock, done };
 #endif
 }
 

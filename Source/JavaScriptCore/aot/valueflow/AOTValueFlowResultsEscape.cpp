@@ -161,7 +161,7 @@ private:
     uint32_t m_firstNode;
     Lock m_lock;
     Vector<Vector<uint32_t>> m_parameters;
-    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_unionsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_unionsByHash;
     UncheckedKeyHashMap<uint64_t, ParametersOfOperand, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersOfOperands;
 };
 

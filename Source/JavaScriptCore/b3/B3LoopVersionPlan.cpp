@@ -157,10 +157,25 @@ static bool isLoopTestSameOnRarePaths(const LoopVersionPlan& plan)
     return !plan.hoisted.isHoisted(loop.bound) || plan.hoisted.valuesValidInExcursion.contains(loop.bound);
 }
 
+// unrollLoops leaves a loop with a call alone. It unrolls other loops only if each side path finishes its iteration on its own.
+static bool callsInLikelyBlocks(const HotRegion& region)
+{
+    for (BasicBlock* block : region.blocks) {
+        for (Value* value : *block) {
+            if (isCall(value) && !isLoopPoll(value))
+                return true;
+        }
+    }
+    return false;
+}
+
 std::optional<GaveUp> LoopVersionPlanner::finishPlan(LoopVersionPlan& plan)
 {
-    plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted);
-    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
+    bool mayBeUnrolled = !callsInLikelyBlocks(plan.region);
+    plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted, [&](Value* value) {
+        return mayBeUnrolled || plan.rangeChecks.strided || plan.rangeChecks.decidedComparisons.contains(value);
+    });
+    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.passesThrough(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
         plan.excursion = { };
     if (plan.firstIterationSlowPath && !plan.excursion.contains(plan.firstIterationSlowPath) && !plan.unswitched && plan.isEnteredFromPreHeader)
         return GaveUp(GaveUpReason::NoSingleLikelyPath);

@@ -163,7 +163,7 @@ static void fillTypedResult(const ValueFlowStatement& call, ValueFlowNodeID targ
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
-    const Function& function = program.at(call.function);
+    const Function& function = context.functionWithBody(call.function);
     CFG cfg(function);
     ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, UseLists(function, cfg), call.site);
     RELEASE_ASSERT(result);
@@ -263,11 +263,11 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         return;
 
     const Program& program = context.program();
-    ExpectedResultID expected = program.at(call.function).at(call.site).expectedResult();
     TypedResultForm form = overload.result.typedResultForm;
     if (form == TypedResultForm::None || !context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
         return;
 
+    ExpectedResultID expected = context.operationOf(call).expectedResult();
     ValueFlowNodeID target = description.result;
     if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
         if (!promise)
@@ -279,9 +279,10 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
 
 void allocateRowsOfQuery(const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
-    if (call.opcode != Opcode::Call || typedResultFormOf(context.program(), context.program().at(call.function).at(call.site)) != TypedResultForm::Rows)
+    // Few calls have such an object, and only of those is the text asked.
+    if (call.opcode != Opcode::Call || !context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
         return;
-    if (context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
+    if (typedResultFormOf(context.program(), context.operationOf(call)) == TypedResultForm::Rows)
         fillTypedResult(call, call.result, { }, context);
 }
 
@@ -359,7 +360,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
             accessSites = accessSitesByValue(function, application.accessSites, call->function);
         }
         if (AccessSiteID accessSite = accessSites[call->site.index()])
-            tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts });
+            tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts, call->function });
 
         for (LayoutID layout : result.layouts) {
             application.layouts[layout.index()].flow.observedUses.add({ ObservedUse::ReachesTypedParse, ObservedUse::IsParsedByType });

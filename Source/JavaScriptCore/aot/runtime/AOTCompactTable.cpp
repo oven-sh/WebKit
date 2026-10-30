@@ -252,11 +252,9 @@ uint32_t CompactTable::nextSlotWithTag(const uint8_t* tags, unsigned indexBits, 
     uint32_t mask = (1u << indexBits) - 1;
     uint32_t first = (previous == noSlot ? homeSlot : previous) & ~(slotsPerGroup - 1);
     unsigned skipped = previous == noSlot ? 0 : (previous & (slotsPerGroup - 1)) + 1;
-    uint64_t pattern = tag * onesOfTags;
     while (true) {
         uint64_t eightTags = WTF::unalignedLoad<uint64_t>(tags + first);
-        uint64_t difference = eightTags ^ pattern;
-        uint64_t flags = (difference - onesOfTags) & ~difference & onesOfTags << 7;
+        uint64_t flags = slotsWithTagAmong(eightTags, tag);
         flags = skipped == slotsPerGroup ? 0 : flags >> (skipped * 8) << (skipped * 8);
         for (; flags; flags &= flags - 1) {
             uint32_t slot = first + WTF::ctz(flags) / 8;

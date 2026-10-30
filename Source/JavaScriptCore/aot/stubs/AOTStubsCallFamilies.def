@@ -15,6 +15,7 @@ v(CallValueWithoutThis, CalledByCode, (Ordinary, InTailPosition), FormAxis | Cou
 v(CallValueCell, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueCellWithoutThis, CalledByCode, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueNotClosure, InternalEntry, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
+v(CallValueEngineCallee, InternalEntry, (Ordinary, InTailPosition), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValue)
 v(CallValueLending, CalledByCode, (First, Second, FirstAndSecond, FirstInTailPosition, SecondInTailPosition, FirstAndSecondInTailPosition), FormAxis | CountAxis, 1, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueLending)
 v(CallValueWithCount, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueWithCount)
 v(CallCellWithCount, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallValueWithCount)

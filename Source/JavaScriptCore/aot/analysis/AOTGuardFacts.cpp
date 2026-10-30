@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinPristine.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -21,11 +22,13 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPointsToSolver.h"
 #include "AOTProgramPasses.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperationColumns.h"
 #include "AOTSchemaValueEffects.h"
 #include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "ArrayConventions.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -117,8 +120,12 @@ static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
         return false;
     case ValuePlacement::Parameter:
         return location.block == entryBlock && definition != findFreshEntryParameter(analyses.function(), analyses.cfg());
-    case ValuePlacement::InBlock:
-        return !opcodesThatMayGiveOwnObject.contains(analyses.function().at(definition).opcode);
+    case ValuePlacement::InBlock: {
+        const Value& value = analyses.function().at(definition);
+        if (value.opcode == Opcode::GetHeapFrameWord)
+            return !isFrameWordWithAllocationGroup(analyses.function(), value);
+        return !opcodesThatMayGiveOwnObject.contains(value.opcode);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -199,6 +206,8 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
         return { MemoryLocation(AbstractHeap::NamedProperties) };
     case Proof::Pristine:
         return { MemoryLocation(AbstractHeap::PrototypeLinks), MemoryLocation(AbstractHeap::NamedProperties) };
+    case Proof::PrototypeLinkUnchanged:
+        return { MemoryLocation(AbstractHeap::PrototypeLinks) };
     case Proof::ArrayStorage:
         return { MemoryLocation(AbstractHeap::ArrayStorage) };
     case Proof::None:
@@ -214,7 +223,6 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
     case Proof::InBounds:
     case Proof::NotThenable:
     case Proof::MemberUnchanged:
-    case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
@@ -276,8 +284,15 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
     if (allocation.opcode == Opcode::NewTemplateObject)
         return { };
     bool hasAllocationRule = resultRuleOf(allocation.opcode) == ResultRule::Allocation;
-    if (hasAllocationRule && Value::opcodesWithLayout.contains(allocation.opcode) && allocation.layout())
-        return fillsEveryFieldOfBirth(program, function, allocation) ? proofsOfNewLayoutInstance | ProofSet { Proof::BirthFieldsFilled } : proofsOfNewLayoutInstance;
+    if (hasAllocationRule && Value::opcodesWithLayout.contains(allocation.opcode) && allocation.layout()) {
+        ProofSet proofs = proofsOfNewLayoutInstance;
+        if (fillsEveryFieldOfBirth(program, function, allocation))
+            proofs.add(Proof::BirthFieldsFilled);
+        // An object that is handed no prototype is made below the one of its layout.
+        if (allocation.opcode == Opcode::NewObject && !allocation.prototypeOperand())
+            proofs.add(Proof::PrototypeLinkUnchanged);
+        return proofs;
+    }
     const ClassPart* classPart = allocation.type ? program.at(allocation.type).singleBuiltinClass() : nullptr;
     if (!classPart || newTargetOf(allocation.opcode))
         return { };
@@ -352,6 +367,48 @@ bool leavesSlotsAsTested(const Program& program, const Function& function, const
     return stored && fillsSlot(writer.operand(*stored));
 }
 
+ArrayStorage arrayStorageTestedBy(const Value& test)
+{
+    return test.opcode == Opcode::HasArrayStorage ? test.arrayStorage() : ArrayStorage::Other;
+}
+
+ArrayStorage arrayStorageProvenBy(const Program& program, const Function& function, const GuardFact& fact)
+{
+    if (fact.proofs != ProofSet { Proof::ArrayStorage } || fact.origins.isEmpty())
+        return ArrayStorage::Other;
+    auto foundAt = [&](const GuardOrigin& origin) {
+        switch (origin.source) {
+        case GuardSource::Test:
+            return arrayStorageTestedBy(function.at(origin.test));
+        case GuardSource::Allocation:
+            return arrayStorageOfNewArray(program, function, function.at(origin.test));
+        case GuardSource::SwitchCase:
+            return ArrayStorage::Other;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    ArrayStorage proven = foundAt(fact.origins.first());
+    bool isSameAtAllOrigins = std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
+        return foundAt(origin) == proven;
+    });
+    return isSameAtAllOrigins ? proven : ArrayStorage::Other;
+}
+
+// `ring[i & 7] = x`, `pair[1] = y`: the store may lengthen the vector, move it, or copy one that is shared with a literal. The vector keeps its form:
+// it takes the value as it is, and no store this near the start makes an array sparse.
+bool leavesArrayStorageAsTested(const Program& program, const Function& function, const Value& writer, const Effects& effectsOfWriter, ArrayStorage tested)
+{
+    static constexpr OpcodeSet stores { Opcode::PutArrayElement, Opcode::ElemSet };
+    if (!hasArrayStorageForm(tested) || !stores.contains(writer.opcode))
+        return false;
+    if (effectsOfWriter.mayRunOtherCode() || !effectsOfWriter.writes.isSubsetOf(declaredBoundOf(Opcode::PutArrayElement).writes))
+        return false;
+    const Type& position = program.typeOf(function, writer.opcode == Opcode::ElemSet ? writer.propertyOperand() : writer.positionOperand());
+    if (!position.isInteger() || position.integers.minimum < 0 || position.integers.maximum >= MIN_BEYOND_LENGTH_SPARSE_INDEX)
+        return false;
+    return canStoreWithoutConversion(tested, program.typeOf(function, writer.valueOperand()));
+}
+
 // The definition adds a property, or gives one that is there another value. Where the object takes no property it throws.
 bool definesPropertyBesideFields(const Program& program, const Value& writer, const Effects& effectsOfWriter, const Value& object)
 {
@@ -360,6 +417,94 @@ bool definesPropertyBesideFields(const Program& program, const Value& writer, co
     if (!Value::opcodesWithLayout.contains(object.opcode) || !object.layout() || !allocatesOwnLayout(program, object))
         return false;
     return !findField(program, object.layout(), writer.key(), BaseChain::Proven) && !findField(program, object.layout(), writer.key(), BaseChain::Predicted);
+}
+
+static bool isSeenOnlyBy(FunctionAnalyses& analyses, ValueID value, const Value& user)
+{
+    const Function& function = analyses.function();
+    return std::ranges::all_of(analyses.useLists().usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& next = function.at(use.user);
+        if (isCastWithoutTest(next.opcode) || next.opcode == Opcode::FinishObject)
+            return isSeenOnlyBy(analyses, use.user, user);
+        return &next == &user;
+    });
+}
+
+namespace {
+
+struct WrittenOutDefinition {
+    ValueID object;
+    ValueID key;
+    ValueID value;
+    OptionSet<PropertyDescriptorFlags> flags;
+};
+
+} // anonymous namespace
+
+// `Object.defineProperty(object, key, { value: .. })`, as the call and as what Select makes of it. Nobody but the call has seen the descriptor.
+static std::optional<WrittenOutDefinition> findWrittenOutDefinitionOfData(FunctionAnalyses& analyses, const Value& writer)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    if (writer.opcode == Opcode::DefineOwnProperty) {
+        if (!writer.valueOperand() || writer.getterOperand() || writer.setterOperand())
+            return std::nullopt;
+        return WrittenOutDefinition { writer.objectOperand(), writer.computedKeyOperand(), writer.valueOperand(), writer.descriptorFlags() };
+    }
+    if (writer.opcode != Opcode::CallBuiltin || writer.builtinCallForm() != BuiltinCallForm::Whole || writer.receiverOperand())
+        return std::nullopt;
+    const BuiltinTable& builtins = program.builtins();
+    const BuiltinOverload& overload = builtins.at(writer.overload());
+    if (builtins.canonicalID(overload.builtin) != Builtins::ObjectDefineProperty || overload.mode != BuiltinCallMode::Call)
+        return std::nullopt;
+    std::span<const ValueID> arguments = writer.argumentsOperands();
+    if (arguments.size() != 3)
+        return std::nullopt;
+    ValueID literal = arguments[2];
+    while (isCastWithoutTest(function.at(literal).opcode) || function.at(literal).opcode == Opcode::FinishObject)
+        literal = function.at(literal).operand(0);
+    if (!isSeenOnlyBy(analyses, literal, writer))
+        return std::nullopt;
+    std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literal));
+    if (!descriptor || descriptor->isAccessor() || !descriptor->value || descriptor->closureEnvironment)
+        return std::nullopt;
+    return WrittenOutDefinition { arguments[0], arguments[1], descriptor->value, descriptor->flags };
+}
+
+// The descriptor and the name are written out, and a compiled object is defined on as an ordinary one: no code of the program runs, and the definition changes one property of one object.
+// A name that is no field lies beside the fields. A field that is created with the attributes of its form, and holds what its slot takes, lies in its slot.
+// Where the property is there already, the form says that it cannot be configured: the definition leaves its attributes alone or throws.
+bool definesDataPropertyAsLayoutDeclares(FunctionAnalyses& analyses, const Value& writer, const Value& object)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    if (object.opcode != Opcode::NewObject || !object.layout() || !allocatesOwnLayout(program, object))
+        return false;
+    std::optional<WrittenOutDefinition> definition = findWrittenOutDefinitionOfData(analyses, writer);
+    if (!definition || !program.typeOf(function, definition->object).hasOnlyLayouts())
+        return false;
+    ConstantKey constant = constantKeyOf(program, program.typeOf(function, definition->key));
+    if (constant.kind != ConstantKeyKind::Text)
+        return false;
+
+    std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text });
+    if (!key)
+        return true;
+    if (keyLookupOf(program, *key) != KeyLookup::Ordinary)
+        return false;
+    if (!findField(program, object.layout(), *key, BaseChain::Proven) && !findField(program, object.layout(), *key, BaseChain::Predicted))
+        return true;
+    std::optional<uint32_t> field = program.at(object.layout()).findField(*key);
+    if (!field)
+        return false;
+    const Field& declaration = program.at(object.layout()).fields[*field];
+    if (declaration.form != formCreatedBy(definition->flags) || !declaration.form.contains(FieldForm::IsNotConfigurable))
+        return false;
+    if (declaration.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden }) || isFilledAtBirth(program, { object.layout(), *field }))
+        return false;
+    return program.typeOf(function, definition->value).isSubsetOf(program.at(slotTypeOf(program, declaration)), program);
 }
 
 static bool listsFieldWithKey(const Program& program, const Value& value, PropertyKeyID key)
@@ -389,6 +534,8 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::NotFrozen:
     case Proof::OwnInstance:
         return true;
+    case Proof::PrototypeLinkUnchanged:
+        return test.opcode == Opcode::HasLayoutPrototype;
     case Proof::Pristine:
         return allocatedClass && Value::opcodesWithBuiltinClass.contains(test.opcode) && allocatedClass->builtinClass == test.builtinClass();
     case Proof::ArrayStorage:
@@ -406,7 +553,6 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::InBounds:
     case Proof::NotThenable:
     case Proof::MemberUnchanged:
-    case Proof::PrototypeLinkUnchanged:
     case Proof::EvaluatedOnce:
     case Proof::KeyOrder:
     case Proof::UnmodifiedGenerator:
@@ -627,9 +773,8 @@ static bool provesPristineForUser(const Program& program, const Function& functi
     return provenAspects.containsAll(required);
 }
 
-static bool provesArrayStorageForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user)
+static bool provesArrayStorageForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user, bool needsWritableStorage)
 {
-    bool needsWritableStorage = interpretedOf(user.opcode) == Interpretation::Store && isInBounds(user);
     switch (origin.source) {
     case GuardSource::Test: {
         const Value& test = function.at(origin.test);
@@ -643,6 +788,11 @@ static bool provesArrayStorageForUser(const Program& program, const Function& fu
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool provesArrayStorageForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user)
+{
+    return provesArrayStorageForUser(program, function, origin, user, interpretedOf(user.opcode) == Interpretation::Store && isInBounds(user));
 }
 
 static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
@@ -862,6 +1012,30 @@ bool hasGuardForElementProofs(const Program& program, const Function& function, 
         return needsStorage || needsPosition ? IterationStatus::Continue : IterationStatus::Done;
     });
     return !needsStorage && !needsPosition;
+}
+
+// Whatever says of which form the storage of the array is also says that the storage is the array's own, on every way to the store.
+bool hasGuardForWritableStorage(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, const Value& store)
+{
+    if (!namesArrayStorage(store) || !store.guardOperand())
+        return false;
+    ValueID array = sameObjectThroughCasts(function, store.arrayOperand()).valueInFrontOfFacts();
+    auto isAboutArray = [&](const GuardOrigin& origin) {
+        if (origin.source == GuardSource::SwitchCase)
+            return false;
+        ValueID subject = origin.source == GuardSource::Test ? function.at(origin.test).arrayOperand() : origin.test;
+        return sameObjectThroughCasts(function, subject).valueInFrontOfFacts() == array;
+    };
+    bool isAsked = false;
+    bool isOwnEverywhere = true;
+    forEachGuardOrigin(program, function, cfg, locate, store.guardOperand(), [&](Proof proof, const GuardOrigin& origin) {
+        if (proof != Proof::ArrayStorage)
+            return IterationStatus::Continue;
+        isAsked = true;
+        isOwnEverywhere = isAboutArray(origin) && provesArrayStorageForUser(program, function, origin, store, true);
+        return isOwnEverywhere ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    return isAsked && isOwnEverywhere;
 }
 
 static Vector<MemoryLocation, 2> declaredReadsOf(const auto& provingOperation, Proof proof)

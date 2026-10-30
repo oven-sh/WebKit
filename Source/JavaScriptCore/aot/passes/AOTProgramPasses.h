@@ -110,7 +110,7 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms };
 
 bool isOutlinedIteration(const Function&);
 // Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.
@@ -118,6 +118,11 @@ struct DerivedFunctionKey;
 struct DerivedFunctionInputs;
 DerivedFunctionKey keyOfCallWithElements(VariableID);
 Function buildCallWithElements(const DerivedFunctionKey&, DerivedFunctionInputs&);
+// Calls a value that is one of the functions its type lists. It has an arm for each of them, for all the places that call a value of the type with arguments of these kinds.
+Function buildCallWithSharedArms(const DerivedFunctionKey&, DerivedFunctionInputs&);
+bool isCallWithSharedArms(const Function&);
+// The lowest byte of the node of a key. What is above it belongs to the kind.
+constexpr OutlinedIteration kindOfOutlinedBody(uint32_t node) { return static_cast<OutlinedIteration>(node & 0xff); }
 
 // A parameter, a constant and a cast stay what they are, and so does a test whose proof lasts for a stretch.
 inline constexpr OpcodeSet foldableOpcodes = [] {
@@ -166,6 +171,8 @@ void removeEntryParameters(Function&, const BitVector& removedEntryParameters);
 
 void removeUnusedResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
+void removeUnusedCalls(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
+
 void proveResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
 // The operations that ResolveCalls looks at.
@@ -204,6 +211,9 @@ struct MemberRead {
 };
 
 MemberRead findMemberRead(FunctionPassContext&, const ValueSite& call);
+
+// AOTLoopPasses.cpp. For SeparateUnlikelyLoopPaths, which is the first to copy loops behind the rounds: by then a loop that still holds a loop keeps it.
+PassOutcome testNumbersThatBoundLoopsAroundLoops(FunctionPassContext&);
 
 // SimplifyCasts has nothing to do in a function without any of these.
 inline constexpr OpcodeSet simplifiableCasts = [] {

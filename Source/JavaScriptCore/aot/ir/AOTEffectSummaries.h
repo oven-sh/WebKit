@@ -244,6 +244,8 @@ public:
     EffectsOnEdges onCall() const;
     // Merges onCall() without making a copy of it.
     void mergeOnCallInto(EffectsOnEdges&) const;
+    // What onCall() says on either edge. Of most functions the flags say no, and nothing is copied.
+    bool isRemovableWhenUnused() const;
     UnknownCodeWitness unknownCodeWitness() const { return m_summary ? m_summary->unknownCodeWitness : m_witness; }
     FunctionSummary expanded() const;
     FunctionSummary withoutParameters(const BitVector& removedEntryParameters) const { return expanded().withoutParameters(removedEntryParameters); }

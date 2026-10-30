@@ -134,7 +134,7 @@ function f1 name="turn" module=m0 position=66 flags=[IsChecked, HasExplicitName]
 # Four loops, in the order in which they are emitted: one for fewer than eight times sixteen bytes (4 instructions), one byte at a time with eight turns written out, the one above, and one byte at a time (5).
 # X64-NOT: loop #
 # X64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
-# X64: loop #{{*}}, instructions: 19, patchpoints: 16, rare instructions: 19, {{*}} steps by 8
+# X64: loop #{{*}}, instructions: 19, patchpoints: 16, rare instructions: 15, {{*}} steps by 8
 # X64: loop #{{*}}, instructions: 18, patchpoints: 16, {{*}} steps by 128
 # X64: loop #{{*}}, instructions: 5, patchpoints: 2, {{*}} steps by 1
 # ARM64-NOT: loop #

@@ -280,31 +280,71 @@ void generateArrayIndexOfString(StubAssembler& jit)
         jit.getEffectiveAddress(BaseIndex(butterfly, cursor, CCallHelpers::TimesEight), cursor);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), end);
     jit.and32(TrustedImm32(IndexingShapeMask), end);
-    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
-    notFound.append(jit.branch32(CCallHelpers::Below, end, TrustedImm32(ContiguousShape)));
-    slowPath.append(jit.branch32(CCallHelpers::Above, end, TrustedImm32(ContiguousShape)));
+    Jump isNotContiguous = jit.branch32(CCallHelpers::NotEqual, end, TrustedImm32(ContiguousShape));
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), end);
     jit.getEffectiveAddress(BaseIndex(butterfly, end, CCallHelpers::TimesEight, 1 - static_cast<int32_t>(sizeof(EncodedJSValue))), end);
     notFound.append(jit.branchPtr(CCallHelpers::AboveOrEqual, cursor, end));
 
+    auto loadCharactersAndFlagsOfFlatSearchString = [&] {
+        jit.load32(Address(searchCharacters, StringImpl::flagsOffset()), flags);
+        jit.loadPtr(Address(searchCharacters, StringImpl::dataOffset()), searchCharacters);
+    };
+    auto packWidthAndByteSize = [&] {
+        jit.and32(TrustedImm32(is8BitFlag), flags);
+        jit.or64(flags, end);
+        jit.move(lengthAndByteSize, byteSize);
+        Jump searchStringIs8Bit = jit.branchTest32(CCallHelpers::NonZero, flags);
+        jit.lshift64(TrustedImm32(1), byteSize);
+        searchStringIs8Bit.link(&jit);
+        jit.lshift64(TrustedImm32(32), byteSize);
+        jit.or64(byteSize, lengthAndByteSize);
+    };
+
     jit.loadPtr(Address(searchString, JSString::offsetOfValue()), searchCharacters);
     Jump searchStringIsRope = jit.branchIfRopeStringImpl(searchCharacters);
     jit.load32(Address(searchCharacters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
-    jit.load32(Address(searchCharacters, StringImpl::flagsOffset()), flags);
-    jit.loadPtr(Address(searchCharacters, StringImpl::dataOffset()), searchCharacters);
-    Jump hasSearchCharacters = jit.jump();
+
+    JumpList hasOtherLength;
+    Label compareLengths = jit.label();
+    jit.load64(Address(cursor), element);
+    if (!elementsAreStrings) {
+        hasOtherLength.append(jit.branchIfNotCell(element));
+        hasOtherLength.append(jit.branchTest64(CCallHelpers::Zero, element));
+        hasOtherLength.append(jit.branchIfNotType(element, StringType));
+    }
+    jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
+    Jump firstRope = jit.branchIfRopeStringImpl(characters);
+    Jump firstOfSameLength = jit.branch32(CCallHelpers::Equal, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
+    hasOtherLength.link(&jit);
+    Label skipElement = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+    jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(compareLengths, &jit);
+
+    notFound.link(&jit);
+    Label returnNotFound = jit.label();
+    returnResult(jit, TrustedImm64(-1));
+
+    isNotContiguous.link(&jit);
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
+    jit.branch32(CCallHelpers::Below, end, TrustedImm32(ContiguousShape)).linkTo(returnNotFound, &jit);
+    slowPath.append(jit.jump());
+
+    firstOfSameLength.link(&jit);
+    found.append(jit.branch64(CCallHelpers::Equal, element, searchString));
+    loadCharactersAndFlagsOfFlatSearchString();
+    packWidthAndByteSize();
+    Jump compareFirstOfSameLength = jit.jump();
+
     searchStringIsRope.link(&jit);
     jit.load32(Address(searchString, JSRopeString::offsetOfLength()), lengthAndByteSize);
     loadSubstringCharactersAndFlags(jit, searchString, searchCharacters, byteSize, flags, slowPath);
+    Jump hasSearchCharacters = jit.jump();
+
+    firstRope.link(&jit);
+    jit.branch32(CCallHelpers::NotEqual, Address(element, JSRopeString::offsetOfLength()), lengthAndByteSize).linkTo(skipElement, &jit);
+    loadCharactersAndFlagsOfFlatSearchString();
     hasSearchCharacters.link(&jit);
-    jit.and32(TrustedImm32(is8BitFlag), flags);
-    jit.or64(flags, end);
-    jit.move(lengthAndByteSize, byteSize);
-    Jump searchStringIs8Bit = jit.branchTest32(CCallHelpers::NonZero, flags);
-    jit.lshift64(TrustedImm32(1), byteSize);
-    searchStringIs8Bit.link(&jit);
-    jit.lshift64(TrustedImm32(32), byteSize);
-    jit.or64(byteSize, lengthAndByteSize);
+    packWidthAndByteSize();
 
     Label loop = jit.label();
     jit.load64(Address(cursor), element);
@@ -317,6 +357,7 @@ void generateArrayIndexOfString(StubAssembler& jit)
     jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
     Jump elementIsRope = jit.branchIfRopeStringImpl(characters);
     nextElement.append(jit.branch32(CCallHelpers::NotEqual, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize));
+    compareFirstOfSameLength.link(&jit);
     jit.load32(Address(characters, StringImpl::flagsOffset()), flags);
     jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
 
@@ -338,8 +379,6 @@ void generateArrayIndexOfString(StubAssembler& jit)
     Label advance = jit.label();
     jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
     jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(loop, &jit);
-
-    notFound.link(&jit);
     returnResult(jit, TrustedImm64(-1));
 
     auto convertCursorToIndex = [&] {

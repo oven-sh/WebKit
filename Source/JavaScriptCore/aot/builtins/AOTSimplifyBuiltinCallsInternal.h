@@ -34,6 +34,7 @@ unsigned simplifyInt32Conversions(FunctionPassContext&);
 unsigned simplifyCharacterReads(FunctionPassContext&);
 unsigned simplifyStringReads(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyConcatenatingCalls(FunctionPassContext&, const BuiltinCallSites&);
+unsigned testPartsOfConcatenations(FunctionPassContext&, const BuiltinCallSites&);
 unsigned replaceTemplateObjectsReadByPosition(FunctionPassContext&);
 unsigned simplifyMatches(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyLastPiecesOfSplits(FunctionPassContext&, const BuiltinCallSites&);

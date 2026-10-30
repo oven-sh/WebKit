@@ -41,6 +41,7 @@
 #include "AOTSwitchWindow.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
+#include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -483,6 +484,9 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::IsPristineArray: {
         const Type& list = program.typeOf(function, value.valueOperand());
         bool isList = list.singleBuiltinClass() && list.singleBuiltinClass()->builtinClass == BuiltinClasses::Array && !list.mayBeUndefinedOrNull();
+        bool isSet = list.singleBuiltinClass() && list.singleBuiltinClass()->builtinClass == BuiltinClasses::Set && !list.mayBeUndefinedOrNull();
+        if (isSet && pristineAspectsProvenBy(list, BuiltinClasses::Set).contains(PristineAspects::Names))
+            return KnownValue::boolean(true);
         return isList && pristineAspectsProvenBy(list, BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names }) ? KnownValue::boolean(true) : KnownValue();
     }
     case Opcode::StrictEq:
@@ -3804,19 +3808,82 @@ static void propagateCondition(Rewrite& rewrite, ValueID condition)
     });
 }
 
+// A validating build decides as a release build does, so what it adds counts for nothing.
+static bool isCheckOfValidatingBuild(Rewrite& rewrite, const Use& use)
+{
+    if (use.kind != Use::Kind::Operand)
+        return false;
+    switch (rewrite.at(use.user).opcode) {
+    case Opcode::ValidateType:
+    case Opcode::ValidateCallee:
+    case Opcode::ValidateLookup:
+    case Opcode::ValidateSameValue:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// A value that is a primitive or an instance of built-in classes, and behind a type test such an instance alone: a use that only the taken edge leads to sees that,
+// and the members of those classes are found for it. The front end hands on what `typeof` proves. A test that a pass has made of something else has nobody to do so:
+// `value instanceof Error ? value.message : ""` where each object that comes is an error is a test for an object, and behind it the read is one of an error.
+static void propagateTestedType(Rewrite& rewrite, BlockID block)
+{
+    ValueID condition = rewrite.at(block).terminator.conditionOperand();
+    // One of two branches on a test may be decided by the other, and a condition that is decided proves nothing.
+    if (std::ranges::count(rewrite.uses().usesOf(condition), Use::Kind::TerminatorOperand, &Use::kind) != 1)
+        return;
+    const Value& test = rewrite.at(condition);
+    ValueID tested = test.operand(testedOperandIndex);
+    std::span<const Use> uses = rewrite.uses().usesOf(tested);
+    if (uses.size() < 2)
+        return;
+    Edge taken { block, 0 };
+    BlockID target = targetOf(rewrite.function, taken).block;
+    if (rewrite.cfg().singleIncomingEdge(target) != taken)
+        return;
+    Type typeOnEdge = narrowOperandByTest({ rewrite.program, rewrite.function, rewrite.context.types }, test, testedOperandIndex, EdgeSide::Taken);
+    if (rewrite.typeOf(tested).isObject() || !rewrite.typeOf(tested).hasOnlyClassObjects() || !typeOnEdge.isObject() || !typeOnEdge.isSubsetOf(rewrite.typeOf(tested), rewrite.program))
+        return;
+    Vector<Use, 4> usesBehindEdge;
+    for (const Use& use : uses) {
+        if (canUseValuesOf(rewrite, target, use) && !isCheckOfValidatingBuild(rewrite, use))
+            usesBehindEdge.append(use);
+    }
+    if (usesBehindEdge.isEmpty())
+        return;
+    rewrite.later([&rewrite, taken, usesBehindEdge = WTF::move(usesBehindEdge)] {
+        const Target& target = targetOf(rewrite.function, taken);
+        size_t existing = target.proofs.find(testedOperandIndex);
+        ValueID narrowed = existing != notFound
+            ? rewrite.at(target.block).parameters[firstEdgeResultParameter(rewrite.function, taken.from, taken.targetIndex) + existing]
+            : rewrite.builder().addEdgeResult(taken, testedOperandIndex);
+        for (const Use& use : usesBehindEdge)
+            rewrite.replaceUse(use, narrowed);
+    });
+}
+
 PassOutcome propagateBranchConditions(FunctionPassContext& context)
 {
     PassOutcome outcomeOfMerging = mergeRepeatedTruthinessTests(context);
     Rewrite rewrite(context);
     BitVector isVisited;
+    // The conditions, and what the type tests among them test.
     BitVector isUndecided(context.function.values.size());
     Vector<ValueID, 16> undecidedConditions;
+    Vector<BlockID, 16> branchesOnTypeTests;
     for (BlockID block : rewrite.blocks()) {
         const Terminator& terminator = rewrite.at(block).terminator;
-        if (terminator.kind != TerminatorKind::Branch || !isVisited.add(terminator.conditionOperand().index()))
+        if (terminator.kind != TerminatorKind::Branch)
             continue;
         const Value& condition = rewrite.at(terminator.conditionOperand());
-        if (condition.opcode != Opcode::Boolean && condition.type == TypeTable::boolean) {
+        if (condition.opcode == Opcode::Boolean || condition.type != TypeTable::boolean)
+            continue;
+        if (condition.opcode == Opcode::TypeTest) {
+            isUndecided.quickSet(condition.operand(testedOperandIndex).index());
+            branchesOnTypeTests.append(block);
+        }
+        if (isVisited.add(terminator.conditionOperand().index())) {
             isUndecided.quickSet(terminator.conditionOperand().index());
             undecidedConditions.append(terminator.conditionOperand());
         }
@@ -3825,6 +3892,8 @@ PassOutcome propagateBranchConditions(FunctionPassContext& context)
         return outcomeOfMerging;
     for (ValueID condition : undecidedConditions)
         propagateCondition(rewrite, condition);
+    for (BlockID block : branchesOnTypeTests)
+        propagateTestedType(rewrite, block);
     return rewrite.commit() == PassOutcome::Changed ? PassOutcome::Changed : outcomeOfMerging;
 }
 

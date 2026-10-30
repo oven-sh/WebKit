@@ -80,6 +80,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (auto* returnAddresses = thisObject->returnAddresses()) {
         visitor.markAuxiliary(returnAddresses);
         visitor.appendUnbarriered(AOT::livenessToken(returnAddresses->instance));
+        AOT::visitCallees(visitor, *returnAddresses);
     }
 #endif
     visitor.reportExtraMemoryVisited(thisObject->m_stack.sizeInBytes());

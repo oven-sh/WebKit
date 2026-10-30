@@ -31,6 +31,7 @@
 #include "AirAllocateRegistersAndStackAndGenerateCode.h"
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
+#include "AirCheckSpillSlots.h"
 #include "AirCode.h"
 #include "AirDuplicateReturns.h"
 #include "AirEliminateDeadCode.h"
@@ -202,6 +203,13 @@ static constexpr Step steps[] = {
         "allocateStackByGraphColoring"_s,
         always,
         [](Code& code, PipelineState& state) { state.stackColoring = allocateStackByGraphColoring(code); }
+    },
+
+    // The register allocator has asked the same of its own output, where it also knows which registers hold the value of which slot.
+    {
+        "checkSpillSlotsAreWritten"_s,
+        [](Code& code, const PipelineState&) { return code.proc().policy().validation.checksSpillSlots; },
+        [](Code& code, PipelineState&) { checkSpillSlotsAreWritten(code, PlacesOfValues::Words::OfFrame, "behind stack allocation"_s); }
     },
 
     {

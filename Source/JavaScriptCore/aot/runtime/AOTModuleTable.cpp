@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <compare>
+#include <functional>
 #include <ranges>
 #include <utility>
 #include <wtf/text/MakeString.h>
@@ -54,6 +55,18 @@ const ModuleFailureData& ModuleTable::failure(ModuleFailureID id) const
     std::span<const ModuleFailureData> failures = m_tables->moduleFailures();
     RELEASE_ASSERT(id.index() < failures.size());
     return failures[id.index()];
+}
+
+std::optional<ModuleFailureID> ModuleTable::loadFailure(ModuleID module) const
+{
+    std::span<const ModuleFailureData> failures = m_tables->moduleFailures();
+    if (failures.empty() || !failures.back().isLoadOfModule()) [[likely]]
+        return std::nullopt;
+    auto loads = std::ranges::subrange(std::ranges::partition_point(failures, std::not_fn(&ModuleFailureData::isLoadOfModule)), failures.end());
+    auto found = std::ranges::lower_bound(loads, module.index(), { }, [](const ModuleFailureData& load) { return load.importerModule().index(); });
+    if (found == loads.end() || found->importerModule() != module)
+        return std::nullopt;
+    return found->failureOfLoad();
 }
 
 static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)

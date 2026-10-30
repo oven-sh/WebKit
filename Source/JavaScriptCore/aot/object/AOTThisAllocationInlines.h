@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureWord.h"
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledStructure.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
@@ -32,13 +33,17 @@ static_assert(ClosureWord::functionMask < constructorIsNewTarget);
 
 ALWAYS_INLINE Structure* rememberedStructureOfThis(VM& vm, JSCell* constructor, JSCell* newTarget)
 {
-    if (constructor != newTarget || validatesRuntime(vm)) [[unlikely]]
+    if (validatesRuntime(vm)) [[unlikely]]
         return nullptr;
     auto* function = dynamicDowncast<JSFunction>(*newTarget);
     FunctionRareData* rareData = function ? function->rareData() : nullptr;
-    if (!rareData || rareData->compiledAllocationConstructor() != constructorIsNewTarget) [[unlikely]]
+    Structure* remembered = rareData ? rareData->compiledAllocationStructure() : nullptr;
+    if (!remembered) [[unlikely]]
         return nullptr;
-    return rareData->compiledAllocationStructure();
+    uint32_t rememberedConstructor = rareData->compiledAllocationConstructor();
+    if (constructor == newTarget)
+        return rememberedConstructor == constructorIsNewTarget ? remembered : nullptr;
+    return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm() ? remembered : nullptr;
 }
 
 static constexpr size_t cellChunkSize = 2 * sizeof(uint64_t);

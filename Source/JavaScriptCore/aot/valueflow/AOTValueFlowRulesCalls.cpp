@@ -86,7 +86,7 @@ struct ReceiversOfEveryCallee {
 
 static void passThis(ValueFlowRuleContext& context, const ValueFlowStatement& statement, const ValueFlowOperand& receiver, const ReceiversOfEveryCallee& passedReceivers, ValueFlowNodeID thisValue)
 {
-    if (!context.program().at(statement.function).at(statement.site).operand(1)) {
+    if (!statement.factsOfText.contains(ValueFlowFactOfText::HasSecondOperand)) {
         context.add(thisValue, context.universe().undefinedValue());
         return;
     }
@@ -258,7 +258,7 @@ static void takeResultThroughSummary(ValueFlowRuleContext& context, const ValueF
     for (const auto& passed : summary.passedParameters) {
         const ValueFlowOperand* operand = nullptr;
         if (callee.entryParameterKind(passed.entryParameter) == EntryParameter::This) {
-            if (program.at(statement.function).at(statement.site).operand(1))
+            if (statement.factsOfText.contains(ValueFlowFactOfText::HasSecondOperand))
                 operand = &operands[1];
         } else if (size_t position = passed.entryParameter - callee.firstParameterIndex(); position < arguments.size())
             operand = &arguments[position];
@@ -317,10 +317,11 @@ static constexpr ValueFlowCellName restArgument(unsigned index)
 static constexpr ValueFlowCellName laterRestArguments = restArgument(numberOfGroupedArguments);
 static constexpr ValueFlowCellName otherRestArguments = restArgument(numberOfGroupedArguments + 1);
 
-static ValueID findCallThatAloneTakesRestArray(const Function& function)
+static ValueID findCallThatAloneTakesRestArray(ValueFlowRuleContext& context, FunctionID id)
 {
-    if (!function.has(FunctionFlags::HasRestParameter) || !function.hasBody())
+    if (const Function& record = context.program().at(id); !record.has(FunctionFlags::HasRestParameter) || !record.hasBody())
         return { };
+    const Function& function = context.functionWithBody(id);
     ValueID rest = function.at(entryBlock).parameters[function.firstParameterIndex() + function.numberOfPositionalParameters()];
     auto isRestArray = [&](ValueID id) {
         return id && definitionThroughSameValues(function, id) == rest;
@@ -353,7 +354,7 @@ static ValueID findCallThatAloneTakesRestArray(const Function& function)
 static bool passRestArrayByPosition(ValueFlowRuleContext& context, const ValueFlowStatement& statement, const ValueFlowCallGroup& group)
 {
     const Function& function = context.program().at(statement.function);
-    if (findCallThatAloneTakesRestArray(function) != statement.site)
+    if (findCallThatAloneTakesRestArray(context, statement.function) != statement.site)
         return false;
     ClimbingSet rest = only(context, context.universe().restArrayOf(statement.function));
     unsigned numberOfKnownPositions = numberOfGroupedArguments - std::min(numberOfGroupedArguments, function.numberOfPositionalParameters());
@@ -371,7 +372,7 @@ static bool passRestArrayByPosition(ValueFlowRuleContext& context, const ValueFl
 
 static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees, ValueFlowCallKind kind, const ReceiversOfEveryCallee& passedReceivers = { }, ValueFlowCalleeOrigin origin = ValueFlowCalleeOrigin::Value)
 {
-    if (kind == ValueFlowCallKind::Construct && !context.program().at(statement.function).at(statement.site).operand(1)) {
+    if (kind == ValueFlowCallKind::Construct && !statement.factsOfText.contains(ValueFlowFactOfText::HasSecondOperand)) {
         Vector<ValueFlowObjectID, 8> members;
         context.forEachMember(callees, [&](ValueFlowObjectID callee) {
             if (members.size() <= context.mostMembersToldApart())
@@ -390,7 +391,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
     ValueSetID answeredObjects = ValueSets::anything;
     if (kind == ValueFlowCallKind::Call)
         passThis(context, statement, operands[1], passedReceivers, group.thisValue);
-    else if (context.program().at(statement.function).at(statement.site).operand(1)) {
+    else if (statement.factsOfText.contains(ValueFlowFactOfText::HasSecondOperand)) {
         context.connect(operands[1], group.newTarget);
         context.connect(operands[1], context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands));
         answeredObjects = objectsAnsweredTo(context, callees, context.valueOf(operands[1]));
@@ -422,17 +423,6 @@ static ValueFlowNodeID thisParameterOf(ValueFlowRuleContext& context, FunctionID
 {
     std::optional<unsigned> index = context.program().at(function).thisParameterIndex();
     return index ? context.nodes().entryParameter(function, *index) : ValueFlowNodeID();
-}
-
-bool walksNamesThatAreReExported(const Function& function, const Value& stepOfEnumeration)
-{
-    namespace At = OperandIndex;
-    if (stepOfEnumeration.opcode != Opcode::ForInStep)
-        return false;
-    ValueID enumerated = definitionThroughTests(function, stepOfEnumeration.operand(At::ForInStep::object));
-    return function.values.containsIf([&](const Value& value) {
-        return value.opcode == Opcode::TryReExportFields && definitionThroughTests(function, value.operand(At::TryReExportFields::source)) == enumerated;
-    });
 }
 
 ValueID definitionThroughTests(const Function& function, ValueID id)
@@ -474,14 +464,18 @@ ValueID definitionThroughTests(const Function& function, ValueID id)
     return id;
 }
 
-static PropertyKeyID keyOfMemberCalledOnItsHolder(const Program& program, const ValueFlowStatement& statement)
+static PropertyKeyID keyOfMemberCalledOnItsHolder(ValueFlowRuleContext& context, const ValueFlowStatement& statement)
 {
     if (PropertyKeyID key = statement.key)
         return key;
-    if (constructs(statement.opcode))
+    const ValueFlowRareFactsOfText* facts = context.rareFactsOfText(statement);
+    return facts ? facts->keyOfMemberCalledOnItsHolder : PropertyKeyID();
+}
+
+PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, const Function& function, const Value& call)
+{
+    if (constructs(call.opcode))
         return { };
-    const Function& function = program.at(statement.function);
-    const Value& call = function.at(statement.site);
     ValueID receiver = call.thisValueOperand();
     if (!receiver)
         return { };
@@ -791,7 +785,7 @@ static bool passesObjectThatLetsInUnseenCode(const ValueFlowStatement& statement
 
 static ClimbingSet builtinFunctionsThatUnknownCalleeStandsFor(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    if (PropertyKeyID key = keyOfMemberCalledOnItsHolder(context.program(), statement))
+    if (PropertyKeyID key = keyOfMemberCalledOnItsHolder(context, statement))
         return context.restrict(escapedMembersUnder(context, key), context.universe().builtinTables().heap().functionsThatCallOrBindOperand());
     return builtinFunctionsListedBesideUnknownObject(context, context.operandsOf(statement)[0].node);
 }
@@ -911,9 +905,8 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     callListedBuiltins(statement, context, listedCallees, kind, receiversFollowedBehindUnknownObject);
     allocateRowsOfQuery(statement, context);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
-        const Function& function = context.program().at(statement.function);
-        ValueID callee = function.at(statement.site).operand(0);
-        BuiltinID named = callee ? entryNamedByOperations(context.program(), function, callee) : BuiltinID();
+        const ValueFlowRareFactsOfText* facts = context.rareFactsOfText(statement);
+        BuiltinID named = facts ? facts->entryNamed : BuiltinID();
         const BuiltinTable& builtins = context.program().builtins();
         // Behind a built-in of the engine only a Bun that the program named is looked for.
         auto mayHandOnNamedBun = [&] {
@@ -928,7 +921,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     for (ValueFlowObjectID placeholder : { ValueFlowUniverse::untrackedObject(), ValueFlowUniverse::unknownObject() }) {
         if (!context.contains(callees, placeholder))
             continue;
-        PropertyKeyID keyOfMember = placeholder == ValueFlowUniverse::unknownObject() ? keyOfMemberCalledOnItsHolder(context.program(), statement) : PropertyKeyID();
+        PropertyKeyID keyOfMember = placeholder == ValueFlowUniverse::unknownObject() ? keyOfMemberCalledOnItsHolder(context, statement) : PropertyKeyID();
         if (keyOfMember && findsValueNobodyKnowsThatProgramHasStored(context, context.valueOf(context.operandsOf(statement)[1]), keyOfMember))
             keyOfMember = { };
         if (placeholder == ValueFlowUniverse::unknownObject() && isCodeThatRecordsDescribe(context.universe(), statement.function))
@@ -936,7 +929,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         else if (keyOfMember)
             callMemberNobodyKnows(statement, context, keyOfMember, context.meet(callees, enteredClosures));
         else
-            passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
+            passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), context.universe().builtinTables(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
     }
 
     bool isSuperConstruct = statement.opcode == Opcode::SuperConstruct || statement.opcode == Opcode::SuperConstructList;
@@ -983,7 +976,7 @@ static void passArguments(ValueFlowRuleContext& context, const ValueFlowCallGrou
         context.connect(group.laterArguments, context.restArgumentEntered(function, numberOfGroupedArguments));
         context.connect(group.otherArguments, context.restArgumentEntered(function, numberOfGroupedArguments));
     }
-    if (!findCallThatAloneTakesRestArray(callee))
+    if (!findCallThatAloneTakesRestArray(context, function))
         return;
 
     for (unsigned index = positional; index < numberOfGroupedArguments; ++index) {
@@ -1224,7 +1217,7 @@ void runNewClass(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     const ValueFlowUniverse& universe = context.universe();
     const Program& program = context.program();
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    const Value& operation = program.at(statement.function).at(statement.site);
+    const Value& operation = context.operationOf(statement);
     ClimbingSet constructors = context.valueOf(operands[0]);
     ClimbingSet prototype = only(context, universe.prototypeOf(operation.layout()));
 
@@ -1268,7 +1261,7 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
 {
     const ValueFlowUniverse& universe = context.universe();
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    const Value& operation = context.program().at(statement.function).at(statement.site);
+    const Value& operation = context.operationOf(statement);
     ClimbingSet holder = operation.side() == ClassSide::Static ? context.valueOf(operands[0]) : only(context, universe.prototypeOf(operation.layout()));
 
     auto define = [&](PropertyKeyID key) {

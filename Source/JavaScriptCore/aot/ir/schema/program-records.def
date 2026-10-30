@@ -35,7 +35,7 @@ flags FunctionFlags {
     HasExplicitName IsNakedConstructor IsNamedByComputedKey
     | engine AllocatesOwnThis IsSplitOffGenericVersion
 }
-flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript }
+flags FunctionSyntax { HasWrittenAwait IsEvaluatedScript IsShownAsNativeCode }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -71,23 +71,23 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix
     | engine EvaluatesItself IsEvaluatedByRequire
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
-record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> }
+record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> textPrintedInPlace: Span<Byte> textOfBody: Span<Byte> whereThisIsMade: Span<Word> }
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
 }
 record SyntheticExport wire { name: String variable: Variable? isKnownMember: Bool isReplaceable: Bool }
 record RequiredName wire { module: Module(Target) name: String mayBeAbsent: Bool exportName: String? specifier: String? }
-record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? }
+record ModuleFailure wire { importer: Module(Referrer) specifier: String exporter: Module(Target)? exportSpecifier: String? endsLoadOf: Module(Referrer)? }
 record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
-    requiredNames: Span<RequiredName> otherNames: Span<String> positions: SourcePositions functionText: Span<Byte>
+    requiredNames: Span<RequiredName> otherNames: Span<String> positions: SourcePositions functionText: Span<Byte> typesCutFromFunctionText: Span<Byte>
     | engine namespaceLayout: Layout?
 }
 record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 }

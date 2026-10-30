@@ -466,6 +466,18 @@ const SinkCandidates& FlowResults::sinkCandidates(AccessSiteID call, uint32_t op
     return operand ? operand->candidates : m_unknown.sinkCandidates;
 }
 
+bool FlowResults::isTypedResultUnprofitable(AccessSiteID call) const
+{
+    const FlowTypedResultCall* record = findRecord(m_tables.sites.typedResultCalls, call);
+    return record && record->isUnprofitable;
+}
+
+void FlowResults::markTypedResultsUnprofitable(std::span<const AccessSiteID> sortedCalls)
+{
+    for (FlowTypedResultCall& record : m_tables.sites.typedResultCalls)
+        record.isUnprofitable |= std::ranges::binary_search(sortedCalls, record.call);
+}
+
 TypeID FlowResults::typedResultType(AccessSiteID call) const
 {
     const FlowTypedResultCall* record = findRecord(m_tables.sites.typedResultCalls, call);

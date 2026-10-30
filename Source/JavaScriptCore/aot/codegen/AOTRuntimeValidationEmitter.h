@@ -76,14 +76,18 @@ private:
     template<typename User> void validateOperandsOf(const OperationContext&, const User&, ValueID ownedValue);
     void inheritCheckedClassProofs(BlockID);
     void validateSlotAccess(const OperationContext&, const Value&);
-    void checkRetainedOperand(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
-    void checkRetainedOperand(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
-    void checkIsNoFrameArray(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex);
-    void checkIsNoFrameArray(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex);
+    bool checkRetainedOperand(const OperationContext&, const Value& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray);
+    bool checkRetainedOperand(const OperationContext&, const Terminator& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray);
+    bool refusesFrameArray(const Value& user, ValueID operand, uint32_t operandIndex);
+    bool refusesFrameArray(const Terminator& user, ValueID operand, uint32_t operandIndex);
+    static constexpr FrameCellFilter filterOfRefusedFrameArray(const Value&) { return FrameCellFilter::Arrays; }
+    static constexpr FrameCellFilter filterOfRefusedFrameArray(const Terminator&) { return FrameCellFilter::All; }
 
     // A test of the program may refuse a changed closure. What is validated is asked what it is.
     Condition hasType(Operand, const TypeTestPlan&);
+    void branchOnType(Operand, const TypeTestPlan&, BranchTargets);
     void failUnless(Condition, ValidationFailureKind, Operand found, ValueID);
+    void failUnlessHasType(Operand, const TypeTestPlan&, ValidationFailureKind, ValueID, TypeID typeThatRunTimeTests);
     void askOperationUnless(Condition, ValidationFailureKind, Operand found, ValueID);
     void reportFailure(ValidationFailureKind, Operand found, ValueID);
     void callReport(ValidationFailureKind, Operand found, ValueID);
@@ -92,7 +96,8 @@ private:
 
     void checkValue(ValueID, Operand);
     void checkIsSpecified(ValueID);
-    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind, ValueID tested);
+    void checkHasType(ValueID, Operand, TypeID, ValidationFailureKind, ValueID tested);
+    void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind, ValueID tested, TypeID numberOfType = { });
     void checkLiteralStringWord(ValueID, LiteralStringWord);
     Condition hasShapeAmong(CellPointer, LayoutSetID, std::span<const uint32_t> ascendingShapes);
     void checkReceiverOfSlotAccess(const OperationContext&, const Value&);
@@ -111,7 +116,6 @@ private:
     bool isSuspensionPoint(ValueID);
     bool maySuspendBetween(ValueID allocation, ProgramPoint);
     Condition isInStack(Pointer);
-    Pointer stackPointer();
 
     struct PassedTypeTest {
         ValueID value;
@@ -121,6 +125,7 @@ private:
         friend bool operator==(const PassedTypeTest&, const PassedTypeTest&) = default;
     };
 
+    RefPtr<B3::StackmapGenerator> m_reportGenerator;
     FramePointers m_framePointers;
     BlockID m_blockOfCheckedClassProofs;
     Vector<ValueID, 4> m_checkedClassProofs;

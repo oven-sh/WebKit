@@ -95,6 +95,16 @@ static uint64_t votesOfConversionIn(FunctionAnalyses& analyses, BlockID block)
     return votesAt(analyses.blockFrequencies().classOf(block), analyses.blockCycles().depthOf(block));
 }
 
+static uint64_t votesOfConversionOn(FunctionAnalyses& analyses, Edge edge)
+{
+    ASSERT(!edge.isHandlerEdge());
+    BlockID to = targetOf(analyses.function(), edge).block;
+    const BlockFrequencies& frequencies = analyses.blockFrequencies();
+    const BlockCycles::Forest& cycles = analyses.blockCycles().forest();
+    Expected<BlockFrequency> frequency = rarerOf(frequencies.classOf(edge), rarerOf(frequencies.classOf(edge.from), frequencies.classOf(to)));
+    return votesAt(frequency, cycles.depth(cycles.nearestCommon(cycles.innermost(edge.from), cycles.innermost(to))));
+}
+
 // `copied` gets each cast and each parameter that the value goes into, `wanted` the form in which each other operation takes it.
 template<typename Copied, typename Wanted>
 static void forEachTakerOf(const RepresentationInputs& inputs, const UseLists& useLists, ValueID id, const Copied& copied, const Wanted& wanted)
@@ -204,6 +214,8 @@ private:
 
         void addUse(Representation representation, uint64_t votes)
         {
+            if (holdsAnyNaN(representation))
+                representation = Representation::Double;
             if (hasRegister(representation))
                 wanted[std::to_underlying(representation)] += votes;
         }
@@ -389,6 +401,23 @@ private:
         });
     }
 
+    // `i < bound` where the bound was read out of a field that holds anything: the comparison takes a boxed number as it is, and looks at its tag in every turn.
+    // A number that comes into the loop from outside is unboxed once, where it is made. Beside an integer the tag decides whether integers are compared.
+    // The comparison runs as often as the number is made, times the turns of the loops that the number comes into: a loop that is left for good lies in none of the cycles around the block in front of it.
+    uint64_t votesOfComparisonInLoopThatNumberComesInto(ValueID number, const Use& use) const
+    {
+        const Value& user = m_function.at(use.user);
+        if (!m_cfg.hasCycle() || !m_inputs.typeOf(number).isNumber() || !takesNumberAsItIs(m_inputs, user, number))
+            return 0;
+        if (user.numberOfOperands() == 2 && m_inputs.typeOf(user.operand(1 - use.operandIndex)).isInteger())
+            return 0;
+        const BlockCycles::Forest& cycles = m_analyses.blockCycles().forest();
+        unsigned cycleOfUse = cycles.innermost(use.block);
+        unsigned cycleOfNumber = cycles.innermost(m_useLists.blockOf(number));
+        unsigned loopsEntered = cycles.depth(cycleOfUse) - cycles.depth(cycles.nearestCommon(cycleOfNumber, cycleOfUse));
+        return loopsEntered ? votesAt(m_analyses.blockFrequencies().classOf(use.block), cycles.depth(cycleOfNumber) + loopsEntered) : 0;
+    }
+
     void collectUses()
     {
         for (Member member : m_members) {
@@ -405,7 +434,12 @@ private:
                     m_links.append(Link { webOfCopy, member.web, votes, false });
                 web.addUse(m_webs[webOfCopy].chosen, votes);
             }, [&](Representation wanted, const Use& use) {
-                if (use.kind != Use::Kind::Operand || !isSumOfWhichOnlyLowBitsAreUsed(use.user))
+                if (use.kind == Use::Kind::Operand && isSumOfWhichOnlyLowBitsAreUsed(use.user))
+                    return;
+                uint64_t votesForUnboxedNumber = wanted == Representation::Unchosen && use.kind == Use::Kind::Operand ? votesOfComparisonInLoopThatNumberComesInto(member.value, use) : 0;
+                if (votesForUnboxedNumber)
+                    web.addUse(Representation::Double, votesForUnboxedNumber);
+                else
                     web.addUse(wanted, votesOf(use.block));
             });
         }
@@ -423,12 +457,7 @@ private:
 
     uint64_t votesOf(Edge edge) const
     {
-        ASSERT(!edge.isHandlerEdge());
-        BlockID to = targetOf(m_function, edge).block;
-        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        const BlockCycles::Forest& cycles = m_analyses.blockCycles().forest();
-        Expected<BlockFrequency> frequency = rarerOf(frequencies.classOf(edge), rarerOf(frequencies.classOf(edge.from), frequencies.classOf(to)));
-        return votesAt(frequency, cycles.depth(cycles.nearestCommon(cycles.innermost(edge.from), cycles.innermost(to))));
+        return votesOfConversionOn(m_analyses, edge);
     }
 
     uint64_t votesOfArgument(Edge edge, ValueID argument) const
@@ -888,7 +917,7 @@ static void countUsesOfCopies(FunctionPassContext& pass, const RepresentationInp
 
     auto count = [&](Representation wanted, const Use& use) {
         if (hasRegister(wanted))
-            (wanted == Representation::JSValue ? uses.votesForBoxed : uses.votesForOthers) += votesOfConversionIn(pass.analyses, use.block);
+            (wanted == Representation::JSValue ? uses.votesForBoxed : uses.votesForOthers) += use.kind == Use::Kind::EdgeArgument ? votesOfConversionOn(pass.analyses, use.edge()) : votesOfConversionIn(pass.analyses, use.block);
     };
     forEachTakerOf(inputs, pass.analyses.useLists(), id, [&](ValueID copy, const Use& use) {
         if (use.kind != Use::Kind::Operand && defaultRepresentationOf(inputs.typeOf(copy)) == Representation::JSValue)
@@ -997,6 +1026,8 @@ static bool findDoublesWithAnyNaN(FunctionPassContext& pass, const Representatio
     };
 
     std::span<const BlockID> blocks = pass.analyses.cfg().reversePostOrder();
+    for (ValueID parameter : function.at(entryBlock).parameters)
+        widenToResult(parameter);
     for (BlockID block : blocks) {
         for (ValueID value : function.at(block).values)
             widenToResult(value);
@@ -1091,6 +1122,8 @@ static BitVector findDoublesKeptWithTheOneNaN(FunctionPassContext& pass, const R
             ValueID id = web[index];
             ValueLocation location = useLists.locationOf(id);
             if (location.placement != ValuePlacement::InBlock) {
+                if (location.block == entryBlock)
+                    isFree = false;
                 for (Edge edge : cfg.incomingEdges(location.block)) {
                     IncomingValue incoming = incomingValueOf(function, edge, location.index);
                     if (incoming.kind == IncomingValue::Kind::Argument && incoming.argument && function.at(incoming.argument).representation == Representation::DoubleWithPayload && !edge.isHandlerEdge() && function.at(edge.from).terminator.kind == TerminatorKind::Jump)
@@ -1104,6 +1137,8 @@ static BitVector findDoublesKeptWithTheOneNaN(FunctionPassContext& pass, const R
                 }
             } else if (const Value& value = function.at(id); readsDoubleOutOfBytes(value))
                 addRead(id, location.block);
+            else if (value.opcode == Opcode::CallDirect || value.opcode == Opcode::CallTable)
+                isFree = false;
             else {
                 value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                     addInput(operand);

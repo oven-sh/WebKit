@@ -27,6 +27,11 @@ static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue));
 
 void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection direction)
 {
+    copyElements(form, form, source, target, count, direction);
+}
+
+void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const ArrayStorageForm& formOfTarget, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection direction)
+{
     bool isBackward = direction == CopyDirection::Backward;
     LBasicBlock loop = newBlock();
     LBasicBlock element = newBlock();
@@ -41,7 +46,12 @@ void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const Eleme
     m_out.appendTo(element);
     Integer index = isBackward ? sub(position, integer(1)) : position;
     Operand rawElement = elements().loadRawElement(form, source.elements, add(source.first, index));
-    elements().storeRawElement(form, target.elements, add(target.first, index), rawElement);
+    if (formOfTarget.kind != form.kind) {
+        RELEASE_ASSERT(form.kind == ArrayStorage::Int32 && formOfTarget.kind == ArrayStorage::Double);
+        Number number = toNumber(unboxInt32Element(rawElement.as<Boxed>()));
+        rawElement = select(elements().isHole(form, rawElement), elements().rawHole(formOfTarget).as<Number>(), number);
+    }
+    elements().storeRawElement(formOfTarget, target.elements, add(target.first, index), rawElement);
     m_out.addIncomingToPhi(position.value(), m_out.anchor((isBackward ? index : add(position, integer(1))).value()));
     m_out.jump(loop);
 
@@ -71,7 +81,9 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     ArrayAllocationEmitter allocation(generator());
     LBasicBlock miss = missBlockOf(call);
     Join<CellPointer> join(m_out);
+    bool isDeclaredDouble = arrayStorageDeclaredBy(m_program, resultTypeOf(call)).predicted() == ArrayStorage::Double;
     forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, [&](const ArrayStorageForm& form) {
+        const ArrayStorageForm& made = isDeclaredDouble && form.kind == ArrayStorage::Int32 ? *findArrayStorageForm(ArrayStorage::Double) : form;
         // No array stands for an argument that is an element itself.
         Vector<CellPointer, maxConcatenatedArrays> arrays { receiverOf(call) };
         for (ValueID argument : call.arguments()) {
@@ -94,7 +106,7 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
             length = add(length, lengths.last());
         }
         missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseCopy)));
-        Integer header = allocation.headerOfNewArray(form);
+        Integer header = allocation.headerOfNewArray(made);
         missUnless(call, isNotZero(header));
         Integer capacity = bitOr(length, integer(1));
         CellPointer concatenated = allocation.allocateEmptyArrayWithStorage(call.context(), header, capacity, miss);
@@ -103,13 +115,13 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         {
             CodeGenerator::InitializationScope scope(generator());
             // The indexing header is one word, so word `capacity` of the storage is the last element of the vector.
-            elements().storeRawElement(form, ArrayElements { CellPointer(), storage }, capacity, elements().rawHole(form));
+            elements().storeRawElement(made, ArrayElements { CellPointer(), storage }, capacity, elements().rawHole(made));
             Integer position = integer(0);
             for (unsigned i = 0; i < arrays.size(); ++i) {
                 if (arrays[i])
-                    copyElements(form, { sources[i], integer(0) }, { target, position }, lengths[i], CopyDirection::Forward);
-                else if (std::optional<Operand> rawElement = elements().rawElementToStore(form, call.argument(i - 1), miss))
-                    elements().storeRawElement(form, target, position, *rawElement);
+                    copyElements(form, made, { sources[i], integer(0) }, { target, position }, lengths[i], CopyDirection::Forward);
+                else if (std::optional<Operand> rawElement = elements().rawElementToStore(made, call.argument(i - 1), miss))
+                    elements().storeRawElement(made, target, position, *rawElement);
                 else {
                     m_out.jump(miss);
                     m_out.appendTo(newBlock());

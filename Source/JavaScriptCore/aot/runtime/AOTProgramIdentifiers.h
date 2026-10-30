@@ -9,7 +9,9 @@
 
 #include "AOTImageText.h"
 #include "IdentifierInlines.h"
+#include <array>
 #include <optional>
+#include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -78,8 +80,16 @@ public:
     static String textOf(const Image&, uint32_t number);
     // What the atom table asks before it makes an atom. Text made at run time that equals a name of the image is that name.
     static AtomStringImpl* findAtom(StringView, unsigned hash);
+    // For native code that has the text of a name as characters of its own. Null if no image has the text. Asked again about the same characters at the same address, it hashes nothing.
+    AtomStringImpl* findAtomOfNativeText(std::span<const Latin1Character>);
 
 private:
+    struct NativeText {
+        const Latin1Character* characters { nullptr };
+        size_t length { 0 };
+        AtomStringImpl* atom { nullptr };
+    };
+
     JS_EXPORT_PRIVATE UniquedStringImpl* uidSlowCase(uint32_t number);
     Identifier create(uint32_t number) const;
     void addSymbol(uint32_t number, UniquedStringImpl*) WTF_REQUIRES_LOCK(m_symbolsLock);
@@ -99,6 +109,7 @@ private:
     ProgramSymbols m_symbols;
     mutable Lock m_symbolsLock;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
+    std::array<NativeText, 128> m_recentNativeTexts;
 };
 
 ALWAYS_INLINE UniquedStringImpl* ProgramIdentifiers::uid(uint32_t number)

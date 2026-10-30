@@ -577,8 +577,11 @@ struct BuiltinCondition {
     bool buildAdmitsRuntimeCode { false };
     bool callRunsOtherCode { false };
     bool objectNobodyKnowsIsWritten { false };
+    bool testsReplaceBuiltins { false };
+    BuiltinID programStores { };
 
     BuiltinName firstText() const { return !isOneOf.empty() ? isOneOf.front() : !startsWith.empty() ? startsWith.front() : BuiltinName(); }
+    bool isAboutWhatProgramReplaces() const { return testsReplaceBuiltins || programStores; }
 };
 
 struct BuiltinFeatureUse {
@@ -654,6 +657,8 @@ struct BuiltinHostObject {
     bool keepsStringsOfStoredValues { false };
     // For each of these names the object has an accessor whose getter and setter are native code.
     std::span<const BuiltinName> nativeAccessors { };
+    // The systems on which native code makes the object.
+    OptionSet<BuiltinPlatform> platforms { everyBuiltinPlatform };
 };
 
 struct BuiltinNamedMemberCall {
@@ -747,6 +752,11 @@ enum class BuiltinMark : uint8_t {
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
     LoadsCodeWithoutJSAccess,
+    AnswersNullAsItsPrototype,
+    ReadLoadsCodeByName,
+    HoldsPathOfMainModule,
+    IsResolverThatLoaderCalls,
+    IsRequireThatLoaderCalls,
 };
 
 struct BuiltinMarkedEntry {
@@ -975,7 +985,7 @@ public:
     BuiltinID findOwnPropertyOfInstances(BuiltinClassID, BuiltinName) const;
     bool listsOwnPropertiesOfNewInstances(BuiltinClassID) const;
     bool mayDefineOnNewInstances(BuiltinClassID, BuiltinName) const;
-    BuiltinTypeID typeOfNameDefinedOnNewInstances(BuiltinClassID declaringClass, BuiltinName) const;
+    BuiltinTypeID typeOfNameDefinedOnNewInstances(BuiltinClassID, BuiltinName) const;
     bool definesCharactersOnNewInstances(BuiltinClassID) const;
     std::span<const BuiltinClassID> classesWithInstanceMember(BuiltinName) const;
 
@@ -1091,11 +1101,13 @@ public:
 
     const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
     // `members` ascend. Leaves out a locked member that canBeReplacedInTestRuns() refuses. `holdersOfNewNames`: the objects that get a name of their own opened, which the caller keeps.
-    void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
+    // `opensEveryHolder`: every object takes whatever name canTakeNameInTestRuns() admits.
+    void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames, bool opensEveryHolder = false);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
 
 private:
     void lockByNames(BuiltinID wholeObject);
+    void openToNames(BuiltinID holder);
 
     BuiltinTableData m_data;
     Vector<Builtin> m_builtins;

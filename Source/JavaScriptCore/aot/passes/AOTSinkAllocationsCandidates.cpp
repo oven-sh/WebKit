@@ -19,6 +19,7 @@
 #include <tuple>
 #include <utility>
 #include <wtf/EnumSet.h>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1584,10 +1585,12 @@ struct AccessesLookedUp {
     VirtualObjectKind kind;
     LayoutID layout;
     TypeID type;
-    BitVector users;
 };
 
-static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeAnalysis& escape, const VirtualObjectDescription& description, VirtualFamily& family, uint64_t maxFields, BitVector& usersLookedUp)
+// The accesses that were looked up, each with the index of its AccessesLookedUp. A bit for each value of the function in each of those takes allocations times values.
+using UsersLookedUp = UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeAnalysis& escape, const VirtualObjectDescription& description, VirtualFamily& family, uint64_t maxFields, UsersLookedUp& usersLookedUp, uint32_t lookedUp)
 {
     auto hasTooManyFields = [&] {
         return family.numberOfFields() > maxFields;
@@ -1612,7 +1615,7 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
                 family.ensureField(VirtualField::element(position));
             continue;
         }
-        if (!namesField(context.program, user) || usersLookedUp.set(objectUse.use.user.index()))
+        if (!namesField(context.program, user) || !usersLookedUp.add(uint64_t { lookedUp } << 32 | objectUse.use.user.index()).isNewEntry)
             continue;
         VirtualFieldAccess access = lookUpField(context, description, user);
         if (access.lookup == FieldLookup::Field)
@@ -2017,6 +2020,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
     const EscapeAnalysis& escape = m_analyses.escape();
     uint64_t maxFields = limit(LimitID::MaxVirtualObjectFields);
     Vector<AccessesLookedUp, 8> accessesLookedUp;
+    UsersLookedUp usersLookedUp;
     Vector<Vector<uint32_t, 1>> lookedUpOfFamily(m_families.size());
     for (uint32_t index = 0; index < described.size(); ++index) {
         Candidate& candidate = m_candidates[index];
@@ -2034,10 +2038,9 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         if (position == notFound) {
             position = ofFamily.size();
             ofFamily.append(accessesLookedUp.size());
-            accessesLookedUp.append(AccessesLookedUp { candidate.family, description.kind, description.layout, description.type, { } });
+            accessesLookedUp.append(AccessesLookedUp { candidate.family, description.kind, description.layout, description.type });
         }
-        size_t lookedUp = ofFamily[position];
-        ensureFieldsInUse(m_objectContext, escape, description, family, maxFields, accessesLookedUp[lookedUp].users);
+        ensureFieldsInUse(m_objectContext, escape, description, family, maxFields, usersLookedUp, ofFamily[position]);
     }
 
     BitVector familiesWithTooManyFields(m_families.size());

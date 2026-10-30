@@ -175,6 +175,8 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     AbsoluteAddressInProcedure(GenerateCode, "{function}: a process address reached B3 at {value}")
     RelocationNotLowered(GenerateCode, "{function}: no lowering for the address at {value}")
     VariableReadBeforeSet(GenerateCode, "{function}: a B3 variable is read before it is set at {value}")
+    SpillSlotLacksItsValue(GenerateCode, "{function}: a spill slot is read at {value} where it does not hold its value")
+    RegisterLacksItsValue(GenerateCode, "{function}: a register is read at {value} where it does not hold its value")
     FrameAddressAcrossSuspension(GenerateCode, "{function}: the frame address {value} is live across a suspension")
     NarrowReferenceWithoutPointer(GenerateCode, "{function}: only the 32-bit reference {value} names its cell where operation {count} can run the collector")
     InnerPointerWithoutOwner(GenerateCode, "{function}: {value} points into what a cell owns and is read behind operation {count}, which can run the collector, and the cell is not")

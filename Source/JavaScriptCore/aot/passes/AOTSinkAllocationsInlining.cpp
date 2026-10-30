@@ -394,7 +394,7 @@ static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID
     const EscapeAnalysis& escape = analyses.escape();
     BitVector passedObjects;
     analyses.function().at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        passedObjects.merge(escape.pointsTo(operand).objects.bits());
+        escape.pointsTo(operand).objects.addTo(passedObjects);
     });
 
     unsigned count = 0;

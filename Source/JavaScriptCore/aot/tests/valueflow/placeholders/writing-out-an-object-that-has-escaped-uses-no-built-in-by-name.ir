@@ -1,0 +1,27 @@
+# const odd = { held: 1 }; somethingNoTableLists.takes(odd); JSON.stringify(odd)
+# The object has escaped before JSON.stringify gets it, so the unknown object stands above it.
+# Native code asks the unknown object for no member by name, also through this object. Once the walk read Symbol.toStringTag through it and 53 built-ins were used,
+# those of Intl, Temporal and WebAssembly among them: 3 to 101 lines by the order of flow's rules.
+# Object.prototype.toString and valueOf, which the object finds by itself, are not asked about here: whether they count as run still goes by that order.
+# RUN: valueflow-solve used
+# CHECK-NOT: SymbolToStringTag
+# CHECK: run JSONStringify
+# CHECK-NOT: SymbolToStringTag
+# CHECK-NOT: Intl
+# CHECK-NOT: Temporal
+# CHECK-NOT: WebAssembly
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Odd" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = PropGet v1 key="takes"
+    v5 = Call v4, v1, v3 calleeKey="takes"
+    v6 = Builtin builtin=JSONStringify
+    v7 = Call v6, -, v3
+    Return
+}

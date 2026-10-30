@@ -57,6 +57,7 @@ void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenc
 void willAnalyzeHeap(VM&);
 void willCollectForExhaustedCage(VM&);
 String nameOfCompiledCallee(JSCell*);
+bool isModuleEnvironment(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
 // Where the cells of a live Structure keep their 32-bit references, from the start of the cell. Nothing for a Structure of other cells than compiled objects.
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);

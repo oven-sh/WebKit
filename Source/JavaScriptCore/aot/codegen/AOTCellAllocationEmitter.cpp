@@ -72,6 +72,8 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
     allocation->resultConstraints = { B3::ValueRep::SomeEarlyRegister };
     allocation->clobber(RegisterSet::macroClobberedGPRs());
     m_out.m_block->setSuccessors(normalEdge(continuation), rareEdge(slowPath));
+    if constexpr (MutatorFenceRecords::isUsed)
+        m_records.mutatorFences.allocations.set(allocation->index());
     allocation->setGenerator([cellSize, countsCell = build().recordedOptions().countsBranches, forcesSlowPath = generator().forcesGCSlowPaths(), units = &m_records.units](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (countsCell) {
@@ -270,6 +272,8 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     birth->effects = B3::Effects::none();
     m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
     generator().records().hasBirthsOfFrameCells = true;
+    if constexpr (MutatorFenceRecords::isUsed)
+        m_records.mutatorFences.allocations.set(birth->index());
     if (!generator().validatesOrChecksProofs())
         return CellPointer(birth);
 

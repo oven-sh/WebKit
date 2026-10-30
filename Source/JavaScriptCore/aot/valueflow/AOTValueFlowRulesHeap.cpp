@@ -247,6 +247,28 @@ void HeapRule::askProxiesForListedValues(ClimbingSet proxies, ValueFlowNodeID re
     });
 }
 
+// Whoever asks a proxy for the property that it has under a key, or defines one there, reaches one trap. Behind it the engine asks the target for the same property and holds the two against each other.
+// A handler that may lack the trap hands the question on to the target.
+void HeapRule::askProxiesAboutOwnProperty(ClimbingSet proxies, const ValueFlowOperand& property, BuiltinName trap, ValueFlowNodeID descriptor, ValueFlowNodeID result)
+{
+    ClimbingSet handlers = m_context.valueOf(m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyHandler.index() }));
+    ValueFlowNodeID targets = m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() });
+    ClimbingSet traps = m_context.valueOf(m_context.lookup(known(handlers), ValueFlowName { ValueFlowNameKind::Property, m_program.keyOf(trap).index() }));
+    m_context.openProxiesAmong(m_context.valueOf(targets));
+    if (m_context.meet(m_context.valueOf(targets), m_universe.builtinObjects()) || m_context.meet(traps, ValueSets::complement(m_context.maker().unite(m_universe.closures(), m_universe.builtinFunctions()))))
+        m_context.openProxiesAmong(proxies);
+    connect(targets, m_context.nodes().ofHost(ValueFlowHostNode::TargetsOfProxiesThatAreListed));
+    forEachKey(property, [&](const HeapKey& key) {
+        Vector<ValueFlowNodeID, 3> arguments {
+            targets,
+            m_context.holding(ClimbingSet(key.keyClass == HeapKeyClass::Name ? only(m_universe.keyConstant(key.name)) : m_tables.stringAndSymbolKinds())),
+        };
+        if (descriptor)
+            arguments.append(descriptor);
+        callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments.span(), .result = result });
+    });
+}
+
 void listProxiesByTheirTraps(ValueFlowRuleContext& context, ClimbingSet proxies)
 {
     ValueFlowStatement statement;
@@ -263,6 +285,12 @@ void askProxiesForListedValues(ValueFlowRuleContext& context, ClimbingSet proxie
 {
     ValueFlowStatement statement;
     HeapRule(statement, context).askProxiesForListedValues(proxies, result);
+}
+
+void askProxiesAboutOwnProperty(ValueFlowRuleContext& context, ClimbingSet proxies, const ValueFlowOperand& property, BuiltinName trap, ValueFlowNodeID descriptor, ValueFlowNodeID result)
+{
+    ValueFlowStatement statement;
+    HeapRule(statement, context).askProxiesAboutOwnProperty(proxies, property, trap, descriptor, result);
 }
 
 // An enumeration lists a proxy, goes on to what the proxy says stands above it, and asks again for each name before it hands the name out.
@@ -365,7 +393,8 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         connect(heldPrototypeObjectsOfLibraryClasses(m_context), m_statement.result);
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
         // A read that a built-in makes for its caller, such as Reflect.get(), has no site.
-        BuiltinID named = m_statement.function && m_statement.site ? entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site) : BuiltinID();
+        const ValueFlowRareFactsOfText* facts = m_statement.opcode == Opcode::PropGet ? m_context.rareFactsOfText(m_statement) : nullptr;
+        BuiltinID named = facts ? facts->entryNamed : BuiltinID();
         bool isNamed = named && isMemberOfBun(named);
         ClimbingSet bun(only(m_universe.objectOf(Builtins::Bun)));
         if (isNamed && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {
@@ -772,7 +801,7 @@ bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, cons
 {
     bool isFound = false;
     for (const ValueFlowMemberReplacedBySetter& member : m_tables.membersReplacedBySetters()) {
-        if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != member.key))
+        if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != member.key) || (key.namesSymbolAlone && !isSymbolKind(m_program.at(member.key).kind)))
             continue;
         ClimbingSet holder(only(member.holder));
         bool isListed = m_context.contains(search == PropertySearch::OwnProperty ? receivers : chainFrom(receivers).objects, member.holder);
@@ -790,9 +819,43 @@ bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, cons
     return isFound;
 }
 
+ClimbingSet HeapRule::settersThatSymbolFinds(ClimbingSet setters, ClimbingSet start, const HeapKey& key)
+{
+    Members listedUnderTexts;
+    m_context.forEachMember(m_context.restrict(setters, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_universe.placeholdersAlone()))), [&](ValueFlowObjectID setter) {
+        const Builtin& entry = m_builtins.at(m_universe.builtinOf(setter));
+        if (setter != m_tables.undescribedNativeCode() && entry.holder && !isSymbolKind(m_program.at(m_program.keyOf(entry.name)).kind))
+            listedUnderTexts.append(setter);
+    });
+    if (listedUnderTexts.isEmpty())
+        return setters;
+    HeapChain chain = chainFrom(start, key);
+    if (chain.holdsUnknownObject || chain.holdsUntrackedObject)
+        return setters;
+    ValueSetID underTexts = m_context.maker().of(listedUnderTexts.span());
+    ClimbingSet found = m_context.restrict(setters, ValueSets::complement(underTexts));
+    forEachNodeHolding(chain.writableObjects, foundName(key, HeapPropertyPart::Setter), [&](ValueFlowNodeID definedAnew) {
+        found = m_context.unite(found, m_context.restrict(m_context.valueOf(definedAnew), underTexts));
+    });
+    return found;
+}
+
 void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, const ValueFlowOperand& value)
 {
-    ClimbingSet setters = accessorsFoundFrom(start, key, HeapPropertyPart::Setter);
+    ClimbingSet setters;
+    if (key.namesNoPropertyOfEngine) {
+        // Of the setters above, those that the program has defined.
+        ValueFlowName name = foundName(key, HeapPropertyPart::Setter);
+        ClimbingSet objects = chainFrom(start, key).writableObjects;
+        auto take = [&](ValueFlowNodeID node) {
+            setters = m_context.unite(setters, valueOfNodeIfAny(node));
+        };
+        take(readWhereWritten(objects, name));
+        forEachNodeStoredThroughPlaceholdersInto(objects, name, take);
+    } else
+        setters = accessorsFoundFrom(start, key, HeapPropertyPart::Setter);
+    if (key.namesSymbolAlone)
+        setters = settersThatSymbolFinds(setters, start, key);
     HeapReceiver receiver { nullptr, start };
     receiver.keyLookedUp = &key;
     if (mayBeAccessorNobodyKnows(setters))
@@ -827,7 +890,7 @@ bool HeapRule::mayBeFunctionByType(const ValueFlowOperand& object)
     auto operand = std::ranges::find(m_operands, object.node, &ValueFlowOperand::node);
     if (!object.node || operand == m_operands.end())
         return true;
-    const Function& function = m_program.at(m_statement.function);
+    const Function& function = m_context.functionWithBody(m_statement.function);
     ValueID value = operation().operand(static_cast<uint32_t>(operand - m_operands.begin()));
     if (!value)
         return true;
@@ -877,11 +940,11 @@ ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOp
 
 ClimbingSet HeapRule::holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
-    if (key.keyClass != HeapKeyClass::Name || !isInProgramCode())
+    if (key.keyClass != HeapKeyClass::Name)
         return { };
     ClimbingSet candidates = builtinObjectsListedBesideUnknownObject(object, receivers, key);
     // No listing names a prototype object of the language that came back from code nobody sees.
-    if (mayBeUnknownObject(receivers) && key.receivers != HeapKeyReceivers::AllButBuiltinObjects)
+    if (isInProgramCode() && mayBeUnknownObject(receivers) && key.receivers != HeapKeyReceivers::AllButBuiltinObjects)
         candidates = m_context.unite(candidates, escapedAmong(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName())));
     Members holders;
     forEachMemberUnder(candidates, key, [&](BuiltinID member, ModuleID module) {
@@ -952,7 +1015,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
         writeToListedObjects(listed, writtenName(key, HeapPropertyPart::Value), value);
         noteWrittenMembers(listed, key, true);
     }
-    if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {
+    if (ClimbingSet holders = isInProgramCode() ? holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key) : ClimbingSet(); holdsAnything(holders)) {
         write(holders, writtenName(key, HeapPropertyPart::Value), value);
         noteWrittenMembers(holders, key, true);
     }
@@ -968,7 +1031,8 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
         callSettersOfReceivers(start, key, value);
     });
-    replaceMembersThroughSettersFoundFrom(receivers, key, PropertySearch::WholeChain, &value);
+    if (!key.namesNoPropertyOfEngine)
+        replaceMembersThroughSettersFoundFrom(receivers, key, PropertySearch::WholeChain, &value);
     mayThrow();
 }
 
@@ -1076,6 +1140,7 @@ bool HeapRule::readsRestArgumentOfInstance()
     if (!function.has(FunctionFlags::HasRestParameter) || !m_context.restArgumentOfRun(m_statement.function, 0))
         return false;
     unsigned positional = function.numberOfPositionalParameters();
+    m_context.functionWithBody(m_statement.function);
     if (definitionThroughSameValues(function, operation().operand(At::ElemGet::object)) != function.at(entryBlock).parameters[function.firstParameterIndex() + positional])
         return false;
     ClimbingSet array(only(m_universe.restArrayOf(m_statement.function)));
@@ -1094,31 +1159,125 @@ bool HeapRule::readsRestArgumentOfInstance()
     return true;
 }
 
-bool HeapRule::readsUnderNameOfEnumerationOfSameObject()
+bool readsUnderNameOfEnumerationOfSameObject(const Function& function, const Value& read)
 {
     namespace At = OperandIndex;
-    const Function& function = m_program.at(m_statement.function);
-    const Value& name = function.at(definitionThroughTests(function, operation().operand(At::ElemGet::property)));
+    const Value& name = function.at(definitionThroughTests(function, read.operand(At::ElemGet::property)));
     if (name.opcode != Opcode::ResultAt || name.index() != 1)
         return false;
     const Value& step = function.at(name.operand(At::ResultAt::results));
     if (step.opcode != Opcode::ForInStep)
         return false;
-    return definitionThroughTests(function, step.operand(At::ForInStep::object)) == definitionThroughTests(function, operation().operand(At::ElemGet::object));
+    return definitionThroughTests(function, step.operand(At::ForInStep::object)) == definitionThroughTests(function, read.operand(At::ElemGet::object));
 }
 
-// The names of objects below Object.prototype alone, where nobody has given that object a name that an enumeration shows.
+StringID textThatSumBeginsWith(const Program& program, const Function& function, ValueID id)
+{
+    const Value* leftmost = &function.at(definitionThroughSameValues(function, id));
+    if (leftmost->opcode != Opcode::Add)
+        return { };
+    while (leftmost->opcode == Opcode::Add)
+        leftmost = &function.at(definitionThroughSameValues(function, leftmost->operand(0)));
+    if (leftmost->opcode != Opcode::String || program.string(leftmost->string()).empty() || !program.strings.isAllASCII(leftmost->string()))
+        return { };
+    return leftmost->string();
+}
+
+// A key that begins with a text names only what begins with that text. Where ordinary objects are asked, and nothing that the engine has put on what they inherit from begins so,
+// such a key finds what a name out of an enumeration finds: what the program has written.
+bool HeapRule::findsNoPropertyOfEngineUnderKeyBeginningWith(StringID beginning, ClimbingSet receivers)
+{
+    ValueSetMaker& maker = m_context.maker();
+    ValueSetID ordinaryObjects = maker.intersect(m_tables.objectsWithoutPropertiesOfNativeCode(), ValueSets::complement(maker.unite(maker.unite(m_universe.closures(), m_universe.arrays()), m_tables.argumentsObjects())));
+    ValueFlowObjectID withoutProperties[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null), ValueFlowUniverse::primitive(PrimitiveSet::Absent) };
+    if (m_context.meet(receivers, ValueSets::complement(maker.unite(ordinaryObjects, maker.of(withoutProperties)))))
+        return false;
+    HeapChain chain = chainFrom(receivers, unknownHeapKey);
+    if (chain.holdsUnknownObject || chain.holdsUntrackedObject || m_context.meet(chain.objects, ValueSets::complement(maker.unite(ordinaryObjects, m_tables.holdersWithMembers()))))
+        return false;
+    std::span<const uint8_t> text = m_program.string(beginning);
+    auto beginsWithText = [&](BuiltinName name) {
+        std::span<const uint8_t> textOfName = m_builtins.textOf(name);
+        return textOfName.size() >= text.size() && equalSpans(textOfName.first(text.size()), text);
+    };
+    // What objects of the program are born with and no enumeration shows.
+    bool isFound = false;
+    for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::prototype, BuiltinNames::constructor, BuiltinNames::raw, BuiltinNames::length, BuiltinNames::name })
+        isFound |= beginsWithText(name);
+    m_context.forEachMember(m_context.restrict(chain.objects, m_tables.holdersWithMembers()), [&](ValueFlowObjectID holder) {
+        for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder)))
+            isFound |= beginsWithText(m_builtins.at(member).name);
+    });
+    return !isFound;
+}
+
+Vector<ValueID, 2> objectsReadUnderKeyOfStore(const Function& function, const Value& store)
+{
+    namespace At = OperandIndex;
+    ValueID key = definitionThroughSameValues(function, store.operand(At::ElemSet::property));
+    Vector<ValueID, 2> objects;
+    Vector<ValueID, 4> parametersSeen;
+    Vector<ValueID, 4> pending { store.operand(At::ElemSet::value) };
+    while (!pending.isEmpty()) {
+        ValueID id = definitionThroughSameValues(function, pending.takeLast());
+        const Value& definition = function.at(id);
+        if (definition.opcode == Opcode::ElemGet) {
+            if (definitionThroughSameValues(function, definition.operand(At::ElemGet::property)) != key)
+                return { };
+            if (!objects.contains(definition.operand(At::ElemGet::object)))
+                objects.append(definition.operand(At::ElemGet::object));
+            continue;
+        }
+        // A value that goes round a loop was read under the key of an earlier turn.
+        if (definition.opcode != Opcode::Parameter || parametersSeen.contains(id))
+            return { };
+        parametersSeen.append(id);
+        bool isPassed = false;
+        for (const Block& block : function.blocks) {
+            bool isGivenOtherwise = false;
+            block.forEachTarget([&](const Target& target) {
+                const auto& parameters = function.at(target.block).parameters;
+                size_t index = 0;
+                while (index < parameters.size() && parameters[index] != id)
+                    ++index;
+                if (index == parameters.size())
+                    return;
+                if (index >= target.arguments.size()) {
+                    isGivenOtherwise = true;
+                    return;
+                }
+                isPassed = true;
+                pending.append(target.arguments[index]);
+            });
+            if (isGivenOtherwise)
+                return { };
+        }
+        if (!isPassed)
+            return { };
+    }
+    return objects;
+}
+
+// The names of the enumerated objects and of all that they inherit from, up to Object.prototype, where nobody has given that object a name that an enumeration shows.
 bool HeapRule::listsNamesOfEnumeration()
 {
-    if (mayUnknownCodeWrite(m_context) || isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten))
-        return false;
-    ClimbingSet enumerated = m_context.valueOf(operand(OperandIndex::ForInStep::object));
+    // A locked object takes no name, whoever writes. An enumerated object that a write nobody follows could reach has escaped, and then its keys are not listed.
     ValueSetID objectPrototype = only(m_universe.objectOf(Builtins::ObjectPrototype));
-    if (m_context.meet(objectsAbove(known(enumerated)), ValueSets::complement(objectPrototype)))
+    bool isObjectPrototypeLocked = m_context.sets().contains(m_universe.lockedObjects(), m_universe.objectOf(Builtins::ObjectPrototype));
+    if (!isObjectPrototypeLocked && (mayUnknownCodeWrite(m_context) || isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten)))
         return false;
     if (holdsAnything(m_context.markedAmong(ClimbingSet(objectPrototype), { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty })) || hasBeenLost(ClimbingSet(objectPrototype)))
         return false;
-    return listKeysAsObjectKeysDoes(m_context, enumerated, m_statement.result);
+    AOT_THRESHOLD(unsigned, longestChain, 8);
+    ClimbingSet walked = m_context.valueOf(operand(OperandIndex::ForInStep::object));
+    ClimbingSet current = walked;
+    for (unsigned step = 0; holdsAnything(current); ++step) {
+        if (step == longestChain)
+            return false;
+        current = m_context.restrict(objectsAbove(known(current)), m_context.maker().intersect(m_universe.objects(), ValueSets::complement(objectPrototype)));
+        walked = m_context.unite(walked, current);
+    }
+    return listKeysAsObjectKeysDoes(m_context, walked, m_statement.result);
 }
 
 void HeapRule::runOperation()
@@ -1134,12 +1293,16 @@ void HeapRule::runOperation()
             return;
         ValueSetID& answerOfFirstRun = m_context.rememberedByStatement();
         if (!answerOfFirstRun)
-            answerOfFirstRun = readsUnderNameOfEnumerationOfSameObject() ? ValueSets::anything : ValueSets::nothing;
+            answerOfFirstRun = m_statement.factsOfText.contains(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject) ? ValueSets::anything : ValueSets::nothing;
         bool namesEnumerableProperty = answerOfFirstRun == ValueSets::anything;
         ValueFlowOperand object = withoutProxiesAskedByTheirTraps(operand(At::ElemGet::object));
         ClimbingSet proxies = m_proxiesAskedByTheirTraps;
+        bool namesNoPropertyOfEngine = false;
+        if (const ValueFlowRareFactsOfText* facts = m_context.rareFactsOfText(m_statement); facts && facts->textThatKeyBeginsWith && !holdsAnything(proxies))
+            namesNoPropertyOfEngine = findsNoPropertyOfEngineUnderKeyBeginningWith(facts->textThatKeyBeginsWith, m_context.valueOf(object));
         forEachKey(operand(At::ElemGet::property), [&](HeapKey key) {
-            key.namesEnumerableProperty = namesEnumerableProperty && key.keyClass == HeapKeyClass::Unknown;
+            key.namesEnumerableProperty = (namesEnumerableProperty || namesNoPropertyOfEngine) && key.keyClass == HeapKeyClass::Unknown;
+            key.namesNoPropertyOfEngine = namesNoPropertyOfEngine && key.keyClass == HeapKeyClass::Unknown;
             m_proxiesAskedByTheirTraps = proxies;
             read(receiversUnder(object, key), key);
         }, { &object, nullptr, true, true });
@@ -1153,10 +1316,30 @@ void HeapRule::runOperation()
     case Opcode::ElemSet: {
         ValueFlowOperand object = withoutProxiesAskedByTheirTraps(operand(At::ElemSet::object));
         ClimbingSet proxies = m_proxiesAskedByTheirTraps;
-        forEachKey(operand(At::ElemSet::property), [&](const HeapKey& key) {
+        // `target[key] = source[key]` stores under each name what the source holds under that name, not what it holds under the others.
+        // The reads have statements of their own, which do all else that a read does. What an ordinary object answers under a name is what a lookup finds.
+        std::span<const ValueFlowOperand> sources = m_context.objectsReadUnderKeyOfStore(m_statement);
+        ValueSetID ordinaryObjects = m_context.maker().intersect(m_tables.objectsWithoutPropertiesOfNativeCode(), ValueSets::complement(m_context.maker().unite(m_context.maker().unite(m_universe.closures(), m_universe.arrays()), m_tables.argumentsObjects())));
+        ValueFlowObjectID withoutProperties[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null), ValueFlowUniverse::primitive(PrimitiveSet::Absent) };
+        ValueSetID answeringWhatLookupFinds = m_context.maker().unite(ordinaryObjects, m_context.maker().of(withoutProperties));
+        bool storesNameByName = !sources.empty() && std::ranges::none_of(sources, [&](const ValueFlowOperand& source) {
+            return m_context.meet(m_context.valueOf(source), ValueSets::complement(answeringWhatLookupFinds));
+        });
+        bool namesNoPropertyOfEngine = false;
+        if (const ValueFlowRareFactsOfText* facts = m_context.rareFactsOfText(m_statement); facts && facts->textThatKeyBeginsWith && !holdsAnything(proxies))
+            namesNoPropertyOfEngine = findsNoPropertyOfEngineUnderKeyBeginningWith(facts->textThatKeyBeginsWith, m_context.valueOf(object));
+        forEachKey(operand(At::ElemSet::property), [&](HeapKey key) {
             m_proxiesAskedByTheirTraps = proxies;
-            store(receiversUnder(object, key), key, operand(At::ElemSet::value));
-        }, { &object, &operand(At::ElemSet::value), true });
+            if (key.keyClass != HeapKeyClass::Name || !storesNameByName) {
+                key.namesEnumerableProperty = key.namesNoPropertyOfEngine = namesNoPropertyOfEngine && key.keyClass == HeapKeyClass::Unknown;
+                store(receiversUnder(object, key), key, operand(At::ElemSet::value));
+                return;
+            }
+            for (const ValueFlowOperand& source : sources) {
+                m_proxiesAskedByTheirTraps = proxies;
+                store(receiversUnder(object, key), key, operandOf(m_context.lookup(startOfLookup(m_context.valueOf(source)), nameOfLookupForValue(key))));
+            }
+        }, { &object, &operand(At::ElemSet::value), true, false, storesNameByName });
         mayThrow();
         return;
     }
@@ -1297,8 +1480,8 @@ void HeapRule::runOperation()
         if (m_statement.opcode == Opcode::ForInStep)
             withoutProxiesEnumeratedByTheirTraps(operand(At::ForInStep::object));
         add(m_statement.result, m_universe.maskOf(m_context.maker(), m_program, m_program.at(operation().type)));
-        if (walksNamesThatAreReExported(m_program.at(m_statement.function), operation()) && !listsNamesOfEnumeration())
-            add(m_statement.result, m_universe.strings());
+        if (m_statement.opcode == Opcode::ForInStep && !listsNamesOfEnumeration())
+            add(m_statement.result, only(ValueFlowUniverse::primitive(PrimitiveSet::String)));
         mayThrow();
         return;
     case Opcode::GetSuperBase: {

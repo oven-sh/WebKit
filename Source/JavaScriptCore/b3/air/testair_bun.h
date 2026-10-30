@@ -127,7 +127,7 @@ static void letAirEmitFrame(B3::Air::Policy& policy)
 }
 
 static constexpr bool RegisterPolicy::* allocatorRegisterFields[] = { &RegisterPolicy::chargesForCalleeSaves, &RegisterPolicy::discountsPreferredRegisterMoves, &RegisterPolicy::hintsTwoAddressOperands, &RegisterPolicy::usesSecondPreferredRegister, &RegisterPolicy::evictsHolderOfPreferredRegister };
-static constexpr bool LiveRangeSplitPolicy::* allocatorSplitFields[] = { &LiveRangeSplitPolicy::splitsAroundClobbersEarly, &LiveRangeSplitPolicy::spansStretchesOfClobbers, &LiveRangeSplitPolicy::limitsClobberSitesPerSplit, &LiveRangeSplitPolicy::splitsIntoClustersOverBlocks };
+static constexpr bool LiveRangeSplitPolicy::* allocatorSplitFields[] = { &LiveRangeSplitPolicy::splitsAroundClobbersEarly, &LiveRangeSplitPolicy::splitsAroundClobbersThatRead, &LiveRangeSplitPolicy::keepsUnusedTmpsOnStackThroughLoops, &LiveRangeSplitPolicy::spansStretchesOfClobbers, &LiveRangeSplitPolicy::splitsIntoClustersOverBlocks };
 
 static void enableAllAllocatorFields(B3::Air::Policy& policy)
 {
@@ -382,8 +382,9 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(splitting, splitMultiplier, 3.0);
     CHECK_POLICY_DUMP_NAMES(splitting, maxLoopFractionOfLiveRange, 0.5);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundClobbersEarly, true);
+    CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundClobbersThatRead, true);
+    CHECK_POLICY_DUMP_NAMES(splitting, keepsUnusedTmpsOnStackThroughLoops, true);
     CHECK_POLICY_DUMP_NAMES(splitting, spansStretchesOfClobbers, true);
-    CHECK_POLICY_DUMP_NAMES(splitting, limitsClobberSitesPerSplit, true);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsIntoClustersOverBlocks, true);
     CHECK_POLICY_DUMP_NAMES(splitting, splitsAroundFrame, true);
     CHECK_POLICY_DUMP_NAMES(frame, coalescesSpillSlots, false);

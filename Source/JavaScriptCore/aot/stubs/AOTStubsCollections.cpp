@@ -49,7 +49,7 @@ enum class InsertionPoint : uint8_t { AmongTags, AtSlot };
 
 static StubSignature signatureOfLookup()
 {
-    return StubSignature::withGPRResult({ thisGPR, argumentGPR(0) });
+    return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0) });
 }
 
 static KeyComparison keyComparisonOf(const StubAssembler& jit)
@@ -233,7 +233,7 @@ static void emitStoreInIndex(StubAssembler& jit, const HashTableRegisters& regis
     isStoredAmongLong.link(&jit);
 }
 
-// Nothing is stored before the last exit to isFull, a table without room, or to cannotAppend, a column that is too narrow for the key or the value.
+// Nothing is stored before the last exit to isFull, a table without room, or to cannotAppend, a column that is too narrow for the key or the value. The search has marked the home slot that it left, which holds for whoever inserts the key.
 static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegisters& registers, InsertionPointExits& insertionPoints, std::optional<GPRReg> value, JumpList& isFull, JumpList& cannotAppend)
 {
     const GPRReg table = registers.table;
@@ -387,7 +387,7 @@ StubSignature signatureOfSetDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapGet(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakSetHas(StubKey) { return signatureOfLookup(); }
-StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ thisGPR, argumentGPR(0), argumentGPR(1) }); }
+StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
 
@@ -470,8 +470,6 @@ static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegister
     isCreated.append(jit.jump());
 }
 
-static constexpr GPRReg ownerAfterLookup = hashTableRegisterPlan.copyOfOwner ? gprOf(*hashTableRegisterPlan.copyOfOwner) : thisGPR;
-
 // The last operand of a map's stub is the value.
 static StubSignature signatureAfterLookup(StubKey key, std::initializer_list<Reg> operands)
 {
@@ -481,8 +479,8 @@ static StubSignature signatureAfterLookup(StubKey key, std::initializer_list<Reg
     return signature;
 }
 
-StubSignature signatureOfNewCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) }); }
-StubSignature signatureOfGrowCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0) }); }
+StubSignature signatureOfNewCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerOfHashTableGPR, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) }); }
+StubSignature signatureOfGrowCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerOfHashTableGPR, argumentGPR(0) }); }
 
 static HashTableRegisters registersAfterLookup(StubAssembler& jit, GPRReg hash)
 {
@@ -752,6 +750,7 @@ void generateGrowCompactTable(StubAssembler& jit)
             // The tags begin behind the entry numbers: mask + 1 bytes.
             jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
             Jump homeIsFree = jit.branchTest8(CCallHelpers::Zero, BaseIndex(slot, position, CCallHelpers::TimesOne));
+            emitMarkThatKeyLeftHomeSlot(jit, BaseIndex(slot, position, CCallHelpers::TimesOne));
             jit.and32(TrustedImm32(~static_cast<int32_t>(CompactTable::slotsPerGroup - 1)), position);
             Label probe = jit.label();
             jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
@@ -768,8 +767,7 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.urshift32(TrustedImm32(3), slot);
             jit.add32(slot, position);
             homeIsFree.link(&jit);
-            jit.urshift32(TrustedImm32(CompactTable::tagShiftOfSlots), hash);
-            jit.or32(TrustedImm32(CompactTable::takenSlot), hash);
+            emitLoadTagOfSlot(jit, hash);
             jit.getEffectiveAddress(BaseIndex(larger, mask, CCallHelpers::TimesOne, index + 1), slot);
             jit.store8(hash, BaseIndex(slot, position, CCallHelpers::TimesOne));
             jit.store8(entry, BaseIndex(larger, position, CCallHelpers::TimesOne, index));

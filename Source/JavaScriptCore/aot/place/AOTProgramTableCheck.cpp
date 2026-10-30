@@ -239,7 +239,30 @@ static void checkSortedTables(const TableCheck& check)
         return file + 1 < check.tables.staticsOfFiles().size();
     }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.importsOfHeldFiles(), &ImportOfHeldFileData::key);
+    std::span<const ModuleWithNamedVariablesData> modulesWithNamedVariables = check.tables.modulesWithNamedVariables();
+    checkAscending(modulesWithNamedVariables, &ModuleWithNamedVariablesData::module);
+    checkAscending(modulesWithNamedVariables, &ModuleWithNamedVariablesData::firstVariable);
+    check.expect((modulesWithNamedVariables.empty() ? 0 : modulesWithNamedVariables.back().firstVariable) == check.tables.namedVariables().size() && std::ranges::all_of(check.tables.namedVariables(), [&](const NamedVariableData& variable) {
+        if (variable.name >= check.program.strings.size())
+            return false;
+        if (variable.place() == NamedVariableData::Place::Closure)
+            return variable.function().index() < check.program.functions.size();
+        return variable.offset() + (variable.place() == NamedVariableData::Place::NarrowWord ? sizeof(uint32_t) : sizeof(uint64_t)) <= check.tables.instanceSizes.sizeOfStatics;
+    }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
+    checkAscending(check.tables.stateOfLibraryModules(), [](const StateOfLibraryModuleData& state) { return static_cast<uint64_t>(state.moduleAndKind) << 32 | state.first; });
+    check.expect(std::ranges::all_of(check.tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {
+        uint64_t end = static_cast<uint64_t>(state.first) + state.count;
+        switch (state.kind()) {
+        case StateOfLibraryModuleData::Kind::Classes:
+            return end <= check.tables.numberOfLayoutIndices;
+        case StateOfLibraryModuleData::Kind::Closures:
+            return end <= check.tables.numberOfClosureCells;
+        case StateOfLibraryModuleData::Kind::Variables:
+            return end <= check.tables.instanceSizes.sizeOfStatics;
+        }
+        return false;
+    }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeFunctions(), &CompiledRuntimeFunctionData::id);
 
     check.expect(isStrictlyAscending(check.tables.builtinCells(), std::identity { }) && isStrictlyAscending(check.tables.eagerBuiltinCells(), std::identity { }), ProgramTableRule::TableNotSorted);

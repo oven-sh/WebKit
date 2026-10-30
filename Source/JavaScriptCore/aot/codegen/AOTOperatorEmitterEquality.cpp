@@ -461,6 +461,43 @@ private:
 
 } // anonymous namespace
 
+// The operand of a strict equality of two values that is a written text.
+static ValueID writtenTextComparedWithValue(const Function& function, const Value& equality)
+{
+    for (ValueID operand : { equality.rightOperand(), equality.leftOperand() }) {
+        if (function.at(operand).opcode == Opcode::String)
+            return operand;
+    }
+    return { };
+}
+
+// `shape.kind === "circle"` where the branch narrows `shape`: the comparison stays a StrictEq. It has the characters in its code, or hands them to a stub. Nobody asks for the cell of the text, so it is neither made nor tested for.
+bool OperatorEmitter::comparesOnlyTextOf(ValueID string)
+{
+    // Validation reads every operand in front of its operation.
+    if (generator().validates())
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    std::optional<Use> use = useLists.singleUse(string);
+    ValueLocation location = useLists.locationOf(string);
+    if (!use || use->kind != Use::Kind::Operand || location.placement != ValuePlacement::InBlock || use->block != location.block)
+        return false;
+    const Value& user = m_function.at(use->user);
+    if (user.opcode != Opcode::StrictEq)
+        return false;
+    bool isReadByForm = user.form() == OperatorForm::StringAndValue && m_function.at(string).representation == Representation::Cell;
+    if (!isReadByForm && (user.form() != OperatorForm::Generic || writtenTextComparedWithValue(m_function, user) != string))
+        return false;
+    // What is alive across a suspension is saved with the frame.
+    for (ValueID between : m_function.at(location.block).values.span().subspan(location.index + 1)) {
+        if (between == use->user)
+            return true;
+        if (maySuspend(m_function.at(between).opcode))
+            return false;
+    }
+    return false;
+}
+
 void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
 {
     EqualityEmitter equality(generator());
@@ -469,6 +506,16 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     Condition result;
     switch (value->form()) {
     case OperatorForm::Generic:
+        // One call with the characters takes the place of two: one that makes the cell of the text, one that compares any two values.
+        if (ValueID written = isStrict ? writtenTextComparedWithValue(m_function, value.value()) : ValueID()) {
+            ValueID other = written == left ? right : left;
+            const Type& type = typeOf(other);
+            bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), m_function.at(written).string(), targets, false, everyCellIsString);
+            });
+            return;
+        }
         result = equality.equalityOnValues(value, isStrict);
         break;
     case OperatorForm::Integers:

@@ -144,18 +144,6 @@ static Vector<uint32_t> numberFields(const Program& program)
     return firstFieldOfLayout;
 }
 
-static Vector<uint32_t, 16> fieldsFilledBy(const Program& program, const Layout& declared, const DataNode::Object& object)
-{
-    Vector<uint32_t, 16> fields;
-    for (const DataMember& member : object.members) {
-        if (std::optional<uint32_t> field = declared.findField(member.key))
-            fields.append(*field);
-        else if (program.nameClassOf(member.key) != NameClass::Index)
-            break;
-    }
-    return fields;
-}
-
 static void insertInUniquedSortedList(CompactList<FunctionID>& list, FunctionID function)
 {
     size_t position = std::ranges::lower_bound(list.span(), function) - list.span().begin();
@@ -295,7 +283,7 @@ struct FieldResults {
     // For the layouts that have objects.
     Vector<OptionSet<Actor>> actorsOpenOnObjectsOfLayouts { };
     // By layout and key, where the receiver of a definition is only observed to be an object of the layout: ValueForms. A store by name counts as the plain form.
-    mutable UncheckedKeyHashMap<uint64_t, uint8_t> formsOfValuesSeenDefined { };
+    mutable UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> formsOfValuesSeenDefined { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
@@ -635,11 +623,13 @@ struct FieldResults {
         if (kind == LayoutKind::Record ? hasOtherSites.quickGet(id.index()) : !constructions.isFollowed(id))
             return keys;
 
+        // `const defaults: O = { a: 1, b: 2 }` beside `const options: Partial<O> = { b: 5 }`: one layout, and each literal keeps the names that it lists itself.
         bool isBornHere = isBornWithCopies.get(id.index());
-        if (isBornHere) {
-            std::optional<Vector<PropertyKeyID>> listed = reached == ObjectsOfLayout::Followed ? keysListedByLiteral(object, id) : std::nullopt;
-            keys = listed ? WTF::move(*listed) : keysHeldSinceBirth[id.index()];
-        }
+        std::optional<Vector<PropertyKeyID>> listed = reached == ObjectsOfLayout::Followed ? keysListedByLiteral(object, id) : std::nullopt;
+        if (listed)
+            keys = WTF::move(*listed);
+        else if (isBornHere)
+            keys = keysHeldSinceBirth[id.index()];
         Vector<PropertyKeyID> keysOfOtherForms;
         forEachFieldOfObjectsWith(program, application, id, [&](FieldReference declaration, const Field& field) {
             if (!field.key)
@@ -1655,6 +1645,42 @@ struct FieldResults {
         return ValueForms::formToPlanFor(forms);
     }
 
+    void forEachLayoutOfCopyFilledByItsMaker(const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
+    {
+        static_assert(!OperandIndex::PropSet::object && !OperandIndex::PropDefine::object && !OperandIndex::DefineGetter::object && !OperandIndex::DefineSetter::object);
+        const Value& operation = function.at(statement.site);
+        uint32_t filled = 0;
+        PropertyKeyID key;
+        if (statement.opcode == Opcode::PropSet || statement.opcode == Opcode::PropDefine || statement.opcode == Opcode::DefineGetter || statement.opcode == Opcode::DefineSetter) {
+            key = operation.key();
+            if (!key)
+                return;
+        } else if (statement.opcode == Opcode::CopyDataProperties)
+            filled = OperandIndex::CopyDataProperties::target;
+        else if (statement.opcode == Opcode::Call && operation.numberOfOperands() > OperandIndex::Call::arguments) {
+            const Value& callee = function.at(definitionThroughUpcasts(function, operation.calleeOperand()));
+            if (callee.opcode != Opcode::Builtin || program.builtins().canonicalID(callee.builtin()) != Builtins::ObjectAssign)
+                return;
+            filled = OperandIndex::Call::arguments;
+        } else
+            return;
+        ValueFlowNodeID copy = inputs.bodies().operandsOf(statement)[filled].node;
+        if (!copy || function.at(sameObjectThroughCasts(function, operation.operand(filled))).opcode != Opcode::CopyObject)
+            return;
+        ValueSetID copies = inputs.solver().possibleValuesOf(copy);
+        if (ValueSets::isComplement(copies))
+            return;
+        Vector<LayoutID, 8> layouts;
+        sets.forEachMemberInLine(copies, [&](ValueFlowObjectID object) {
+            if (LayoutID layout = inputs.universe().layoutOf(object))
+                layouts.append(layout);
+        });
+        AOT::sort(layouts);
+        removeRepeatedElements(layouts);
+        for (LayoutID layout : layouts)
+            functor(layout, key);
+    }
+
     // `for (var name in defaults) options[name] = ..`: the store names what the enumerated objects list. A prediction: whatever else the enumeration shows is stored as a name that no field has.
     // `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied. So an object that the program names no field of
     // gets the names only where flow holds every object that is enumerated, and nothing lists the names of the object itself.
@@ -1737,6 +1763,8 @@ struct FieldResults {
         KeysByLayout keysNamedOnlyByOutsideCreators(numberOfLayouts);
         KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
         KeysByLayout keysOfEnumerationsCopied(numberOfLayouts);
+        KeysByLayout keysGivenToCopiesByTheirMakers(numberOfLayouts);
+        BitVector layoutsOfCopiesThatTheirMakersCopyInto(numberOfLayouts);
         AOT_THRESHOLD(size_t, mostLayoutsEnumerated, 2);
         // Every statement is processed independently, on all threads. The lists are sorted below, so the order in which keys arrive does not matter.
         struct KeyNamed {
@@ -1762,6 +1790,9 @@ struct FieldResults {
                             keysNamedInShare[share].append({ &keysOfEnumerationsCopied, layout, key, 0 });
                         });
                     }
+                    forEachLayoutOfCopyFilledByItsMaker(program.functions[index], statement, [&](LayoutID layout, PropertyKeyID key) {
+                        keysNamedInShare[share].append({ &keysGivenToCopiesByTheirMakers, layout, key, 0 });
+                    });
                     if (statement.opcode != Opcode::PropSet)
                         continue;
                     ValueFlowNodeID receiver = inputs.bodies().operandsOf(statement)[0].node;
@@ -1797,12 +1828,16 @@ struct FieldResults {
         });
         for (const Vector<KeyNamed>& keysNamed : keysNamedInShare) {
             for (const KeyNamed& named : keysNamed) {
+                if (!named.key) {
+                    layoutsOfCopiesThatTheirMakersCopyInto.quickSet(named.layout.index());
+                    continue;
+                }
                 (*named.list)[named.layout.index()].append(named.key);
                 if (named.list == &keysGivenToInstancesSeen)
                     formsOfValuesSeenDefined.add(static_cast<uint64_t>(named.layout.index()) << 32 | named.key.index(), 0).iterator->value |= named.forms;
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedAtFollowedUsesOfGivenObjects, &keysGivenToInstancesSeen, &keysOfEnumerationsCopied }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedAtFollowedUsesOfGivenObjects, &keysGivenToInstancesSeen, &keysOfEnumerationsCopied, &keysGivenToCopiesByTheirMakers }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1879,12 +1914,13 @@ struct FieldResults {
             keysByLayout[id.index()].removeAllMatching([&](PropertyKeyID key) {
                 auto declarers = layoutsWithField.find(key.index());
                 PropertyKeyKind kind = program.at(key).kind;
-                bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName && kind != PropertyKeyKind::PrivateName;
+                bool canBeDeclared = kind != PropertyKeyKind::WellKnownSymbol && kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName && kind != PropertyKeyKind::PrivateName;
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
                     return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
                 // A store to a name that no type declares has bypassed the types.
                 isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedAtFollowedUses[id.index()], key) && !std::ranges::binary_search(keysNamedAtFollowedUsesOfGivenObjects[id.index()], key);
+                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysGivenToCopiesByTheirMakers[id.index()], key) && !layoutsOfCopiesThatTheirMakersCopyInto.quickGet(id.index());
                 if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
                 if (stores.accessorDefinedUnder(maker, id, key).isAccessor())
@@ -2689,6 +2725,8 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
     for (uint32_t name = 0; name < numberOfNames; ++name)
         namesRead.note(placeholdersReadThrough[name], readsWithoutStamp[firstReadOfName[name]].key);
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        if (application.layouts[index].flow.allocation == AllocationState::NeverAllocated)
+            return;
         forEachFieldOfObjectsWith(program, application, LayoutID(index), [&](FieldReference declaration, const Field& field) {
             AtomicRef reads(flowOf(application, declaration).location.reads);
             if (field.key && leavesReadsToBeFound(reads.load(std::memory_order_relaxed)) && namesRead.reach(stores, LayoutID(index), field.key.index()))
@@ -2720,6 +2758,8 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
     StoresByLayout& stores = *usesOfHeap.stores;
     Vector<Vector<FieldUnderKey>> fieldsOfObjectsWith(program.layouts.size());
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        if (application.layouts[index].flow.allocation == AllocationState::NeverAllocated)
+            return;
         forEachFieldOfObjectsWith(program, application, LayoutID(index), [&](FieldReference declaration, const Field& field) {
             fieldsOfObjectsWith[index].append({ field.key ? field.key.index() : NamesThroughPlaceholders::none, declaration });
         });

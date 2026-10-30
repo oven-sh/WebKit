@@ -32,6 +32,7 @@ constexpr bool mayBeGivenFrameArray(Entry entry)
     case Entry::operationAOTCreateUnmappedArguments:
     case Entry::operationAOTCreateMappedArguments:
     case Entry::operationAOTContentsHaveType:
+    case Entry::operationAOTValueHasType:
         return true;
     default:
         return false;

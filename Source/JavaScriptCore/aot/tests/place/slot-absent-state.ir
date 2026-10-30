@@ -1,6 +1,8 @@
 # A slot has an absent state unless its field is always filled, is never deleted, and its objects stay out of reach of uncompiled JavaScript. A slot of an environment has one only where a read may come before the first store
 # FORM: AsRead
 # RUN: plan-slots layouts
+# Where no code gets a test, a number that may be something else has a slot for any value.
+# OPTIONS: heat=EverythingIsHot
 
 module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0

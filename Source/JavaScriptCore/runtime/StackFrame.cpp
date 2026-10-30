@@ -85,8 +85,8 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, const AOT::TraceFrame& frame, JSCe
 void StackFrame::appendCompiledFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
 {
     results.reserveCapacity(results.size() + std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses));
-    AOT::forEachShownFrame(trace, [&](const AOT::TraceFrame& frame) {
-        results.constructAndAppend(frame);
+    AOT::forEachShownFrame(trace, [&](const AOT::TraceFrame& frame, JSObject* callee) {
+        results.constructAndAppend(frame, callee, WriteBarrierEarlyInit);
     });
 }
 

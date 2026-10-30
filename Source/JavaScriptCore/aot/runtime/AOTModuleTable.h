@@ -65,6 +65,8 @@ public:
     // The export statement that asks for the name. An import asks for any other one.
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
+    // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
+    std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
     // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.

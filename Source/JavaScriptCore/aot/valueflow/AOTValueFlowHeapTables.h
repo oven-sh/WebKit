@@ -46,6 +46,8 @@ struct ValueFlowMembersUnderKey {
     ValueSetID entriesWithFeaturesOfHostClasses { ValueSets::nothing };
     // And the entries that are marked as classes whose instances have such a method.
     ValueSetID hostClassesWithSuchMethod { ValueSets::nothing };
+    // The objects that do not escape with the object that holds them, `process` say, on which the table takes the key for absent. Code that nobody has seen finds them all the same.
+    ValueSetID unescapedHoldersWithoutKey { ValueSets::nothing };
 };
 
 struct ValueFlowPropertyKeptForLife {
@@ -205,6 +207,8 @@ public:
     bool hasGetEntry(BuiltinID member) const { return m_hasGetEntry.quickGet(member.index()); }
     bool hasSetEntry(BuiltinID member) const { return m_hasSetEntry.quickGet(member.index()); }
     bool letsInUnseenCode(BuiltinID member) const { return m_letsInUnseenCode.quickGet(member.index()); }
+    // An object of the host that the table names right above one that the host makes for each module. It has the members that the table lists under both.
+    bool standsRightAboveObjectOfModule(BuiltinID holder) const { return m_standsRightAboveObjectOfModule.quickGet(holder.index()); }
     bool mayAnswerToName(ModuleID module) const { return m_mayAnswerToName.quickGet(module.index()); }
     // Whether the path of a module that may answer to a name, or what stands in it behind a folder node_modules, begins with the text.
     bool holdsModuleOfPackage(std::span<const uint8_t> package) const;
@@ -299,6 +303,8 @@ private:
     Vector<MemberOfHolder> m_membersUnderNames;
     Vector<HolderListingName> m_closedHoldersListingNames;
     Vector<HolderListingName> m_prototypesOfInstancesWithNames;
+    // Namespaces and constructors with a list of all members on every object of the chain, which are passed by where the members of their holder escape.
+    Vector<BuiltinID> m_listedHoldersThatDoNotEscape;
     Vector<std::pair<BuiltinName, ValueSetID>, 4> m_instancesThatKeepName;
     Vector<BuiltinID> m_holdersWithClosedKeys;
     BitVector m_hasClosedKeys;
@@ -318,6 +324,7 @@ private:
     BitVector m_hasGetEntry;
     BitVector m_hasSetEntry;
     BitVector m_letsInUnseenCode;
+    BitVector m_standsRightAboveObjectOfModule;
     BitVector m_hasNumericName;
     Vector<ValueFlowClassOfEntries> m_classesOfEntries;
     Vector<ValueFlowClassOfEntries> m_classesOfHostWithEntries;

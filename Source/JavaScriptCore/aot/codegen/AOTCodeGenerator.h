@@ -48,6 +48,7 @@ class PromisedResults;
 class StackChecks;
 class TypeArena;
 struct CodeRecords;
+struct ValueLocation;
 
 struct CodeGenerationInputs {
     const Program& program;
@@ -144,6 +145,7 @@ public:
     // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
     bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
+    bool hasGuardForWritableStorage(const ValueContext& store);
     ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
@@ -257,7 +259,8 @@ private:
     void generateBlock(BlockID);
     void generateContentsOf(BlockID);
     bool isHandedOnByJumpAlone(BlockID, const Block&, ValueID);
-    void generateValue(BlockID, const Block&, ValueID);
+    bool isAwaitedAtOnce(std::span<const ValueID> valuesOfBlock, size_t index) const;
+    void generateValue(BlockID, const Block&, ValueID, bool isAwaitedAtOnce = false);
     void generateTerminator(BlockID, const Block&);
     void dispatch(const ValueContext&);
     void dispatch(const TerminatorContext&);
@@ -265,6 +268,7 @@ private:
 
     void generate(const ValueContext&);
     void verifyElementGuard(const ValueContext&);
+    ValueLocation locationOfParameter(ValueID) const;
     void defineValue(ValueID, Operand);
     void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, const IncomingOperand&);

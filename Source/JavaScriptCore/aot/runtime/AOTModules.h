@@ -29,6 +29,7 @@
 
 namespace JSC {
 
+class HeapAnalyzer;
 class JSCellButterfly;
 class JSModuleLoader;
 class ModuleLoadingContext;
@@ -38,6 +39,7 @@ class ThrowScope;
 
 namespace AOT {
 
+class ModuleEnvironment;
 class ModuleLinkWalk;
 struct EvaluationInProgress;
 struct Instance;
@@ -77,6 +79,7 @@ struct LinkContext {
     macro(JSValue, requiredValue) \
     macro(JSValue, valueInRequireCache) \
     macro(JSObject*, exportsOfMock) \
+    macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
@@ -139,6 +142,8 @@ public:
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     // Importers are bound past a module that only hands names on, and a body without code never runs: its status says nothing. Plain Bun has loaded it with the first module that imports it.
     bool wasLoadedWithImporter(ModuleID) const;
+    // The factory of a mock that waits runs when the first importer is linked, and that importer has begun to load by then: what was loaded when the mock was made decides.
+    bool wasLoadedWhenMockWasMade(ModuleID);
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
@@ -157,12 +162,15 @@ public:
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
-    bool isLeftOutByMock(ModuleID module, unsigned exportIndex) const
+    // The build keeps a name in every table that a link searches for it. Of any other name it drops the entries that nothing reads.
+    enum class TablesBehindStars : bool { MayLackName, HaveName };
+    // Whoever imports the name from the module finds it nowhere: such a mock leaves it out, or every `export *` that hands it on leads to one that does.
+    bool isMissingBehindMocks(ModuleID module, unsigned exportIndex, TablesBehindStars tables) const
     {
         if (m_exportsLeftOutByMocks.isEmpty()) [[likely]]
             return false;
-        auto found = m_exportsLeftOutByMocks.find(module);
-        return found != m_exportsLeftOutByMocks.end() && found->value.get(exportIndex);
+        Vector<ModuleID, 8> path;
+        return isMissingBehindMocks(module, exportIndex, tables, path);
     }
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
     // Asked about the modules of the graph below a root.
@@ -205,6 +213,7 @@ public:
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
     void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
+    bool letMockStandInPlaceOfLibraryModule(ModuleID);
     void runMocksBelow(ModuleID root);
     void loadEvictedFilesBelow(ModuleID root);
     JSObject* capturedExports(ModuleID);
@@ -224,6 +233,7 @@ public:
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
     void throwFailure(ModuleFailureID, bool isForRequire);
+    std::optional<ModuleFailureID> loadFailure(ModuleID module) const { return m_table.loadFailure(module); }
     void throwExportNotFound(const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
     void didRequestFromHost(ModuleID module)
@@ -233,6 +243,7 @@ public:
     }
     // Of this image.
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
+    bool isHeldForImport(ModuleID) const;
     // What require() answers for a file of data goes by whether something has imported the file: isHeldForImport().
     void didImportFromUncompiledCode(ModuleID module)
     {
@@ -258,11 +269,16 @@ public:
     const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
     StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void evict(ModuleID);
+    void forgetEvaluation(ModuleID);
+    void forgetRunOfLibraryModule(ModuleID);
+    JSValue executeForLoader(ModuleID);
     void recordRequireFromOtherImage(ModuleID target, JSObject* moduleObjectOfReferrer);
     // The other side of it: a require() of `referrer` has returned a file of another image, which `required` names as the host names it.
     void recordRequireOfOtherImage(ModuleID referrer, ModuleID required);
     // Whether evict() would do anything: the file runs or has run.
     bool wouldBeEvicted(ModuleID);
+    // Whether the loader of plain Bun would hold a module for the file, which only a deletion takes away.
+    bool wasLoadedByImport(ModuleID);
     // Code is compiled for files that load once, but for those that the build saw taken out of require.cache. What holds no code is read again at any time.
     bool mayBeEvicted(ModuleID module) const
     {
@@ -270,10 +286,14 @@ public:
         return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
     }
     void leaveToHostUnlessItHasRun(ModuleID);
+    void takeOutOfLoader(ModuleID);
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
     bool hasRun(ModuleID);
+    bool isListedWhileItRuns(ModuleID) const;
+    void keepObjectMadeByRequire(ModuleID, JSObject* moduleObject);
+    void forgetObjectMadeByRequire(ModuleID);
     bool isLeftToHost(ModuleID);
     void didEvictFromOtherImage() { m_otherImageHasEvictedFiles = true; }
     // The text of a data: URL that the program imports under a constant name is part of the program.
@@ -301,8 +321,39 @@ public:
     void evaluateModuleInRecord(ModuleID);
     // Says whether the start that asks goes on to run the module.
     bool beginModuleInRecord(ModuleID);
+    struct ModuleOfRealm {
+        Modules* modules;
+        ModuleID module;
+        // One more than the place, among the ES modules of other images that the image of the root imports, of the one that leads to it. Zero: the image of the root names it itself.
+        uint32_t entry { 0 };
+        uint32_t levelBelowRoot { 0 };
+        uint32_t placeOfImporter { 0 };
+    };
+    using ModulesOfRealm = Vector<ModuleOfRealm, 8>;
+    struct FilesLeftToLoader {
+        ModulesOfRealm requests;
+        ModulesOfRealm importers;
+    };
+    struct RequestsMadeOnWay : RefCounted<RequestsMadeOnWay> {
+        ModulesOfRealm modules;
+    };
+    struct LevelOfRealm {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfRealm);
+
+        ModulesOfRealm requests;
+        RefPtr<RequestsMadeOnWay> made;
+        ModulesOfRealm importersOfUncompiledCode;
+        Modules* modulesOfRoot { nullptr };
+    };
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesLeftToLoader* leftToLoader = nullptr);
+    std::pair<Modules*, ModuleID> placeInRealm(ModuleID);
+    bool isFileLeftToRun(ModuleID fileOrFace) const;
+    ModulesOfRealm filesOfRealmLeftToRunBelow(ModuleID root, ModulesOfRealm& entries, ModulesOfRealm& importers);
+    bool layWayThroughRealm(ModuleID root, FilesLeftToLoader&, LevelOfRealm& levelOfRoot);
+    void takeUpWayThroughRealm(ModuleID root);
+    bool isOnWayBelowRootOfItsImage(ModuleID) const;
+    AbstractModuleRecord* recordOfRequestedModule(ModuleID ofSomeImage);
     void queueJobsThatWaitForLoader();
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
@@ -310,7 +361,9 @@ public:
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
     void captureExportsAgain(ModuleID);
     void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
+    bool exportsWhatMockNamesAlone(ModuleID) const;
     void answerRequireWithNamespaceOfMock(ModuleID file);
+    void noteLoadBehindMock(ModuleID fileOrFace, bool isRequired);
     // The start of the module is on the stack only to run the files that the module imports.
     bool isRunningFilesOf(ModuleID root) const { return m_rootWhoseFilesRun == root; }
     bool stopLoadingBehindFile(ModuleID file);
@@ -327,7 +380,7 @@ public:
     bool canTellHowGraphIsLoaded(ModuleID root);
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
-    ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
+    ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*, const ModulesOfRealm& inFront = { }, const LevelOfRealm* = nullptr);
     struct RequestsOfUncompiledCode;
     void collectRequestsOfUncompiledCode(ModuleID, RequestsOfUncompiledCode&);
     // Null: the statements that name the module say nothing of its type.
@@ -406,6 +459,9 @@ public:
     AbstractModuleRecord* recordForResolution(ModuleID);
     JSObject* uncompiledNamespace(ModuleID, ModulePhase);
 
+    void willAnalyzeHeap(VM&);
+    void analyzeVariables(ModuleEnvironment*, uint32_t indexAmongModulesWithNamedVariables, HeapAnalyzer&) const;
+
 private:
     friend class RequestToHostScope;
 
@@ -440,6 +496,7 @@ private:
         FOR_EACH_REFERENCE_OF_LOADED_MODULE(AOT_DECLARE_REFERENCE)
 #undef AOT_DECLARE_REFERENCE
         bool isBeingRequired { false };
+        bool isKeptByRequire { false };
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
@@ -449,6 +506,8 @@ private:
         bool didDropError { false };
         bool exportsWhatMockNamesAlone { false };
         bool answersRequireWithNamespaceOfMock { false };
+        bool wasLoadedBehindMock { false };
+        bool wasRequiredBehindMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
         bool wasReachedBySecondLoad { false };
         bool isBeingLoadedByLoader { false };
@@ -484,6 +543,7 @@ private:
     Identifier moduleKey(ModuleID);
     Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
+    JSObject* namespaceThatCompiledCodeHolds(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
     JSObject* createNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions);
     JSObject* createTableOfExports();
@@ -515,6 +575,9 @@ private:
     AbstractModuleRecord::Resolution::Type resolveRequiredName(ModuleID exporter, const Identifier&);
     // Throws for the first name that an unlinked module of the list requires and that its exporter lacks or has from two bindings.
     void checkRequiredNames(std::span<const ModuleID> modules);
+    bool isMissingBehindMocks(ModuleID, unsigned exportIndex, TablesBehindStars, Vector<ModuleID, 8>& path) const;
+    // The text of a CommonJS file always stores the name. The file lacks it only where a mock stands for the whole file.
+    bool isFoundInTextOfFile(const RequiredNameData& requiredName) const { return requiredName.mayBeAbsent && isCommonJSFileOrFace(requiredName.exporterModule()); }
     bool isDeferredExport(const LoadedModule&, const Identifier&) const;
     bool findsItsNamesInLibraryAlone(ModuleID) const;
     Vector<DynamicExport> collectDynamicExports(ModuleID);
@@ -570,7 +633,6 @@ private:
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     Identifier keyWithoutForm(ModuleID file);
     std::optional<ModuleID> findFormThatStatementLoaded(const Identifier& key, const ScriptFetchParameters&, std::optional<ModuleID> asked) const;
-    bool isHeldForImport(ModuleID) const;
     bool isBelowRootWhoseFilesRun(ModuleID) const;
     void noteFormAnsweredFirst(const Identifier& key, const ScriptFetchParameters&, ModuleID file);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
@@ -610,6 +672,10 @@ private:
     uint32_t m_synchronousLoadCount { 0 };
     uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
+    Structure* m_environmentStructure { nullptr };
+    Vector<ModuleEnvironment*> m_environments;
+    // A heap snapshot keeps pointers to these until it is written.
+    Vector<AtomString> m_namesOfVariables;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen.
@@ -666,6 +732,7 @@ private:
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
+    bool m_isAnsweringRequireOfMock { false };
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOutByMocks;
     BitVector m_evictedFiles;
@@ -677,8 +744,11 @@ private:
     BitVector m_modulesThatRanWithImporters;
     Vector<uint8_t> m_statusesWhenImportsWereFollowed;
     BitVector m_modulesWithMockToRun;
+    BitVector m_modulesWithMockThatWaited;
+    BitVector m_modulesLoadedBeforeMockThatWaited;
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
+    BitVector m_libraryModulesLeftByThrow;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     BitVector m_dataFilesImportedByUncompiledCode;
     bool m_otherImageHoldsEntryPointOfRealm { false };
@@ -692,6 +762,7 @@ private:
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
     const bool m_showsWaysBetweenModuleObjects;
+    const bool m_storesPathOfMainModule;
     bool m_loadsModulesByName;
     const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
@@ -808,6 +879,12 @@ private:
         bool isAskedFor { false };
     };
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfRealm>> m_levelsOfRealm;
+    struct WayThroughRealm {
+        ModuleID root;
+        ModulesOfRealm modulesOnWay;
+    };
+    Vector<WayThroughRealm, 1> m_waysThroughRealm;
     // From where a module on a way lists its requests to where the loader asks for them, in the same step.
     struct FileAskedForOnBehalfOfRoot {
         ModuleID requester;

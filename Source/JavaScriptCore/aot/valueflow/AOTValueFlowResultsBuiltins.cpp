@@ -61,14 +61,18 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
         if (BuiltinID namespaceObject = builtins.at(RuntimeModuleID(index)).namespaceObject)
             namespacesOfModules.set(namespaceObject.index());
     }
+    ValueSetID objectsOfLoadedModules = valueOfHostNode(inputs, ValueFlowHostNode::ObjectsOfLoadedModules);
     BitVector builtinsWhoseCodeRuns(builtins.builtinCount());
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         const Builtin& entry = builtins.at(BuiltinID(index));
         OptionSet<BuiltinUse> enteringUses = usesEnteringCode(entry.kind);
         bool mayHoldFunctionsWithoutEntry = (entry.kind == BuiltinKind::Function || entry.kind == BuiltinKind::Method) && !entry.flags.contains(BuiltinFlag::ListsAllMembers);
-        if (namespacesOfModules.get(index) || mayHoldFunctionsWithoutEntry)
+        bool hangsUnderGlobalObject = builtins.at(builtins.rootOf(BuiltinID(index))).holder == Builtins::GlobalThis;
+        bool isFoundOnlyByLoadingModule = namespacesOfModules.get(index) && !hangsUnderGlobalObject;
+        if (isFoundOnlyByLoadingModule || mayHoldFunctionsWithoutEntry)
             enteringUses.add(accessingBuiltinUses);
-        if (inputs.solver().usesOf(BuiltinID(index)).containsAny(enteringUses))
+        bool isLoaded = namespacesOfModules.get(index) && inputs.sets().contains(objectsOfLoadedModules, universe.objectOf(BuiltinID(index)));
+        if (isLoaded || inputs.solver().usesOf(BuiltinID(index)).containsAny(enteringUses))
             builtinsWhoseCodeRuns.quickSet(builtins.canonicalID(BuiltinID(index)).index());
     }
 
@@ -795,7 +799,8 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         bool isUnlocked = program.isUnlocked(member);
         if (isEnabled && !isStoredThroughUnknownReceiver && !isUnlocked && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
-        if (inputs.build.options().sharesRealms() && !isUnlocked && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
+        // An image that holds the library alone takes every member for unlocked, and still has to say which of them it writes itself.
+        if (inputs.build.options().sharesRealms() && (!isUnlocked || inputs.build.options().holdsLibraryAlone()) && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
             tables.membersWrittenInSharedRealm.quickSet(index);
         BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
         if (isStoredThroughUnknownReceiver || isUnlocked)
@@ -969,6 +974,10 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             BuiltinID constructor = builtins.at(builtinClass).constructor;
             if (constructor && builtins.typedArrayClassOf(builtinClass) == builtinClass && universe.builtinTables().objectStandingFor(builtinClass))
                 classMadeAs.add(universe.resultOf(constructor, 0).index(), builtinClass);
+        }
+        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+            if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::IsLazilyCreated))
+                classMadeAs.add(universe.resultOf(BuiltinID(index), 1).index(), BuiltinClasses::Array);
         }
         for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
             if (ValueSets::isComplement(node.objects))
@@ -1241,14 +1250,14 @@ ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs& in
     for (size_t function : inputs.solver().libraryFunctionsLacked())
         found.libraryFunctionsLacked.append(RuntimeFunctionID(static_cast<uint32_t>(function)));
     if (!inputs.build.options().admitsReplacedBuiltins()) {
-        found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputs);
+        found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputs, found.unseenCode.span());
         return found;
     }
     // Both walk the calls of built-in functions.
     ValueFlowHeapIndex index(inputs);
     ValueFlowResultInputs inputsWithIndex = inputs;
     inputsWithIndex.heapIndex = &index;
-    found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputsWithIndex);
+    found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputsWithIndex, found.unseenCode.span());
     collectWhatTestsReplace(inputsWithIndex, found);
     return found;
 }
@@ -1268,6 +1277,8 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     tables.wholeProgram.loadsOfMachineCode = WTF::move(usesOfLibraryCode.loadsOfMachineCode);
     tables.wholeProgram.findsFilesOfProgramByName = filesOfProgramAreLoadedByName(inputs.solution) || inputs.solver().input().refusedCode.hostRunsFilesOutsideImage;
     tables.wholeProgram.hostRunsFilesOutsideImage = inputs.solver().input().refusedCode.hostRunsFilesOutsideImage;
+    tables.wholeProgram.hasOneRealmAtATime = tables.wholeProgram.hostRunsFilesOutsideImage || inputs.build.options().sharesRealms();
+    tables.wholeProgram.storesPathOfMainModule = isRaised(inputs.solution, ValueFlowHostNode::PathOfMainModuleIsStored);
     warnAboutLoadsUnderComputedNames(inputs, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);
     times.didFinish("built-ins: code that runs, unseen code, instances"_s);

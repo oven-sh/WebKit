@@ -1,0 +1,134 @@
+# A value kept in a heap word is read back as a value of its own. One object may go by several names, and a test may look at one of them while the read that names its guard reads another.
+# In the first function the names are the object and the parameter of the edge that narrows it. In the second they are the object and the parameter of a block that two narrowing edges in two stretches lead to.
+# In the third no operation reads the other name under the guard: an edge hands the guard on beside it, to a block that is handed another object with its own guard on the other way in.
+# In the fourth that edge is the one on which the test makes the guard.
+# None of these objects goes into a word. The other object of each function crosses the same suspensions, is tested and read under one name or not at all, and is kept.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass limit=MaxSuspensionsCrossedOnStack:0
+# RUN: pass KeepValuesInHeapWords
+# STATISTIC: ValuesKeptInHeapWords = 4
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+layout L0 name="Box" fields=[{key="w" declared={type=number}}]
+layout L1 name="Other" fields=[{key="w" declared={type=number}}]
+
+function f0 name="testsTheNarrowedName" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2} {
+  b0(v0: boolean, v1: anything, v2: undefined|Promise):
+    v3 = PropGet v1 key="box"
+    v4 = NewObject layout=L1 fields=[]
+    v5 = TypeTest v3 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = AwaitBySavingFrame v0, v2, v3, v4, v6
+# CHECK: IsSlotFilled v6 key="w"
+    v8 = IsSlotFilled v6 key="w" receivers=[L0] level=Expected
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+# CHECK: AssumeType v3 provenType=L0
+    v10 = AssumeType v3 provenType=L0
+    v11 = GetSlot v10, v9 key="w" receivers=[L0] level=Expected
+    PutModuleVariable v4 variable=g0
+    Return v11
+  b3() frequency=Unlikely:
+    v13 = Undefined
+    Return v13
+}
+function f1 name="testsTheNarrowedName" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2}
+
+function f2 name="testsTheParameterOfTheBlockWhereTwoWaysMeet" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=2} {
+  b0(v0: boolean, v1: anything, v2: undefined|Promise):
+    v3 = PropGet v1 key="box"
+    v4 = NewObject layout=L1 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = TypeTest v3 testedType=L0
+    Branch v5 -> taken b3(| 0), notTaken b7()
+  b2():
+    v6 = AwaitBySavingFrame v0, v2, v3, v4
+    v7 = TypeTest v3 testedType=L0
+    Branch v7 -> taken b4(| 0), notTaken b7()
+  b3(v8):
+    Jump -> next b5(v8)
+  b4(v9):
+    Jump -> next b5(v9)
+  b5(v10):
+    v11 = AwaitBySavingFrame v0, v2, v3, v4, v10
+# CHECK: IsSlotFilled v10 key="w"
+    v12 = IsSlotFilled v10 key="w" receivers=[L0] level=Expected
+    Branch v12 -> taken b6(| 0), notTaken b7()
+  b6(v13):
+# CHECK: AssumeType v3 provenType=L0
+    v14 = AssumeType v3 provenType=L0
+    v15 = GetSlot v14, v13 key="w" receivers=[L0] level=Expected
+    PutModuleVariable v4 variable=g0
+    Return v15
+  b7() frequency=Unlikely:
+    v17 = Undefined
+    Return v17
+}
+function f3 name="testsTheParameterOfTheBlockWhereTwoWaysMeet" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=2}
+
+function f4 name="handsTheGuardOnBesideTheOtherName" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=2} {
+  b0(v0: boolean, v1: anything, v2: undefined|Promise):
+    v3 = PropGet v1 key="box"
+    v4 = PropGet v1 key="other"
+    v5 = TypeTest v3 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b8()
+  b1(v6):
+    v7 = AwaitBySavingFrame v0, v2, v3, v4, v6
+    Branch v0 -> taken b2(), notTaken b4()
+  b2():
+# CHECK: IsSlotFilled v6 key="w"
+    v8 = IsSlotFilled v6 key="w" receivers=[L0] level=Expected
+    Branch v8 -> taken b3(| 0), notTaken b8()
+  b3(v9):
+# CHECK: AssumeType v3 provenType=L0
+    v10 = AssumeType v3 provenType=L0
+    Jump -> next b7(v10, v9)
+  b4():
+    v11 = TypeTest v4 testedType=L0
+    Branch v11 -> taken b5(| 0), notTaken b8()
+  b5(v12):
+    v13 = IsSlotFilled v12 key="w" receivers=[L0] level=Expected
+    Branch v13 -> taken b6(| 0), notTaken b8()
+  b6(v14):
+    Jump -> next b7(v12, v14)
+  b7(v15, v16):
+    v17 = GetSlot v15, v16 key="w" receivers=[L0] level=Expected
+    Return v17
+  b8() frequency=Unlikely:
+    v18 = Undefined
+    Return v18
+}
+function f5 name="handsTheGuardOnBesideTheOtherName" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=2}
+
+function f6 name="makesTheGuardOnTheEdgeThatHandsTheOtherNameOn" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=2} {
+  b0(v0: boolean, v1: anything, v2: undefined|Promise):
+    v3 = PropGet v1 key="box"
+    v4 = PropGet v1 key="other"
+    v5 = TypeTest v3 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b6()
+  b1(v6):
+    v7 = AwaitBySavingFrame v0, v2, v3, v4, v6
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+# CHECK: AssumeType v3 provenType=L0
+    v8 = AssumeType v3 provenType=L0
+# CHECK: IsSlotFilled v6 key="w"
+    v9 = IsSlotFilled v6 key="w" receivers=[L0] level=Expected
+    Branch v9 -> taken b5(v8 | 0), notTaken b6()
+  b3():
+    v10 = TypeTest v4 testedType=L0
+    Branch v10 -> taken b4(| 0), notTaken b6()
+  b4(v11):
+    v12 = IsSlotFilled v11 key="w" receivers=[L0] level=Expected
+    Branch v12 -> taken b5(v11 | 0), notTaken b6()
+  b5(v13, v14):
+    v15 = GetSlot v13, v14 key="w" receivers=[L0] level=Expected
+    Return v15
+  b6() frequency=Unlikely:
+    v16 = Undefined
+    Return v16
+}
+function f7 name="makesTheGuardOnTheEdgeThatHandsTheOtherNameOn" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=2}

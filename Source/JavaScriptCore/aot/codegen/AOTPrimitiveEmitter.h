@@ -9,6 +9,7 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTInstance.h"
+#include "AOTMutatorFenceMerging.h"
 #include "AOTOperand.h"
 #include "B3MovedLoadCheck.h"
 #include "JSCJSValue.h"
@@ -245,7 +246,7 @@ protected:
     CellPointer emptyString() { return CellPointer(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(emptyString)).value()); }
     CellPointer singleCharacterString(Word32 character);
 
-    void mutatorFence();
+    std::optional<MutatorFence> mutatorFence();
 
     // Ends every read through a pointer loaded from a cell (a view's vector, a string's characters): B3 hoists and shares that load, and then nothing else keeps the cell visible to the conservative scan.
     void ensureStillAliveHere(CellPointer);

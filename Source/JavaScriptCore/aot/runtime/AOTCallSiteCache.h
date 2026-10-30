@@ -13,6 +13,7 @@
 #include <bit>
 #include <optional>
 #include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -49,9 +50,9 @@ public:
         bool hasRecordedCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
-        // Of the frames that were inlined around the site and whose callee Image::calleeOfSiteAt() knows: FunctionDescription::recordsCallee() holds of one, recordsCalleeOnceRenamed() holds of one.
-        bool hasInlinedFrameRecordingCallee : 1 { false };
-        bool hasInlinedFrameRecordingCalleeOnceRenamed : 1 { false };
+        // Of the frames at the site that a stack trace may list: FunctionDescription::recordsCallee() holds of the function of one, as it is written or in the form that runs; recordsCalleeOnceRenamed() holds of one.
+        bool hasFrameRecordingCallee : 1 { false };
+        bool hasFrameRecordingCalleeOnceRenamed : 1 { false };
         // leavesByTailCall(site.calledBuiltin): the frame of the built-in is listed only while its callee has not been entered.
         bool namesTailCallingBuiltin : 1 { false };
         // Once the callee of the site has been entered.
@@ -68,12 +69,38 @@ public:
         ImageFrame frame { };
     };
 
+    // Where the stack holds the function objects that run in the frames at a call site, and the one that the site has called. The image says it, in tables that are read from their start.
+    struct CalleesOfFrames {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CalleesOfFrames);
+        struct KeptInFrame {
+            unsigned inlineFrame;
+            FunctionID sourceFunction;
+            CalleeOfSite callee;
+            // FunctionDescription::recordsCallee().
+            bool recordsCallee;
+        };
+        // calleeOfCopiedFrame() of the frames that a stack trace may list, but for CalleeOfSite::ownFunctionObject().
+        WTF::Vector<KeptInFrame, 2> keptInFrame;
+        // The frame that the machine frame was entered for: hasOnlyEntrypointsBelow() holds of it and calleeOfCopiedFrame() knows nothing. No function: no such frame may be listed.
+        FunctionID sourceFunctionEntered;
+        unsigned inlineFrameEntered { 0 };
+        bool enteredRecordsCallee { false };
+        // Image::calleeOfSiteAt().
+        std::optional<CalleeOfSite> calledAtSite;
+        // Of the innermost frame, for the frame above that was entered through it: its function as it is written, calleeOfCopiedFrame() and hasOnlyEntrypointsBelow().
+        FunctionID sourceFunctionOfInnermost;
+        std::optional<CalleeOfSite> calleeOfInnermost;
+        bool innermostHasOnlyEntrypointsBelow { false };
+    };
+
     // The next resolve() may move or replace the entry that either of the two returns.
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
     // Nothing for an address that runs no compiled code.
     const Entry* resolve(const Image&, const void* returnAddress);
     // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
     const Entry* withMethodReadSite(const Image&, const Entry*);
+    // For a call site whose callee was entered. It stays where it is.
+    const CalleesOfFrames& calleesOfFramesAt(const Image&, const Entry&);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
     // It remembers the inlined frames of the functions that were asked for lately.
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }
@@ -107,6 +134,7 @@ private:
     FixedVector<Entry> m_entries;
     DecodedInlineFrames m_decodedInlineFrames;
     InlineFrameReader m_inlineFrames { m_decodedInlineFrames };
+    UncheckedKeyHashMap<const void*, std::unique_ptr<CalleesOfFrames>> m_calleesOfFrames;
     std::array<Position, numberOfPositions> m_positions;
 };
 static_assert(sizeof(CallSiteCache::Entry) <= 64);

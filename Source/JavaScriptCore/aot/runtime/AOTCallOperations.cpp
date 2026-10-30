@@ -670,10 +670,28 @@ static ALWAYS_INLINE PlaceInFunctionText placeInFunctionTextOf(const CompiledFra
     // The code that runs is the function's own unless it is a copy in the code of another, and then the line is not known.
     // FunctionDescription::definition() looks for the code of a function by its number, which sorts every function of the image the first time: a program that catches one error as it starts would pay for that.
     std::optional<SourcePosition> definition = frame.inlineFrame ? std::nullopt : image->positionOf(frame.code.index(), CallSiteIndex(0));
+    bool isWhereListIsWritten = place && place->startIsWhereWritten;
+    LineColumn position = isWhereListIsWritten ? place->constructionStart : place ? place->lineColumn : LineColumn();
     std::optional<unsigned> line;
-    if (place && definition && place->source == definition->source && place->lineColumn.line >= definition->lineColumn.line)
-        line = place->lineColumn.line - definition->lineColumn.line + linesOfTextAboveSource(description.sourceFunction());
-    return PlaceInFunctionText { frame.returnAddress, description.sourceFunction(), line, place ? place->source : ModuleID(), place ? place->lineColumn : LineColumn() };
+    if (place && definition && place->source == definition->source && position.line >= definition->lineColumn.line)
+        line = position.line - definition->lineColumn.line + linesOfTextAboveSource(description.sourceFunction());
+    return PlaceInFunctionText { frame.returnAddress, description.sourceFunction(), line, place ? place->source : ModuleID(), position, isWhereListIsWritten };
+}
+
+void withPlaceOfCallOfNativeFunction(VM& vm, const ScopedLambda<void(const PlaceInFunctionText&)>& functor)
+{
+    // As far as the engine's own search for the expression that failed goes: getBytecodeIndex(). The frame on top may have left by a tail call, and the one below may be of another image.
+    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
+        if (visitor->isNativeCalleeFrame() || visitor->isImplementationVisibilityPrivate())
+            return IterationStatus::Continue;
+        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                functor(placeInFunctionTextOf(visitor.compiledFrames().frame()));
+                return IterationStatus::Done;
+            }
+        }
+        return visitor->codeBlock() ? IterationStatus::Done : IterationStatus::Continue;
+    });
 }
 
 StringView nameOfConstructorThatRunsOnTop(VM& vm)

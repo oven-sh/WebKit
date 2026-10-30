@@ -40,6 +40,41 @@ struct PendingMove {
     Use use;
 };
 
+class ObjectsInBits {
+public:
+    class Iterator {
+    public:
+        explicit Iterator(BitVector::iterator position)
+            : m_position(position)
+        {
+        }
+
+        ObjectID operator*() const { return ObjectID(*m_position); }
+
+        Iterator& operator++()
+        {
+            ++m_position;
+            return *this;
+        }
+
+        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_position == b.m_position; }
+
+    private:
+        BitVector::iterator m_position;
+    };
+
+    explicit ObjectsInBits(const BitVector& bits LIFETIME_BOUND)
+        : m_bits(bits)
+    {
+    }
+
+    Iterator begin() const { return Iterator(m_bits.begin()); }
+    Iterator end() const { return Iterator(m_bits.end()); }
+
+private:
+    const BitVector& m_bits;
+};
+
 class FramePlanner {
     WTF_MAKE_NONCOPYABLE(FramePlanner);
 public:
@@ -48,7 +83,7 @@ public:
     FramePlan run();
 
 private:
-    ObjectSet candidates() const { return ObjectSet(m_isCandidate); }
+    ObjectsInBits candidates() const { return ObjectsInBits(m_isCandidate); }
     ValueID allocationOf(ObjectID object) const { return m_escape.at(object).definition; }
     const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(allocationOf(object)); }
     bool isCandidate(ObjectID object) const { return m_isCandidate.get(object.index()); }
@@ -637,6 +672,12 @@ Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t 
     });
 }
 
+// A cell in a frame keeps the fields that it is made with. One that is made with every field of its layout has none left to create, however other objects of the layout come by theirs.
+bool mayCreateFieldsLater(const Layout& layout, size_t numberOfFieldsAtAllocation)
+{
+    return layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction && numberOfFieldsAtAllocation != layout.fields.size();
+}
+
 static AllocationHeapCause checkObjectForm(const Program& program, const Value& object)
 {
     LayoutID id = object.layout();
@@ -661,7 +702,7 @@ static AllocationHeapCause checkObjectForm(const Program& program, const Value& 
         if (defersClosureWithCapture(flowOf(program, FieldReference { id, field }).location.deferral))
             return AllocationHeapCause::LayoutDefersClosures;
     }
-    if (layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (mayCreateFieldsLater(layout, object.fields().size()))
         return AllocationHeapCause::FieldsCreatedLater;
     return AllocationHeapCause::None;
 }

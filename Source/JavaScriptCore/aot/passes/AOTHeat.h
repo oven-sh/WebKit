@@ -97,6 +97,8 @@ public:
     Expected<double> allocationsOf(LayoutID) const;
     // Whether a function of the module allocates the layout. The literals of many modules may share one layout, which names only the first of them as its module.
     Expected<bool> isAllocatedIn(LayoutID, ModuleID) const;
+    // Whether a function of the program allocates the layout, and not the library alone.
+    Expected<bool> isAllocatedByProgram(const Program&, LayoutID) const;
     // Whether some store, definition or literal of the program puts a value of the layout under the name. Only values whose type lists a few layouts count.
     Expected<bool> isStoredUnder(LayoutID, PropertyKeyID) const;
     // Whether some store or definition puts a new object without prototype or layout under the name: `this._events = Object.create(null)`.

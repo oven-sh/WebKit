@@ -1095,6 +1095,10 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 PassOutcome eliminateGuards(FunctionPassContext& context)
 {
     PassOutcome outcome = foldInstanceTestsOfTypedObjects(context);
+    if (askWhetherComparedPositionsAreInBounds(context, ComparedPositions::HaveTests) == PassOutcome::Changed) {
+        context.analyses.didChangeControlFlow();
+        outcome = PassOutcome::Changed;
+    }
     outcome |= eliminateRedundantBranches(context);
     outcome |= simplifyGuardLists(context);
     // The analyses were told of every edit, so whatever they hold was made behind the last one.

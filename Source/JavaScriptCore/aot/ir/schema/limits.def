@@ -75,7 +75,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxClonedBytesPerStretch(Optimize, CodeSize, GenericPath, 512, 512, 0, "code size of one fast path")
     MaxBlocksInGenericVersion(Optimize, CodeSize, GenericPath, 16384, 16384, 0, "blocks in a function's slow-path copy")
     MaxBlocksCopiedBehindStretches(Optimize, CodeSize, GenericPath, 128, 128, 0, "blocks copied for slow paths per guard placement pass")
-    MaxBytesOfSeparatedLoop(Optimize, CodeSize, GenericPath, 4096, 4096, 0, "code size of a loop that gets a separate slow-path copy")
     MaxSeparatedLoopsPerFunction(Optimize, CodeSize, GenericPath, 8, 8, 0, "loops per function that get a separate slow-path copy")
     MaxTurnsOfUnrolledLoop(Optimize, CodeSize, NotOptimized, 8, 8, 0, "turns of a loop whose turns are written out one behind the other")
     MaxBytesOfUnrolledLoop(Optimize, CodeSize, NotOptimized, 2048, 2048, 0, "code size of all the turns of a loop that are written out")
@@ -210,7 +209,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxLeavesToRebalance(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "operands in a rebalanced expression")
     MaxBitTestTargets(GenerateCode, CodeSize, NotOptimized, 3, 3, 0, "targets of a switch lowered to bit tests")
     MaxCompareChainSearchSize(GenerateCode, CompileTime, NotOptimized, 16, 16, 0, "compare chain search work")
-    MaxClobberSitesPerSplit(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "calls a live range is split around")
 
     ClosureAllocationSites(BuildImage, BitWidth, BuildError, 16777216, 16777216, 0, "places that create closures")
     ImageFunctions(BuildImage, BitWidth, BuildError, 16777215, 16777215, 0, "functions in a program, with the copies and entry points that the compiler makes")

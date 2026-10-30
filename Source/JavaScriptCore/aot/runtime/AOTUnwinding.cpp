@@ -68,10 +68,12 @@ static bool letsThrowPass(StubFrameKind kind)
     case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
     case StubFrameKind::AtStubEntry:
         return true;
     case StubFrameKind::Adapter:
     case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::HandlerOfJob:
     case StubFrameKind::AsyncGeneratorBody:
@@ -273,6 +275,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
             case StubFrameKind::MethodRead:
             case StubFrameKind::BelowSpilledArguments:
             case StubFrameKind::PlainFunctionConstruct:
+            case StubFrameKind::PlainFunctionConstructMakesThis:
             case StubFrameKind::AtStubEntry:
                 break;
             case StubFrameKind::GeneratorBody:
@@ -286,6 +289,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
                 break;
             case StubFrameKind::Adapter:
             case StubFrameKind::ConstructAdapter:
+            case StubFrameKind::ConstructAdapterMakesThis:
                 if constexpr (goesOnInOtherImages) {
                     if (!asyncGeneratorBodyFrameLeft && isCalledByCodeOfOtherImage(state, callFrame, entryFrame)) {
                         // What finishAtEndOfRun() does for a run that ends at an adapter.
@@ -310,7 +314,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSi
                 [[fallthrough]];
             case StubFrameKind::HandlerOfJob:
             case StubFrameKind::SavedFrameAdapter:
-                result.runEnd = { callFrame, site->stubFrameKind == StubFrameKind::ConstructAdapter, site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
+                result.runEnd = { callFrame, isConstructAdapterFrame(site->stubFrameKind), site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
                 result.exit = leaveRunAt(callFrame, entryFrame);
                 finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
                 return result;

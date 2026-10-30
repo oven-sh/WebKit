@@ -22,6 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr ValueFlowCellName addedNamesName { ValueFlowNameKind::AddedNames };
 inline constexpr ValueFlowCellName internalFieldsName { ValueFlowNameKind::InternalFields };
 inline constexpr ValueFlowName everyPropertyOfListedHoldersOfExports { ValueFlowNameKind::EveryProperty, 2 };
+inline constexpr ValueFlowName everyPropertyUnderKeyOfProgramAlone { ValueFlowNameKind::EveryProperty, 8 };
 
 enum class HeapKeyClass : uint8_t {
     Name,
@@ -38,6 +39,9 @@ struct HeapKey {
     HeapKeyReceivers receivers { HeapKeyReceivers::All };
     bool isComputed { false };
     bool namesNoSymbol { false };
+    bool namesSymbolAlone { false };
+    // With namesEnumerableProperty: the key is no name of anything that the engine has put on the objects asked, hidden by a name of the program or not.
+    bool namesNoPropertyOfEngine { false };
 
     bool mayNameNonEnumerable(PropertyKeyID other) const { return (keyClass == HeapKeyClass::Unknown && !namesEnumerableProperty) || (keyClass == HeapKeyClass::Name && name == other); }
 };
@@ -45,6 +49,7 @@ struct HeapKey {
 inline constexpr HeapKey indexHeapKey { HeapKeyClass::Index, { } };
 inline constexpr HeapKey unknownHeapKey { HeapKeyClass::Unknown, { } };
 inline constexpr HeapKey enumeratedHeapKey { HeapKeyClass::Unknown, { }, true };
+inline constexpr HeapKey heapKeyOfProgramAlone { HeapKeyClass::Unknown, { }, true, HeapKeyReceivers::All, false, false, false, true };
 
 enum class HeapPropertyPart : uint8_t { Value, Getter, Setter };
 
@@ -58,6 +63,7 @@ struct HeapKeyUse {
     const ValueFlowOperand* stored { nullptr };
     bool tellsReceiversApart { false };
     bool isRead { false };
+    bool tellsEveryNameApart { false };
 };
 
 struct HeapReceiver {
@@ -109,7 +115,7 @@ public:
 private:
     using Members = Vector<ValueFlowObjectID, 8>;
 
-    const Value& operation() const { return m_program.at(m_statement.function).at(m_statement.site); }
+    const Value& operation() const { return m_context.operationOf(m_statement); }
     const ValueFlowOperand& operand(uint32_t index) const { return m_operands[index]; }
     ClimbingSet m_proxiesAskedByTheirTraps;
     static bool isPassed(const ValueFlowOperand& operand) { return operand.node || (operand.constant && operand.constant != ValueSets::nothing); }
@@ -167,6 +173,7 @@ public:
     void listProxiesByTheirTraps(ClimbingSet proxies);
     ClimbingSet targetsListedInPlaceOf(ClimbingSet proxies);
     void askProxiesForListedValues(ClimbingSet proxies, ValueFlowNodeID result);
+    void askProxiesAboutOwnProperty(ClimbingSet proxies, const ValueFlowOperand& property, BuiltinName trap, ValueFlowNodeID descriptor, ValueFlowNodeID result);
 private:
     void mayThrow() { add(m_statement.thrown, unknownValue(ValueFlowUnknownSource::ThrownByRunTime)); }
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
@@ -249,6 +256,8 @@ private:
     bool surelyComesToMember(ClimbingSet start, PropertyKeyID);
 
     void collectChain();
+    ValueFlowObjectID onlyObjectIn(ClimbingSet);
+    void walkUpFrom(ValueFlowObjectID);
     void collectAccessors(BuiltinCallMode);
     void noteUseOfMembers(const HeapKey&, BuiltinUse);
     ClimbingSet letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID, std::initializer_list<ValueFlowName>);
@@ -319,12 +328,13 @@ private:
     void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);
+    ClimbingSet settersThatSymbolFinds(ClimbingSet setters, ClimbingSet start, const HeapKey&);
     void remove(const ValueFlowOperand& object, const HeapKey&);
     enum class CopiedProperties : uint8_t { AreDefinedAsValues, AreAssigned, AreDefinedAsTheyStand };
     void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
     bool readsRestArgumentOfInstance();
-    bool readsUnderNameOfEnumerationOfSameObject();
     bool listsNamesOfEnumeration();
+    bool findsNoPropertyOfEngineUnderKeyBeginningWith(StringID beginning, ClimbingSet receivers);
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
@@ -372,13 +382,25 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
     for (auto [kind, text] : textsOfPrimitives)
         kindsWithText.append(ValueFlowUniverse::primitive(kind));
     ClimbingSet otherKeys = m_context.restrict(keys, ValueSets::complement(m_context.maker().of(kindsWithText.span())));
+    auto nameTextsOfPrimitives = [&] {
+        BuiltinName lastText;
+        for (auto [kind, text] : textsOfPrimitives) {
+            if (text != lastText && m_context.contains(keys, ValueFlowUniverse::primitive(kind))) {
+                functor(keyNamed(m_program.keyOf(text)));
+                lastText = text;
+            }
+        }
+    };
 
     if (m_context.meet(otherKeys, m_tables.keysNobodyKnows())) {
         HeapKeyReceivers receiversOfSymbols = receiversOfSymbolNobodyKnows(otherKeys, use);
         if (receiversOfSymbols == HeapKeyReceivers::AllButBuiltinObjects) {
             HeapKey nobodyKnows = unknownHeapKey;
             nobodyKnows.namesNoSymbol = !m_context.meet(otherKeys, m_context.maker().intersect(m_tables.keysNobodyKnows(), ValueSets::complement(only(ValueFlowUniverse::primitive(PrimitiveSet::String)))));
+            nobodyKnows.namesSymbolAlone = !m_context.meet(otherKeys, ValueSets::complement(m_universe.symbols()));
             functor(nobodyKnows);
+            if (nobodyKnows.namesSymbolAlone)
+                nameTextsOfPrimitives();
             if (!use.isRead || !property.node)
                 return;
             auto forEachKeyListedAmong = [&](ValueSetID all, NOESCAPE const Invocable<void(const HeapKey&)> auto& take) {
@@ -399,7 +421,7 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
             return;
         }
         if (receiversOfSymbols == HeapKeyReceivers::BuiltinObjects)
-            functor(HeapKey { HeapKeyClass::Unknown, { }, false, HeapKeyReceivers::AllButBuiltinObjects });
+            functor(HeapKey { HeapKeyClass::Unknown, { }, false, HeapKeyReceivers::AllButBuiltinObjects, false, false, true });
         if (use.stored)
             connect(*use.stored, ValueFlowProgramNodes::escaped());
         m_context.forEachMember(ClimbingSet(m_context.maker().intersect(m_universe.symbols(), m_universe.keys())), [&](ValueFlowObjectID constant) {
@@ -409,17 +431,11 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
         });
     }
 
-    BuiltinName lastText;
-    for (auto [kind, text] : textsOfPrimitives) {
-        if (text != lastText && m_context.contains(keys, ValueFlowUniverse::primitive(kind))) {
-            functor(keyNamed(m_program.keyOf(text)));
-            lastText = text;
-        }
-    }
+    nameTextsOfPrimitives();
 
     bool namesIndex = m_context.meet(keys, m_tables.numberKinds());
     AOT_THRESHOLD(uint32_t, mostNamesOfOneKeyToldApart, 32);
-    bool countsNamesOfProgramTogether = m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
+    bool countsNamesOfProgramTogether = !use.tellsEveryNameApart && m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
     bool hasNameOfProgram = false;
     m_context.forEachMemberInLine(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
         HeapKey key = keyNamed(m_universe.keyOf(constant));

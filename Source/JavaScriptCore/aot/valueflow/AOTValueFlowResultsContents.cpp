@@ -62,6 +62,7 @@ struct ArrayWrites {
         MeetsObjectThatIsNoArray = 1 << 11,
         HoldsWhatIsCopied = 1 << 12,
         IsGivenMoreThanNumbers = 1 << 13,
+        MayBeGivenUndefined = 1 << 14,
     };
 
     bool has(Flag flag) const { return flags.load(std::memory_order_relaxed) & flag; }
@@ -82,6 +83,7 @@ struct ArrayWrites {
     bool isDense() const { return has(IsCreatedDense) && getsNoHole(); }
     bool everyStoreIsKnown() const { return (has(IsLiteral) || has(IsInData) || has(HoldsWhatIsCopied)) && !has(HasOtherWriter); }
     bool keepsStorageOfLiteral() const { return (has(IsLiteral) || has(IsPairOfEntries)) && getsNoHole() && !has(ElementsAreMoved); }
+    bool isGivenNoUndefined() const { return has(IsLiteral) && !has(HoldsWhatIsCopied) && !has(HasOtherWriter) && !has(MayBeGivenUndefined); }
 
     std::atomic<uint16_t> flags { 0 };
     ValueFlowNumbers storedNumbers;
@@ -104,6 +106,13 @@ struct ElementStoredAgain {
     FunctionID function;
     ValueID read;
     ValueFlowNumbers numbersOfRead;
+    ValueSetID arraysRead { ValueSets::nothing };
+};
+
+struct ElementWithinLengthStoredAgain {
+    uint32_t array;
+    FunctionID function;
+    ValueID read;
     ValueSetID arraysRead { ValueSets::nothing };
 };
 
@@ -130,6 +139,7 @@ struct ContainerWalker {
     ValueSetID objectsWithReplacedContents { ValueSets::nothing };
     Vector<ArrayMadeByBuiltin> arraysMadeByBuiltins;
     Vector<ElementStoredAgain> elementsStoredAgain;
+    Vector<ElementWithinLengthStoredAgain> elementsWithinLengthStoredAgain;
     Vector<SpreadIntoArray> spreadsIntoArrays;
     Vector<ElementRead> elementReads;
     HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsOfArraysSeen;
@@ -192,7 +202,7 @@ static BuiltinClassID classOfCandidate(const ValueFlowResultInputs& inputs, Valu
     // What native code makes where it calls a constructor of the table. Of a typed array nothing but its class and what is done to the object is asked.
     if (universe.kindOf(object) == ValueFlowObjectKind::ResultOfBuiltin) {
         BuiltinClassID builtinClass = inputs.classOf(object);
-        return builtinClass && program.builtins().typedArrayClassOf(builtinClass) ? builtinClass : BuiltinClassID();
+        return builtinClass && (builtinClass == BuiltinClasses::Array || program.builtins().typedArrayClassOf(builtinClass)) ? builtinClass : BuiltinClassID();
     }
     FunctionID function = universe.functionOf(object);
     if (!function || !inputs.isReached(function))
@@ -439,23 +449,37 @@ private:
         return numbers;
     }
 
-    void noteStoredOperand(Walker& walker, ValueSetID arrays, FunctionID function, ValueID stored)
+    void noteStoredOperand(Walker& walker, ValueSetID arrays, FunctionID function, ValueID stored, ValueSetID possibleValues)
     {
         const Function& body = program().at(function);
         ValueID definition = definitionThroughSameValues(body, stored);
-        bool isReadFromArray = body.at(definition).opcode == Opcode::ElemGet;
+        Vector<ValueID, 2> reads = elementReadsHandedOn(walker, function, definition);
+        bool isReadFromArray = !reads.isEmpty();
         const Type& type = program().typeOf(body, stored);
         bool isNaN = body.at(definition).opcode == Opcode::Double && !canStoreWithoutConversion(ArrayStorage::Double, body.at(definition).number());
         if (isNaN || (!type.isNever() && type.hasOnlyPrimitives(Primitive::UndefinedOrNull)))
             addToEachArray(walker.maker, arrays, ArrayWrites::IsGivenMoreThanNumbers);
+        // A read at a position inside the length of a list that has no holes and never gets shorter finds an element: it hands on undefined only if that list holds it.
+        bool isReadWithinLength = isReadFromArray && std::ranges::all_of(reads, [&](ValueID read) {
+            return isWithinLength(walker, function, read, body.at(read).operand(OperandIndex::ElemGet::object), body.at(read).operand(OperandIndex::ElemGet::property));
+        });
+        bool mayBeUndefined = !isReadWithinLength && sets().meet(possibleValues, universe().undefinedValue());
+        bool mayBeNumber = sets().meet(possibleValues, m_kindsOfBoundedNumbers);
         std::optional<ValueFlowNumbers> numbers;
         forEachContainerIn(walker.maker, arrays, m_arrays, [&](uint32_t array) {
-            if (!sets().meet(m_containers[array].stored[m_indexOfElements], m_kindsOfBoundedNumbers))
+            if (mayBeUndefined)
+                m_arrayWrites[array].add(ArrayWrites::MayBeGivenUndefined);
+            if (isReadWithinLength) {
+                for (ValueID read : reads)
+                    walker.elementsWithinLengthStoredAgain.append({ array, function, read });
+            }
+            if (!mayBeNumber || !sets().meet(m_containers[array].stored[m_indexOfElements], m_kindsOfBoundedNumbers))
                 return;
             if (!numbers)
                 numbers = numbersOf(walker, function, stored);
             if (isReadFromArray) {
-                walker.elementsStoredAgain.append({ array, function, definition, *numbers });
+                for (ValueID read : reads)
+                    walker.elementsStoredAgain.append({ array, function, read, *numbers });
                 return;
             }
             Locker locker { lockOf(array) };
@@ -472,6 +496,7 @@ private:
             if (!array)
                 return;
             bool hasHole = false;
+            bool everyElementIsNumber = true;
             ValueFlowNumbers numbers;
             for (const DataNode& element : listed->elements) {
                 hasHole |= element.is<DataNode::Hole>();
@@ -480,9 +505,10 @@ private:
                     numbers.integers = numbers.integers.unionWith(Range::one(static_cast<int64_t>(number->value)));
                 else if (number)
                     numbers.mayBeOtherThanIntegers = true;
+                everyElementIsNumber &= !!number;
             }
             ArrayWrites& writes = m_arrayWrites[*array];
-            writes.add(ArrayWrites::IsInData);
+            writes.add(ArrayWrites::IsInData | (everyElementIsNumber ? 0 : ArrayWrites::MayBeGivenUndefined));
             writes.set(ArrayWrites::IsLiteral, becomesLiterals);
             writes.set(ArrayWrites::IsCreatedDense, !hasHole);
             if (arrayStorageOfData(program(), *listed) == ArrayStorage::Contiguous)
@@ -501,13 +527,9 @@ private:
         addToEachArray(walker.maker, others, ArrayWrites::MayGetHole | ArrayWrites::MayGetShorter | ArrayWrites::ElementsAreMoved | ArrayWrites::HasOtherWriter);
     }
 
-    bool isWithinLength(Walker& walker, FunctionID id, ValueID store)
+    void analyze(Walker& walker, FunctionID id)
     {
         const Function& function = program().at(id);
-        ValueID position = function.at(store).operand(OperandIndex::ElemSet::property);
-        if (!program().typeOf(function, position).isInteger())
-            return false;
-
         if (std::exchange(walker.analyzedFunction, id) != id) {
             walker.relations.reset();
             walker.analyses = makeUnique<FunctionAnalyses>(AnalysisContext { m_inputs.build, program(), nullptr, nullptr, id, CallResults::NotFollowed }, function);
@@ -524,12 +546,54 @@ private:
                     walker.relations->assumeRange(statement.site, Range::uint32(), walker.analyses->useLists().blockOf(statement.site));
             }
         }
+    }
 
-        using Answer = IntegerRelations::Answer;
-        BlockID block = walker.analyses->useLists().blockOf(store);
-        if (walker.relations->isAtLeast(position, 0, block) != Answer::Proven)
+    // The reads of elements whose answer the value is, through casts and where ways meet. None where it may be anything else.
+    Vector<ValueID, 2> elementReadsHandedOn(Walker& walker, FunctionID id, ValueID value)
+    {
+        const Function& function = program().at(id);
+        if (function.at(value).opcode == Opcode::ElemGet)
+            return { value };
+        if (function.at(value).opcode != Opcode::Parameter)
+            return { };
+
+        analyze(walker, id);
+        const CFG& cfg = walker.analyses->cfg();
+        Vector<ValueID, 2> reads;
+        Vector<ValueID, 4> seen { value };
+        for (size_t index = 0; index < seen.size(); ++index) {
+            ValueID definition = seen[index];
+            if (function.at(definition).opcode == Opcode::ElemGet) {
+                reads.append(definition);
+                continue;
+            }
+            ValueLocation location = walker.analyses->useLists().locationOf(definition);
+            if (location.placement != ValuePlacement::Parameter || location.block == cfg.root())
+                return { };
+            for (Edge edge : cfg.incomingEdges(location.block)) {
+                ValueID passed = valuePassedOn(function, edge, location.index);
+                if (!passed)
+                    return { };
+                passed = definitionThroughSameValues(function, passed);
+                if (!seen.contains(passed))
+                    seen.append(passed);
+            }
+        }
+        return reads;
+    }
+
+    bool isWithinLength(Walker& walker, FunctionID id, ValueID access, ValueID list, ValueID position)
+    {
+        const Function& function = program().at(id);
+        if (!program().typeOf(function, position).isNumber())
             return false;
-        ValueID array = walker.analyses->identityOf(function.at(store).operand(OperandIndex::ElemSet::object));
+
+        analyze(walker, id);
+        using Answer = IntegerRelations::Answer;
+        BlockID block = walker.analyses->useLists().blockOf(access);
+        if (walker.relations->isWholeNumber(position, block) != Answer::Proven || walker.relations->isAtLeast(position, 0, block) != Answer::Proven)
+            return false;
+        ValueID array = walker.analyses->identityOf(list);
         return std::ranges::any_of(walker.lengthReads, [&](const std::pair<ValueID, ValueID>& read) {
             return read.first == array && walker.relations->isAtMost(position, read.second, -1, block) == Answer::Proven;
         });
@@ -540,7 +604,7 @@ private:
         const Value& operation = program().at(function).at(statement.site);
         switch (statement.opcode) {
         case Opcode::AppendElement:
-            noteStoredOperand(walker, arrays, function, operation.operand(OperandIndex::AppendElement::value));
+            noteStoredOperand(walker, arrays, function, operation.operand(OperandIndex::AppendElement::value), m_heap.possibleValuesOf(walker.maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::AppendElement::value]));
             return;
         case Opcode::AppendSpread:
             addToEachArray(walker.maker, arrays, ArrayWrites::HasOtherWriter);
@@ -549,8 +613,8 @@ private:
         case Opcode::ElemSet:
             if (operandIndex != OperandIndex::ElemSet::object)
                 break;
-            noteStoredOperand(walker, arrays, function, operation.operand(OperandIndex::ElemSet::value));
-            addToEachArray(walker.maker, arrays, isWithinLength(walker, function, statement.site) ? ArrayWrites::IsStoredWithinLength : ArrayWrites::MayGetHole);
+            noteStoredOperand(walker, arrays, function, operation.operand(OperandIndex::ElemSet::value), m_heap.possibleValuesOf(walker.maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::value]));
+            addToEachArray(walker.maker, arrays, isWithinLength(walker, function, statement.site, operation.operand(OperandIndex::ElemSet::object), operation.operand(OperandIndex::ElemSet::property)) ? ArrayWrites::IsStoredWithinLength : ArrayWrites::MayGetHole);
             return;
         case Opcode::PropSet:
         case Opcode::PropDefine:
@@ -573,7 +637,7 @@ private:
                 m_arrayWrites[*array].add(ArrayWrites::IsLiteral);
                 m_arrayWrites[*array].set(ArrayWrites::IsCreatedDense, operation.holes().empty());
                 for (uint32_t index = OperandIndex::NewArray::elements; index < operation.numberOfOperands(); ++index)
-                    noteStoredOperand(walker, walker.maker.of(object), function, operation.operand(index));
+                    noteStoredOperand(walker, walker.maker.of(object), function, operation.operand(index), m_heap.possibleValuesOf(walker.maker, operands[index]));
             }
         }
         if (statement.opcode == Opcode::Data)
@@ -600,6 +664,11 @@ private:
         }
     }
 
+    static ValueSetID argumentOf(const ValueFlowBuiltinApplication& application, uint32_t index)
+    {
+        return index < application.arguments.size() ? application.arguments[index] : application.otherArguments;
+    }
+
     void noteApplication(Walker& walker, const ValueFlowBuiltinApplication& application)
     {
         ValueSetMaker& maker = walker.maker;
@@ -622,7 +691,7 @@ private:
             if (stores && spellsOutArguments) {
                 const Value& call = program().at(application.function).at(application.site);
                 for (uint32_t index = 2; index < call.numberOfOperands(); ++index)
-                    noteStoredOperand(walker, arrays, application.function, call.operand(index));
+                    noteStoredOperand(walker, arrays, application.function, call.operand(index), argumentOf(application, index - 2));
             }
             addToEachArray(maker, arrays, (stores && !spellsOutArguments ? ArrayWrites::HasOtherWriter : 0) | (takes ? ArrayWrites::MayGetShorter : 0) | (movesElements ? ArrayWrites::ElementsAreMoved : 0));
         };
@@ -676,7 +745,7 @@ private:
         if (holdsWhatIsCopied) {
             const Value& call = program().at(application.function).at(application.site);
             for (uint32_t index = 2; index < call.numberOfOperands(); ++index)
-                noteStoredOperand(walker, maker.of(m_containers[*array].object), application.function, call.operand(index));
+                noteStoredOperand(walker, maker.of(m_containers[*array].object), application.function, call.operand(index), argumentOf(application, index - 2));
         }
         m_arrayWrites[*array].add(holdsWhatIsCopied ? ArrayWrites::HoldsWhatIsCopied : ArrayWrites::HasOtherWriter);
         walker.arraysMadeByBuiltins.append({ *array, copied, mayRunCode, holdsWhatIsCopied ? sources : ValueSets::nothing });
@@ -726,6 +795,28 @@ private:
         }
     }
 
+    void settleWhichListsAreGivenUndefined(std::span<const ElementWithinLengthStoredAgain> elementsStoredAgain)
+    {
+        auto holdsNoUndefined = [&](uint32_t array) {
+            return m_arrayWrites[array].isGivenNoUndefined() || !sets().meet(m_containers[array].stored[m_indexOfElements], universe().undefinedValue());
+        };
+        for (bool didChange = true; std::exchange(didChange, false);) {
+            for (const ElementWithinLengthStoredAgain& stored : elementsStoredAgain) {
+                ArrayWrites& writes = m_arrayWrites[stored.array];
+                if (writes.has(ArrayWrites::MayBeGivenUndefined))
+                    continue;
+                bool findsElement = stored.arraysRead != ValueSets::nothing;
+                forEachContainerIn(maker(), stored.arraysRead, m_arrays, [&](uint32_t source) {
+                    findsElement &= m_arrayWrites[source].isDense() && !m_arrayWrites[source].has(ArrayWrites::MayGetShorter) && holdsNoUndefined(source);
+                });
+                if (!findsElement) {
+                    writes.add(ArrayWrites::MayBeGivenUndefined);
+                    didChange = true;
+                }
+            }
+        }
+    }
+
     void collectArrayWrites()
     {
         const ParallelLoops& loops = m_inputs.loops();
@@ -750,6 +841,11 @@ private:
                 m_arrayWrites[index].set(ArrayWrites::IsCreatedDense, creation.holes().empty());
             }
         });
+        for (uint32_t index = 0; index < builtins().builtinCount(); ++index) {
+            std::optional<uint32_t> array = find(universe().resultOf(BuiltinID(index), 1));
+            if (array && isArray(*array) && m_heap.writtenUnder(maker(), maker().of(m_containers[*array].object), allocatedWithHolesName) == ValueSets::nothing)
+                m_arrayWrites[*array].add(ArrayWrites::IsCreatedDense);
+        }
         forEachIndexInParallel(loops, program().functions.size(), [&](unsigned function, unsigned worker) {
             if (!m_inputs.isReached(FunctionID(function)))
                 return;
@@ -777,6 +873,7 @@ private:
         });
         Vector<ArrayMadeByBuiltin> arraysMadeByBuiltins;
         Vector<ElementStoredAgain> elementsStoredAgain;
+        Vector<ElementWithinLengthStoredAgain> elementsWithinLengthStoredAgain;
         Vector<SpreadIntoArray> spreadsIntoArrays;
         HashMap<uint64_t, ValueSetID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversOfRead;
         auto keyOf = [](FunctionID function, ValueID read) {
@@ -790,15 +887,18 @@ private:
             m_objectsWithReplacedContents = maker().unite(m_objectsWithReplacedContents, walker->objectsWithReplacedContents);
             arraysMadeByBuiltins.appendVector(std::exchange(walker->arraysMadeByBuiltins, { }));
             elementsStoredAgain.appendVector(std::exchange(walker->elementsStoredAgain, { }));
+            elementsWithinLengthStoredAgain.appendVector(std::exchange(walker->elementsWithinLengthStoredAgain, { }));
             spreadsIntoArrays.appendVector(std::exchange(walker->spreadsIntoArrays, { }));
             for (const ElementRead& read : std::exchange(walker->elementReads, { }))
                 receiversOfRead.add(keyOf(read.function, read.read), read.receivers);
         }
-        for (ElementStoredAgain& stored : elementsStoredAgain) {
+        auto findArraysRead = [&](auto& stored) {
             ValueSetID objects = maker().intersect(receiversOfRead.get(keyOf(stored.function, stored.read)), ValueSets::complement(universe().primitives()));
             if (sets().isSubset(objects, m_arrays))
                 stored.arraysRead = objects;
-        }
+        };
+        std::ranges::for_each(elementsStoredAgain, findArraysRead);
+        std::ranges::for_each(elementsWithinLengthStoredAgain, findArraysRead);
 
         for (const ArrayMadeByBuiltin& made : arraysMadeByBuiltins)
             m_arrayWrites[made.array].set(ArrayWrites::IsCreatedDense, !m_arrayWrites[made.array].has(ArrayWrites::MayBeMadeWithHoles));
@@ -826,6 +926,7 @@ private:
                 addToEachArray(maker(), spread.targets, ArrayWrites::IsGivenMoreThanNumbers);
         }
         settleNumbersOfCopies(arraysMadeByBuiltins.span(), elementsStoredAgain.span());
+        settleWhichListsAreGivenUndefined(elementsWithinLengthStoredAgain.span());
     }
 
     void scheduleConversions()
@@ -890,6 +991,8 @@ private:
         const ArrayWrites& writes = m_arrayWrites[index];
         if (isArray(index) && writes.everyStoreIsKnown() && !writes.storedNumbers.isEmpty())
             writes.storedNumbers.narrow(type);
+        if (isArray(index) && writes.isDense() && writes.isGivenNoUndefined())
+            type = type.withoutPrimitives(Primitive::Undefined);
         if (m_containers[index].builtinClass == BuiltinClasses::Map && slot.contentsSlot == ContentsSlot::Value && m_inputs.numbersOfValues) {
             const ValueFlowNumbers* numbers = m_inputs.numbersOfValues->ofValuesOfMap(m_containers[index].object);
             if (numbers && !numbers->isEmpty())
@@ -901,7 +1004,8 @@ private:
     // Whoever makes a container lists what it lays into each slot: an operation by its operands, the row of a built-in by the type of its result, a coroutine by its body. Nobody has the object before it is handed out.
     bool makerListsContentsOf(ValueFlowObjectID object) const
     {
-        return m_inputs.universe().kindOf(object) == ValueFlowObjectKind::CoroutineResult || m_inputs.universe().siteOf(object);
+        ValueFlowObjectKind kind = m_inputs.universe().kindOf(object);
+        return kind == ValueFlowObjectKind::CoroutineResult || kind == ValueFlowObjectKind::ResultOfBuiltin || m_inputs.universe().siteOf(object);
     }
 
     OptionSet<Actor> actorsOpenOnContentsOf(const Container& container) const
@@ -997,6 +1101,7 @@ private:
         const ValueFlowSolver& solver = m_inputs.solver();
         ValueFlowNodeID pairsOfEntries = m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfEntries);
         ValueFlowNodeID pairsOfSteps = m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfSteps);
+        ValueFlowNodeID arraysThatMayHaveHoles = m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles);
         constexpr uint32_t nodesPerShare = 1 << 12;
         uint32_t numberOfNodes = solver.input().numberOfNodes;
         // Such a value gets no type, so nothing is read or stored through it.
@@ -1009,7 +1114,7 @@ private:
             Walker& walker = walkerOf(worker);
             for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
                 ValueSetID set = solver.possibleValuesOf(ValueFlowNodeID(index));
-                if (ValueFlowNodeID(index) != pairsOfEntries && ValueFlowNodeID(index) != pairsOfSteps && set != ValueSets::nothing && !isOnlyCompared.quickGet(index) && walker.setsWithArrays.contains(set))
+                if (ValueFlowNodeID(index) != pairsOfEntries && ValueFlowNodeID(index) != pairsOfSteps && ValueFlowNodeID(index) != arraysThatMayHaveHoles && set != ValueSets::nothing && !isOnlyCompared.quickGet(index) && walker.setsWithArrays.contains(set))
                     noteSetOfArrays(walker, set);
             }
         });
@@ -1145,11 +1250,24 @@ private:
             return sets().isSubset(link, maker.of(container.object));
 
         const ValueFlowSite* site = universe().siteOf(container.object);
-        if (!site || site->origin != ValueFlowSiteOrigin::BuiltinResult)
+        bool isArrayThatStandsForAllOfBuiltin = container.builtinClass == BuiltinClasses::Array && universe().kindOf(container.object) == ValueFlowObjectKind::ResultOfBuiltin;
+        if (!isArrayThatStandsForAllOfBuiltin && (!site || site->origin != ValueFlowSiteOrigin::BuiltinResult))
             return true;
         Vector<ValueFlowObjectID, 32> prototypeObjects;
         universe().appendObjectsOf(builtins().at(container.builtinClass).prototype, prototypeObjects);
         return sets().isSubset(link, maker.of(prototypeObjects.span()));
+    }
+
+    // `new TypeError(text)`: the constructor defines names on the error and a program may store to TypeError.prototype.message, and the object above the error is still the one it was made with.
+    bool keepsPrototypeOfClass(ValueSetMaker& maker, const Container& container) const
+    {
+        const BuiltinClass& instanceClass = builtins().at(container.builtinClass);
+        // Object.create(above) makes an object of the class Object below whatever it is given.
+        if (!instanceClass.prototype || instanceClass.isPrimitiveWrapper || instanceClass.isNeverPristine || container.possibleMutations.contains(ObjectMutation::ChangePrototype))
+            return false;
+        Vector<ValueFlowObjectID, 32> prototypeObjects;
+        universe().appendObjectsOf(instanceClass.prototype, prototypeObjects);
+        return sets().isSubset(container.writtenPrototypeLinks, maker.of(prototypeObjects.span()));
     }
 
     bool keepsPatternAndNumericLastIndex(ValueSetMaker& maker, const Container& container) const
@@ -1167,7 +1285,7 @@ private:
         const Container& container = m_containers[index];
         OptionSet<PristineAspects> aspects;
         if (!inheritsUnchangedMembers(maker, container) || (isArray(index) && container.possibleMutations.contains(ObjectMutation::ChangeIntegrity)))
-            return aspects;
+            return keepsPrototypeOfClass(maker, container) ? OptionSet<PristineAspects> { PristineAspects::Prototype } : aspects;
         if (!container.possibleMutations.containsAny(elementStorageMutations))
             aspects.add(PristineAspects::Storage);
         if (isArray(index) && aspects.contains(PristineAspects::Storage) && m_arrayWrites[index].isDense())
@@ -1176,6 +1294,9 @@ private:
             aspects.add(PristineAspects::Names);
         if (container.builtinClass == BuiltinClasses::RegExp && aspects.contains(PristineAspects::Names) && keepsPatternAndNumericLastIndex(maker, container))
             aspects.add(PristineAspects::AsCreated);
+        // Whoever has the names of its class has its prototype.
+        if (!aspects.contains(PristineAspects::Names) && keepsPrototypeOfClass(maker, container))
+            aspects.add(PristineAspects::Prototype);
         return aspects;
     }
 

@@ -362,10 +362,52 @@ void GenericCopy::computeRegion(Extent extent)
     m_untestedRejoins.removeAllMatching(isCopied);
 }
 
+BitVector GenericCopy::computeBlocksReachingBackEdges() const
+{
+    const CFG& cfg = m_analyses.cfg();
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    BitVector reachesBackEdge(m_function.blocks.size());
+    BitVector isVisited(m_function.blocks.size());
+    Vector<BlockID, 16> visited;
+    Vector<BlockID, 16> worklist;
+    for (BlockID header : m_entries) {
+        const NaturalLoop* loop = loops.headerOf(header);
+        if (!loop)
+            continue;
+        worklist.append(header);
+        while (!worklist.isEmpty()) {
+            for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
+                if (edge.from == header || !loops.belongsTo(edge.from, *loop))
+                    continue;
+                if (!edge.isHandlerEdge() && std::ranges::binary_search(m_redirectedEdges, std::pair { edge.from.index(), edge.targetIndex }))
+                    continue;
+                if (!isVisited.add(edge.from.index()))
+                    continue;
+                visited.append(edge.from);
+                worklist.append(edge.from);
+            }
+        }
+        for (BlockID block : visited) {
+            isVisited.quickClear(block.index());
+            const Block& contents = m_function.at(block);
+            bool isOnBackEdge = contents.values.isEmpty() && contents.terminator.kind == TerminatorKind::Jump && contents.terminator.next().block == header;
+            if (!isOnBackEdge || m_isRejoinBlock.get(header.index()))
+                reachesBackEdge.quickSet(block.index());
+        }
+        visited.shrink(0);
+    }
+    return reachesBackEdge;
+}
+
 bool GenericCopy::addsLoopEntry(BlockID block) const
 {
     if (!m_analyses.isInCycle(block))
         return false;
+    // The copy is entered at the header's copy, so leaving it here would make the loop irreducible.
+    if (!m_reachesBackEdge)
+        m_reachesBackEdge = computeBlocksReachingBackEdges();
+    if (m_reachesBackEdge->get(block.index()))
+        return true;
     const CFG& cfg = m_analyses.cfg();
     const NaturalLoops& loops = m_analyses.naturalLoops();
     const Block& contents = m_function.at(block);
@@ -545,6 +587,7 @@ auto GenericCopy::plan(uint64_t maxBlocks) -> Extent
 auto GenericCopy::plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks) -> Extent
 {
     RELEASE_ASSERT(!m_cloner);
+    AOT::sortInLine(m_redirectedEdges);
     if (m_starts.isEmpty()) {
         if (tryPlan(Extent::OnlyCopiedBlocks, maxBlocks, livenessInsideCopiedBlocks))
             return Extent::OnlyCopiedBlocks;

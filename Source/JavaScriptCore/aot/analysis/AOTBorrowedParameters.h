@@ -112,7 +112,7 @@ public:
 private:
     Lock m_lock;
     Vector<std::unique_ptr<Vector<HandedOnTarget>>> m_lists;
-    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsByHash;
     UncheckedKeyHashMap<uint64_t, ListOfOperand, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsOfOperands;
 };
 

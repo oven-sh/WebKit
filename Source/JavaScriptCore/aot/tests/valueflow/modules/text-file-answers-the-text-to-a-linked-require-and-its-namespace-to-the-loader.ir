@@ -1,0 +1,40 @@
+# use(require("./notes.txt")); use(require(globalThis.name)); use(require(["./notes.txt"][0]))
+# `bun build` puts the text of a text file where it links a require(). Every other require() goes to the loader, which answers with the namespace object, as in `bun run`.
+# The linked call gets the string and no object. The call under a name nobody knows may get the namespace object, and the call under a name that flow alone follows gets nothing else.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-why values=f0:v9 values=f0:v6 values=f0:v5
+# CHECK: values=f0:v9
+# CHECK: operand 2 {{*}} 1 members: [[namespace]]
+# CHECK: values=f0:v6
+# CHECK: operand 2 {{*}} [[namespace]]
+# CHECK: values=f0:v5
+# CHECK: operand 2 {{*}} 2 members: primitive7 primitive10
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="_0" module=m1 declared={type=anything} flags=[IsImmutable]
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/app/notes.txt" displayPath="notes.txt" kind=Data flags=[IsFoundByName, AnswersLoaderWithNamespace] requireResult=DefaultExport body=f1 data=d0 exports=[{name="default" variable=g1}]
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="./notes.txt"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = RequireDynamic v2 referrer=m0
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v0
+    v6 = Call v4, -, v3
+    v7 = String string="./notes.txt"
+    v8 = RequireDynamic v7 referrer=m0
+    v9 = Call v4, -, v8
+    Return
+}
+function f1 module=m1 kind=Module results=[{type=anything}] {
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f2 name="use" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+data d0 root=String{value="text"} module=m1

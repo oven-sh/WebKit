@@ -95,7 +95,7 @@ public:
 
 private:
     Lock m_lock;
-    UncheckedKeyHashMap<unsigned, Vector<Ref<SharedCallList>, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
+    UncheckedKeyHashMap<uint64_t, Vector<Ref<SharedCallList>, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_listsByHash;
 };
 
 // The calls of one node. n functions that each may call any of the n have n equal lists of n calls, so nodes with equal long lists share one.

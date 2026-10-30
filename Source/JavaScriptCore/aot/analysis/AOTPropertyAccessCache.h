@@ -118,6 +118,7 @@ public:
 
     using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
     using BuiltinBase = Answer<LayoutID, BuiltinClassID>;
+    using ClassAbove = Answer<LayoutID, LayoutID>;
     using FilledAtBirth = Answer<LayoutID, bool>;
     using TakesAllocatedThis = Answer<FunctionID, bool>;
 
@@ -180,12 +181,16 @@ public:
 
     using TableCall = Answer<TableCallKey, TableCallTargets>;
 
-    // What a call in tail position asks of each function that it may enter. The list is one of the program: it neither moves nor changes.
+    // What a call asks of each function that it may enter. The list is one of the program: it neither moves nor changes.
     struct NamesOfCallees {
         std::span<const FunctionID> callees;
         bool someRecordsCalleeOnlyOnceRenamed { false };
         bool someIsCalledDirectlyWhileNamesAreUnchanged { false };
         bool someIsCalledDirectlyOnlyWhileNamesAreUnchanged { false };
+        bool allTakeOrReturnNumbersInDirectCalls { true };
+        // And has slim closures.
+        bool somePassesNumbersInRegisters { false };
+        bool allComeBack { false };
     };
 
     PropertyAccessCache() = default;
@@ -202,6 +207,7 @@ public:
     SharedMemo<CodeOfOperand> codeOfOperands;
     SharedMemo<InheritedMember> inheritedMembers;
     SharedMemo<BuiltinBase> builtinBases;
+    SharedMemo<ClassAbove> classesAboveEmptyPrototypes;
     SharedMemo<FilledAtBirth> layoutsFilledAtBirth;
     SharedMemo<TakesAllocatedThis> constructorsTakingAllocatedThis;
     SharedMemo<FieldAbove> fieldsAbove;

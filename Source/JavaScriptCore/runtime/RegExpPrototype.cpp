@@ -61,7 +61,7 @@ static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterUnicode);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterUnicodeSets);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterSource);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoGetterFlags);
-static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncTest);
+JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncTest);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncSearch);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncReplace);
 static JSC_DECLARE_HOST_FUNCTION(regExpProtoFuncMatch);

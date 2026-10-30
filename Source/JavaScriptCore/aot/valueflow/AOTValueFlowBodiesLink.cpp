@@ -723,6 +723,8 @@ private:
         uint32_t edge;
         uint32_t mask;
         uint32_t observedValue;
+        uint32_t rareFactsOfText;
+        uint32_t copiesOfOperations;
         uint32_t comparedValues;
         uint32_t valueAliveForComparisonsOnly;
     };
@@ -1253,12 +1255,15 @@ private:
                 ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
         }
         Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
+        Vector<ValueFlowObjectID> denseArrayLiterals;
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
                 ofLayout[layout.index()].append(object);
             if (universe.m_sites[site].isProxyFromNamedConstructor)
                 proxiesFromNamedConstructor.append(object);
+            if (universe.m_sites[site].isDenseArrayLiteral)
+                denseArrayLiterals.append(object);
             if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
@@ -1267,6 +1272,7 @@ private:
                 list.append(object);
         }
         universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
+        universe.m_denseArrayLiterals = maker.of(denseArrayLiterals.span());
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
@@ -1343,20 +1349,6 @@ private:
         ValueSetID inEveryClassButNoBuiltinObject = maker.unite(universe.m_instancesBelowBuiltinClasses, universe.m_objectsThatMayBeAnything);
         ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
 
-        auto hasSameCellTypeTest = [&](BuiltinClassID first, BuiltinClassID second) {
-            const BuiltinClass& a = builtins.at(first);
-            const BuiltinClass& b = builtins.at(second);
-            return a.instanceTest == BuiltinInstanceTest::JSTypeEquals && b.instanceTest == BuiltinInstanceTest::JSTypeEquals && a.type == b.type;
-        };
-        auto mayBeInstanceOf = [&](BuiltinClassID allocatedAs, BuiltinClassID tested) {
-            if (builtins.isSameOrSubclassOf(tested, allocatedAs))
-                return true;
-            for (BuiltinClassID current = allocatedAs; current; current = builtins.at(current).parent) {
-                if (current == tested || hasSameCellTypeTest(current, tested))
-                    return true;
-            }
-            return false;
-        };
         Vector<ValueSetID> allocatedAs = ofClass.map([&](const Vector<ValueFlowObjectID>& members) {
             return maker.of(members.span());
         });
@@ -1377,7 +1369,7 @@ private:
             if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
                 parts.append(universe.m_closures);
             for (uint32_t other = 0; other < builtins.classCount(); ++other) {
-                if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(BuiltinClassID(other), tested))
+                if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(builtins, BuiltinClassID(other), tested))
                     parts.append(allocatedAs[other]);
             }
             return maker.uniteAll(parts.span());
@@ -1446,6 +1438,8 @@ private:
                 first.edge += other.first.edge;
                 first.mask += other.first.mask;
                 first.observedValue += other.first.observedValue;
+                first.rareFactsOfText += other.first.rareFactsOfText;
+                first.copiesOfOperations += other.first.copiesOfOperations;
                 first.comparedValues += other.first.comparedValues;
                 first.valueAliveForComparisonsOnly += other.first.valueAliveForComparisonsOnly;
                 return *this;
@@ -1471,6 +1465,8 @@ private:
             places.first.operand += body.operands.size();
             places.first.edge += body.edges.size();
             places.first.observedValue += body.observedValues.size();
+            places.first.rareFactsOfText += body.rareFactsOfText.size();
+            places.first.copiesOfOperations += body.copiesOfOperations.size();
             places.first.comparedValues += body.comparedValues.size();
             places.first.valueAliveForComparisonsOnly += body.valuesAliveForComparisonsOnly.size();
             places.first.mask += numberOfNodesWithMask[index];
@@ -1493,6 +1489,8 @@ private:
             },
             [&] {
                 m_result.m_observedValues.grow(end.first.observedValue);
+                m_result.m_rareFactsOfText.grow(end.first.rareFactsOfText);
+                m_result.m_copiesOfOperations.grow(end.first.copiesOfOperations);
             },
             [&] {
                 m_result.m_masks.grow(end.first.mask);
@@ -1629,6 +1627,7 @@ private:
         std::ranges::transform(body.statements, m_result.m_statements.mutableSpan().subspan(range.statement).begin(), [&](const Body::Statement& statement) {
             return ValueFlowStatement {
                 statement.kind,
+                statement.factsOfText,
                 statement.opcode,
                 body.function,
                 statement.site,
@@ -1646,6 +1645,11 @@ private:
                 statement.key,
             };
         });
+        // Statements are written in the order of their blocks. Whoever looks one up goes by its site.
+        std::ranges::copy(body.copiesOfOperations, m_result.m_copiesOfOperations.mutableSpan().subspan(first.copiesOfOperations).begin());
+        std::ranges::sort(m_result.m_copiesOfOperations.mutableSpan().subspan(first.copiesOfOperations, body.copiesOfOperations.size()), { }, [](const ValueFlowCopyOfOperation& copy) { return copy.site.index(); });
+        std::ranges::copy(body.rareFactsOfText, m_result.m_rareFactsOfText.mutableSpan().subspan(first.rareFactsOfText).begin());
+        std::ranges::sort(m_result.m_rareFactsOfText.mutableSpan().subspan(first.rareFactsOfText, body.rareFactsOfText.size()), { }, [](const ValueFlowRareFactsOfText& facts) { return facts.site.index(); });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {
             return ValueFlowObservedValue { body.function, observed.test, link(observed.operand) };
         });
@@ -1683,7 +1687,7 @@ void ValueFlowBodies::addBytesTo(ValueFlowBytesByTable& bytes) const
     auto addRest = [&](const auto&... lists) {
         (bytes.addList("bodies: the rest"_s, lists), ...);
     };
-    addRest(m_seedsOnceReached, m_functionsEnteredOnceReached, m_observedValues, m_comparedValues, m_valuesAliveForComparisonsOnly, m_notedOperations, m_knowsValuesBehindChecks, m_ranges);
+    addRest(m_seedsOnceReached, m_functionsEnteredOnceReached, m_observedValues, m_rareFactsOfText, m_copiesOfOperations, m_comparedValues, m_valuesAliveForComparisonsOnly, m_notedOperations, m_knowsValuesBehindChecks, m_ranges);
     addRest(m_nodes.m_firstFieldOfLayout, m_nodes.m_firstNodeOfFunction, m_nodes.m_firstResultOfFunction, m_nodes.m_thrownOfFunction, m_nodes.m_resultSummaries);
     bytes.addList("bodies: values behind checks"_s, m_valuesBehindChecks);
     for (const BitVector& values : m_valuesBehindChecks)

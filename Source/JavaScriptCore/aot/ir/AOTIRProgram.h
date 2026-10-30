@@ -71,6 +71,7 @@ public:
     // A test run adds a property of this name to the object, which takes no other new name.
     bool isOpened(BuiltinID canonicalHolder, StringID name) const { return std::ranges::contains(openedNames, OpenedName { canonicalHolder, name }); }
     bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
+    bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
     // A row for a pristine operand leaves out the members that the general row of the function looks up on it: Array.prototype.toString joins a pristine array by itself.
     // Where one of those names is unlocked only the general row says what the function does.
     bool looksUpUnlockedName(BuiltinID function) const { return m_functionsLookingUpUnlockedNames.get(m_builtins.canonicalID(function).index()); }
@@ -82,7 +83,7 @@ public:
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
     std::span<const uint8_t> copyBorrowedBytes(std::span<const uint8_t>, const ParallelLoops&);
-    void copyBorrowedLineStarts(const ParallelLoops&);
+    void copyBorrowedWordsOfPositions(const ParallelLoops&);
     void collectConstructionStarts();
     void adoptBuffer(Vector<uint8_t>&&);
 
@@ -112,6 +113,8 @@ public:
     Vector<WebAssemblyModule> webAssemblyModules;
     Vector<ReplaceableBuiltin> replaceableBuiltins;
     Vector<OpenedName> openedNames;
+    // CompileOptions::holdsLibraryAlone(): a run that nobody knows yet adds whatever names a test run can add.
+    bool takesAnyNameFromTests { false };
 
     Function& at(FunctionID id) { return functions[id.index()]; }
     const Function& at(FunctionID id) const { return ProvisionalFunctions::contains(id) ? m_provisionalFunctions->at(id) : functions[id.index()]; }
@@ -212,7 +215,7 @@ private:
     struct Bytes {
         std::span<const uint8_t> borrowed;
         Vector<uint8_t> owned;
-        Vector<uint32_t> lineStarts;
+        Vector<uint32_t> wordsOfPositions;
     };
 
     struct CountsAsRead {
@@ -242,6 +245,7 @@ private:
 
     const BuiltinTable& m_builtins;
     BitVector m_namesOpenedSomewhere;
+    bool m_testsReplaceBuiltins { false };
     BitVector m_functionsLookingUpUnlockedNames;
     BitVector m_functionsCallingUnlockedMembersThatNoRowNames;
     // By the class of a pristine part: the functions that look up a name which, on an instance of the class or of one below it, finds what a test may have put there.

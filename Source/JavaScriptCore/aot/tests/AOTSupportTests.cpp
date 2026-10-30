@@ -972,6 +972,45 @@ static_assert(movesAsBytes<uint8_t> && movesAsBytes<FunctionID> && movesAsBytes<
 static_assert(!VectorTraits<FunctionID>::canMoveWithMemcpy && !VectorTraits<RecordWithPadding>::canMoveWithMemcpy);
 static_assert(!movesAsBytes<RecordThatKnowsWhereItIs> && !movesAsBytes<Vector<unsigned, 2>> && !movesAsBytes<std::pair<unsigned, RecordThatKnowsWhereItIs>>);
 
+struct RecordOfLists {
+    unsigned number;
+    Vector<unsigned> list;
+    std::array<Vector<uint8_t>, 2> more;
+
+    friend bool operator==(const RecordOfLists&, const RecordOfLists&) = default;
+};
+
+struct RecordWithInlineList {
+    unsigned number;
+    Vector<unsigned, 2> list;
+
+    friend bool operator==(const RecordWithInlineList&, const RecordWithInlineList&) = default;
+};
+
+struct RecordOfRecordThatKnowsWhereItIs {
+    Vector<unsigned> list;
+    RecordThatKnowsWhereItIs record;
+};
+
+static_assert(movesAsBytes<Vector<unsigned>> && movesAsBytes<Vector<RecordThatKnowsWhereItIs>> && !movesAsBytes<RecordWithInlineList> && !movesAsBytes<RecordOfRecordThatKnowsWhereItIs>);
+#if COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+static_assert(movesAsBytes<RecordOfLists> && movesAsBytes<std::pair<unsigned, RecordOfLists>> && movesAsBytes<Vector<RecordOfLists>>);
+#endif
+
+struct RecordOfRecordsWithInlineLists {
+    uint8_t flag : 1;
+    Vector<RecordWithInlineList, 2> records;
+    std::pair<unsigned, Vector<uint8_t, 3>> pair;
+    Vector<unsigned> list;
+
+    friend bool operator==(const RecordOfRecordsWithInlineLists&, const RecordOfRecordsWithInlineLists&) = default;
+};
+
+static_assert(!isMendedAfterMovingAsBytes<unsigned> && !isMendedAfterMovingAsBytes<RecordOfLists> && !isMendedAfterMovingAsBytes<RecordThatKnowsWhereItIs> && !isMendedAfterMovingAsBytes<Vector<RecordThatKnowsWhereItIs, 2>> && !isMendedAfterMovingAsBytes<RecordOfRecordThatKnowsWhereItIs>);
+#if !ASAN_ENABLED && COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+static_assert(isMendedAfterMovingAsBytes<Vector<unsigned, 2>> && isMendedAfterMovingAsBytes<RecordWithInlineList> && isMendedAfterMovingAsBytes<RecordOfRecordsWithInlineLists> && isMendedAfterMovingAsBytes<Vector<Vector<unsigned, 2>, 3>>);
+#endif
+
 template<typename T, size_t inlineCapacity, size_t minCapacity>
 void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
 {
@@ -1115,6 +1154,25 @@ static void testVectorsHoldWhatThoseOfWTFHold()
     });
     checkGrowthOfVectorsOf<Vector<unsigned>>([](unsigned number) {
         return Vector<unsigned> { number, number + 1 };
+    });
+    checkGrowthOfVectorsOf<RecordOfLists>([](unsigned number) {
+        return RecordOfLists { number, { number, number + 1 }, { { { static_cast<uint8_t>(number) }, { } } } };
+    });
+    checkGrowthOfVectorsOf<RecordWithInlineList>([](unsigned number) {
+        return RecordWithInlineList { number, Vector<unsigned, 2>(number % 4, [&](size_t index) {
+            return number + static_cast<unsigned>(index);
+        }) };
+    });
+    checkGrowthOfVectorsOf<RecordOfRecordsWithInlineLists>([](unsigned number) {
+        auto createRecord = [&](size_t index) {
+            unsigned first = number + static_cast<unsigned>(index);
+            return RecordWithInlineList { first, Vector<unsigned, 2>(first % 4, [&](size_t position) {
+                return first + static_cast<unsigned>(position);
+            }) };
+        };
+        return RecordOfRecordsWithInlineLists { static_cast<uint8_t>(number & 1), Vector<RecordWithInlineList, 2>(number % 5, createRecord), { number, Vector<uint8_t, 3>(number % 6, [&](size_t position) {
+            return static_cast<uint8_t>(number + position);
+        }) }, { number } };
     });
     checkGrowthOfVectorsOf<Vector<unsigned, 2>>([](unsigned number) {
         return Vector<unsigned, 2>(number % 4, [&](size_t index) {

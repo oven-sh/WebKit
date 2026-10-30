@@ -121,6 +121,8 @@ public:
     FunctionID find(const DerivedFunctionKey&) const;
     FunctionID ensure(const DerivedFunctionKey&);
     const Function& at(FunctionID) const final;
+    // at() answers without building anything.
+    bool isBuilt(FunctionID provisional) const { return !!entryOf(provisional).published.load(std::memory_order_acquire); }
     // Of the function as at() answers it. The first who asks makes it, once.
     const InliningSummary& inliningSummaryOf(FunctionID provisional, NOESCAPE const ScopedLambda<InliningSummary()>& summarize) const;
     DerivedFunctionKey keyOf(FunctionID provisional) const { return entryOf(provisional).key; }

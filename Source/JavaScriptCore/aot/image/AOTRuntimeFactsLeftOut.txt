@@ -20,6 +20,7 @@ OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSiz
 OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys) | 'm_extraKeysAndCellSize' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | 'm_extraPropertiesSlot' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_flags) | 'm_flags' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder) | 'm_heldKeyOrder' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_layout) | 'm_layout' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | 'm_namedStructureAndRareData' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName) | 'm_successorByPrivateName' is a private member of 'JSC::AOT::CompiledStructure'

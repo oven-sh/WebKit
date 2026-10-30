@@ -1,0 +1,34 @@
+# The read of an own slot compares the Structure of the object with the one of each class that the receiver may be an instance of, and looks for each of those Structures once.
+# Behind them all stands one read by name.
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneClass" parameters=[{type=Error}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+    Return v1
+}
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTFindOwnSlotStructure x1
+# CHECK: stub GetById{{*}} x1
+function f1 name="twoClasses" parameters=[{type=Error|TypeError}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+    Return v1
+}
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTFindOwnSlotStructure x2
+# CHECK: stub GetById{{*}} x1
+function f2 name="neitherIsTheClassOfTheRead" parameters=[{type=TypeError|RangeError|SyntaxError}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+    Return v1
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTFindOwnSlotStructure x3
+# CHECK: stub GetById{{*}} x1
+function f3 name="oneOfThemKeepsItElsewhere" parameters=[{type=Error|AggregateError}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+    Return v1
+}
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTFindOwnSlotStructure x1
+# CHECK: stub GetById{{*}} x1

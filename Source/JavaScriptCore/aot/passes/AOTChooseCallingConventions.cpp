@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCFG.h"
 #include "AOTCallGraph.h"
 #include "AOTConvention.h"
 #include "AOTDerivedFunctions.h"
@@ -18,13 +19,17 @@
 #include "AOTEffectSummaries.h"
 #include "AOTEffects.h"
 #include "AOTElideStackChecks.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTMethodTableEntrypoints.h"
+#include "AOTOperatorForms.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRelocation.h"
+#include "AOTRepresentationRules.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTStubBodyConvention.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
@@ -42,7 +47,10 @@
 #include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/PrintStream.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -202,10 +210,22 @@ Representation declaredRepresentationOf(const Program& program, const DeclaredTy
     return Representation::JSValue;
 }
 
-static Representation directParameterRepresentation(const Program& program, const Function& callee, unsigned index)
+static std::span<const ImpureParameter> impureParametersOf(const CallingConventionTables& tables, FunctionID id)
 {
-    if (const DeclaredType* declared = callee.declaredEntryParameter(index))
-        return declaredRepresentationOf(program, *declared);
+    if (id.index() >= tables.conventions.size() || !tables.conventions[id.index()].hasImpureParameters)
+        return { };
+    auto range = std::ranges::equal_range(tables.impureParameters, id, { }, &ImpureParameter::function);
+    return { range.begin(), range.end() };
+}
+
+static Representation directParameterRepresentation(const Program& program, const Function& callee, unsigned index, std::span<const ImpureParameter> impureParameters)
+{
+    if (const DeclaredType* declared = callee.declaredEntryParameter(index)) {
+        Representation representation = declaredRepresentationOf(program, *declared);
+        if (representation == Representation::Double && std::ranges::binary_search(impureParameters, index, { }, &ImpureParameter::entryParameterIndex))
+            return Representation::ImpureDouble;
+        return representation;
+    }
 
     switch (callee.entryParameterKind(index)) {
     case EntryParameter::Callee:
@@ -257,12 +277,14 @@ static ArgumentLocation singleResultLocation(const Program& program, const Funct
         return { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue };
 
     Representation representation = declaredRepresentationOf(program, declared);
+    if (representation == Representation::Double && convention.resultIsImpure)
+        representation = Representation::ImpureDouble;
     if (isPassedInFPR(representation))
         return { .kind = ArgumentLocation::Kind::FPR, .reg = FPRInfo::returnValueFPR, .representation = representation };
     return { .kind = ArgumentLocation::Kind::GPR, .reg = GPRInfo::returnValueGPR, .representation = representation };
 }
 
-static ArgumentLocations computeArgumentLocations(const Program& program, const Function& callee, FunctionConvention convention, ConventionRegisters registers)
+static ArgumentLocations computeArgumentLocations(const Program& program, const Function& callee, FunctionConvention convention, ConventionRegisters registers, std::span<const ImpureParameter> impureParameters)
 {
     ArgumentLocations locations;
     locations.convention = entryConventionOf(callee);
@@ -272,7 +294,7 @@ static ArgumentLocations computeArgumentLocations(const Program& program, const 
     case EntryConvention::Direct: {
         ArgumentAllocator allocator { registers };
         for (unsigned index = 0; index < count; ++index)
-            locations.parameters.append(allocator.allocate(directParameterRepresentation(program, callee, index)));
+            locations.parameters.append(allocator.allocate(directParameterRepresentation(program, callee, index, impureParameters)));
         locations.numberOfStackArguments = allocator.numberOfStackWords;
         break;
     }
@@ -326,7 +348,7 @@ Representation CallingConventions::parameterRepresentation(const Program& progra
     const Function& callee = program.at(id);
     switch (entryConventionOf(callee)) {
     case EntryConvention::Direct:
-        return directParameterRepresentation(program, callee, entryParameterIndex);
+        return directParameterRepresentation(program, callee, entryParameterIndex, impureParametersOf(m_tables, id));
     case EntryConvention::GenericRegisters:
     case EntryConvention::GenericBuffer: {
         unsigned nextArgument = 0;
@@ -347,7 +369,7 @@ Representation CallingConventions::resultRepresentation(const Program& program, 
 
 ArgumentLocations CallingConventions::locationsOf(const Program& program, FunctionID id) const
 {
-    return computeArgumentLocations(program, program.at(id), of(program, id), m_tables.registers);
+    return computeArgumentLocations(program, program.at(id), of(program, id), m_tables.registers, impureParametersOf(m_tables, id));
 }
 
 uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& program, FunctionID callee) const
@@ -377,6 +399,11 @@ SecondaryEntry CallingConventions::findEntryOmittingArguments(FunctionID callee,
             return entry;
     }
     return { primaryEntry, static_cast<uint8_t>(numberOfGPRArguments) };
+}
+
+bool CallingConventions::letsGoOfParameter(FunctionID callee, unsigned entryParameterIndex) const
+{
+    return !m_tables.parametersLetGo.isEmpty() && std::ranges::binary_search(m_tables.parametersLetGo, ParameterLetGo { callee, entryParameterIndex });
 }
 
 void CallingConventions::dump(PrintStream& out, const Program& program) const
@@ -427,6 +454,10 @@ void CallingConventions::dump(PrintStream& out, const Program& program) const
                 out.print(comma, entry.id, "@", entry.firstOmittedGPR);
             out.print("]");
         }
+        for (unsigned parameter = 0; parameter < locations.parameters.size(); ++parameter) {
+            if (letsGoOfParameter(id, parameter))
+                out.print(" lets-go=", parameter);
+        }
         out.println();
     }
 }
@@ -454,6 +485,118 @@ static void collectTailCallSitesOf(const Program& program, FunctionID caller, Ve
     });
 }
 
+class EntryParameterFinder {
+public:
+    explicit EntryParameterFinder(const Function& function)
+        : m_function(function)
+    {
+    }
+
+    std::optional<uint32_t> indexOf(ValueID value)
+    {
+        for (size_t remainingSteps = m_function.values.size(); remainingSteps--;) {
+            ValueID root = sameObjectThroughCasts(m_function, value).valueInFrontOfFacts();
+            if (m_function.at(root).opcode != Opcode::Parameter)
+                return std::nullopt;
+            if (size_t index = m_function.at(entryBlock).parameters.find(root); index != notFound)
+                return static_cast<uint32_t>(index);
+            findNarrowedCopies();
+            auto subject = m_subjectOfNarrowedCopy.find(root.index());
+            if (subject == m_subjectOfNarrowedCopy.end())
+                return std::nullopt;
+            value = subject->value;
+        }
+        return std::nullopt;
+    }
+
+private:
+    void findNarrowedCopies()
+    {
+        if (std::exchange(m_didFindNarrowedCopies, true))
+            return;
+        for (uint32_t block = 0; block < m_function.blocks.size(); ++block) {
+            forEachEdgeResult(m_function, BlockID(block), [&](const EdgeResult& result, ValueID parameter) {
+                if (result.kind == EdgeResultKind::NarrowedOperand)
+                    m_subjectOfNarrowedCopy.add(parameter.index(), result.subject);
+            });
+        }
+    }
+
+    const Function& m_function;
+    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_subjectOfNarrowedCopy;
+    bool m_didFindNarrowedCopies { false };
+};
+
+std::optional<uint32_t> entryParameterIndexOf(const Function& function, ValueID value)
+{
+    return EntryParameterFinder(function).indexOf(value);
+}
+
+// A parameter that the function sets to null, or that it hands on as such a parameter.
+static Vector<ParameterLetGo> findParametersLetGo(const Program& program, const CallGraph& callGraph, const ParallelLoops& loops)
+{
+    unsigned count = program.functions.size();
+    Vector<ParameterLetGo> found = collectInParallel<ParameterLetGo>(loops, count, [&](unsigned index, Vector<ParameterLetGo>& found) {
+        EntryParameterFinder parameters(program.functions[index]);
+        forEachListedValue(program, FunctionID(index), { Opcode::ReleaseHint }, [&](BlockID, uint32_t, ValueID, const Value& hint) {
+            if (std::optional<uint32_t> parameter = parameters.indexOf(hint.valueOperand()))
+                found.append({ FunctionID(index), *parameter });
+        });
+    });
+    if (found.isEmpty())
+        return found;
+
+    auto keyOf = [](FunctionID function, uint32_t parameter) { return static_cast<uint64_t>(function.index()) << 32 | parameter; };
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> known;
+    BitVector letsGo(count);
+    BitVector isChanged(count);
+    Vector<FunctionID> changed;
+    Vector<ParameterLetGo> all;
+    auto add = [&](FunctionID function, uint32_t parameter) {
+        if (!known.add(keyOf(function, parameter)).isNewEntry)
+            return;
+        all.append({ function, parameter });
+        letsGo.quickSet(function.index());
+        if (!isChanged.quickSet(function.index()))
+            changed.append(function);
+    };
+    for (ParameterLetGo letGo : found)
+        add(letGo.function, letGo.entryParameterIndex);
+
+    // A round reads the callers of the functions that the round before has added to.
+    BitVector isListed(count);
+    Vector<FunctionID> callers;
+    while (!changed.isEmpty()) {
+        for (FunctionID callee : changed) {
+            isChanged.quickClear(callee.index());
+            for (FunctionID caller : callGraph.callersOf(callee)) {
+                if (!isListed.quickSet(caller.index()))
+                    callers.append(caller);
+            }
+        }
+        changed.shrink(0);
+        for (FunctionID caller : callers) {
+            isListed.quickClear(caller.index());
+            const Function& function = program.at(caller);
+            EntryParameterFinder parameters(function);
+            forEachDirectCall(program, caller, [&](BlockID, ValueID call, FunctionID callee) {
+                if (!letsGo.quickGet(callee.index()))
+                    return;
+                std::span<const ValueID> arguments = function.at(call).argumentsOperands();
+                for (uint32_t index = 0; index < arguments.size(); ++index) {
+                    if (!arguments[index] || !known.contains(keyOf(callee, index)))
+                        continue;
+                    if (std::optional<uint32_t> parameter = parameters.indexOf(arguments[index]))
+                        add(caller, *parameter);
+                }
+            });
+        }
+        callers.shrink(0);
+    }
+    std::ranges::sort(all);
+    return all;
+}
+
 static std::span<const TailCallSite> sitesOf(std::span<const TailCallSite> sites, FunctionID caller)
 {
     auto found = std::ranges::equal_range(sites, caller, { }, &TailCallSite::caller);
@@ -464,6 +607,517 @@ static bool canBoxResult(const Function& function)
 {
     return function.results.size() == 1 && function.hasOrdinaryFrame() && entryConventionOf(function) == EntryConvention::Direct;
 }
+
+namespace {
+
+// Lets a double read from a typed array or DataView cross calls and returns without being purified.
+// purifyNaN() drops the sign of a NaN and arithmetic NaNs keep theirs, so a parameter or result is only chosen when every value that reaches it comes from bytes.
+class ImpureDoubleConventions {
+public:
+    ImpureDoubleConventions(const Program& program, const OptimizationInputs& inputs, BuildContext& build, const CallingConventionTables& tables, std::span<const ArgumentLocation> results, const ScopedLambda<bool(FunctionID)>& isEnabledFor)
+        : m_program(program)
+        , m_inputs(inputs)
+        , m_build(build)
+        , m_tables(tables)
+        , m_results(results)
+        , m_isEnabledFor(isEnabledFor)
+    {
+    }
+
+    void choose(std::span<const uint32_t> functionsReadingBytes, CallingConventionTables& chosen)
+    {
+        m_bodyOf.fill(noBody, m_program.functions.size());
+        do {
+            for (auto& body : m_bodies) {
+                body->valuesFromBytes.clearAll();
+                body->parametersFromBytes.clearAll();
+                body->resultIsFromBytes = false;
+            }
+            for (uint32_t index : functionsReadingBytes)
+                visitLater(bodyOf(FunctionID(index)));
+            while (!m_worklist.isEmpty()) {
+                Body& body = *m_bodies[m_worklist.takeLast()];
+                body.isOnWorklist = false;
+                propagateFromBytes(body);
+            }
+        } while (rejectMixedJoins());
+
+        do {
+            for (auto& body : m_bodies) {
+                body->impureValues.clearAll();
+                body->impureParameters.clearAll();
+                body->resultIsImpure = false;
+            }
+            for (uint32_t index : functionsReadingBytes)
+                visitLater(bodyOf(FunctionID(index)));
+            while (!m_worklist.isEmpty()) {
+                Body& body = *m_bodies[m_worklist.takeLast()];
+                body.isOnWorklist = false;
+                propagateImpure(body);
+            }
+        } while (rejectUnprofitable());
+
+        for (auto& body : m_bodies) {
+            for (size_t index : body->impureParameters) {
+                chosen.impureParameters.append({ body->id, static_cast<uint32_t>(index) });
+                chosen.conventions[body->id.index()].hasImpureParameters = true;
+            }
+            chosen.conventions[body->id.index()].resultIsImpure = body->resultIsImpure;
+        }
+        AOT::sort(chosen.impureParameters);
+    }
+
+private:
+    static constexpr uint32_t noBody = UINT32_MAX;
+
+    struct Body {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Body);
+
+        Body(const AnalysisContext& context, const Function& function)
+            : id(context.id)
+            , function(function)
+            , analyses(context, function)
+        {
+        }
+
+        FunctionID id;
+        const Function& function;
+        mutable FunctionAnalyses analyses;
+        Vector<std::pair<ValueID, ValueID>, 4> narrowedCopies;
+        bool hasOnlyKnownCallers { false };
+        bool isOnWorklist { false };
+        uint32_t index { 0 };
+
+        BitVector valuesFromBytes;
+        BitVector parametersFromBytes;
+        bool resultIsFromBytes { false };
+        BitVector mixedValues;
+        BitVector mixedParameters;
+        bool resultIsMixed { false };
+
+        BitVector impureValues;
+        BitVector impureParameters;
+        bool resultIsImpure { false };
+        BitVector purifiedParameters;
+        bool resultIsPurified { false };
+    };
+
+    Body* findBodyOf(FunctionID id) const
+    {
+        uint32_t index = m_bodyOf[id.index()];
+        return index == noBody ? nullptr : m_bodies[index].get();
+    }
+
+    Body& bodyOf(FunctionID id)
+    {
+        if (Body* body = findBodyOf(id))
+            return *body;
+        const Function& function = m_program.at(id);
+        RELEASE_ASSERT(function.hasBody());
+        auto body = makeUnique<Body>(AnalysisContext { m_build, m_program, &m_inputs.flow, &m_inputs.effects, id }, function);
+        body->index = m_bodies.size();
+        body->hasOnlyKnownCallers = canBoxResult(function)
+            && function.role != FunctionRole::TableEntrypoint && function.role != FunctionRole::TableLookup && function.role != FunctionRole::StubBody
+            && m_inputs.callGraph.entrySet(id) == EntrySet::DirectCallers && !function.mayBeCalledByHost() && m_isEnabledFor(id);
+        for (BlockID block : body->analyses.cfg().reversePostOrder()) {
+            forEachOutgoingEdge(function, block, [&](Edge edge, const Target& target) {
+                const CompactList<ValueID>& parameters = function.at(target.block).parameters;
+                for (uint32_t index = 0; index < parameters.size(); ++index) {
+                    IncomingValue incoming = incomingValueOf(function, edge, index);
+                    if (incoming.kind != IncomingValue::Kind::EdgeResult)
+                        continue;
+                    EdgeResult result = edgeResultAt(function, incoming.result);
+                    if (result.kind == EdgeResultKind::NarrowedOperand)
+                        body->narrowedCopies.append({ result.subject, parameters[index] });
+                }
+            });
+        }
+        AOT::sort(body->narrowedCopies);
+        m_bodyOf[id.index()] = body->index;
+        m_bodies.append(WTF::move(body));
+        return *m_bodies.last();
+    }
+
+    void visitLater(Body& body)
+    {
+        if (!std::exchange(body.isOnWorklist, true))
+            m_worklist.append(body.index);
+    }
+
+    const Type& typeOf(const Body& body, ValueID id) const { return m_program.typeOf(body.function, id); }
+    bool isKeptAsDouble(const Body& body, ValueID id) const { return defaultRepresentationOf(typeOf(body, id)) == Representation::Double; }
+    bool isPassedAsDouble(FunctionID id, size_t entryParameterIndex) const { return directParameterRepresentation(m_program, m_program.at(id), entryParameterIndex, { }) == Representation::Double; }
+
+    bool returnsDouble(const Body& body) const
+    {
+        return !m_tables.conventions[body.id.index()].resultIsBoxed && m_results[body.id.index()].kind == ArgumentLocation::Kind::FPR && m_results[body.id.index()].representation == Representation::Double;
+    }
+
+    bool takesImpure(FunctionID id, uint32_t entryParameterIndex) const
+    {
+        Body* body = findBodyOf(id);
+        return body && body->impureParameters.get(entryParameterIndex);
+    }
+
+    bool isFromBytesOrNeverNaN(const Body* body, const Function& function, ValueID id) const
+    {
+        return !id || (body && body->valuesFromBytes.get(id.index())) || !m_program.typeOf(function, id).mayBeNaN();
+    }
+
+    template<typename Functor>
+    void forEachCopyNarrowedFrom(const Body& body, ValueID subject, const Functor& functor) const
+    {
+        auto* copy = std::lower_bound(body.narrowedCopies.begin(), body.narrowedCopies.end(), std::pair { subject, ValueID(0u) });
+        for (; copy != body.narrowedCopies.end() && copy->first == subject; ++copy)
+            functor(copy->second);
+    }
+
+    void propagateFromBytes(Body& body)
+    {
+        const Function& function = body.function;
+        const UseLists& useLists = body.analyses.useLists();
+        Vector<ValueID, 16> worklist;
+        auto reach = [&](ValueID id) {
+            if (body.mixedValues.get(id.index()) || !typeOf(body, id).mayBeNaN())
+                return;
+            if (!body.valuesFromBytes.set(id.index()))
+                worklist.append(id);
+        };
+
+        const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+        for (size_t index : body.parametersFromBytes)
+            reach(entryParameters[index]);
+        for (BlockID block : body.analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                Body* callee = value.opcode == Opcode::CallDirect ? findBodyOf(value.function()) : nullptr;
+                if ((callee && callee->resultIsFromBytes) || readsDoubleOutOfBytesBeforeSelection(m_program, value))
+                    reach(id);
+            }
+        }
+
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            forEachCopyNarrowedFrom(body, id, reach);
+            for (const Use& use : useLists.usesOf(id)) {
+                switch (use.kind) {
+                case Use::Kind::Operand: {
+                    const Value& user = function.at(use.user);
+                    if (user.opcode == Opcode::CallDirect) {
+                        if (std::optional<uint32_t> index = user.variadicOperandIndex(use.operandIndex); index && m_program.at(user.function()).hasBody())
+                            didPass(bodyOf(user.function()), *index);
+                    } else if (nanUseBeforeSelection(m_program, user, use.operandIndex, OperatorForm::Numbers) == NaNUse::Propagates)
+                        reach(use.user);
+                    break;
+                }
+                case Use::Kind::TerminatorOperand: {
+                    TerminatorKind kind = function.at(use.block).terminator.kind;
+                    if (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall)
+                        didReturn(body);
+                    break;
+                }
+                case Use::Kind::EdgeArgument:
+                case Use::Kind::HandlerArgument:
+                    reach(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+                    break;
+                case Use::Kind::BlockSubject:
+                    break;
+                }
+            }
+        }
+    }
+
+    void didPass(Body& callee, uint32_t entryParameterIndex)
+    {
+        if (callee.hasOnlyKnownCallers && !callee.mixedParameters.get(entryParameterIndex) && !callee.parametersFromBytes.set(entryParameterIndex))
+            visitLater(callee);
+    }
+
+    void didReturn(Body& body)
+    {
+        if (!body.hasOnlyKnownCallers || body.resultIsMixed || std::exchange(body.resultIsFromBytes, true))
+            return;
+        for (FunctionID caller : m_inputs.callGraph.callersOf(body.id)) {
+            if (m_program.at(caller).hasBody())
+                visitLater(bodyOf(caller));
+        }
+    }
+
+    bool isLoopHeader(const Body& body, BlockID block) const
+    {
+        const CFG& cfg = body.analyses.cfg();
+        return std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
+            return cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block);
+        });
+    }
+
+    bool allIncomingAreFromBytes(const Body& body, ValueLocation join) const
+    {
+        return std::ranges::all_of(body.analyses.cfg().incomingEdges(join.block), [&](Edge edge) {
+            IncomingValue incoming = incomingValueOf(body.function, edge, join.index);
+            if (incoming.kind == IncomingValue::Kind::Argument)
+                return isFromBytesOrNeverNaN(&body, body.function, incoming.argument);
+            EdgeResult result = edgeResultAt(body.function, incoming.result);
+            return result.kind == EdgeResultKind::NarrowedOperand && isFromBytesOrNeverNaN(&body, body.function, result.subject);
+        });
+    }
+
+    bool allArgumentsAreFromBytes(const Body& callee, uint32_t entryParameterIndex) const
+    {
+        bool result = true;
+        for (FunctionID callerID : m_inputs.callGraph.callersOf(callee.id)) {
+            const Function& caller = m_program.at(callerID);
+            if (!caller.hasBody())
+                continue;
+            forEachDirectCall(m_program, callerID, [&](BlockID, ValueID call, FunctionID called) {
+                if (called == callee.id && caller.at(call).function() == called)
+                    result &= isFromBytesOrNeverNaN(findBodyOf(callerID), caller, caller.at(call).argumentsOperands()[entryParameterIndex]);
+            });
+        }
+        return result;
+    }
+
+    bool allReturnsAreFromBytes(const Body& body) const
+    {
+        bool result = true;
+        forEachBlockEndingWith(m_program, body.id, { TerminatorKind::Return, TerminatorKind::ReturnCall }, [&](BlockID block) {
+            const Terminator& terminator = body.function.at(block).terminator;
+            result &= isFromBytesOrNeverNaN(&body, body.function, terminator.kind == TerminatorKind::Return ? terminator.valueOperand() : terminator.callOperand());
+        });
+        return result;
+    }
+
+    bool allTailCallersReturnImpure(const Body& callee) const
+    {
+        bool result = true;
+        for (FunctionID callerID : m_inputs.callGraph.callersOf(callee.id)) {
+            const Function& caller = m_program.at(callerID);
+            if (!caller.hasBody())
+                continue;
+            forEachBlockEndingWith(m_program, callerID, { TerminatorKind::ReturnCall }, [&](BlockID block) {
+                const Value& call = caller.at(caller.at(block).terminator.callOperand());
+                if (call.opcode != Opcode::CallDirect || call.function() != callee.id)
+                    return;
+                Body* body = findBodyOf(callerID);
+                result &= body && body->resultIsImpure;
+            });
+        }
+        return result;
+    }
+
+    bool hasOnlyArithmeticUses(Body& body, ValueID parameter)
+    {
+        const Function& function = body.function;
+        const UseLists& useLists = body.analyses.useLists();
+        ScratchTypeArena types(m_program.types);
+        TypingContext typing { m_program, function, types.arena() };
+        OperatorSite site { typing, body.analyses.effectContext() };
+        BitVector isSeen;
+        Vector<ValueID, 16> worklist;
+        auto follow = [&](ValueID id) {
+            switch (defaultRepresentationOf(typeOf(body, id))) {
+            case Representation::Double:
+                if (!body.impureValues.get(id.index()))
+                    return false;
+                if (!isSeen.set(id.index()))
+                    worklist.append(id);
+                return true;
+            case Representation::Void:
+            case Representation::Boolean:
+            case Representation::Int32:
+            case Representation::Int64:
+                return true;
+            default:
+                return false;
+            }
+        };
+        follow(parameter);
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            bool isKept = true;
+            forEachCopyNarrowedFrom(body, id, [&](ValueID copy) {
+                isKept &= follow(copy);
+            });
+            if (!isKept)
+                return false;
+            for (const Use& use : useLists.usesOf(id)) {
+                if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
+                    continue;
+                switch (use.kind) {
+                case Use::Kind::Operand: {
+                    const Value& user = function.at(use.user);
+                    if (user.opcode == Opcode::CallDirect) {
+                        std::optional<uint32_t> index = user.variadicOperandIndex(use.operandIndex);
+                        if (!index || !takesImpure(user.function(), *index))
+                            return false;
+                        break;
+                    }
+                    OperatorForm form = hasOperatorForm(user.opcode) ? chooseFormOfOperator(site, user) : OperatorForm::Generic;
+                    switch (nanUseBeforeSelection(m_program, user, use.operandIndex, form)) {
+                    case NaNUse::Purifies:
+                        return false;
+                    case NaNUse::Ignores:
+                        break;
+                    case NaNUse::Propagates:
+                        if (!follow(use.user))
+                            return false;
+                        break;
+                    }
+                    break;
+                }
+                case Use::Kind::TerminatorOperand:
+                    switch (function.at(use.block).terminator.kind) {
+                    case TerminatorKind::Return:
+                        if (!body.resultIsImpure)
+                            return false;
+                        break;
+                    case TerminatorKind::Switch:
+                        break;
+                    default:
+                        return false;
+                    }
+                    break;
+                case Use::Kind::EdgeArgument:
+                case Use::Kind::HandlerArgument:
+                    if (!follow(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]))
+                        return false;
+                    break;
+                case Use::Kind::BlockSubject:
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
+    bool rejectMixedJoins()
+    {
+        bool hasRejected = false;
+        for (auto& owned : m_bodies) {
+            Body& body = *owned;
+            const UseLists& useLists = body.analyses.useLists();
+            for (size_t index : body.valuesFromBytes) {
+                ValueLocation location = useLists.locationOf(ValueID(static_cast<uint32_t>(index)));
+                if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || isLoopHeader(body, location.block) || allIncomingAreFromBytes(body, location))
+                    continue;
+                body.mixedValues.set(index);
+                hasRejected = true;
+            }
+            if (body.resultIsFromBytes && !allReturnsAreFromBytes(body)) {
+                body.resultIsMixed = true;
+                hasRejected = true;
+            }
+            for (size_t index : body.parametersFromBytes) {
+                if (allArgumentsAreFromBytes(body, index))
+                    continue;
+                body.mixedParameters.set(index);
+                hasRejected = true;
+            }
+        }
+        return hasRejected;
+    }
+
+    void propagateImpure(Body& body)
+    {
+        const Function& function = body.function;
+        const UseLists& useLists = body.analyses.useLists();
+        ScratchTypeArena types(m_program.types);
+        TypingContext typing { m_program, function, types.arena() };
+        OperatorSite site { typing, body.analyses.effectContext() };
+        Vector<ValueID, 16> worklist;
+        auto reach = [&](ValueID id) {
+            if (body.valuesFromBytes.get(id.index()) && isKeptAsDouble(body, id) && !body.impureValues.set(id.index()))
+                worklist.append(id);
+        };
+
+        const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+        for (size_t index : body.impureParameters)
+            reach(entryParameters[index]);
+        for (BlockID block : body.analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                Body* callee = value.opcode == Opcode::CallDirect ? findBodyOf(value.function()) : nullptr;
+                if ((callee && callee->resultIsImpure) || readsDoubleOutOfBytesBeforeSelection(m_program, value))
+                    reach(id);
+            }
+        }
+
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            forEachCopyNarrowedFrom(body, id, reach);
+            for (const Use& use : useLists.usesOf(id)) {
+                switch (use.kind) {
+                case Use::Kind::Operand: {
+                    const Value& user = function.at(use.user);
+                    if (user.opcode == Opcode::CallDirect) {
+                        std::optional<uint32_t> index = user.variadicOperandIndex(use.operandIndex);
+                        Body* callee = index ? findBodyOf(user.function()) : nullptr;
+                        if (callee && callee->parametersFromBytes.get(*index) && !callee->purifiedParameters.get(*index) && isPassedAsDouble(callee->id, *index) && !callee->impureParameters.set(*index))
+                            visitLater(*callee);
+                        break;
+                    }
+                    OperatorForm form = hasOperatorForm(user.opcode) ? chooseFormOfOperator(site, user) : OperatorForm::Generic;
+                    if (nanUseBeforeSelection(m_program, user, use.operandIndex, form) == NaNUse::Propagates)
+                        reach(use.user);
+                    break;
+                }
+                case Use::Kind::TerminatorOperand: {
+                    TerminatorKind kind = function.at(use.block).terminator.kind;
+                    if ((kind != TerminatorKind::Return && kind != TerminatorKind::ReturnCall) || !body.resultIsFromBytes || body.resultIsPurified || !returnsDouble(body) || std::exchange(body.resultIsImpure, true))
+                        break;
+                    for (FunctionID caller : m_inputs.callGraph.callersOf(body.id)) {
+                        if (Body* callerBody = findBodyOf(caller))
+                            visitLater(*callerBody);
+                    }
+                    break;
+                }
+                case Use::Kind::EdgeArgument:
+                case Use::Kind::HandlerArgument:
+                    reach(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+                    break;
+                case Use::Kind::BlockSubject:
+                    break;
+                }
+            }
+        }
+    }
+
+    bool rejectUnprofitable()
+    {
+        bool hasChanged = false;
+        for (auto& owned : m_bodies) {
+            Body& body = *owned;
+            if (body.resultIsImpure && !allTailCallersReturnImpure(body)) {
+                body.resultIsPurified = true;
+                hasChanged = true;
+            }
+        }
+        if (hasChanged)
+            return true;
+        for (auto& owned : m_bodies) {
+            Body& body = *owned;
+            for (size_t index : body.impureParameters) {
+                if (hasOnlyArithmeticUses(body, body.function.at(entryBlock).parameters[index]))
+                    continue;
+                body.purifiedParameters.set(index);
+                hasChanged = true;
+            }
+        }
+        return hasChanged;
+    }
+
+    const Program& m_program;
+    const OptimizationInputs& m_inputs;
+    BuildContext& m_build;
+    const CallingConventionTables& m_tables;
+    std::span<const ArgumentLocation> m_results;
+    const ScopedLambda<bool(FunctionID)>& m_isEnabledFor;
+    Vector<uint32_t> m_bodyOf;
+    Vector<std::unique_ptr<Body>> m_bodies;
+    Vector<uint32_t> m_worklist;
+};
+
+} // anonymous namespace
 
 CallingConventions chooseCallingConventions(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
@@ -485,7 +1139,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     Vector<FunctionID> editedCallers;
     uint64_t numberOfBoxedResults = 0;
     auto isEnabledFor = [&](FunctionID id) { return build.isEnabled(PassID::ChooseCallingConventions, findFunctionAsRead(&program, id)); };
-    auto locationsOf = [&](FunctionID id) { return computeArgumentLocations(program, program.at(id), tables.conventions[id.index()], tables.registers); };
+    auto locationsOf = [&](FunctionID id) { return computeArgumentLocations(program, program.at(id), tables.conventions[id.index()], tables.registers, { }); };
     auto locationOfOnlyResult = [&](FunctionID id) {
         const Function& function = program.at(id);
         RELEASE_ASSERT(function.results.size() == 1);
@@ -565,8 +1219,9 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     }
 
     auto box = [&](FunctionID id) {
-        if (std::exchange(tables.conventions[id.index()].resultIsBoxed, true))
+        if (tables.conventions[id.index()].resultIsBoxed)
             return;
+        tables.conventions[id.index()].resultIsBoxed = true;
         results[id.index()] = locationOfOnlyResult(id);
         ++numberOfBoxedResults;
     };
@@ -937,6 +1592,21 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     build.statistics().count(StatisticID::ClosuresNeverCreated, numberOfClosuresNeverCreated);
     build.statistics().countChanges(PassID::ChooseCallingConventions, editedCallers.size());
     times.didFinish("chooseSecondaryEntries"_s);
+
+    Vector<uint32_t> functionsReadingBytes = findIndicesInParallel(loops, count, [&](unsigned index) {
+        FunctionID id(index);
+        constexpr OpcodeSet reads { Opcode::GetTypedArrayElement, Opcode::CallBuiltin };
+        return recordFactsOf(program, id).hasBody && anyValueListedOrNot(program, id, reads, [&](ValueID value, const Value& read) {
+            return readsDoubleOutOfBytesBeforeSelection(program, read) && program.typeOf(program.functions[index], value).mayBeNaN();
+        });
+    });
+    if (!functionsReadingBytes.isEmpty()) {
+        ScopedLambda<bool(FunctionID)> isEnabled(isEnabledFor);
+        ImpureDoubleConventions(program, inputs, build, tables, results.span(), isEnabled).choose(functionsReadingBytes.span(), tables);
+    }
+    times.didFinish("chooseImpureDoubles"_s);
+    tables.parametersLetGo = findParametersLetGo(program, inputs.callGraph, loops);
+    times.didFinish("findParametersLetGo"_s);
     return CallingConventions(WTF::move(tables));
 }
 

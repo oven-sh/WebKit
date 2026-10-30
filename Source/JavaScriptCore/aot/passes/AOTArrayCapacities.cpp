@@ -164,6 +164,8 @@ struct CapacityPlan {
     Vector<ValueID, 2> repeatedLengthReads { };
     // Those whose test for null and undefined is repeated with them.
     Vector<ValueID, 2> repeatedChecks { };
+    // `list[k] = x` at the counter of the loop that the capacity is counted from: each puts its element behind the last one.
+    Vector<ValueID, 2> storesThatFill { };
 };
 
 // What an array still needs when its vector is full: the iterations a counted loop has left, times what each of them appends.
@@ -307,6 +309,10 @@ struct CapacityPlanner {
         for (const AppendSite& site : sites) {
             if ((frequencies.classOf(point.block) < frequencies.classOf(site.block)).predicted() || !mayFollowLiteral(site))
                 continue;
+            // An unlikely path that leaves a loop for its copy hands this list to the appends of the copy. On the likely paths those append to the list that the copy makes itself.
+            ValueID appendedOnLikelyPaths = analyses.identityOf(valueOnLikelyEdges(analyses.identityOf(appendedArrayOf(function.at(site.value)))).predicted());
+            if (appendedOnLikelyPaths != analyses.identityOf(id) && function.at(appendedOnLikelyPaths).opcode == Opcode::NewArray)
+                continue;
             const NaturalLoop* loop = loops.innerMostLoopOf(site.block);
             bool isInOtherCycle = !loop && analyses.isInCycle(site.block);
             if (!isInOtherCycle && loop == loopOfLiteral) {
@@ -331,6 +337,10 @@ struct CapacityPlanner {
         if (!loopSites.isEmpty()) {
             if (!tryAddLoopSites(result, { id, point }, loopSites))
                 return std::nullopt;
+            for (const AppendSite& site : loopSites) {
+                if (site.kind == AppendKind::StoreAtIndex && function.at(site.value).opcode == Opcode::PutArrayElement)
+                    result.storesThatFill.append(site.value);
+            }
         } else if (!result.hasRunTimeTerm() && result.constant + numberOfConditionalElements - numberOfElements <= 1)
             result.constant += numberOfConditionalElements;
         if (!result.hasRunTimeTerm() && (result.constant <= numberOfElements || context.exceeds(LimitID::MaxPlannedArrayCapacity, static_cast<uint64_t>(result.constant), id)))
@@ -954,6 +964,8 @@ static unsigned applyCapacityPlans(FunctionPassContext& context, Vector<Capacity
         if (!context.program.typeOf(function, sum).isInteger())
             continue;
         function.edit(plan.literal, ValueEdit::Definition).setCapacityOperand(sum);
+        for (ValueID store : plan.storesThatFill)
+            function.edit(store, ValueEdit::Definition).setIsExpectedToAppend(true);
         ++numberOfPlannedLiterals;
     }
     builder.applyInsertions();
@@ -1734,7 +1746,9 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     uint64_t bytes = 0;
     for (BlockID block : found.region)
         bytes += estimatedCodeBytes(context.program, function, function.at(block));
-    if (bytes > context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8 || RegionCloner::checkCanDuplicate(analyses, found.region.span(), found.region.span().first(1)) != CloneCheck::CanClone)
+    // The reads stand in the program twice, for a kind of storage that is not expected.
+    AOT_THRESHOLD(uint64_t, mostBytesOfReadsCopied, 512);
+    if (bytes > mostBytesOfReadsCopied || RegionCloner::checkCanDuplicate(analyses, found.region.span(), found.region.span().first(1)) != CloneCheck::CanClone)
         return { };
 
     builder.setOrigin(test.origin());
@@ -2196,6 +2210,76 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context)
     return outcome;
 }
 
+// `[...set]`: the empty literal comes to stand right in front of the append, behind what makes the set, so that the list is made with the members in it.
+// Nobody can tell when an empty list that nobody has was made.
+static PassOutcome bringLiteralsToAppendsOfMembers(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::AppendMembers))
+        return PassOutcome::Unchanged;
+    struct Moved {
+        BlockID block;
+        ValueID literal;
+        ValueID cast;
+        ValueID append;
+    };
+    Vector<Moved, 2> found;
+    const UseLists& useLists = analyses.useLists();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID append : function.at(block).values) {
+            if (function.at(append).opcode != Opcode::AppendMembers)
+                continue;
+            ValueID list = function.at(append).arrayOperand();
+            ValueID cast = function.at(list).opcode == Opcode::AssumeType ? list : ValueID();
+            ValueID id = cast ? function.at(cast).valueOperand() : list;
+            const Value& literal = function.at(id);
+            if (literal.opcode != Opcode::NewArray || literal.capacityOperand() || !literal.elementsOperands().empty() || !literal.holes().empty() || literal.storage() != AllocationStorage::Heap)
+                continue;
+            ValueLocation appendAt = useLists.locationOf(append);
+            ValueLocation literalAt = useLists.locationOf(id);
+            if (literalAt.block != block || (cast && useLists.locationOf(cast).block != block))
+                continue;
+            // Whoever reads the list ahead of the append needs it there. The end of a block stands behind all its values, and its handler is handed only what is there at its head.
+            auto isReadBehindAppendOnly = [&](ValueID value, ValueID itsCast) {
+                return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
+                    if (use.kind != Use::Kind::Operand)
+                        return true;
+                    if (use.user == itsCast || use.user == append)
+                        return true;
+                    ValueLocation location = useLists.locationOf(use.user);
+                    return location.block != block || location.index > appendAt.index;
+                });
+            };
+            if (!isReadBehindAppendOnly(id, cast) || (cast && !isReadBehindAppendOnly(cast, ValueID())))
+                continue;
+            if (literalAt.index + (cast ? 2 : 1) == appendAt.index)
+                continue;
+            found.append({ block, id, cast, append });
+        }
+    }
+    if (found.isEmpty())
+        return PassOutcome::Unchanged;
+    for (const Moved& moved : found) {
+        BlockValues values = std::exchange(function.edit(moved.block, BlockEdit::Values).values, { });
+        BlockValues inNewOrder;
+        inNewOrder.reserveInitialCapacity(values.size());
+        for (ValueID id : values) {
+            if (id == moved.literal || id == moved.cast)
+                continue;
+            if (id == moved.append) {
+                inNewOrder.append(moved.literal);
+                if (moved.cast)
+                    inNewOrder.append(moved.cast);
+            }
+            inNewOrder.append(id);
+        }
+        function.edit(moved.block, BlockEdit::Values).values = WTF::move(inNewOrder);
+    }
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 // A list that may read undefined never holds doubles or integers alone, and growing into another storage is what such a list would pay for every time it is made.
 static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& context)
 {
@@ -2228,6 +2312,8 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     PassOutcome copied = copyListsInOnePiece(context);
+    if (bringLiteralsToAppendsOfMembers(context) == PassOutcome::Changed)
+        copied = PassOutcome::Changed;
     makeListsThatMayReadUndefinedForAnyValue(context);
     unsigned literalsWithAppends = makeElementsOfAppendsBehindLiterals(context);
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
@@ -2251,6 +2337,9 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     if (constructed)
         context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
     context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
+    // The length that stands in place of an append has another type than the call had, and so has what uses it.
+    if (!literalsWithAppends)
+        context.passesThatCanWait.add(PassID::RetypeValues);
     return PassOutcome::Changed;
 }
 

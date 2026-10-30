@@ -101,6 +101,7 @@ struct ElementRegisters {
 
 StubSignature signatureOfGetByVal(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::A1) }); }
 StubSignature signatureOfGetByValAtIndex(StubKey key) { return signatureOfGetByVal(key); }
+StubSignature signatureOfGetByValKeepingRegisters(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValExpecting(StubKey key) { return signatureOfGetByVal(key); }
 StubSignature signatureOfGetByValAtIndexExpecting(StubKey key) { return signatureOfGetByVal(key); }
 
@@ -404,7 +405,7 @@ void loadKeptTextOfIndex(StubAssembler& jit, GPRReg key, GPRReg storage, GPRReg 
     hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
 }
 
-void generateGetByVal(StubAssembler& jit)
+static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCaller)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
@@ -415,7 +416,8 @@ void generateGetByVal(StubAssembler& jit)
     JumpList absent;
 
     JumpList isNeitherStringNorCompiledObject;
-    emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
+    if (registersOfCaller == RegistersOfCaller::AreLost)
+        emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
@@ -467,8 +469,8 @@ void generateGetByVal(StubAssembler& jit)
     notNumber.link(&jit);
     slow.append(jit.branchIfNotCell(base));
     slow.append(jit.branchIfNotCell(key));
-    checkStubOperands(getByValCachedCells(), { base, key });
-    jit.jumpToStub(getByValCachedCells());
+    checkStubOperands(getByValCachedCells(registersOfCaller), { base, key });
+    jit.jumpToStub(getByValCachedCells(registersOfCaller));
 
     slow.link(&jit);
     if (jit.options().callsTrapsOfProxies.predicted()) {
@@ -483,7 +485,21 @@ void generateGetByVal(StubAssembler& jit)
         jit.jumpToStub(throughProxy(TrapOfProxy::Get));
         operationReads.link(&jit);
     }
-    callBinaryOperation(jit, Entry::operationAOTGetByVal);
+    if (registersOfCaller == RegistersOfCaller::AreLost) {
+        callBinaryOperation(jit, Entry::operationAOTGetByVal);
+        return;
+    }
+    jit.callOperationAndReturn(Entry::operationAOTGetByVal, { .saves = OperationCall::Saves::CallerSavedGPRsAndFewFPRs, .secondArgumentIn = base, .thirdArgumentIn = key });
+}
+
+void generateGetByVal(StubAssembler& jit)
+{
+    generateGetByVal(jit, RegistersOfCaller::AreLost);
+}
+
+void generateGetByValKeepingRegisters(StubAssembler& jit)
+{
+    generateGetByVal(jit, RegistersOfCaller::AreKept);
 }
 
 static ECMAMode ecmaModeOf(ElementStoreMode mode)

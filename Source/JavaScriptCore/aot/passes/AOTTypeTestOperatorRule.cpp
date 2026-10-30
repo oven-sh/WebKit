@@ -42,6 +42,8 @@ struct BoundedCounter {
     ValueID parameter;
     ValueID comparison;
     Edge stayingEdge;
+    // Every turn passes the comparison, so what the loop hands on is bounded wherever the step stands: `++i < n`, `i++ < n`, `do .. while (++i < n)`.
+    std::optional<unsigned> loopTestedInEveryTurn { };
 };
 
 // In the order of their parameters.
@@ -145,11 +147,11 @@ static bool isNumberByTypeOrExpectedType(TestSiteReporter& reporter, ValueID ope
     return expected && expected->isNumber();
 }
 
-// An expected type that names no primitive, or leaves out no kind of them, says nothing to an operator. Such an operand is taken for a number where the operand beside it is one.
-static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, const Value& user, ValueID operand, ValueID other)
+// An expected type that names no primitive, or leaves out no kind of them, says nothing to an operator. Such an operand is taken for a number where the operand beside it is one, or where what the operator makes is taken for one.
+static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, const Value& user, ValueID operand, ValueID other, NOESCAPE const Invocable<bool()> auto& makesNumber)
 {
     const Type& type = reporter.typeOf(operand);
-    if (!(type.primitives & Primitive::Number) || type.isNumber() || !isNumberByTypeOrExpectedType(reporter, other))
+    if (!(type.primitives & Primitive::Number) || type.isNumber() || (!isNumberByTypeOrExpectedType(reporter, other) && !makesNumber()))
         return { };
     constexpr uint16_t noPrimitives = 0;
     std::optional<Type> expected = reporter.expectedPartOf(operand, noPrimitives);
@@ -217,6 +219,7 @@ static std::optional<OperatorTests> findFewestTests(TestSiteReporter& reporter, 
 }
 
 static constexpr OpcodeSet operationsOnElementsOfViews { Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView };
+static constexpr OpcodeSet operationsOnElementsOfArrays { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsElementPresent, Opcode::IsInBounds };
 static constexpr OpcodeSet operationsOnElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 static constexpr uint32_t collectionOperandIndex = 0;
 static constexpr uint32_t positionOperandIndex = 1;
@@ -235,13 +238,45 @@ static Expected<bool> findsElementOfView(TestSiteReporter& reporter, const Use& 
     return typedArrayTypeOf(BuiltinTable::singleton(), collection.withoutPrimitives(Primitive::UndefinedOrNull)) != NotTypedArray;
 }
 
-// Whether typed code in the loop does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. An array counts its elements in 32 bits, so it wants an int32 too. Behind the loop the value is made once, and the test would be made at every turn.
-static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& loop, ValueID counter)
+static Expected<bool> findsElementOfArray(TestSiteReporter& reporter, const Use& use)
 {
+    const Value& user = reporter.function().at(use.user);
+    if (use.operandIndex != positionOperandIndex)
+        return false;
+    if (operationsOnElementsOfArrays.contains(user.opcode))
+        return true;
+    if (!operationsOnElements.contains(user.opcode))
+        return false;
+    std::optional<ElementAccessPlan> plan = planElementAccessOf(reporter.program(), reporter.function(), user);
+    return plan && plan->form == ElementAccessForm::Array;
+}
+
+// `i < n; i++`.
+static bool stepsOnlyBehindTest(TestSiteReporter& reporter, const InductionVariable& variable, const InductionTest& test)
+{
+    return test.tested == TestedValue::BeforeStep && std::ranges::all_of(variable.steppedValues, [&](ValueID stepped) {
+        return dominatesAfterSplit(reporter.analyses(), test.stayingEdge, reporter.analyses().useLists().blockOf(stepped));
+    });
+}
+
+// Whether typed code in the loop does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. Behind the loop the value is made once, and the test would be made at every turn.
+// An array counts its elements in 32 bits. `i < values.length; i++` asks its counter for an int32 once a turn, behind everything else, which takes no time. Where the step stands in front of the test or the test looks at what was counted up, the counter is asked at the head of the turn and again where it finds the element, and the back end takes the loop for one without a bound: there an array gets an integer, which it compares with its length as it compares an int32.
+static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& loop, const InductionVariable& variable)
+{
+    bool mayFindElementsOfArrays = std::ranges::any_of(variable.tests, [&](const InductionTest& test) {
+        return isBoundingRelation(test.relation, variable.direction) && !stepsOnlyBehindTest(reporter, variable, test);
+    });
     const Function& function = reporter.function();
     const UseLists& useLists = reporter.analyses().useLists();
     const NaturalLoops& loops = reporter.analyses().naturalLoops();
-    Vector<ValueID, maxNamesOfCounter> names { counter };
+    // `while (++i < n) use(i)`: the body sees what the turn has counted up.
+    Vector<ValueID, maxNamesOfCounter> names { variable.parameter };
+    for (ValueID stepped : variable.steppedValues) {
+        if (names.size() == maxNamesOfCounter)
+            return false;
+        if (!names.contains(stepped))
+            names.append(stepped);
+    }
     auto follow = [&](ValueID name) {
         if (names.contains(name))
             return true;
@@ -257,12 +292,16 @@ static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const Natur
             switch (use.kind) {
             case Use::Kind::Operand: {
                 Opcode opcode = function.at(use.user).opcode;
-                if (isCastWithoutTest(opcode)) {
+                // `i++` converts what it counts up, and a number is converted to itself.
+                bool isConversionOfNumber = (opcode == Opcode::ToNumeric || opcode == Opcode::ToNumber) && reporter.typeOf(names[index]).isNumber();
+                if (isCastWithoutTest(opcode) || isConversionOfNumber) {
                     if (!follow(use.user))
                         return false;
                     continue;
                 }
                 if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use).predicted())
+                    continue;
+                if (mayFindElementsOfArrays && findsElementOfArray(reporter, use).predicted())
                     continue;
                 if (opcode == Opcode::Add && reporter.typeOf(use.user).isNumber())
                     continue;
@@ -297,10 +336,16 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, KnownOfCo
                 continue;
             std::optional<bool> isEligible;
             for (const InductionTest& test : variable.tests) {
-                if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
+                if (!isBoundingRelation(test.relation, variable.direction))
+                    continue;
+                // ConvertCountersToIntegers passes on what such a comparison says on the edge that is taken.
+                std::optional<unsigned> loopTestedInEveryTurn;
+                if (test.exits != LoopExits::Unknown && !test.stayingEdge.targetIndex)
+                    loopTestedInEveryTurn = loop.loopIndex;
+                if (test.tested != TestedValue::BeforeStep && !loopTestedInEveryTurn)
                     continue;
                 if (known.isComparisonWithTestedBound.get(test.comparison.index())) {
-                    counters.append({ variable.parameter, test.comparison, test.stayingEdge });
+                    counters.append({ variable.parameter, test.comparison, test.stayingEdge, loopTestedInEveryTurn });
                     continue;
                 }
                 const Type& bound = reporter.typeOf(test.bound);
@@ -309,16 +354,56 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, KnownOfCo
                 if (!isEligible) {
                     uint8_t& answer = known.isOnlyReckonedWith[variable.parameter.index()];
                     if (!answer)
-                        answer = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter).predicted() ? 1 : 2;
+                        answer = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable).predicted() ? 1 : 2;
                     isEligible = answer == 1;
                 }
                 if (*isEligible)
-                    counters.append({ variable.parameter, test.comparison, test.stayingEdge });
+                    counters.append({ variable.parameter, test.comparison, test.stayingEdge, loopTestedInEveryTurn });
             }
         }
     }
     AOT::stableSort(counters, { }, &BoundedCounter::parameter);
     return counters;
+}
+
+// The block parameter that a number is, or was before it was converted to the number it is and constants were added to it: `i - 1` behind `i++ < n`.
+static ValueID findParameterReckonedFrom(TestSiteReporter& reporter, ValueID id)
+{
+    constexpr unsigned mostSteps = 4;
+    const Function& function = reporter.function();
+    for (unsigned step = 0;; ++step) {
+        id = reporter.analyses().identityOf(id);
+        if (reporter.analyses().useLists().locationOf(id).placement == ValuePlacement::Parameter || step == mostSteps)
+            return id;
+        const Value& value = function.at(id);
+        auto isConstant = [&](uint32_t operandIndex) {
+            return !!integerConstantThroughCasts(reporter.program(), function, value.operand(operandIndex));
+        };
+        uint32_t reckonedFrom = 0;
+        switch (value.opcode) {
+        case Opcode::ToNumber:
+        case Opcode::ToNumeric:
+        case Opcode::Increment:
+        case Opcode::Decrement:
+            break;
+        case Opcode::Add:
+            if (isConstant(rightOperand))
+                break;
+            if (!isConstant(leftOperand))
+                return id;
+            reckonedFrom = rightOperand;
+            break;
+        case Opcode::Sub:
+            if (!isConstant(rightOperand))
+                return id;
+            break;
+        default:
+            return id;
+        }
+        if (!reporter.typeOf(value.operand(reckonedFrom)).isNumber())
+            return id;
+        id = value.operand(reckonedFrom);
+    }
 }
 
 // An operator takes an integer as it is, so none of these needs a test. One for int32 that is placed here stays in the loop for good: a view may be longer than that, and nothing proves that this one is not.
@@ -329,13 +414,16 @@ static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& val
         return false;
     if (!boundedCounters)
         boundedCounters = findBoundedCounters(reporter, known);
-    // Every tested operand has to be the counter.
+    // Every tested operand has to be the counter, or a constant away from it.
     std::span<const BoundedCounter> counters = boundedCounters->span();
     for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
         if (isTested[operandIndex])
-            counters = std::span(std::ranges::equal_range(counters, reporter.analyses().identityOf(value.operand(operandIndex)), { }, &BoundedCounter::parameter));
+            counters = std::span(std::ranges::equal_range(counters, findParameterReckonedFrom(reporter, value.operand(operandIndex)), { }, &BoundedCounter::parameter));
     }
+    const NaturalLoops& loops = reporter.analyses().naturalLoops();
     return std::ranges::any_of(counters, [&](const BoundedCounter& counter) {
+        if (counter.loopTestedInEveryTurn && loops.belongsTo(reporter.point().block, loops.loop(*counter.loopTestedInEveryTurn)))
+            return true;
         return reporter.use() == counter.comparison || dominatesAfterSplit(reporter.analyses(), counter.stayingEdge, reporter.point().block);
     });
 }
@@ -346,13 +434,17 @@ static bool isExpectedToBeIntegerOfUnknownSize(TestSiteReporter& reporter, Value
     return expected && expected->isInteger() && expected->integers == Range::full();
 }
 
+static bool isAccessUnderTests(TestSiteReporter& reporter, ValueID operand)
+{
+    ValueID identity = reporter.analyses().identityOf(operand);
+    return accessClassOf(reporter.function().at(identity).opcode) != AccessClass::None && reporter.isClaimed(identity);
+}
+
 // What a field, an array or a variable of numbers holds arrives as a number. An access for which a rule in front of this one has just asked for tests delivers behind them what is expected of it.
 static bool arrivesAsValueOfAnyType(TestSiteReporter& reporter, ValueID operand)
 {
-    ValueID identity = reporter.analyses().identityOf(operand);
-    const Value& definition = reporter.function().at(identity);
-    bool isAccessUnderTests = accessClassOf(definition.opcode) != AccessClass::None && reporter.isClaimed(identity);
-    return defaultRepresentationOf(reporter.types().at(isAccessUnderTests ? definition.expectedOrType().predicted() : definition.type)) == Representation::JSValue;
+    const Value& definition = reporter.function().at(reporter.analyses().identityOf(operand));
+    return defaultRepresentationOf(reporter.types().at(isAccessUnderTests(reporter, operand) ? definition.expectedOrType().predicted() : definition.type)) == Representation::JSValue;
 }
 
 static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
@@ -413,6 +505,56 @@ static TypeID narrowTestOfIntegerOfUnknownSize(TestSiteReporter& reporter, const
     return operatorsThatTakeNullish.contains(user.opcode) ? admitExpectedNullish(reporter, operand, TypeTable::int32) : TypeTable::int32;
 }
 
+static constexpr OpcodeSet operatorsThatMakeNumbersOfNumbers { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow };
+
+// A test that the compiler placed: the side on which it fails is not a likely one. `typeof x === "number"` in the program reckons with both.
+static bool isExpectedToPass(TestSiteReporter& reporter, ValueID test)
+{
+    const Function& function = reporter.function();
+    return std::ranges::any_of(reporter.analyses().useLists().usesOf(test), [&](const Use& use) {
+        if (use.kind != Use::Kind::TerminatorOperand || !function.at(use.block).terminator.isConditionalBranch())
+            return false;
+        return function.at(function.at(use.block).terminator.notTaken().block).frequency.predicted() != BlockFrequency::Normal;
+    });
+}
+
+// `sum += shape.width + shape.height`, with shapes of which nothing is known. What likely code adds to a number, compares with one or tests for one is taken for a number, and it is one only where both operands are.
+// Unlikely code is where such a test has failed already.
+static bool isTakenForNumber(TestSiteReporter& reporter, ValueID result)
+{
+    const Function& function = reporter.function();
+    BlockID block = reporter.analyses().useLists().blockOf(result);
+    if (!block || function.at(block).frequency.predicted() != BlockFrequency::Normal || !(reporter.typeOf(result).primitives & Primitive::Number))
+        return false;
+    Vector<ValueID, maxNamesOfCounter> names { result };
+    for (size_t index = 0; index < names.size(); ++index) {
+        std::optional<Type> expected = reporter.expectedPartOf(names[index]);
+        if (expected && expected->isNumber())
+            return true;
+        for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
+            if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
+                continue;
+            ValueID next;
+            if (use.kind == Use::Kind::EdgeArgument) {
+                const Block& target = function.at(targetOf(function, use.edge()).block);
+                if (target.frequency.predicted() == BlockFrequency::Normal && use.operandIndex < target.parameters.size())
+                    next = target.parameters[use.operandIndex];
+            } else if (use.kind == Use::Kind::Operand) {
+                const Value& user = function.at(use.user);
+                if (user.opcode == Opcode::TypeTest && reporter.types().at(user.testedType()).isNumber() && isExpectedToPass(reporter, use.user))
+                    return true;
+                if (hasOperatorForm(user.opcode) && user.numberOfOperands() == 2 && isNumberByTypeOrExpectedType(reporter, user.operand(1 - use.operandIndex)))
+                    return true;
+                if (isCastWithoutTest(user.opcode))
+                    next = use.user;
+            }
+            if (next && !names.contains(next) && names.size() < maxNamesOfCounter)
+                names.append(next);
+        }
+    }
+    return false;
+}
+
 static TestedTypePerOperand testedTypesOfOperands(TestSiteReporter& reporter, const OperatorSite& site, ValueID id)
 {
     const Value& value = reporter.function().at(id);
@@ -421,10 +563,19 @@ static TestedTypePerOperand testedTypesOfOperands(TestSiteReporter& reporter, co
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
         tested[operandIndex] = narrowTestOfIntegerOfUnknownSize(reporter, site, id, operandIndex, testedTypeFor(reporter, site, value, value.operand(operandIndex)));
     if (numberOfOperands == 2) {
+        std::optional<bool> isTaken;
+        // What a read delivers behind the tests that it has just got shows in the next round.
+        auto makesNumber = [&] {
+            if (!isTaken) {
+                isTaken = operatorsThatMakeNumbersOfNumbers.contains(value.opcode) && !isAccessUnderTests(reporter, value.operand(leftOperand))
+                    && !isAccessUnderTests(reporter, value.operand(rightOperand)) && isTakenForNumber(reporter, id);
+            }
+            return *isTaken;
+        };
         for (uint32_t operandIndex : { leftOperand, rightOperand }) {
             if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)
                 continue;
-            if (TypeID number = testedTypeBesideNumber(reporter, value, value.operand(operandIndex), value.operand(1 - operandIndex)))
+            if (TypeID number = testedTypeBesideNumber(reporter, value, value.operand(operandIndex), value.operand(1 - operandIndex), makesNumber))
                 tested[operandIndex] = number;
         }
     }
@@ -593,6 +744,45 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
     return std::nullopt;
 }
 
+// `while (i--)`: a counter that goes down by one until it is zero starts at zero or above, or the loop does not end. Asked for that, it is never negative, and then that it is not zero says that it is above zero: a bound like any other, for ConvertCountersToIntegers and for the back end.
+static bool countsDownUntilZero(TestSiteReporter& reporter, const Value& conversion)
+{
+    if (conversion.opcode != Opcode::ToNumeric && conversion.opcode != Opcode::ToNumber)
+        return false;
+    const Function& function = reporter.function();
+    FunctionAnalyses& analyses = reporter.analyses();
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const NaturalLoop* loop = loops.innerMostLoopOf(reporter.point().block);
+    if (!loop)
+        return false;
+    ValueLocation counter = analyses.useLists().locationOf(analyses.identityOf(conversion.operand(0)));
+    if (counter.placement != ValuePlacement::Parameter || counter.block != loop->header())
+        return false;
+
+    ValueID number = reporter.use();
+    bool everyTurnStepsDownByOne = std::ranges::all_of(analyses.cfg().incomingEdges(loop->header()), [&](Edge edge) {
+        if (!loops.belongsTo(edge.from, *loop))
+            return true;
+        ValueID handedOn = valuePassedOn(function, edge, counter.index);
+        if (!handedOn)
+            return false;
+        const Value& step = function.at(analyses.identityOf(handedOn));
+        return step.opcode == Opcode::Decrement && analyses.identityOf(step.operand(0)) == number;
+    });
+    if (!everyTurnStepsDownByOne)
+        return false;
+    return std::ranges::any_of(analyses.useLists().usesOf(number), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ToBoolean)
+            return false;
+        return std::ranges::any_of(analyses.useLists().usesOf(use.user), [&](const Use& test) {
+            if (test.kind != Use::Kind::TerminatorOperand || !function.at(test.block).terminator.isConditionalBranch())
+                return false;
+            const Terminator& branch = function.at(test.block).terminator;
+            return loops.belongsTo(test.block, *loop) && loops.belongsTo(branch.taken().block, *loop) && !loops.belongsTo(branch.notTaken().block, *loop);
+        });
+    });
+}
+
 // The one rule behind this one looks at tests of a type, so a site that is left out here is claimed from nobody.
 static_assert(!hasOperatorForm(Opcode::TypeTest));
 
@@ -620,6 +810,11 @@ void reportOperatorTests(TestSiteReporter& reporter)
         TestedTypePerOperand tested = testedTypesOfOperands(reporter, site, reporter.use());
         if (!tested[leftOperand] && !tested[rightOperand])
             return;
+        if (tested[leftOperand] == TypeTable::int32 && countsDownUntilZero(reporter, value)) {
+            Range zeroOrAbove = Range::int32();
+            zeroOrAbove.minimum = 0;
+            tested[leftOperand] = reporter.types().intern(Type::integer(zeroOrAbove));
+        }
 
         std::optional<OperatorTests> found = findFewestTests(reporter, site, value, tested);
         if (!found)

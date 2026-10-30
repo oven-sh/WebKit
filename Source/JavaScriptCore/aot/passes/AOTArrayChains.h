@@ -136,9 +136,11 @@ struct ArrayChain {
 };
 
 // The body of its callee is about to take the place of a call that is taken alone, so no longer chain will come of it.
-Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr);
+Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr, BlockID onlyBlock = { });
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&);
+// Tests prove what the source and the callbacks are. PlaceTypeTests asks before it has placed them.
+enum class ChainOperandProofs : uint8_t { Required, MayStillCome };
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&, ChainOperandProofs = ChainOperandProofs::Required);
 FunctionID findChainTraversal(const Program&);
 
 static_assert(ChainShape::decode(ChainShape { { ChainLinkKind::Filter, ChainLinkKind::Map, ChainLinkKind::None }, ChainEndKind::Reduce, true }.encode()).numberOfLinks() == 2);

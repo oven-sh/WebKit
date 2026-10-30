@@ -144,6 +144,12 @@ Cleanups runValidation(Procedure& procedure, PipelineState&)
     return { };
 }
 
+Cleanups runValidationAfterPhases(Procedure& procedure, PipelineState&)
+{
+    validateAfterPhase(procedure);
+    return { };
+}
+
 Cleanups runNothing(Procedure&, PipelineState&)
 {
     return { };
@@ -204,7 +210,7 @@ static constexpr Step steps[] = {
         runClientPhases<ClientPhase::Point::BeforeOptimization> },
     { "validate"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::BeforeOptimization) && shouldValidateIR(procedure); },
-        runValidation },
+        runValidationAfterPhases },
     { "checkVariablesAreSet"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.checksVariablesAreSet; },
         runPass<checkVariablesAreSet> },
@@ -342,7 +348,7 @@ static constexpr Step steps[] = {
         runClientPhases<ClientPhase::Point::AfterOptimization> },
     { "validate"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::AfterOptimization) && shouldValidateIR(procedure); },
-        runValidation },
+        runValidationAfterPhases },
     { "lowerMacrosAfterOptimizations"_s, always, runPass<lowerMacrosAfterOptimizations> },
     { "lowerRelocatableValues"_s, always, runPass<lowerRelocatableValues> },
     { "materializePinnedConstants"_s,

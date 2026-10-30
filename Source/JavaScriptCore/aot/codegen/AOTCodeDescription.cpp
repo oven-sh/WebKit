@@ -196,6 +196,8 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, Funct
     const Function& owner = program.at(shown);
     if (isDefaultConstructor(program, owner))
         return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
+    if (owner.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
+        return program.lineColumnFor(owner.module, owner.position);
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
@@ -258,6 +260,13 @@ static void describeConstructionStart(const Program& program, const ShownFunctio
     if (!construction || (construction->isWrittenAsCall && !isConstructOf(site.kind)))
         return;
     LineColumn lineColumn = program.lineColumnFor(module, construction->start);
+    if (construction->isShownAtStart) {
+        position.constructionStartLine = std::exchange(position.line, lineColumn.line);
+        position.constructionStartColumn = std::exchange(position.column, lineColumn.column);
+        position.sourceOffset = construction->start;
+        position.startIsWhereWritten = true;
+        return;
+    }
     position.constructionStartLine = lineColumn.line;
     position.constructionStartColumn = lineColumn.column;
     position.startIsForCallers = construction->isForCallers;

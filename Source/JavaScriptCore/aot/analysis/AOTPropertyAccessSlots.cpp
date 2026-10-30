@@ -386,6 +386,34 @@ std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessConte
     return creation;
 }
 
+std::optional<LazyFieldCreation> planFieldCreationBelowInheritedValue(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+{
+    LayoutList layoutsWithEmptySlots;
+    bool inheritsValue = false;
+    for (LayoutID layout : receivers) {
+        FieldArmState state = computeStateOfFieldArm(context.program, singleElementSpan(layout), key, false);
+        if (!state.form.isEmpty() || state.hasImmutableMember || state.hasDeferredMember)
+            return std::nullopt;
+        if (state.isAlwaysFilled)
+            continue;
+        layoutsWithEmptySlots.add(layout);
+        inheritsValue |= !state.isAbsentOnPrototypes && findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, Access::Read, false }).kind != MemberKind::Absent;
+    }
+    if (!inheritsValue)
+        return std::nullopt;
+    // A store passes a value that may be written, and nothing else.
+    std::optional<TestsOfEmptySlot> inherited = computeTestsThatNothingIsInherited(context, layoutsWithEmptySlots.span(), key, Access::Store);
+    if (!inherited)
+        return std::nullopt;
+    FieldArmState state = computeStateOfFieldArm(context.program, receivers, key, false);
+    LazyFieldCreation creation { creatingStoreFor(state), inherited->proofs, WTF::move(inherited->conditions) };
+    if (!state.cannotMoveOut)
+        creation.proofs.add(Proof::NoFieldOutsideSlot);
+    if (!state.receivers.cannot(ObjectMutation::ChangeIntegrity))
+        creation.proofs.add(Proof::NotFrozen);
+    return creation;
+}
+
 static void planFieldRead(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)
 {
     const Program& program = context.program;

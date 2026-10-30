@@ -187,6 +187,21 @@ static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet con
         && !holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all()));
 }
 
+static ClimbingSet denseArraysAmong(ValueFlowRuleContext& context, ClimbingSet arrays)
+{
+    ClimbingSet literals = context.restrict(arrays, context.universe().denseArrayLiterals());
+    if (!holdsSomething(context, literals))
+        return literals;
+    for (ValueFlowNodeID changed : { context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles), ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() })
+        literals = context.membersMissingFrom(changed, literals);
+    return context.restrict(literals, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.markedAmong(literals, OptionSet<ObjectMutation>::all()))));
+}
+
+static ClimbingSet withoutDenseArrays(ValueFlowRuleContext& context, ClimbingSet arrayLikes)
+{
+    return context.restrict(arrayLikes, ValueSets::complement(context.withMembersOf(ValueSets::nothing, denseArraysAmong(context, arrayLikes))));
+}
+
 static void takeValues(ValueFlowRuleContext& context, ClimbingSet containers, BuiltinClassID iteratorClass, const StepTarget& target, std::optional<uint32_t> indexInPattern = std::nullopt)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -196,7 +211,13 @@ static void takeValues(ValueFlowRuleContext& context, ClimbingSet containers, Bu
             return;
         }
         ClimbingSet arrayLikes = context.restrict(containers, ValueSets::complement(universe.strings()));
-        target.take(context.lookup(arrayLikes, elementsName));
+        ClimbingSet denseArrays = denseArraysAmong(context, arrayLikes);
+        if (holdsSomething(context, denseArrays)) {
+            target.take(context.readWhatWasWritten(denseArrays, elementsName));
+            arrayLikes = withoutDenseArrays(context, arrayLikes);
+        }
+        if (!holdsSomething(context, denseArrays) || holdsSomething(context, arrayLikes))
+            target.take(context.lookup(arrayLikes, elementsName));
         if (context.meet(containers, universe.strings()))
             target.take(kinds(context, { PrimitiveSet::String }));
     } else
@@ -313,7 +334,7 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
                 return;
             ClimbingSet stepped = context.restrict(containers, iteration->containers);
             takeContents(context, stepped, *iteration, step.pair, target, step.indexInPattern);
-            bool mayReadHole = step.readsHolesAsUndefined && iteration->iteratorClass == BuiltinClasses::ArrayIterator && iteration->kind == IterationKind::Values && holdsSomething(context, stepped);
+            bool mayReadHole = step.readsHolesAsUndefined && iteration->iteratorClass == BuiltinClasses::ArrayIterator && iteration->kind == IterationKind::Values && holdsSomething(context, withoutDenseArrays(context, stepped));
             if (step.takesReturnedValue || mayReadHole)
                 context.add(values, universe.undefinedValue());
         });
@@ -374,7 +395,6 @@ static ValueFlowObjectID pairAllocatedAt(const ValueFlowStatement& statement, Va
 void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    const Value& operation = context.program().at(statement.function).at(statement.site);
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 
@@ -390,9 +410,10 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
 
     switch (statement.opcode) {
     case Opcode::IteratorOpen:
-        openIterators(context, iterated(operands[0], statement.result), operation.iteratorKind(), statement.result ? statement.result : nodeThatNobodyReads(context));
+        openIterators(context, iterated(operands[0], statement.result), context.operationOf(statement).iteratorKind(), statement.result ? statement.result : nodeThatNobodyReads(context));
         return;
     case Opcode::IteratorResume: {
+        const Value& operation = context.operationOf(statement);
         ClimbingSet state = iterated(operands[0], statement.result);
         ResumeMode mode = operation.resumeMode();
         ValueFlowNodeID values = statement.result ? statement.result : nodeThatNobodyReads(context);
@@ -410,7 +431,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         return;
     }
     case Opcode::IteratorClose:
-        closeIterators(context, iterated(operands[0], { }), operation.iteratorKind());
+        closeIterators(context, iterated(operands[0], { }), context.operationOf(statement).iteratorKind());
         return;
     case Opcode::AppendSpread: {
         ClimbingSet spread = context.valueOf(operands[1]);

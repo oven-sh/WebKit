@@ -492,21 +492,14 @@ static JSObject* createAbsentNameError(JSGlobalObject* globalObject, const Priva
     return createAbsentPrivateNameError(globalObject, absent.declared->isBrand() ? createPrivateMethodAccessError : createInvalidPrivateNameError);
 }
 
-// The field of the object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
 static const FieldData* fieldUnderDeclaredName(VM& vm, State& state, const Object& object, const LayoutData& declaringLayout, const FieldData& declared)
 {
-    struct Remembered {
-        const LayoutData* layoutOfObject;
-        const FieldData* declared;
-        const FieldData* field;
-    };
-    constexpr size_t numberOfPlaces = 64;
-    static thread_local Remembered places[numberOfPlaces];
-
     const LayoutData& layout = object.layout();
     if (&layout == &declaringLayout)
         return &declared;
-    Remembered& place = places[((std::bit_cast<uintptr_t>(&declared) >> 3) ^ (std::bit_cast<uintptr_t>(&layout) >> 4)) % numberOfPlaces];
+    if (!state.fieldsUnderDeclaredNames) [[unlikely]]
+        state.fieldsUnderDeclaredNames = state.tableArena.allocate<FieldUnderDeclaredName>(State::numberOfFieldsUnderDeclaredNames);
+    FieldUnderDeclaredName& place = state.fieldsUnderDeclaredNames[((std::bit_cast<uintptr_t>(&declared) >> 3) ^ (std::bit_cast<uintptr_t>(&layout) >> 4)) % State::numberOfFieldsUnderDeclaredNames];
     if (place.layoutOfObject != &layout || place.declared != &declared)
         place = { &layout, &declared, object.fieldNamed(state, state.objects->layouts.nameOf(vm, declared)) };
     return place.field;
@@ -534,13 +527,28 @@ static const FieldData* fieldOfEvaluation(VM& vm, State& state, const Object& ob
     return field;
 }
 
+// What the stub of a read does by itself for the next object of the layout.
+static void rememberFieldOfOtherLayout(State& state, const Object& object, JSCellButterfly* token, uint32_t fieldIndex, const FieldData& field)
+{
+    uint32_t layoutOfObject = object.layout().index;
+    uint32_t declaringClass = token->get(ClassToken::classIndexSlot).asUInt32();
+    if (layoutOfObject == declaringClass || (state.sharesRealm && !object.isDescribedBy(state)) || declaringLayoutOf(state, token).evaluation() != EvaluationState::ProvenOnce)
+        return;
+    state.instance.classes.privateFieldPlaces[indexOfPrivateFieldPlace(layoutOfObject, fieldIndex)] = { static_cast<uint64_t>(layoutOfObject) << 32 | declaringClass, fieldIndex, 0, &field, 0 };
+}
+
 static JSValue tryReadFromSlot(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex)
 {
     Object* object = compiledObjectOrNull(base);
     if (!object)
         return { };
     const FieldData* field = fieldOfEvaluation(vm, state, *object, token, fieldIndex);
-    return field ? object->readInline(*field) : JSValue();
+    if (!field)
+        return { };
+    JSValue value = object->readInline(*field);
+    if (value)
+        rememberFieldOfOtherLayout(state, *object, token, fieldIndex, *field);
+    return value;
 }
 
 static bool tryStoreIntoFilledSlot(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex, JSValue stored)
@@ -599,6 +607,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* inst
     // A lookup may make the property table of a Structure, which ends in a place where the collector may stop this thread. Compiled code counts on no collection here.
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
+    if (JSValue::decode(object).isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createPrivateNameOfNullishError(globalObject, JSValue::decode(object)));
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (JSObject* holder = holderOfNamesWithoutField(base)) {
@@ -645,6 +657,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
     constexpr Entry entry = Entry::operationAOTPrivateSet;
     AOT_OPERATION_BEGIN(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
+    if (JSValue::decode(object).isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createPrivateNameOfNullishError(globalObject, JSValue::decode(object)));
+        OPERATION_RETURN(scope);
+    }
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     JSValue stored = JSValue::decode(value);

@@ -1,0 +1,22 @@
+# A read by name that asks only the tables of the run time loads the row of the Structure, compares the cell of the name and loads the value: no stub, no frame. The test behind it branches on whether a cell answered.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code calls
+# CHECK: f0: size={{*}} frame=none entries=1 sites=0
+# CHECK-NOT: stub GetById
+# CHECK: f1: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="answered" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="girth" [asksOnlyTables]
+    v2 = DidReadAbove v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v3 = Undefined
+    Return v3
+}
+function f1 name="end" results=[{type=undefined}] {
+    Return
+}

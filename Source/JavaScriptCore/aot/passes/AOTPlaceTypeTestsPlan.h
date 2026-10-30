@@ -25,7 +25,7 @@ class Heat;
 inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | namedAccesses | OpcodeSet {
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
-    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
+    Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::ConstructSuperForwardVarargs, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
     Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject, Opcode::TypeTest,
 };
 
@@ -92,6 +92,10 @@ struct TestPlacementPlan {
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
 Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
+
+// The `k` of `k < list.length` in front of `list[k]`.
+enum class ComparedPositions : uint8_t { HaveNoTests, HaveTests };
+PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext&, ComparedPositions);
 
 TestPlacementPlan planTestPlacement(FunctionPassContext&);
 TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&);

@@ -42,7 +42,7 @@ static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext
     if (!statement.result)
         return;
     const ValueFlowOperand& converted = context.operandsOf(statement)[0];
-    if (context.program().at(statement.function).at(statement.site).illTypedCause() == IllTypedCause::None) {
+    if (context.operationOf(statement).illTypedCause() == IllTypedCause::None) {
         context.connect(converted, statement.result);
         return;
     }
@@ -101,6 +101,7 @@ static void runConversionToObject(const ValueFlowStatement& statement, ValueFlow
     if (statement.opcode != Opcode::ToThis || !mayBe(value, Primitive::Undefined | Primitive::Null))
         return;
     // Where every use stands behind a test that the global object fails, the uses never meet it. proveValuesOfOperations() says of the value itself that it may be the global object.
+    context.functionWithBody(statement.function);
     if (isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
         return addWhatUndefinedBecomesBehindTestForOwnInstances(statement, context);
     context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
@@ -526,8 +527,41 @@ bool hasRuleOfItsOwn(Opcode opcode)
     return flowRuleOf(opcode) != FlowRule::General;
 }
 
+void noteArraysThatMayGetHoles(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    context.add(context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles), context.restrict(objects, context.universe().denseArrayLiterals()));
+}
+
+static uint8_t operandsThatMayGetHoles(Opcode opcode)
+{
+    static const std::array<uint8_t, numberOfOpcodes>& masks = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<uint8_t, numberOfOpcodes>>();
+        result->fill(0);
+        for (Opcode member : allMembersOf<Opcode>) {
+            if (member == Opcode::AppendElement || member == Opcode::AppendSpread || effectRuleOf(member) == EffectRule::Call)
+                continue;
+            uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(member) + (hasVariadicOperand(member) ? 1 : 0);
+            for (uint32_t index = 0; index < numberOfDeclaredOperands; ++index) {
+                if (!operandUsesOf(member, index).containsAny(usesThatMayCreateHoles))
+                    continue;
+                RELEASE_ASSERT(index < 8);
+                (*result)[static_cast<unsigned>(member)] |= 1 << index;
+            }
+        }
+        return result.release();
+    }();
+    return masks[static_cast<unsigned>(opcode)];
+}
+
 static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
+    if (uint8_t mask = operandsThatMayGetHoles(statement.opcode)) {
+        std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
+        for (uint32_t index = 0; index < operands.size(); ++index) {
+            if (mask & (1 << std::min(index, numberOfNamedOperandsOf(statement.opcode))))
+                noteArraysThatMayGetHoles(context, context.valueOf(operands[index]));
+        }
+    }
     switch (flowRuleOf(statement.opcode)) {
     case FlowRule::General:
         break;

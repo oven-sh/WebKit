@@ -75,7 +75,23 @@ static consteval bool shapesCoverPreservingCalls()
     return true;
 }
 
+// A site picks what the stub saves when it knows which registers are live, after its arguments were placed.
+static consteval bool variantsTakeArgumentsInSameRegisters()
+{
+    for (const OperationCallShape& shape : preservingCallShapes) {
+        OperationCall call = operationCallOf(shape);
+        for (auto saves : { OperationCall::Saves::CallerSavedGPRs, OperationCall::Saves::CallerSavedRegisters }) {
+            call.saves = saves;
+            std::optional<StubKey> variant = tryCallOperationPreservingRegisters(call);
+            if (variant && takesArgumentInResultRegister(preservingCallShapes[variant->form()]) != takesArgumentInResultRegister(shape))
+                return false;
+        }
+    }
+    return true;
+}
+
 static_assert(factoriesRoundTrip());
+static_assert(variantsTakeArgumentsInSameRegisters());
 static_assert(shapesCoverPreservingCalls());
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .fourthArgumentIn = GPRInfo::returnValueGPR }));
 static_assert(!tryCallOperationPreservingRegisters({ .saves = OperationCall::Saves::CallerSavedRegisters, .valueDestination = GPRInfo::returnValueGPR }));
@@ -165,7 +181,11 @@ StubSignature signatureOfCallOperationPreservingRegisters(StubKey key)
 
 void generateCallOperationPreservingRegisters(StubAssembler& jit)
 {
-    jit.callOperationAndReturn(jit.immediate(), operationCallOf(preservingCallShapes[jit.key().form()]));
+    const OperationCallShape& shape = preservingCallShapes[jit.key().form()];
+    OperationCall call = operationCallOf(shape);
+    if (takesArgumentInResultRegister(shape))
+        call.secondArgumentIn = GPRInfo::returnValueGPR;
+    jit.callOperationAndReturn(jit.immediate(), call);
 }
 
 static_assert(MacroAssembler::numberOfRegisters() <= ThrowSiteWord::numberOfRegistersPerBank && MacroAssembler::numberOfFPRegisters() <= ThrowSiteWord::numberOfRegistersPerBank);

@@ -188,6 +188,8 @@ private:
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
+    // For a Structure that differs in something else than the key order.
+    static Variant variantWithKeyOrderOf(const CompiledStructure&);
     // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
 

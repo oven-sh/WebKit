@@ -46,6 +46,8 @@ struct BlockWithCall {
 
 static constexpr int64_t surrogateKindMask = 0xFC00;
 static constexpr int64_t leadSurrogateKind = 0xD800;
+static constexpr int64_t maximumCodeUnit = 0xFFFF;
+static constexpr int64_t maximumCodePoint = 0x10FFFF;
 
 static std::optional<CodeUnitRead> codeUnitReadOf(FunctionPassContext& context, const ValueSite& site, const Value& call)
 {
@@ -121,13 +123,24 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
     } else
         expansion.finishArmAsUnreachable();
 
+    auto finishArmOutside = [&] {
+        expansion.finishArm(read.readsCodePoint ? builder.appendUndefined() : builder.appendDouble(PNaN));
+    };
     for (BlockID block : blocksOutside) {
         builder.moveToEndOf(block);
-        expansion.finishArm(read.readsCodePoint ? builder.appendUndefined() : builder.appendDouble(PNaN));
+        finishArmOutside();
     }
+    // The call answers as the arms above do. An integer joins them as one, and the answer for outside goes on as the constant it is, so that branches behind the read can be decided for it.
+    Type typeInside = Type::integer({ 0, read.readsCodePoint ? maximumCodePoint : maximumCodeUnit });
     for (const BlockWithCall& withCall : blocksWithCall) {
         builder.moveToEndOf(withCall.block);
-        expansion.finishArm(expansion.appendOriginal({ .operandIndex = OperandIndex::CallBuiltin::arguments, .operand = withCall.position, .isNarrowedValue = true }));
+        ValueID result = expansion.appendOriginal({ .operandIndex = OperandIndex::CallBuiltin::arguments, .operand = withCall.position, .isNarrowedValue = true });
+        ValueID isInside = builder.appendTypeTest(result, typeInside);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isInside, OperandIndex::TypeTest::value, frequencyOutside, frequencyOutside);
+        builder.moveToEndOf(branch.taken);
+        expansion.finishArm(branch.provenOnTaken);
+        builder.moveToEndOf(branch.notTaken);
+        finishArmOutside();
     }
     expansion.end();
 }

@@ -946,8 +946,11 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         m_front.clear();
         m_hashedTable.clear();
         for (Instance* earlier : m_vm.aotState().instances) {
-            if (serves(*earlier))
-                zeroSpan(earlier->keyedValuePlaces());
+            if (!serves(*earlier))
+                continue;
+            zeroSpan(earlier->keyedValuePlaces());
+            if (StringKeyCache* keys = earlier->state ? earlier->state->stringKeys.getIfCreated() : nullptr)
+                keys->forgetPlacesOfPairs();
         }
     }
     m_hasInstance = true;
@@ -1164,8 +1167,10 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
     for (Instance* instance : m_vm.aotState().instances) {
         if (!serves(*instance))
             continue;
-        if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
+        if (std::exchange(instance->propertyCaches.placesSayAbsence, 0)) {
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
+            ++instance->propertyCaches.timesAbsencesWereForgotten;
+        }
     }
 }
 
@@ -1248,6 +1253,99 @@ bool VMPropertyCaches::hasChainDependent(VM&, uint32_t structureIDBits, UniquedS
     StructureID id = std::bit_cast<StructureID>(structureIDBits);
     std::optional<uint16_t> column = m_columnsByNameAddress.getOptional(uid);
     return (column && m_front.hasChainDependentCell(id, *column)) || m_hashedTable.hasChainDependentEntry(id, uid);
+}
+
+namespace {
+
+struct CreatedMember {
+    static std::optional<CreatedMember> find(VM& vm, const CreatedMembers& created, UniquedStringImpl* uid)
+    {
+        unsigned attributes = 0;
+        PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+        if (!isValidOffset(offset))
+            return std::nullopt;
+        return CreatedMember { uid, offset, attributes };
+    }
+
+    UniquedStringImpl* uid;
+    PropertyOffset offset;
+    unsigned attributes;
+};
+
+}
+
+static std::optional<Slot> slotBehindCreatedMember(const Slot& slot, const CreatedMember& member, const CreatedMembers& created)
+{
+    if (!slot.structureID || slot.kind == Slot::Kind::Uncacheable)
+        return std::nullopt;
+    Structure* structure = slot.structureID.decode();
+    if (!structure->isObject() || !structure->hasMonoProto())
+        return std::nullopt;
+    JSObject* prototype = created.prototype;
+    auto [uid, offset, attributes] = member;
+    for (JSObject* object = structure->storedPrototypeObject(); object != prototype; object = object->getPrototypeDirect().getObject()) {
+        if (!object)
+            return std::nullopt;
+        if (object->classInfo() == ClassPrototype::info() && ClassPrototype::hasMember(object, uid))
+            return slot;
+    }
+    bool isValue = slot.kind == Slot::Kind::Value;
+    if ((!isValue && slot.kind != Slot::Kind::Getter && slot.kind != Slot::Kind::Setter) || slot.has(Slot::isOwn) || slot.holder->structure() != created.structureOfDeclaredMemberHolders)
+        return std::nullopt;
+    JSValue kept = valueAtOffset(asObject(slot.holder), slot.offsetInStorage());
+    JSValue made = prototype->getDirect(offset);
+    if (isValue) {
+        if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || kept != made)
+            return std::nullopt;
+    } else {
+        if (!(attributes & PropertyAttribute::Accessor))
+            return std::nullopt;
+        auto* keptAccessor = uncheckedDowncast<GetterSetter>(kept.asCell());
+        auto* madeAccessor = uncheckedDowncast<GetterSetter>(made.asCell());
+        if (keptAccessor->getter() != madeAccessor->getter() || keptAccessor->setter() != madeAccessor->setter())
+            return std::nullopt;
+    }
+    Slot moved = Slot::createInStorage(slot.structureID, slot.kind, slot.flags & ~Slot::isOutOfLine, prototype, offset);
+    if (moved.kind != slot.kind)
+        return std::nullopt;
+    return moved;
+}
+
+static bool isSameSlot(const Slot& a, const Slot& b)
+{
+    return a.headerBits() == b.headerBits() && a.payloadBits() == b.payloadBits();
+}
+
+static bool belongsToOneObject(Structure*);
+
+bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, const CreatedMembers& created)
+{
+    ASSERT(uid);
+    std::optional<CreatedMember> member = CreatedMember::find(vm, created, uid);
+    if (!member)
+        return true;
+    StructureID id = std::bit_cast<StructureID>(structureIDBits);
+    std::optional<uint16_t> column = m_columnsByNameAddress.getOptional(uid);
+    CachedName name { uid, column ? std::optional<uint32_t>(*column) : std::nullopt };
+    bool keepsSome = false;
+    for (SlotAccess access : { SlotAccess::Read, SlotAccess::Store, SlotAccess::Define, SlotAccess::Delete }) {
+        std::optional<Slot> slot = find(id, name, access);
+        if (!slot || !slot->has(Slot::dependsOnChain))
+            continue;
+        std::optional<Slot> kept = slotBehindCreatedMember(*slot, *member, created);
+        if (!kept) {
+            if (column && hasFrontCells(access))
+                m_front.remove(id, *column, access);
+            m_hashedTable.remove(id, uid, access);
+            continue;
+        }
+        keepsSome = true;
+        if (isSameSlot(*kept, *slot))
+            continue;
+        Structure* structure = id.decode();
+        set(structure, belongsToOneObject(structure) ? CachedName { uid, std::nullopt } : name, access, *kept);
+    }
+    return keepsSome;
 }
 
 void initializePropertyCacheWords(Instance& instance)
@@ -1591,7 +1689,7 @@ static ASCIILiteral whyObjectsDidNotAnswer(VM& vm, JSValue receiver, UniquedStri
                         return at("a field of the receiver that may exist without storage"_s, "a field of an object above that may exist without storage"_s);
                 }
                 if (compiled.hasExtraProperties()) {
-                    JSObject* extra = compiled.compiledStructure().extraPropertiesSlot() ? compiled.extraProperties() : nullptr;
+                    JSObject* extra = compiled.compiledStructure().extraPropertiesSlot() ? extraPropertiesIfMade(compiled) : nullptr;
                     if (!extra || extra->type() != FinalObjectType)
                         return at("the extra properties of the receiver are not where the stub looks"_s, "the extra properties of an object above are not where the stub looks"_s);
                     switch (askPropertyTable(extra, "the extra properties have elements"_s, at("the extra properties of the receiver have no property table"_s, "the extra properties of an object above have no property table"_s), "an extra property is a custom accessor or value"_s, "an extra property is an accessor: the stub could not call the getter"_s)) {
@@ -2462,6 +2560,26 @@ void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
         clear(at(siteIndex));
 }
 
+bool SiteCaches::keepChainDependent(VM& vm, uint32_t siteIndex, UniquedStringImpl* uid, const CreatedMembers& created)
+{
+    if (!uid)
+        return false;
+    std::optional<CreatedMember> member = CreatedMember::find(vm, created, uid);
+    if (!member)
+        return true;
+    Slot slot = m_slots[siteIndex].get();
+    if (!slot.has(Slot::dependsOnChain))
+        return false;
+    std::optional<Slot> kept = slotBehindCreatedMember(slot, *member, created);
+    if (!kept)
+        return false;
+    if (!isSameSlot(*kept, slot)) {
+        m_slots[siteIndex].set(m_writtenRegions, *kept);
+        m_wasWrittenSinceLastSweep = true;
+    }
+    return true;
+}
+
 bool SiteCaches::hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*) const
 {
     return m_slots[siteIndex].get().has(Slot::dependsOnChain);
@@ -2737,9 +2855,19 @@ void StringKeyCache::cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second,
             return;
         publishKeysOfPairs();
     }
-    if (addKeyOfPair({ first, second, key, 0 }) && ++m_keyOfPairEvictionCount > m_keysOfPairs.size() / 4) [[unlikely]]
+    if (addKeyOfPair({ first, second, key, 0, 0 }) && ++m_keyOfPairEvictionCount > m_keysOfPairs.size() / 4) [[unlikely]]
         growKeysOfPairs();
     m_writtenSinceCollection.recordAll();
+}
+
+void StringKeyCache::forgetPlacesOfPairs()
+{
+    if (!std::exchange(m_instance.propertyCaches.pairsHavePlaces, 0))
+        return;
+    for (KeyOfPair& entry : m_keysOfPairs) {
+        entry.structureIDOfPlace = 0;
+        entry.slotOfPlace = 0;
+    }
 }
 
 void StringKeyCache::growKeysOfPairs()
@@ -2880,6 +3008,8 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
 
 size_t StringKeyCache::removeDeadEntries(VM& vm, CollectionScope scope)
 {
+    // A Structure may have died, as for the places themselves, which are cleared at every collection.
+    forgetPlacesOfPairs();
     size_t removedCount = 0;
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
         removedCount += removeDeadEntries(vm, m_cachedKeys.mutableSpan());

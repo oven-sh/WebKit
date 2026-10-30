@@ -137,7 +137,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             continue;
         ValueFlowObjectID closure = inputs.universe().closureOf(body);
         bool onlyLoaderEnters = !numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure);
-        if (onlyLoaderEnters && isEvaluatedAtMostOnceOf(module.kind))
+        if (onlyLoaderEnters && isEvaluatedAtMostOnceOf(module.kind) && !module.flags.contains(ModuleFlags::RunsAgain))
             runsAtMostOnce(body);
     }
 

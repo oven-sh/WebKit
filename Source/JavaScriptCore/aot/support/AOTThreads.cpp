@@ -32,6 +32,35 @@
 
 namespace JSC { namespace AOT {
 
+void joinChunksAsBytes(const ParallelLoops& loops, VectorWords& result, std::span<VectorWords> chunks, size_t elementSize)
+{
+    size_t size = 0;
+    for (auto& chunk : chunks)
+        size += chunk.size;
+    if (size) {
+        allocateVectorBuffer<VectorBufferMalloc>(result, size, elementSize);
+        auto bytes = unsafeMakeSpan(static_cast<uint8_t*>(result.buffer), size * elementSize);
+        takePageFaultsInParallel(loops, bytes);
+        for (auto& chunk : chunks) {
+            if (!chunk.size)
+                continue;
+            memcpySpan(bytes, unsafeMakeSpan(static_cast<const uint8_t*>(chunk.buffer), chunk.size * elementSize));
+            bytes = bytes.subspan(chunk.size * elementSize);
+            chunk.size = 0;
+        }
+        result.size = static_cast<unsigned>(size);
+    }
+    AOT_THRESHOLD(size_t, fewestChunksFreedOnPool, 64);
+    if (chunks.size() >= fewestChunksFreedOnPool) {
+        forEachIndexInParallel(loops, static_cast<unsigned>(chunks.size()), [&](unsigned index) {
+            VectorWords& chunk = chunks[index];
+            if (chunk.buffer)
+                VectorBufferMalloc::free(chunk.buffer);
+            chunk = { };
+        });
+    }
+}
+
 static thread_local TaskPriority t_currentPriority = TaskPriority::Foreground;
 static thread_local bool t_isInsideLoop = false;
 static thread_local unsigned t_parallelRegionDepth = 0;

@@ -35,24 +35,34 @@ StubSignature signatureOfConcatenateKeyOfPair(StubKey)
     return StubSignature::withGPRResult({ operationArgumentGPR(1), operationArgumentGPR(2) });
 }
 
+void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch)
+{
+    RELEASE_ASSERT(noOverlap(first, second, set, scratch));
+    // StringKeyCache::hashOfPair().
+    jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
+    jit.mul32(TrustedImm32(StringKeyCache::keyOfPairMultiplier), set, set);
+    jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.and64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), set);
+#else
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), scratch);
+    jit.and64(scratch, set);
+#endif
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
+}
+
 // The operation joins the parts and enters the pair.
 void generateConcatenateKeyOfPair(StubAssembler& jit)
 {
     const GPRReg first = jit.operand(0);
     const GPRReg second = jit.operand(1);
     const GPRReg set = jit.result();
-    // StringKeyCache::hashOfPair().
-    jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
-    jit.mul32(TrustedImm32(StringKeyCache::keyOfPairMultiplier), set, set);
-    jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
 #if CPU(X86_64)
-    jit.and64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), set);
+    locateKeysOfPair(jit, first, second, set, InvalidGPRReg);
 #else
-    const GPRReg mask = jit.allocateScratch(StubRegister::T12);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keyOfPairMask)), mask);
-    jit.and64(mask, set);
+    locateKeysOfPair(jit, first, second, set, jit.allocateScratch(StubRegister::T12));
 #endif
-    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
     for (unsigned way = 0; way < StringKeyCache::waysOfKeysOfPairs; ++way) {
         const int32_t entry = way * sizeof(StringKeyCache::KeyOfPair);
         Jump hasOtherFirst = jit.branch64(CCallHelpers::NotEqual, Address(set, entry + OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, first)), first);

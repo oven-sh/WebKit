@@ -115,6 +115,10 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
 
     // The keys are listed first, while the slots still say which fields are missing. No code of the program runs before the stores.
     std::optional<StateOfNewObject> newObject = slotAccess.stateOfNewObjectBefore(value, value->objectOperand());
+    if (newObject) {
+        for (Entry& entry : run.entries)
+            entry.mayCreate = entry.mayCreate && !newObject->hasCreated(entry.access->key);
+    }
     listMissingFields(value, cell, run, newObject);
 
     for (const Entry& entry : run.entries)

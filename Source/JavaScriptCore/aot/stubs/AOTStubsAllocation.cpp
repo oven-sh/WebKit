@@ -79,20 +79,39 @@ static void copyChunk(StubAssembler& jit, Address from, Address to, GPRReg first
 #endif
 }
 
-void loadAllocationSiteRecord(StubAssembler& jit, GPRReg allocation, GPRReg record, GPRReg scratch)
+static constexpr int32_t distanceToEmptyRecord = -static_cast<int32_t>(sizeof(AllocationSiteRecord));
+
+// ARM64 adds a register or a number to a register, not both at once. There the number is left to the offset of each access.
+#if CPU(ARM64)
+static constexpr int32_t distanceLeftToOffsets = distanceToEmptyRecord;
+#else
+static constexpr int32_t distanceLeftToOffsets = 0;
+#endif
+
+static Address inRecordAtSite(GPRReg record, ptrdiff_t offset)
+{
+    return Address(record, distanceLeftToOffsets + static_cast<int32_t>(offset));
+}
+
+static void loadAllocationSiteRecordForOffsets(StubAssembler& jit, GPRReg allocation, GPRReg record, GPRReg scratch)
 {
     static_assert(std::is_same_v<decltype(ObjectWords::distancesToAllocationSites), int32_t*>);
-    constexpr int32_t distanceToEmptyRecord = -static_cast<int32_t>(sizeof(AllocationSiteRecord));
     ASSERT(noOverlap(record, allocation) && noOverlap(record, scratch));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.distancesToAllocationSites)), record);
 #if CPU(ARM64)
     jit.load32SignedExtendTo64(BaseIndex(record, allocation, CCallHelpers::TimesFour, 0, CCallHelpers::Extend::ZExt32), scratch);
     jit.addPtr(scratch, record);
-    jit.addPtr(TrustedImm32(distanceToEmptyRecord), record);
 #else
     jit.load32SignedExtendTo64(BaseIndex(record, allocation, CCallHelpers::TimesFour), scratch);
     jit.getEffectiveAddress(BaseIndex(record, scratch, CCallHelpers::TimesOne, distanceToEmptyRecord), record);
 #endif
+}
+
+void loadAllocationSiteRecord(StubAssembler& jit, GPRReg allocation, GPRReg record, GPRReg scratch)
+{
+    loadAllocationSiteRecordForOffsets(jit, allocation, record, scratch);
+    if constexpr (!!distanceLeftToOffsets)
+        jit.addPtr(TrustedImm32(distanceLeftToOffsets), record);
 }
 
 static AllocationSiteRegisters allocateSiteRegisters(StubAssembler& jit)
@@ -104,8 +123,8 @@ static AllocationSiteRegisters allocateSiteRegisters(StubAssembler& jit)
 {
     const auto [cell, allocation, record, allocator, scratch] = registers;
     countCellOfAllocation(jit, allocation, record);
-    loadAllocationSiteRecord(jit, allocation, record, allocator);
-    jit.loadPtr(Address(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
+    loadAllocationSiteRecordForOffsets(jit, allocation, record, allocator);
+    jit.loadPtr(inRecordAtSite(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
     return allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize, CountedUnder::Allocation);
 }
 
@@ -160,17 +179,53 @@ void generateAllocateCell(StubAssembler& jit)
     if (zeroesBody(initialization))
         zeroBehindFirstChunk(jit, registers, cellSize);
     if (!storesWords(initialization)) {
-        jit.load64(Address(record, AllocationSiteRecord::offsetOfHeader()), scratch);
+        jit.load64(inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), scratch);
         jit.store64(scratch, Address(cell));
         if (zeroesBody(initialization))
             jit.store64(TrustedImm32(0), Address(cell, sizeof(JSCell)));
     } else
-        copyChunk(jit, Address(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), allocator, scratch);
+        copyChunk(jit, inRecordAtSite(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), allocator, scratch);
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTAllocateSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation });
+}
+
+StubSignature signatureOfInitializeObjectInFrame(StubKey)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T9) });
+    signature.addOperand(signature.firstResult);
+    return signature;
+}
+
+void generateInitializeObjectInFrame(StubAssembler& jit)
+{
+    const GPRReg cell = jit.result();
+    const GPRReg allocation = jit.operand(0);
+    const GPRReg record = jit.allocateScratch(StubRegister::T11);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T12);
+    RELEASE_ASSERT(cell == jit.operand(1) && noOverlap(cell, allocation, record, scratch, instanceGPR));
+
+    auto loadRecord = [&] {
+        loadAllocationSiteRecord(jit, allocation, record, scratch);
+    };
+    auto initialize = [&] {
+        copyChunk(jit, Address(record, AllocationSiteRecord::offsetOfHeader()), Address(cell), record, scratch);
+        jit.store8(TrustedImm32(frameCellState), Address(cell, JSCell::cellStateOffset()));
+    };
+    loadRecord();
+    Jump hasNoHeader = jit.branchTest64(CCallHelpers::Zero, Address(record, AllocationSiteRecord::offsetOfHeader()), TrustedImm32(-1));
+    initialize();
+    jit.returnToCaller();
+
+    hasNoHeader.link(&jit);
+    // Sending the result to a scratch register makes the call restore every other register, including the cell's.
+    auto initializeFromFilledRecord = [&] {
+        loadRecord();
+        initialize();
+    };
+    jit.callOperationAndReturn(Entry::operationAOTGetHeaderOfAllocation, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = allocation, .valueDestination = record }, initializeFromFilledRecord);
 }
 
 StubSignature signatureOfAllocateInstance(StubKey)
@@ -379,7 +434,7 @@ void generateCopyObject(StubAssembler& jit)
 
     JumpList slowPath;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, site, slowPath);
-    jit.load64(Address(site.record, AllocationSiteRecord::offsetOfHeader()), header);
+    jit.load64(inRecordAtSite(site.record, AllocationSiteRecord::offsetOfHeader()), header);
     initializeCopyAndReturn(false);
 
     emitLateRefill(jit, refill, slowPath);

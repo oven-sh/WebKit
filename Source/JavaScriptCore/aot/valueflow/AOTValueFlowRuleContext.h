@@ -63,6 +63,9 @@ public:
     const ValueFlowUniverse& universe() const;
     const ValueFlowProgramNodes& nodes() const;
     uint64_t mostMembersToldApart() const;
+    // In a test run a spy that the build has not seen replaces an export. An executable refuses such a spy, and so does a run whose test files come from disk: an entry point names what they do.
+    bool followsSpiesOutOfSight() const;
+    bool runnerChoosesMainModule() const;
 
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
@@ -70,12 +73,24 @@ public:
     const ModuleExport* defaultExportOf(ModuleID);
     const ModuleExport* moduleExportsExportOf(ModuleID);
     FunctionID functionOfStatement() const;
+    const ValueFlowRareFactsOfText* rareFactsOfText(const ValueFlowStatement&) const;
+    const Function& functionWithBody(FunctionID) const;
+    // The operation of a statement, without its body where a copy is kept.
+    const Value& operationOf(const ValueFlowStatement&) const;
+    const Value& operationAt(FunctionID, ValueID) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
+    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement&) const LIFETIME_BOUND;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
     ValueFlowName nameOfKey() const;
     bool isLookupForCall() const;
+    // Native code that walks what it was handed opens nothing on the unknown object by name. A receiver that has escaped has the unknown object above it, and is listed only until the unknown object arrives beside it.
+    bool isNativeWalk() const { return m_isNativeWalk; }
+    class NativeWalk : SetForScope<bool> {
+    public:
+        explicit NativeWalk(ValueFlowRuleContext& context) : SetForScope(context.m_isNativeWalk, true) { }
+    };
     ValueFlowCallKind callKindOfKey() const;
     ValueFlowObjectID markerOfKey() const;
 
@@ -94,6 +109,7 @@ public:
     ClimbingSet valueOf(const ValueFlowOperand&);
     bool isReached(FunctionID);
     ClimbingSet valueWithin(ClimbingSet within, ValueFlowNodeID);
+    ClimbingSet coveredByUnknownObjectAmong(ClimbingSet);
     ClimbingSet valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID);
     bool holdsAnyOf(ClimbingSet within, ValueFlowNodeID);
     ClimbingSet membersMissingFrom(ValueFlowNodeID, ClimbingSet);
@@ -103,7 +119,6 @@ public:
     void addUnlessHeld(ValueFlowNodeID, ValueFlowObjectID);
     static constexpr unsigned numberOfSetsRememberedByThread = 3;
     ClimbingSet membersNewToThread(ClimbingSet, unsigned number);
-    bool wasAddedInEarlierRound(ValueFlowNodeID, ClimbingSet) const;
     bool isFirstToTieNamespaceInThisRound(ModuleID);
     bool isStatementOfBody() const;
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
@@ -177,6 +192,10 @@ public:
     ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowCellName) = delete;
     // The value of that node if an earlier turn made it. The statement does not ask for the node, so a change of the value does not run it again.
     std::optional<ClimbingSet> peekAtWhatWasWritten(ClimbingSet objects, ValueFlowName);
+    // What statements that write through exactly these objects have stored by now: a part of what a read of them finds. The statement does not ask for the node either.
+    ClimbingSet peekAtWhatIsWrittenThrough(ClimbingSet objects, ValueFlowName);
+    ClimbingSet seenFromObjectUp(ValueFlowObjectID) const;
+    void noteSeenFromObjectUp(ValueFlowObjectID, ClimbingSet);
     // What peeks of this turn found from these objects on. The thread remembers it: no value changes within a turn.
     std::optional<ClimbingSet> sourcesOfCopiesSeenFrom(ClimbingSet objects);
     void noteSourcesOfCopiesSeenFrom(ClimbingSet objects, ClimbingSet seen);
@@ -351,6 +370,7 @@ private:
     // One list for each statement whose operands a run has narrowed. A rule keeps its span while it runs rules for other statements.
     Vector<std::unique_ptr<Vector<ValueFlowOperand, 8>>, 2> m_narrowedOperandsOfRun;
     const ValueFlowNodeKey* m_keyOfStatementOfThisTurn { nullptr };
+    bool m_isNativeWalk { false };
     ValueSetID m_rememberedByStatementOfThisTurn;
     HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_instancesMadeInTurn;
     uint64_t m_turnOfInstancesMade { 0 };

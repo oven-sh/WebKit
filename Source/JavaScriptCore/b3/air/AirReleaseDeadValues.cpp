@@ -13,7 +13,8 @@
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "AirStackColoring.h"
-#include "B3StackmapValue.h"
+#include "B3PatchpointValue.h"
+#include "B3Procedure.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
@@ -48,6 +49,8 @@ private:
         unsigned instIndex;
         // The places that hold the value and that are worth clearing.
         BitVector places;
+        // The callee lets go. The places are cleared in front of the call.
+        bool isCall { false };
     };
 
     static StackmapValue* hintOf(const Inst& inst)
@@ -58,6 +61,14 @@ private:
         return stackmap && stackmap->releasesDeadValues() ? stackmap : nullptr;
     }
 
+    static PatchpointValue* callWhoseCalleeLetsGo(const Inst& inst)
+    {
+        if (inst.kind.opcode != Patch || !inst.origin)
+            return nullptr;
+        auto* patchpoint = inst.origin->as<PatchpointValue>();
+        return patchpoint && !patchpoint->childrenLetGoByCallee().isEmpty() ? patchpoint : nullptr;
+    }
+
     // A stub that keeps nearly every register may still allocate, so the registers that a patchpoint clobbers say nothing.
     static bool mayCollect(const Inst& inst)
     {
@@ -65,6 +76,9 @@ private:
             return true;
         if (inst.kind.opcode != Patch || hintOf(inst))
             return false;
+        // Also where the call takes the frame down first: the frame of the callee lies over the same words, and it need not write them all.
+        if (callWhoseCalleeLetsGo(inst))
+            return true;
         auto* stackmap = inst.origin ? inst.origin->as<StackmapValue>() : nullptr;
         return !stackmap || !stackmap->runsWithoutFrame();
     }
@@ -250,19 +264,25 @@ private:
         for (BasicBlock* block : m_code) {
             for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
                 Inst& inst = block->at(instIndex);
-                if (!hintOf(inst))
-                    continue;
                 Hint hint { block, instIndex, { } };
-                // The value may have become a constant.
-                if (auto first = inst.args().size() == 2 ? placeOf(inst.args()[1]) : std::nullopt) {
-                    hint.places = placesHoldingValueAt(block, instIndex, *first);
-                    hint.places.exclude(m_neverCleared);
-                    for (unsigned place : hint.places) {
-                        if (m_watchedIndexOfPlace[place] != notWatched)
-                            continue;
-                        m_watchedIndexOfPlace[place] = m_watchedPlaces.size();
-                        m_watchedPlaces.append(place);
+                if (PatchpointValue* call = callWhoseCalleeLetsGo(inst)) {
+                    hint.isCall = true;
+                    unsigned firstChild = 1 + m_code.proc().resultCount(call->type());
+                    for (unsigned child : call->childrenLetGoByCallee()) {
+                        if (auto first = firstChild + child < inst.args().size() ? placeOf(inst.args()[firstChild + child]) : std::nullopt)
+                            hint.places.merge(placesHoldingValueAt(block, instIndex, *first));
                     }
+                } else if (!hintOf(inst))
+                    continue;
+                // The value may have become a constant.
+                else if (auto first = inst.args().size() == 2 ? placeOf(inst.args()[1]) : std::nullopt)
+                    hint.places = placesHoldingValueAt(block, instIndex, *first);
+                hint.places.exclude(m_neverCleared);
+                for (unsigned place : hint.places) {
+                    if (m_watchedIndexOfPlace[place] != notWatched)
+                        continue;
+                    m_watchedIndexOfPlace[place] = m_watchedPlaces.size();
+                    m_watchedPlaces.append(place);
                 }
                 m_hints.append(WTF::move(hint));
             }
@@ -386,6 +406,10 @@ private:
                 while (--instIndex > hint.instIndex)
                     stepBackward(block->at(instIndex), state);
                 Inst& inst = block->at(instIndex);
+                // What the call reads itself stays.
+                if (hint.isCall)
+                    stepBackward(inst, state);
+                unsigned clearedAt = hint.isCall ? instIndex : instIndex + 1;
                 RegisterSet registers;
                 for (unsigned place : hint.places) {
                     unsigned index = m_watchedIndexOfPlace[place];
@@ -393,16 +417,22 @@ private:
                         continue;
                     // An earlier hint of the block need not clear it again.
                     state.meetsCollection.quickClear(index);
-                    if (place < m_firstSlot)
-                        registers.add(Reg::fromIndex(place), IgnoreVectors);
-                    else if (place < m_firstCallArg)
-                        insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::stack(m_slotOfWord[place - m_firstSlot]));
+                    if (place >= m_firstCallArg)
+                        insertionSet.insert(clearedAt, Move, inst.origin, zero, Arg::callArg(static_cast<int32_t>((place - m_firstCallArg) * sizeof(uint64_t))));
+                    else if (place >= m_firstSlot)
+                        insertionSet.insert(clearedAt, Move, inst.origin, zero, Arg::stack(m_slotOfWord[place - m_firstSlot]));
                     else
-                        insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::callArg(static_cast<int32_t>((place - m_firstCallArg) * sizeof(uint64_t))));
+                        registers.add(Reg::fromIndex(place), IgnoreVectors);
                 }
-                StackmapValue* stackmap = hintOf(inst);
+                // A move of zero into a register that nothing reads would not last: reportUsedRegisters() removes it.
+                StackmapValue* stackmap = inst.origin->as<StackmapValue>();
                 stackmap->setRegistersToRelease(registers);
-                stackmap->clobberLate(registers);
+                // A call that runs without the frame leaves the function: nothing behind it reads a register. The registers that the frame saved are the caller's again
+                // by then, so it may not say that it clobbers them, and its generator clears only what belongs to nobody.
+                if (!hint.isCall || !stackmap->runsWithoutFrame())
+                    stackmap->clobberLate(registers);
+                if (hint.isCall)
+                    continue;
                 stepBackward(inst, state);
                 if (registers.isEmpty())
                     inst = Inst();

@@ -12,6 +12,9 @@
 # REQUIRES(HOT): unsanitized-code
 # RUN(NONE): lower-to-b3 optimized loops f2
 # REQUIRES(NONE): unsanitized-code
+# RUN(CALLEE): lower-to-b3 optimized f1
+# REQUIRES(CALLEE): unsanitized-code
+# RUN(PASSED): pipeline ChooseCallingConventions
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -95,13 +98,14 @@ function f2 name="sumOfHalves" module=m0 position=59 flags=[IsChecked, HasExplic
 }
 
 # half(list[k]): the element goes from the bytes into the floating-point register of the argument, and the result is added as it comes back. Nothing is boxed.
-# The bytes may hold a NaN of any bits and a parameter holds only one kind of NaN, so the element is compared with itself ahead of the call. A NaN takes a rare arm.
+# The bytes may hold a NaN of any bits. Every call of half() hands it a number out of bytes and half() only computes with it, so its parameter and its result take such a NaN as it is: nothing is tested in the loop.
 # HOT-LABEL: steps by 1
 # HOT: Double b@[[sum]] = Phi(
+# HOT-NOT: Equal(
+# HOT-NOT: Branch(
 # HOT: Double b@[[element]] = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
-# HOT: Int32 b@[[isNumber]] = Equal(b@[[element]], b@[[element]], {{*}}:CallDirect)
-# HOT-NEXT: Branch(b@[[isNumber]], Terminal, {{*}}:CallDirect)
-# HOT-NEXT: Successors: Then:#{{*}}, Else:Rare:#{{*}}
+# HOT-NOT: Equal(
+# HOT-NOT: Branch(
 # HOT: Double b@[[half]] = Patchpoint(b@[[element]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
 # HOT-NEXT: Double b@{{*}} = Add(b@[[sum]], b@[[half]], {{*}}:Add)
 # HOT-LABEL: end of loop
@@ -110,3 +114,13 @@ function f2 name="sumOfHalves" module=m0 position=59 flags=[IsChecked, HasExplic
 # NONE-NOT: BitwiseCast
 # NONE-NOT: Reads:JSArrayBufferView
 # NONE-LABEL: end of loop
+# half() itself tests nothing either.
+# CALLEE-LABEL: name="half" role=Source
+# CALLEE-NOT: Equal(
+# CALLEE-NOT: Branch(
+# CALLEE-LABEL: end of function
+# The entry checks, which leave by a tail call to the function behind them, the sum, which boxes nothing, and that function. The version for any value is handed a boxed number, which has been tested.
+# PASSED: f1 Direct ({{*}}:JSValue) -> ({{*}}:ImpureDouble)
+# PASSED: f2 Direct ({{*}}:Cell) -> ({{*}}:ImpureDouble)
+# PASSED: f4 Direct ({{*}}:ImpureDouble) -> ({{*}}:ImpureDouble)
+# PASSED: f5 Direct ({{*}}:JSValue) -> ({{*}}:Double)

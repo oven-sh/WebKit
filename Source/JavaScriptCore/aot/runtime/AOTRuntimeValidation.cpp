@@ -755,6 +755,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instanc
     return contentsHaveType(*instance, container, static_cast<Typed::ContentsSlot>(contentsSlot), *contents);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValueHasType, size_t, (Instance* instance, EncodedJSValue value, uint32_t type))
+{
+    DeferGCForAWhile deferGC(*instance->vm);
+    const RuntimeLayoutTable& layouts = instance->state->objects->layouts;
+    const RuntimeType* expected = layouts.typeWithIndex(type);
+    RELEASE_ASSERT(expected);
+    return layouts.valueHasType(*expected, JSValue::decode(value));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven))
 {
     static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s, "CounterStepsAsTold"_s };

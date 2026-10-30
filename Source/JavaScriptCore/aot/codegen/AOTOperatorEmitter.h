@@ -62,6 +62,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     void generateHasInPrototypeChain(const ValueContext&);
     bool fetchesPrototypeItself(ValueID builtin);
+    bool comparesOnlyTextOf(ValueID string);
     void generateToBoolean(const ValueContext&);
     void generateLogicalNot(const ValueContext&);
     void generateTypeOf(const ValueContext&);

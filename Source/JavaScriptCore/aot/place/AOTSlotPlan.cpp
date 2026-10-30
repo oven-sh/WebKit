@@ -526,14 +526,21 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         m_rows.append(row);
     }
 
-    AOT::sort(rowsInUnallocatedBases);
-    m_rowsInUnallocatedBases = WTF::map(rowsInUnallocatedBases, [](const std::pair<SlotRow, SlotRow>& entry) {
-        return entry.second;
-    });
+    Vector<uint32_t> firstOfDeclaringRow(FillWith { }, rows.count() + 1, 0u);
+    for (auto [declaringRow, row] : rowsInUnallocatedBases)
+        ++firstOfDeclaringRow[declaringRow + 1];
+    for (size_t row = 0; row < rows.count(); ++row)
+        firstOfDeclaringRow[row + 1] += firstOfDeclaringRow[row];
+    m_rowsInUnallocatedBases.grow(rowsInUnallocatedBases.size());
+    Vector<uint32_t> nextOfDeclaringRow = firstOfDeclaringRow;
+    for (auto [declaringRow, row] : rowsInUnallocatedBases)
+        m_rowsInUnallocatedBases[nextOfDeclaringRow[declaringRow]++] = row;
     for (Family& family : m_families) {
-        auto found = std::ranges::equal_range(rowsInUnallocatedBases, family.declaringRow, { }, &std::pair<SlotRow, SlotRow>::first);
-        family.firstRowInUnallocatedBases = static_cast<uint32_t>(found.begin() - rowsInUnallocatedBases.begin());
-        family.numberOfRowsInUnallocatedBases = static_cast<uint32_t>(found.size());
+        family.firstRowInUnallocatedBases = firstOfDeclaringRow[family.declaringRow];
+        family.numberOfRowsInUnallocatedBases = firstOfDeclaringRow[family.declaringRow + 1] - firstOfDeclaringRow[family.declaringRow];
+        std::span<SlotRow> rowsOfFamily = m_rowsInUnallocatedBases.mutableSpan().subspan(family.firstRowInUnallocatedBases, family.numberOfRowsInUnallocatedBases);
+        if (!std::ranges::is_sorted(rowsOfFamily))
+            AOT::sort(rowsOfFamily);
     }
 }
 

@@ -1,0 +1,46 @@
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="a" declared={type=anything}}]
+function f0 name="Point" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="called" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = Call v1, v0 calleeKey="method"
+    Return v2
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="method"
+}
+
+function f2 name="called-behind-a-jump" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    Jump -> next b1(v1)
+  b1(v2: anything):
+    v3 = Call v2, v0 calleeKey="method"
+    Return v3
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="method"
+}
+
+function f3 name="called-and-returned" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = Call v1, v0 calleeKey="method"
+    Return v1
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="method"}
+}
+
+function f4 name="called-if-it-is-there" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = TypeTest v1 testedType=undefined|null
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Return v3
+  b2():
+    v4 = Call v1, v0 calleeKey="method"
+    Return v4
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="method"}
+}

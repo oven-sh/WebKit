@@ -232,6 +232,13 @@ bool isEqualityOfNumbers(const Program& program, const Function& function, const
     return program.typeOf(function, value.leftOperand()).isNumber() && program.typeOf(function, value.rightOperand()).isNumber();
 }
 
+bool takesNumberAsItIs(const RepresentationInputs& inputs, const Value& user, ValueID operand)
+{
+    if (!hasOperatorForm(user.opcode) || user.form() != OperatorForm::Numbers)
+        return false;
+    return relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && inputs.typeOf(operand).isNumber());
+}
+
 static bool isSumOfBoxedNumbers(const Value& value)
 {
     return sumsOfNumbers.contains(value.opcode) && value.form() == OperatorForm::Numbers && value.representation == Representation::JSValue;
@@ -251,8 +258,7 @@ static Representation wantedByNumbers(const RepresentationInputs& inputs, const 
     }
     if (isSumOfBoxedNumbers(user))
         return type.isInt32() ? Representation::Int32 : Representation::JSValue;
-    bool takesNumberAsItIs = relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
-    if (takesNumberAsItIs && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
+    if (takesNumberAsItIs(inputs, user, operand) && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
         return Representation::Unchosen;
     if (type.isNumber())
         return Representation::Double;
@@ -764,6 +770,33 @@ static bool takesAnyNaN(const User& user, uint32_t operandIndex)
     if (builtin == InlineBuiltin::ArrayPush)
         return !!user.variadicOperandIndex(operandIndex);
     return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
+}
+
+static std::optional<InlineBuiltin> inlineBuiltinBeforeSelection(const Program& program, const Value& value)
+{
+    return value.opcode == Opcode::CallBuiltin ? program.builtins().at(value.overload()).code.implementation.inlineBuiltin : inlineBuiltinOf(value);
+}
+
+bool readsDoubleOutOfBytesBeforeSelection(const Program& program, const Value& value)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinBeforeSelection(program, value);
+    return value.opcode == Opcode::GetTypedArrayElement || (builtin && builtinsThatMoveBytes.contains(*builtin));
+}
+
+NaNUse nanUseBeforeSelection(const Program& program, const Value& user, uint32_t operandIndex, OperatorForm formOfOperator)
+{
+    if (isForwardedOperand(user, operandIndex))
+        return NaNUse::Propagates;
+    if (hasOperatorForm(user.opcode))
+        return formOfOperator == OperatorForm::Numbers ? NaNUse::Propagates : NaNUse::Purifies;
+    if (storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex))
+        return NaNUse::Ignores;
+    std::optional<InlineBuiltin> builtin = inlineBuiltinBeforeSelection(program, user);
+    if (!builtin || !user.variadicOperandIndex(operandIndex))
+        return NaNUse::Purifies;
+    if (builtinsThatComputeWithNumbers.contains(*builtin))
+        return NaNUse::Propagates;
+    return builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin) ? NaNUse::Ignores : NaNUse::Purifies;
 }
 
 static bool convertsOperand(const Value& value)

@@ -421,6 +421,48 @@ MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
     return WTF::move(chainEnd);
 }
 
+// `class extends Above { constructor() { .. } }`: the prototype object holds `constructor` alone and never anything else, and its link is fixed. A walk under another name passes it and notes nothing.
+static bool hasEmptyPrototypeBelowOneClass(const Program& program, LayoutID id)
+{
+    if (TypeTable::isProvisional(id))
+        return false;
+    const Layout& layout = program.at(id);
+    const ClassFlow& classFlow = layout.classFlow;
+    if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.flow.baseState != BaseState::Layout || layout.flow.commonAncestor)
+        return false;
+    if (classFlow.prototypeLink != MemberMutability::Fixed || !classFlow.prototypeNamesAreComplete)
+        return false;
+    auto isOnPrototype = [](const ClassMember& member) {
+        return member.side == ClassSide::Prototype;
+    };
+    return std::ranges::none_of(classFlow.members, isOnPrototype) && std::ranges::none_of(classFlow.namedMembers, isOnPrototype);
+}
+
+// Where a long row of such classes ends is kept for each class of the row, so the row is walked once, not once for each name.
+static LayoutID passEmptyPrototypes(const Program& program, PropertyAccessCache& cache, LayoutID id)
+{
+    auto isAnswerFor = [](LayoutID wanted) {
+        return [wanted](const PropertyAccessCache::ClassAbove& entry) {
+            return entry.key == wanted;
+        };
+    };
+    Vector<LayoutID, 8> passed;
+    LayoutID current = id;
+    for (size_t steps = 0; steps < program.layouts.size() && hasEmptyPrototypeBelowOneClass(program, current); ++steps) {
+        if (steps >= PropertyAccessCache::fewestClassesAbove) {
+            if (const PropertyAccessCache::ClassAbove* kept = cache.classesAboveEmptyPrototypes.find(computeHash(current), isAnswerFor(current))) {
+                current = kept->value;
+                break;
+            }
+            passed.append(current);
+        }
+        current = program.at(current).flow.base;
+    }
+    for (LayoutID layout : passed)
+        cache.classesAboveEmptyPrototypes.add(computeHash(layout), PropertyAccessCache::ClassAbove { layout, current }, isAnswerFor(layout));
+    return current;
+}
+
 // A walk that has noted nothing when it comes to a class goes on as the walk that begins there, step for step. The two name their first class in what they note, and nowhere else.
 // So an answer without conditions is the answer of both, and a long row of classes is walked once for a name, not once from each of its classes.
 struct ClassesPassed {
@@ -436,6 +478,7 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
     bool isConstructorKey = program.nameClassOf(key) == NameClass::Constructor;
+    PropertyAccessCache* rowsPassed = isConstructorKey ? nullptr : passed.cache;
     MemberCondition memberUnchanged { MemberCondition::Kind::MemberUnchanged, query.layout, ClassSide::Prototype, key };
     MemberAnswer walked;
     const bool asksRunTime = query.access == Access::Store && program.at(query.layout).classFlow.evaluations == ExecutionCount::AtMostOnce;
@@ -520,7 +563,7 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         case ChainStep::CompiledClass:
             if (context.usesOnlyAnswersWithoutTests && !walked.conditions.isEmpty())
                 return MemberAnswer::unknown(walked.cause);
-            current = next.layout;
+            current = rowsPassed ? passEmptyPrototypes(program, *rowsPassed, next.layout) : next.layout;
             continue;
         case ChainStep::BuiltinClass:
             return finish(findMemberFromPrototypeOf(context, next.builtinClass, key, query.access));

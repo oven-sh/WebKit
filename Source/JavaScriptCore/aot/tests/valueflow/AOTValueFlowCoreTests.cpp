@@ -1585,6 +1585,102 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
     }
 }
 
+static std::atomic<uint32_t> firstOfLowestObjects;
+
+// The graph keeps the sixty-four lowest objects of a set as bits of one word, and finds the set of a word in a table by that word.
+static void aNodeMayHoldAllOfTheLowestObjects()
+{
+    static constexpr uint32_t numberOfLowestObjects = 64;
+    ValueFlowStatement statement;
+    statement.function = FunctionID(0u);
+    statement.result = ValueFlowNodeID(0u);
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = 1;
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = 1;
+    input.statements = std::span(&statement, 1);
+    input.ranges = ranges;
+
+    ValueFlowRule rule = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        uint32_t next = firstOfLowestObjects;
+        context.forEachMember(context.valueOf(statement.result), [&](ValueFlowObjectID) {
+            ++next;
+        });
+        if (next < numberOfLowestObjects)
+            context.add(statement.result, context.maker().of(ValueFlowObjectID(next)));
+    };
+    for (uint32_t first : { 0u, 1u }) {
+        ParallelLoops loops(1);
+        ValueSets sets(numberOfLowestObjects);
+        firstOfLowestObjects = first;
+        ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+        solver.solve();
+        AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statement.result)) == numberOfLowestObjects - first);
+    }
+}
+
+static std::atomic<unsigned> runsOfReaderOfGrowingSet;
+static std::atomic<unsigned> connectionsOfReaderOfGrowingSet;
+
+// The statements that cost most are handed to the threads first. They were picked for that by being due, and a statement that waits is still due:
+// so the one kind of statement that it pays most to let wait ran in every round.
+static void aStatementThatMakesManyConnectionsWaitsLikeAnyOtherThatRunsOften()
+{
+    static constexpr uint32_t numberOfObjects = 256;
+    static constexpr uint32_t growing = 0;
+    static constexpr uint32_t taken = 1;
+    static constexpr uint32_t handedOn = 2;
+    static constexpr uint32_t firstOfRow = 3;
+    Vector<ValueFlowStatement> statements(numberOfObjects + 1);
+    for (uint32_t index = 0; index < statements.size(); ++index) {
+        statements[index].function = FunctionID(0u);
+        statements[index].result = ValueFlowNodeID(index < numberOfObjects ? firstOfRow + index : taken);
+    }
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = statements.size();
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = firstOfRow + numberOfObjects;
+    input.statements = statements.span();
+    input.ranges = ranges;
+
+    // Each statement of the row runs when the one in front of it has, a round later, and gives the set one more member: so something else is due in every round. The last statement takes all that the set holds.
+    ValueFlowRule rule = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        if (statement.result.index() >= firstOfRow) {
+            uint32_t position = statement.result.index() - firstOfRow;
+            if (position && !context.meet(context.valueOf(ValueFlowNodeID(statement.result.index() - 1)), ValueSets::anything))
+                return;
+            context.add(statement.result, context.maker().of(ValueFlowObjectID(position)));
+            context.add(ValueFlowNodeID(growing), context.maker().of(ValueFlowObjectID(position)));
+            return;
+        }
+        ++runsOfReaderOfGrowingSet;
+        context.add(statement.result, context.valueOf(ValueFlowNodeID(growing)));
+        for (unsigned connection = 0; connection < connectionsOfReaderOfGrowingSet; ++connection)
+            context.connect(ValueFlowNodeID(taken), ValueFlowNodeID(handedOn));
+    };
+    for (unsigned numberOfThreads : { 1u, 4u }) {
+        unsigned runsWithFewConnections = 0;
+        for (unsigned connections : { 1u, 5000u }) {
+            ParallelLoops loops(numberOfThreads);
+            ValueSets sets(numberOfObjects);
+            runsOfReaderOfGrowingSet = 0;
+            connectionsOfReaderOfGrowingSet = connections;
+            ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+            solver.solve();
+            AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(ValueFlowNodeID(growing))) == numberOfObjects);
+            AOT_TEST_CHECK(solver.possibleValuesOf(ValueFlowNodeID(handedOn)) == solver.possibleValuesOf(ValueFlowNodeID(growing)));
+            AOT_TEST_CHECK(solver.rounds().size() >= numberOfObjects);
+            AOT_TEST_CHECK(runsOfReaderOfGrowingSet < numberOfObjects / 4);
+            if (connections == 1)
+                runsWithFewConnections = runsOfReaderOfGrowingSet;
+            else
+                AOT_TEST_CHECK(runsOfReaderOfGrowingSet == runsWithFewConnections);
+        }
+    }
+}
+
 static void numbersByKeyAgreeWithAHashMap()
 {
     // The second kind of key is picked as a shard of watches picks its sets: by the high bits of a product with the golden ratio.
@@ -1645,11 +1741,100 @@ static void aMakerThatIsGivenBackWaitsForItsThread()
     AOT_TEST_CHECK(&pool.take() == &mine);
 }
 
+static void numbersTakenOutOfListsAreGoneAndTheOthersStay()
+{
+    // One number is in the name of the list, up to sixteen stand side by side, more are dealt out over eight lists, and those again.
+    for (uint32_t size : { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 12u, 13u, 16u, 17u, 40u, 300u, 5000u }) {
+        for (uint32_t step : { 1u, 2u, 3u, 7u }) {
+            ValueFlowNumberLists lists;
+            uint32_t list = 0;
+            uint32_t other = 0;
+            auto numberAt = [](uint32_t index) { return index * 2654435761u >> 3; };
+            for (uint32_t index = 0; index < size; ++index) {
+                AOT_TEST_CHECK(lists.add(list, numberAt(index)));
+                AOT_TEST_CHECK(lists.add(other, numberAt(index) ^ 1));
+            }
+            AOT_TEST_CHECK(!lists.remove(list, numberAt(size)));
+            uint32_t left = size;
+            for (uint32_t index = 0; index < size; index += step, --left) {
+                AOT_TEST_CHECK(lists.remove(list, numberAt(index)));
+                AOT_TEST_CHECK(!lists.remove(list, numberAt(index)));
+                AOT_TEST_CHECK(!lists.contains(list, numberAt(index)));
+            }
+            uint32_t seen = 0;
+            lists.forEach(list, [&](uint32_t) { ++seen; });
+            AOT_TEST_CHECK(seen == left && lists.numberOfNumbers() == left + size);
+            for (uint32_t index = 0; index < size; ++index) {
+                AOT_TEST_CHECK(lists.contains(list, numberAt(index)) == !!(index % step));
+                AOT_TEST_CHECK(lists.contains(other, numberAt(index) ^ 1));
+            }
+            // What was given back is taken again.
+            size_t memory = lists.memoryInBytes();
+            for (uint32_t index = 0; index < size; index += step)
+                AOT_TEST_CHECK(lists.add(list, numberAt(index)));
+            AOT_TEST_CHECK(lists.numberOfNumbers() == 2 * size && lists.memoryInBytes() <= memory + 64 * sizeof(uint32_t));
+            for (uint32_t index = 0; index < size; ++index)
+                AOT_TEST_CHECK(lists.remove(list, numberAt(index)));
+            AOT_TEST_CHECK(size > 16 || !list);
+            AOT_TEST_CHECK(lists.numberOfNumbers() == size);
+        }
+    }
+}
+
+static void anEdgeTakenOutOfTheGraphCarriesNoMore()
+{
+    ParallelLoops loops(1);
+    ValueSets sets(16);
+    Vector<std::unique_ptr<ValueSetMaker>> makers(1, [&](size_t) {
+        return makeUnique<ValueSetMaker>(sets);
+    });
+    auto setOf = [&](std::initializer_list<uint32_t> members) {
+        Vector<ValueFlowObjectID> list;
+        for (uint32_t member : members)
+            list.append(ValueFlowObjectID(member));
+        return makers[0]->of(list.span());
+    };
+    // early -> source, late -> source, source -> old, source -> current
+    ValueFlowGraph graph(loops, makers.span());
+    ValueFlowNodeID early = graph.addNodes(5);
+    ValueFlowNodeID late(early.index() + 1);
+    ValueFlowNodeID source(early.index() + 2);
+    ValueFlowNodeID old(early.index() + 3);
+    ValueFlowNodeID current(early.index() + 4);
+    graph.makeConstant(early, setOf({ 3 }));
+    graph.makeConstant(late, setOf({ 5 }));
+    Vector<ValueFlowNodeID> moved;
+    ValueFlowEdge first[] = { { early, source }, { source, old }, { source, current } };
+    AOT_TEST_CHECK(graph.addEdges(first) == 3);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3 }) && graph.valueOf(current) == setOf({ 3 }));
+
+    ValueFlowEdge removed[] = { { source, old } };
+    ValueFlowEdge listedTwice[] = { removed[0], removed[0] };
+    graph.removeEdges(listedTwice);
+    AOT_TEST_CHECK(!graph.hasAdded(removed[0]) && graph.counters().edgesRemoved == 1);
+    bool isPredecessor = false;
+    graph.forEachPredecessor(old, [&](ValueFlowNodeID predecessor) {
+        isPredecessor |= predecessor == source;
+    });
+    AOT_TEST_CHECK(!isPredecessor);
+    ValueFlowEdge second[] = { { late, source } };
+    AOT_TEST_CHECK(graph.addEdges(second) == 1);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3 }) && graph.valueOf(current) == setOf({ 3, 5 }));
+
+    // Whoever wants it again adds it as a new edge, and it brings all that its source holds.
+    AOT_TEST_CHECK(graph.addEdges(removed) == 1);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3, 5 }));
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
+    v(numbersTakenOutOfListsAreGoneAndTheOthersStay) v(anEdgeTakenOutOfTheGraphCarriesNoMore) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
+    v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(aNodeMayHoldAllOfTheLowestObjects) v(aStatementThatMakesManyConnectionsWaitsLikeAnyOtherThatRunsOften) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

@@ -16,6 +16,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTModuleEnvironment.h"
 #include "AOTObject.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
@@ -184,6 +185,11 @@ void willAnalyzeHeap(VM& vm)
 void willCollectForExhaustedCage(VM& vm)
 {
     vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
+}
+
+bool isModuleEnvironment(JSCell* cell)
+{
+    return cell->classInfo() == ModuleEnvironment::info();
 }
 
 String nameOfCompiledCallee(JSCell* cell)

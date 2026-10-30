@@ -128,6 +128,17 @@ Expected<bool> Heat::isAllocatedIn(LayoutID layout, ModuleID module) const
     return std::ranges::binary_search(m_modulesThatAllocate, packedKeyOf(layout, module));
 }
 
+Expected<bool> Heat::isAllocatedByProgram(const Program& program, LayoutID layout) const
+{
+    RELEASE_ASSERT(m_hasWeights);
+    auto first = std::ranges::lower_bound(m_modulesThatAllocate, packedKeyOf(layout, ModuleID(0u)));
+    auto end = std::ranges::lower_bound(first, m_modulesThatAllocate.end(), packedKeyOf(LayoutID(layout.index() + 1), ModuleID(0u)));
+    return std::ranges::any_of(first, end, [&](uint64_t allocator) {
+        const Module& module = program.at(ModuleID(static_cast<uint32_t>(allocator)));
+        return module.kind != ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLibrary);
+    });
+}
+
 Expected<bool> Heat::isStoredUnder(LayoutID layout, PropertyKeyID name) const
 {
     RELEASE_ASSERT(m_hasWeights);

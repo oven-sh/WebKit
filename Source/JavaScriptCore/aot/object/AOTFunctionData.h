@@ -13,8 +13,11 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
+#include <wtf/ASCIICType.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -161,6 +164,7 @@ struct ConstructEntrypointData {
 static_assert(sizeof(ConstructEntrypointData) == 8 && isImageRecord<ConstructEntrypointData>);
 
 // Where a plain function makes a call in tail position. A function that is constructed is listed in stack traces until that call has returned, though its frame is gone.
+// In front of those of a function stands the place where it is listed while `this` is made for it, which a stub does before the function has a frame.
 // ProgramTables::placesOfTailCalls has them one behind the other, ascending by function. Each says how far it is from the one in front.
 struct TailCallPlace {
     static constexpr uint32_t noCallee = UINT32_MAX;
@@ -169,7 +173,7 @@ struct TailCallPlace {
     {
         bool namesCallee = callee != noCallee;
         bool isInOtherSource = sourcePlusOne != inFront.sourcePlusOne;
-        appendVarint(bytes, static_cast<uint64_t>(function - inFront.function) << 2 | isInOtherSource << 1 | namesCallee);
+        appendVarint(bytes, static_cast<uint64_t>(function - inFront.function) << 3 | isWhereThisIsMade << 2 | isInOtherSource << 1 | namesCallee);
         if (isInOtherSource)
             appendVarint(bytes, sourcePlusOne);
         appendVarint(bytes, zigZagEncode(static_cast<int64_t>(line) - inFront.line));
@@ -182,7 +186,8 @@ struct TailCallPlace {
     {
         TailCallPlace place;
         uint64_t head = readVarint(cursor);
-        place.function = inFront.function + static_cast<uint32_t>(head >> 2);
+        place.function = inFront.function + static_cast<uint32_t>(head >> 3);
+        place.isWhereThisIsMade = head & 4;
         place.sourcePlusOne = head & 2 ? static_cast<uint32_t>(readVarint(cursor)) : inFront.sourcePlusOne;
         place.line = static_cast<uint32_t>(inFront.line + zigZagDecode(readVarint(cursor)));
         place.column = static_cast<uint32_t>(readVarint(cursor));
@@ -194,6 +199,7 @@ struct TailCallPlace {
     // Both as they are written. The callee is named where the function has several places and the call says whom it enters.
     uint32_t function { 0 };
     uint32_t callee { noCallee };
+    bool isWhereThisIsMade { false };
     // All three are zero in an image without positions.
     uint32_t sourcePlusOne { 0 };
     uint32_t line { 0 };
@@ -223,8 +229,195 @@ struct FunctionTexts {
     uint32_t numberOfEntries;
     uint32_t entriesOffset;
     uint32_t textOffset;
+    // One more PiecesOfModule follows them, which ends the pieces of the last.
+    uint32_t numberOfModulesWithPieces;
+    uint32_t modulesWithPiecesOffset;
+    uint32_t piecesOffset;
 };
-static_assert(sizeof(FunctionTexts) == 12 && isImageRecord<FunctionTexts>);
+static_assert(sizeof(FunctionTexts) == 24 && isImageRecord<FunctionTexts>);
+
+// The text is pieces of files with the types cut out, so a line and a column of a file lead into it only by way of these. In the order of the modules.
+// The pieces of a module follow one another as in its file. Every number is a varint.
+//   A piece: how far its text starts behind the end of the piece before it (zigzag), doubled, plus one; its size; how many lines it starts below the start of the piece before it; its column.
+//   A cut in that piece: how far it lies behind the cut before it, or behind the start of the piece, doubled; the columns that are gone, doubled, plus one where lines are gone too; then how many lines.
+//   Where lines are gone, the columns are those in front of what follows the cut on its line.
+struct PiecesOfModule {
+    uint32_t module;
+    uint32_t start;
+};
+static_assert(sizeof(PiecesOfModule) == 8 && isImageRecord<PiecesOfModule>);
+
+// Follows a piece of text through the file that it is from. A column counts units of UTF-16, and the text is UTF-8.
+struct PlaceOfTextInFile {
+    // Goes over the character at text[at] and answers where the next one starts.
+    size_t advanceOver(std::span<const uint8_t> text, size_t at)
+    {
+        uint8_t byte = text[at];
+        bool wasBehindCarriageReturn = std::exchange(isBehindCarriageReturn, byte == '\r');
+        if (byte == '\n' && wasBehindCarriageReturn)
+            return at + 1;
+        if (byte < 0x80) {
+            if (byte == '\n' || byte == '\r')
+                startLine();
+            else
+                ++column;
+            return at + 1;
+        }
+        size_t length = byte < 0xE0 ? 2 : byte < 0xF0 ? 3 : 4;
+        // U+2028 and U+2029
+        if (byte == 0xE2 && at + 2 < text.size() && text[at + 1] == 0x80 && (text[at + 2] == 0xA8 || text[at + 2] == 0xA9))
+            startLine();
+        else
+            column += length == 4 ? 2 : 1;
+        return at + length;
+    }
+
+    void advanceOverCut(uint32_t lines, uint32_t columns)
+    {
+        isBehindCarriageReturn = false;
+        line += lines;
+        column = lines ? columns + 1 : column + columns;
+    }
+
+    void startLine()
+    {
+        ++line;
+        column = 1;
+    }
+
+    uint32_t line;
+    uint32_t column;
+    bool isBehindCarriageReturn { false };
+};
+
+// `bun run` runs what Bun's transpiler prints of a file, and an error quotes that: the value in place of the name of a constant, an initializer in place of the
+// only use of a variable, `3` for `1 + 2`. These say what is printed in place of which piece of the text. In the order of the modules, and one more ends the bytes of the last.
+// The first byte of textPrintedInPlace says what a start counts from: 0, the start of the text of all functions; 1, the start of the file, for a test run, which reads the files.
+struct TextPrintedInPlaceOfModule {
+    uint32_t module;
+    uint32_t start;
+};
+static_assert(sizeof(TextPrintedInPlaceOfModule) == 8 && isImageRecord<TextPrintedInPlaceOfModule>);
+
+// The pieces of a module ascend by their starts, and one that holds others stands in front of them. Every number is a varint.
+//   How far the piece starts behind the start of the piece before it; its size; then either
+//   the size of what is printed, doubled, and those bytes, or
+//   the size of another piece that is printed there too, times four, plus two where it is printed in round brackets, plus one; and how far that piece starts in front of this one (zigzag).
+// A file that `bun run` runs as it is written, such as the output of `bun build`, has one piece of no size.
+struct TextPrintedInPlace {
+    static bool sayFileRunsAsWritten(std::span<const TextPrintedInPlace> pieces) { return pieces.size() == 1 && !pieces[0].end; }
+
+    static Vector<TextPrintedInPlace> readAll(std::span<const uint8_t> bytes)
+    {
+        Vector<TextPrintedInPlace> pieces;
+        const uint8_t* cursor = bytes.data();
+        const uint8_t* end = std::to_address(bytes.end());
+        // A number takes ten bytes at the most, and the last piece may be cut short in a file that somebody has written by hand.
+        auto readNumber = [&] {
+            uint64_t number = 0;
+            for (unsigned shift = 0; cursor < end && shift < 64; shift += 7) {
+                uint8_t byte = *cursor++;
+                number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+                if (!(byte & 0x80))
+                    break;
+            }
+            return number;
+        };
+        uint64_t start = 0;
+        while (cursor < end) {
+            start += readNumber();
+            uint64_t size = readNumber();
+            uint64_t printed = readNumber();
+            if (start + size > std::numeric_limits<uint32_t>::max())
+                break;
+            TextPrintedInPlace piece { static_cast<uint32_t>(start), static_cast<uint32_t>(start + size) };
+            if (printed & 1) {
+                int64_t startOfCopied = static_cast<int64_t>(start) - zigZagDecode(readNumber());
+                if (startOfCopied < 0 || static_cast<uint64_t>(startOfCopied) + (printed >> 2) > std::numeric_limits<uint32_t>::max())
+                    break;
+                // An initializer ends in front of the name that it replaces, and an operand is smaller than its operator. So to follow the copies comes to an end.
+                uint64_t endOfCopied = static_cast<uint64_t>(startOfCopied) + (printed >> 2);
+                bool isInFront = endOfCopied <= start;
+                bool isBeneath = static_cast<uint64_t>(startOfCopied) >= start && endOfCopied <= start + size && (printed >> 2) < size;
+                if (!isInFront && !isBeneath)
+                    continue;
+                piece.isCopy = true;
+                piece.isInBrackets = printed & 2;
+                piece.startOfCopied = static_cast<uint32_t>(startOfCopied);
+                piece.endOfCopied = static_cast<uint32_t>(startOfCopied + (printed >> 2));
+            } else {
+                if (printed >> 1 > static_cast<uint64_t>(end - cursor))
+                    break;
+                piece.bytes = { cursor, static_cast<size_t>(printed >> 1) };
+                cursor += printed >> 1;
+            }
+            pieces.append(piece);
+        }
+        return pieces;
+    }
+
+    void appendTo(Vector<uint8_t>& bytes, uint32_t startOfPieceInFront) const
+    {
+        appendVarint(bytes, start - startOfPieceInFront);
+        appendVarint(bytes, end - start);
+        if (!isCopy) {
+            appendVarint(bytes, static_cast<uint64_t>(this->bytes.size()) << 1);
+            bytes.append(this->bytes);
+            return;
+        }
+        appendVarint(bytes, static_cast<uint64_t>(endOfCopied - startOfCopied) << 2 | isInBrackets << 1 | 1);
+        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(start) - static_cast<int64_t>(startOfCopied)));
+    }
+
+    uint32_t start { 0 };
+    uint32_t end { 0 };
+    std::span<const uint8_t> bytes { };
+    bool isCopy { false };
+    bool isInBrackets { false };
+    uint32_t startOfCopied { 0 };
+    uint32_t endOfCopied { 0 };
+};
+
+// In front of what is printed in place of a key, so that nobody takes `a["b"]` for what the program has written: that is printed `a.b`. No text holds this byte, and whoever shows the text takes it out.
+static constexpr uint8_t markOfPrintedKey = 1;
+
+// Behind the `[` or `{` of what is printed over several lines: one, and one more for each indentation of the line that holds the bracket. Whoever shows the text takes them out too.
+static constexpr uint8_t markOfIndentation = 2;
+
+// text[from, to) as `bun run` has it. `pieces` are those of the module, and count from the start of `text`.
+template<typename Character>
+void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Character> text, size_t from, size_t to, std::span<const TextPrintedInPlace> pieces)
+{
+    size_t at = from;
+    auto first = std::ranges::lower_bound(pieces, from, { }, &TextPrintedInPlace::start);
+    for (const TextPrintedInPlace& piece : pieces.subspan(first - pieces.begin())) {
+        if (piece.start >= to)
+            break;
+        // It stands in a piece that is done, or reaches out of the text that is asked for.
+        if (piece.start < at || piece.end > to || (piece.isCopy && piece.endOfCopied > text.size()))
+            continue;
+        printed.append(text.subspan(at, piece.start - at));
+        if (!printed.isEmpty() && printed.last() == '[')
+            printed.append(static_cast<Character>(markOfPrintedKey));
+        size_t startOfPrinted = printed.size();
+        if (piece.isCopy) {
+            if (piece.isInBrackets)
+                printed.append('(');
+            appendWithTextPrintedInPlace(printed, text, piece.startOfCopied, piece.endOfCopied, pieces);
+            if (piece.isInBrackets)
+                printed.append(')');
+        } else
+            printed.append(byteCast<Character>(piece.bytes));
+        at = piece.end;
+        // `1.toString` is no program, so `1 .toString` is printed.
+        bool isNumber = printed.size() > startOfPrinted && isASCIIDigit(printed[startOfPrinted]) && std::ranges::all_of(printed.subspan(startOfPrinted), [](Character character) {
+            return isASCIIDigit(character) || character == '.' || character == 'e';
+        });
+        if (isNumber && at < text.size() && text[at] == '.')
+            printed.append(' ');
+    }
+    printed.append(text.subspan(at, to - at));
+}
 
 // In the order of the sources of the functions, so that both a function and its source lead to the text.
 struct FunctionTextEntry {
@@ -281,6 +474,8 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(closureCellNumbers, Number24) \
     v(functionTexts, FunctionTexts) \
     v(constructorLines, ConstructorLineData) \
+    v(modulesWithTextPrintedInPlace, TextPrintedInPlaceOfModule) \
+    v(textPrintedInPlace, uint8_t) \
     v(constructors, ConstructorData) \
     v(boundFunctions, BoundFunctionData) \
     v(constructEntrypoints, ConstructEntrypointData) \

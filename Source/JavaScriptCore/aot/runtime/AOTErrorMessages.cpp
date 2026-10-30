@@ -405,22 +405,29 @@ String describe(const ProgramTables& tables, const RuntimeType& type, Typed::Typ
 }
 
 static thread_local const String* quotedSource;
+// The run time has looked for what the program spells at the place, and has found nothing.
+static thread_local bool hasNothingToQuote;
+static String findCallOfNativeFunction(VM&);
 
-String quotedSourceOfFailedExpression(VM& vm)
+String quotedSourceOfFailedExpression(VM& vm, bool messageEndsInQuote)
 {
     if (quotedSource)
         return *quotedSource;
-    if (!vm.hasCompiledCode())
+    if (!vm.hasCompiledCode() || hasNothingToQuote)
         return { };
-    StringView constructor = nameOfConstructorThatRunsOnTop(vm);
-    return constructor.isNull() ? String() : tryMakeString("new "_s, constructor);
+    if (StringView constructor = nameOfConstructorThatRunsOnTop(vm); !constructor.isNull())
+        return tryMakeString("new "_s, constructor);
+    // `Function.prototype.call.call(o)`: what is no function is refused in `call`, which is JavaScript of the engine's own under `bun run`, and nothing is quoted out of that.
+    return messageEndsInQuote ? findCallOfNativeFunction(vm) : String();
 }
 
 static JSObject* createQuoting(const String& source, JSObject* (*create)(JSGlobalObject*, JSValue), JSGlobalObject* globalObject, JSValue value)
 {
     SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
+    SetForScope nothingInScope(hasNothingToQuote, source.isNull());
     return create(globalObject, value);
 }
+
 
 // As the engine's message describes the value. Null where it cannot be described.
 static String describe(JSGlobalObject* globalObject, JSValue value)
@@ -533,7 +540,23 @@ static std::optional<size_t> findClosingBracket(std::span<const Latin1Character>
             }
         } else if (character == '/' && at + 1 < text.size() && text[at + 1] == '/')
             at = std::min(WTF::find(text, static_cast<Latin1Character>('\n'), at), text.size());
-        else if (character == '(' || character == '[')
+        else if (character == '/' && at + 1 < text.size() && text[at + 1] == '*') {
+            for (at += 2; at + 1 < text.size() && (text[at] != '*' || text[at + 1] != '/'); ++at) { }
+            ++at;
+        } else if (character == '/') {
+            // `= /[)\]]/`: behind a value it divides.
+            size_t inFront = at;
+            while (inFront > open && (text[inFront - 1] == ' ' || text[inFront - 1] == '\n'))
+                --inFront;
+            Latin1Character last = text[inFront - 1];
+            if (isPartOfName(last) || last == ')' || last == ']' || last == '}' || isQuote(last))
+                continue;
+            bool isInClass = false;
+            for (++at; at < text.size() && text[at] != '\n' && (text[at] != '/' || isInClass); ++at) {
+                isInClass = text[at] == '[' || (isInClass && text[at] != ']');
+                at += text[at] == '\\';
+            }
+        } else if (character == '(' || character == '[')
             ++depth;
         else if ((character == ')' || character == ']') && !--depth)
             return at;
@@ -689,8 +712,9 @@ static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size
 }
 
 // Each place in `text[from, to)` that reads an element: `a.b[k]`. The place of such a read is that of `a.b`, so of several that hold it the first is meant.
-// `name` is "[]" where the key is computed as the program runs. Otherwise the compiler knows the key, as it may where the source has `a[k]`. Then `bun run` may know
-// it too and print the name, which `bun test` does not: so that is quoted only where a file says which place it is, as in a test run.
+// In a file that runs as it is written it is that of the `[`.
+// `name` is "[]" where the key is computed as the program runs. Otherwise the compiler knows the key, as it may where the source has `a[k]`: that is quoted only where
+// the place is known. Whether `bun run` knows the key too, and prints the name, is what TextPrintedInPlace says.
 static WrittenReads findWrittenElements(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
     bool isComputed = name == "[]"_s;
@@ -713,7 +737,7 @@ static WrittenReads findWrittenElements(std::span<const Latin1Character> text, s
             return WrittenReads::Differ;
         }
         start = startWithNew(text, *start, at);
-        if (within && (*within < *start || *within >= at))
+        if (within && (*within < *start || *within > at))
             continue;
         std::span<const Latin1Character> read = text.subspan(*start, endWithStoredValue(text, *close + 1) - *start);
         if (within) {
@@ -752,21 +776,49 @@ static WrittenReads findWrittenPrivateNames(std::span<const Latin1Character> tex
     return found.data() ? WrittenReads::Same : WrittenReads::None;
 }
 
-// `x of v` of `for (const x of v)`, and `[a, b]` of `const [a, b] = v`. The place is that of `x`, or stands in front of the list. Only a file says where that is.
+// Where the quote of a loop starts, in the head `text[from, to)`: at `x` in `const x`, at `const` in `const [a, b]` and `const { a }`, and at the start of what is assigned to: `o.x`, `[a, b]`.
+static size_t startOfLoopTarget(std::span<const Latin1Character> text, size_t from, size_t to)
+{
+    auto skipBlanks = [&](size_t at) {
+        while (at < to && (text[at] == ' ' || text[at] == '\n'))
+            ++at;
+        return at;
+    };
+    size_t start = skipBlanks(from);
+    for (ASCIILiteral word : { "const"_s, "let"_s, "var"_s }) {
+        size_t behind = start + word.length();
+        if (behind >= to || isPartOfName(text[behind]) || !equal(StringView(word), text.subspan(start, word.length())))
+            continue;
+        size_t target = skipBlanks(behind);
+        return target < to && isPartOfName(text[target]) ? target : start;
+    }
+    return start;
+}
+
+// `x of v` of `for (const x of v)`, and `[a, b]` of `const [a, b] = v`. The place of a loop lies in its head, or is the loop's own where the head has no name. That of a list is the list or stands in front of it.
+// Only a file says where that is.
 static WrittenReads findWrittenIterations(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
-    if (!within)
+    if (!within || *within >= to)
         return WrittenReads::None;
-    for (size_t at = from; at + 4 < *within; ++at) {
-        if (text[at] != 'f' || text[at + 1] != 'o' || text[at + 2] != 'r' || text[at + 3] != ' ' || (at > from && isPartOfName(text[at - 1])))
+    auto isBlank = [](Latin1Character character) {
+        return character == ' ' || character == '\n';
+    };
+    // `for ([a, b] of v)`: at the list it is the list that was given no list. A head may take several lines, so the `for` may stand on a line in front.
+    for (size_t at = text[*within] == '[' ? 0 : *within + 1; at--;) {
+        if (at + 4 >= text.size() || text[at] != 'f' || text[at + 1] != 'o' || text[at + 2] != 'r' || text[at + 3] != ' ' || (at && isPartOfName(text[at - 1])))
             continue;
         size_t open = WTF::find(text, static_cast<Latin1Character>('('), at);
-        std::optional<size_t> close = open != notFound && open < *within ? findClosingBracket(text, open) : std::nullopt;
-        if (!close || *close <= *within || *close >= to)
+        std::optional<size_t> close = open != notFound && (open < *within || at == *within) ? findClosingBracket(text, open) : std::nullopt;
+        if (!close || *close <= *within) {
+            if (at < from)
+                break;
             continue;
-        for (size_t word = *within; word + 4 < *close; ++word) {
-            if (text[word] == ' ' && text[word + 1] == 'o' && text[word + 2] == 'f' && text[word + 3] == ' ') {
-                found = text.subspan(*within, *close - *within);
+        }
+        for (size_t word = std::max(*within, open); word + 4 < *close; ++word) {
+            if (isBlank(text[word]) && text[word + 1] == 'o' && text[word + 2] == 'f' && isBlank(text[word + 3])) {
+                size_t start = startOfLoopTarget(text, open + 1, word);
+                found = text.subspan(start, *close - start);
                 return WrittenReads::Same;
             }
         }
@@ -782,19 +834,49 @@ static WrittenReads findWrittenIterations(std::span<const Latin1Character> text,
         if (at > from && (isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']'))
             return WrittenReads::None;
         std::optional<size_t> close = findClosingBracket(text, at);
-        // Of a list in a list either may be the one.
-        if (!close || *close >= to || WTF::find(text.subspan(at + 1, *close - at - 1), static_cast<Latin1Character>('[')) != notFound)
+        if (!close)
             return WrittenReads::None;
+        // `const [[x]] = v`: the place in front of the lists is that of both, and either may be the one. The place of `[[x]] = v` is the list itself, and that of `[x]` in `const [a, [x]] = v` lies in the outer list.
+        size_t first = at + 1;
+        while (first < *close && isBlank(text[first]))
+            ++first;
+        if (at != *within && text[first] == '[')
+            return WrittenReads::None;
+        // The list may end on a later line.
+        to = std::max(to, std::min(WTF::find(text, static_cast<Latin1Character>('\n'), *close), text.size()));
         size_t behind = *close + 1;
         while (behind < to && text[behind] == ' ')
             ++behind;
-        bool takesValues = behind < to && ((text[behind] == '=' && (behind + 1 == to || (text[behind + 1] != '=' && text[behind + 1] != '>'))) || text[behind] == ':' || text[behind] == ',' || text[behind] == ')' || text[behind] == '}');
+        bool takesValues = behind < to && ((text[behind] == '=' && (behind + 1 == to || (text[behind + 1] != '=' && text[behind + 1] != '>'))) || text[behind] == ':' || text[behind] == ',' || text[behind] == ')' || text[behind] == '}' || text[behind] == ']');
+        takesValues |= behind + 2 < to && text[behind] == 'o' && text[behind + 1] == 'f' && text[behind + 2] == ' ';
         if (!takesValues)
             return WrittenReads::None;
         found = text.subspan(at, *close + 1 - at);
         return WrittenReads::Same;
     }
     return WrittenReads::None;
+}
+
+// The list that opens at `within`, where the compiler says that the place fills a list.
+static WrittenReads findWrittenListAt(std::span<const Latin1Character> text, size_t, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    if (!within || *within >= to || text[*within] != '[')
+        return WrittenReads::None;
+    std::optional<size_t> close = findClosingBracket(text, *within);
+    if (!close)
+        return WrittenReads::None;
+    found = text.subspan(*within, *close + 1 - *within);
+    return WrittenReads::Same;
+}
+
+// A keyword that a whole expression follows: `export default k in a`.
+static bool isFollowedByWholeExpression(std::span<const Latin1Character> word)
+{
+    for (std::span<const char> keyword : { "return"_span, "default"_span, "throw"_span, "case"_span, "yield"_span, "else"_span, "do"_span }) {
+        if (equalSpans(word, byteCast<Latin1Character>(keyword)))
+            return true;
+    }
+    return false;
 }
 
 // Each place in `text[from, to)` that asks whether an object has a key: `k in a.b`. What `for (k in a)` walks may be anything, and `#k in a` is not quoted.
@@ -845,7 +927,7 @@ static WrittenReads findWrittenKeyTests(std::span<const Latin1Character> text, s
         if (isWalked)
             continue;
         bool beginsHere = before == '(' || before == '[' || before == '{' || before == ',' || before == ';' || before == ':' || before == '?' || before == '&' || before == '|' || before == '=' || before == '\n'
-            || (before == '>' && inFront >= from + 2 && text[inFront - 2] == '=') || equalSpans(word, byteCast<Latin1Character>("return"_span));
+            || (before == '>' && inFront >= from + 2 && text[inFront - 2] == '=') || isFollowedByWholeExpression(word);
         size_t behind = end;
         while (behind < text.size() && text[behind] == ' ')
             ++behind;
@@ -1025,7 +1107,9 @@ static Vector<Latin1Character> withoutTypes(std::span<const Latin1Character> tex
     Vector<Latin1Character> kept;
     for (size_t at = 0; at < text.size(); ++at) {
         Latin1Character character = text[at];
-        bool isBehindValue = at && (isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']' || isQuote(text[at - 1]));
+        // `1 /* Green */ as T`: the comment is printed behind the value of a member of an enum.
+        bool isBehindComment = at > 1 && text[at - 2] == '*' && text[at - 1] == '/';
+        bool isBehindValue = at && (isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']' || isQuote(text[at - 1]) || isBehindComment);
         if (isQuote(character)) {
             size_t end = at + 1;
             while (end < text.size() && text[end] != character)
@@ -1061,7 +1145,8 @@ static bool areAroundValue(std::span<const Latin1Character> text, size_t open, s
         --end;
     if (!end)
         return true;
-    if (text[end - 1] == ')' || text[end - 1] == ']')
+    // `f?.(a)`
+    if (text[end - 1] == ')' || text[end - 1] == ']' || text[end - 1] == '.')
         return false;
     if (!isPartOfName(text[end - 1]))
         return true;
@@ -1079,7 +1164,8 @@ static bool areAroundValue(std::span<const Latin1Character> text, size_t open, s
 }
 
 // `(a).b` is printed `a.b`, and `(a + b).c` as it is: Bun prints round brackets only where the meaning hangs on them.
-static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::span<const Latin1Character> text)
+// isTakenAtEnd: the text stood in brackets that are not printed, and what stands behind them reads from it or calls it.
+static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::span<const Latin1Character> text, bool isTakenAtEnd = false)
 {
     for (size_t at = 0; at < text.size(); ++at) {
         Latin1Character character = text[at];
@@ -1121,10 +1207,33 @@ static void appendWithoutIdleBrackets(Vector<Latin1Character>& printed, std::spa
             while (!inside.empty() && inside.back() == ' ')
                 inside = inside.first(inside.size() - 1);
             bool isConstructed = at >= 4 && text[at - 4] == 'n' && text[at - 3] == 'e' && text[at - 2] == 'w' && text[at - 1] == ' ';
+            size_t behindBracket = *close + 1;
+            while (behindBracket < text.size() && text[behindBracket] == ' ')
+                ++behindBracket;
+            auto standsBehindBracket = [&](ASCIILiteral token) {
+                return spanHasPrefix(text.subspan(behindBracket), byteCast<Latin1Character>(token.span()));
+            };
+            bool isTaken = behindBracket == text.size() ? isTakenAtEnd : standsBehindBracket("."_s) || standsBehindBracket("["_s) || standsBehindBracket("("_s) || standsBehindBracket("`"_s) || standsBehindBracket("?."_s) || standsBehindBracket("**"_s);
             bool isPath = !inside.empty() && !isASCIIDigit(inside.front()) && startOfPathInFrontOf(inside, inside.size()) == std::optional<size_t>(0);
             // `(a?.b).c` stops elsewhere than `a?.b.c`, and `new (f()).K()` constructs something else than `new f().K()`.
             if (isPath && WTF::find(inside, static_cast<Latin1Character>('?')) == notFound && !(isConstructed && WTF::find(inside, static_cast<Latin1Character>('(')) != notFound)) {
+                appendWithoutIdleBrackets(printed, inside, isTaken);
+                at = *close;
+                continue;
+            }
+            // `"a" in (await o)` is printed `"a" in await o`: the word binds its path more tightly than whatever takes two operands. `(await o).b`, `(await o)()` and `(await o) ** 2` stay as they are.
+            bool isWordInFrontOfPath = equalSpans(inside, byteCast<Latin1Character>("void 0"_span)) || std::ranges::any_of(std::array { "await "_s, "typeof "_s, "void "_s, "delete "_s }, [&](ASCIILiteral word) {
+                return inside.size() > word.length() && spanHasPrefix(inside, byteCast<Latin1Character>(word.span())) && !isASCIIDigit(inside[word.length()])
+                    && startOfPathInFrontOf(inside, inside.size()) == std::optional<size_t>(word.length());
+            });
+            if (isWordInFrontOfPath && !isTaken && !isConstructed && WTF::find(inside, static_cast<Latin1Character>('?')) == notFound) {
                 appendWithoutIdleBrackets(printed, inside);
+                at = *close;
+                continue;
+            }
+            // `(Color.Green as any).x` is printed `1 /* Green */.x`.
+            if (inside.size() > 4 && (isASCIIDigit(inside.front()) || isQuote(inside.front())) && spanHasSuffix(inside, byteCast<Latin1Character>(" */"_span))) {
+                printed.append(inside);
                 at = *close;
                 continue;
             }
@@ -1195,11 +1304,526 @@ static Vector<Latin1Character> onOneLine(std::span<const Latin1Character> text)
     return kept;
 }
 
-static String asPrinted(std::span<const Latin1Character> text)
+// `true` is printed `!0`, `false` `!1` and `undefined` `void 0`.
+static Vector<Latin1Character> withShortLiterals(std::span<const Latin1Character> text)
 {
     Vector<Latin1Character> printed;
-    appendWithoutIdleBrackets(printed, withoutTypes(onOneLine(text).span()).span());
+    for (size_t at = 0; at < text.size(); ++at) {
+        Latin1Character character = text[at];
+        if (isQuote(character)) {
+            size_t end = at + 1;
+            while (end < text.size() && text[end] != character)
+                end += 1 + (text[end] == '\\');
+            end = std::min(end, text.size() - 1);
+            printed.append(text.subspan(at, end - at));
+            at = end;
+        } else if (isPartOfName(character) && (!at || (!isPartOfName(text[at - 1]) && text[at - 1] != '.' && text[at - 1] != '#'))) {
+            size_t end = at;
+            while (end < text.size() && isPartOfName(text[end]))
+                ++end;
+            std::span<const Latin1Character> word = text.subspan(at, end - at);
+            // `{ true: 1 }` names a property.
+            size_t behind = end;
+            while (behind < text.size() && text[behind] == ' ')
+                ++behind;
+            size_t inFront = at;
+            while (inFront && text[inFront - 1] == ' ')
+                --inFront;
+            bool isKey = behind < text.size() && text[behind] == ':' && inFront && (text[inFront - 1] == '{' || text[inFront - 1] == ',');
+            auto is = [&](ASCIILiteral literal) {
+                return !isKey && equalSpans(word, byteCast<Latin1Character>(literal.span()));
+            };
+            if (is("true"_s))
+                printed.append("!0"_span);
+            else if (is("false"_s))
+                printed.append("!1"_span);
+            else if (is("undefined"_s))
+                printed.append("void 0"_span);
+            else
+                printed.append(word);
+            at = end - 1;
+            continue;
+        }
+        printed.append(text[at]);
+    }
+    return printed;
+}
+
+// A token of a quote, for PrintedBlanks.
+struct QuotedToken {
+    enum class Role : uint8_t { Operand, Keyword, Binary, Prefix, Postfix, Open, Close, Comma, Dot, Spread, KeyColon, Semicolon };
+
+    bool endsOperand() const { return role == Role::Operand || role == Role::Close || role == Role::Postfix; }
+
+    size_t start;
+    size_t end;
+    Role role;
+    bool hasLineBreakInFront { false };
+    bool holdsItems { false };
+    bool hasLineBreakAtItems { false };
+    unsigned marksOfIndentation { 0 };
+    size_t partner { notFound };
+};
+
+// `text` with the blanks and the line breaks of Bun's printer, without comments and without the comma behind the last item.
+// A list or an object is printed over several lines where a line breaks at one of its brackets or commas. How far those lines are indented is what the compiler says: markOfIndentation.
+class PrintedBlanks {
+public:
+    static std::optional<Vector<Latin1Character>> print(std::span<const Latin1Character> text)
+    {
+        PrintedBlanks blanks(text);
+        blanks.readTokens();
+        return blanks.print();
+    }
+
+private:
+    using Role = QuotedToken::Role;
+
+    explicit PrintedBlanks(std::span<const Latin1Character> text)
+        : m_text(text)
+    {
+    }
+
+    bool is(const QuotedToken& token, ASCIILiteral spelled) const
+    {
+        // Marks may stand behind a bracket.
+        return token.end - token.start >= spelled.length() && equalSpans(m_text.subspan(token.start, spelled.length()), byteCast<Latin1Character>(spelled.span()))
+            && (token.end - token.start == spelled.length() || m_text[token.start + spelled.length()] <= markOfIndentation);
+    }
+
+    bool isAnyOf(const QuotedToken& token, std::initializer_list<ASCIILiteral> words) const
+    {
+        return std::ranges::any_of(words, [&](ASCIILiteral word) {
+            return is(token, word);
+        });
+    }
+
+    bool startsWith(size_t at, ASCIILiteral spelled) const
+    {
+        return m_text.size() - at >= spelled.length() && equalSpans(m_text.subspan(at, spelled.length()), byteCast<Latin1Character>(spelled.span()));
+    }
+
+    static bool isBlank(Latin1Character character)
+    {
+        return character == ' ' || character == '\t' || character == '\r' || character == '\n';
+    }
+
+    Latin1Character firstBehindBlanks(size_t at) const
+    {
+        while (at < m_text.size() && isBlank(m_text[at]))
+            ++at;
+        return at < m_text.size() ? m_text[at] : Latin1Character(0);
+    }
+
+    size_t endOfComment(size_t at) const
+    {
+        if (m_text[at + 1] == '/')
+            return std::min(WTF::find(m_text, static_cast<Latin1Character>('\n'), at), m_text.size());
+        for (at += 2; at + 1 < m_text.size(); ++at) {
+            if (m_text[at] == '*' && m_text[at + 1] == '/')
+                return at + 2;
+        }
+        return m_text.size();
+    }
+
+    bool startsComment(size_t at) const
+    {
+        return m_text[at] == '/' && at + 1 < m_text.size() && (m_text[at + 1] == '/' || m_text[at + 1] == '*');
+    }
+
+    size_t endOfQuoted(size_t at) const
+    {
+        if (m_text[at] != '`')
+            return std::min(skipQuoted(m_text, at, m_text.size()) + 1, m_text.size());
+        for (++at; at < m_text.size() && m_text[at] != '`'; ++at) {
+            if (m_text[at] == '\\')
+                ++at;
+            else if (startsWith(at, "${"_s))
+                at = endOfBody(at + 1) - 1;
+        }
+        return std::min(at + 1, m_text.size());
+    }
+
+    size_t endOfRegularExpression(size_t at) const
+    {
+        bool isInClass = false;
+        for (++at; at < m_text.size() && m_text[at] != '\n'; ++at) {
+            Latin1Character character = m_text[at];
+            if (character == '\\')
+                ++at;
+            else if (character == '[')
+                isInClass = true;
+            else if (character == ']')
+                isInClass = false;
+            else if (character == '/' && !isInClass) {
+                for (++at; at < m_text.size() && isPartOfName(m_text[at]); ++at) { }
+                return at;
+            }
+        }
+        return std::min(at, m_text.size());
+    }
+
+    // The body of a function or of a class stays as it is written.
+    size_t endOfBody(size_t at) const
+    {
+        unsigned depth = 0;
+        for (; at < m_text.size(); ++at) {
+            Latin1Character character = m_text[at];
+            if (isQuote(character))
+                at = endOfQuoted(at) - 1;
+            else if (startsComment(at))
+                at = endOfComment(at) - 1;
+            else if (character == '{')
+                ++depth;
+            else if (character == '}' && !--depth)
+                return at + 1;
+        }
+        return m_text.size();
+    }
+
+    size_t endOfWord(size_t at) const
+    {
+        size_t start = at;
+        for (++at; at < m_text.size() && isPartOfName(m_text[at]); ++at) { }
+        // `1e-7`
+        bool hasExponent = isASCIIDigit(m_text[start]) && !startsWith(start, "0x"_s) && (m_text[at - 1] == 'e' || m_text[at - 1] == 'E')
+            && at + 1 < m_text.size() && (m_text[at] == '-' || m_text[at] == '+') && isASCIIDigit(m_text[at + 1]);
+        if (hasExponent) {
+            for (++at; at < m_text.size() && isASCIIDigit(m_text[at]); ++at) { }
+        }
+        return at;
+    }
+
+    size_t endOfPunctuator(size_t at) const
+    {
+        for (ASCIILiteral punctuator : { ">>>="_s, "..."_s, "==="_s, "!=="_s, "**="_s, "<<="_s, ">>="_s, ">>>"_s, "&&="_s, "||="_s, "??="_s, "=>"_s, "=="_s, "!="_s, "<="_s, ">="_s, "&&"_s, "||"_s, "??"_s, "?."_s, "++"_s, "--"_s, "+="_s, "-="_s, "*="_s, "/="_s, "%="_s, "&="_s, "|="_s, "^="_s, "<<"_s, ">>"_s, "**"_s }) {
+            if (startsWith(at, punctuator))
+                return at + punctuator.length();
+        }
+        return at + 1;
+    }
+
+    Role roleOfWord(const QuotedToken& word, const QuotedToken* last) const
+    {
+        if (!isAnyOf(word, { "const"_s, "let"_s, "var"_s, "typeof"_s, "void"_s, "delete"_s, "new"_s, "in"_s, "of"_s, "instanceof"_s, "await"_s, "yield"_s, "return"_s, "throw"_s, "function"_s, "class"_s, "extends"_s, "async"_s, "static"_s, "get"_s, "set"_s }))
+            return Role::Operand;
+        // `o.of`, `{ of: 1 }`, `[of]`, `of = 1`, `new.target`
+        Latin1Character next = firstBehindBlanks(word.end);
+        if ((last && last->role == Role::Dot) || !next || next == ':' || next == ',' || next == '}' || next == ']' || next == ')' || next == '=' || next == '.' || next == ';' || next == '?')
+            return Role::Operand;
+        if (isAnyOf(word, { "in"_s, "of"_s, "instanceof"_s }))
+            return last && last->endsOperand() ? Role::Keyword : Role::Operand;
+        // `{ get() { } }`
+        if (isAnyOf(word, { "get"_s, "set"_s, "static"_s }) && next == '(')
+            return Role::Operand;
+        return Role::Keyword;
+    }
+
+    Role roleOfPunctuator(const QuotedToken& punctuator, const QuotedToken* last)
+    {
+        bool isBehindOperand = last && last->endsOperand();
+        if (is(punctuator, ","_s))
+            return Role::Comma;
+        if (is(punctuator, ";"_s))
+            return Role::Semicolon;
+        if (is(punctuator, "."_s) || is(punctuator, "?."_s))
+            return Role::Dot;
+        if (is(punctuator, "..."_s))
+            return Role::Spread;
+        if (is(punctuator, "~"_s) || is(punctuator, "@"_s))
+            return Role::Prefix;
+        // `a!.b` has a type.
+        if (is(punctuator, "!"_s))
+            return isBehindOperand ? Role::Postfix : Role::Prefix;
+        if (is(punctuator, "+"_s) || is(punctuator, "-"_s))
+            return isBehindOperand ? Role::Binary : Role::Prefix;
+        if (is(punctuator, "++"_s) || is(punctuator, "--"_s))
+            return isBehindOperand && !punctuator.hasLineBreakInFront ? Role::Postfix : Role::Prefix;
+        // `function* f`
+        if (is(punctuator, "*"_s) && last && last->role == Role::Keyword)
+            return Role::Postfix;
+        if (is(punctuator, "?"_s)) {
+            ++m_openConditions.last();
+            return Role::Binary;
+        }
+        if (is(punctuator, ":"_s)) {
+            if (!m_openConditions.last())
+                return Role::KeyColon;
+            --m_openConditions.last();
+        }
+        return Role::Binary;
+    }
+
+    bool opensBody(const QuotedToken* last) const
+    {
+        return last && (last->endsOperand() || is(*last, "=>"_s) || (last->role == Role::Keyword && isAnyOf(*last, { "class"_s, "static"_s })));
+    }
+
+    void readTokens()
+    {
+        bool hasLineBreakInFront = false;
+        Vector<size_t, 8> open;
+        m_openConditions.append(0);
+        for (size_t at = 0; at < m_text.size();) {
+            Latin1Character character = m_text[at];
+            if (isBlank(character)) {
+                hasLineBreakInFront |= character == '\n';
+                ++at;
+                continue;
+            }
+            if (startsComment(at)) {
+                size_t end = endOfComment(at);
+                hasLineBreakInFront |= WTF::find(m_text.subspan(at, end - at), static_cast<Latin1Character>('\n')) != notFound;
+                at = end;
+                continue;
+            }
+            if (character <= markOfIndentation) {
+                ++at;
+                continue;
+            }
+            const QuotedToken* last = m_tokens.isEmpty() ? nullptr : &m_tokens.last();
+            QuotedToken token { at, at + 1, Role::Operand, hasLineBreakInFront };
+            hasLineBreakInFront = false;
+            std::optional<size_t> around = open.isEmpty() ? std::nullopt : std::optional<size_t>(open.last());
+            bool standsAtItems = last && (last->role == Role::Comma || (around && last == &m_tokens[*around]));
+            if (isPartOfName(character) || character == '#') {
+                token.end = endOfWord(at);
+                token.role = roleOfWord(token, last);
+            } else if (isQuote(character))
+                token.end = endOfQuoted(at);
+            else if (character == '/' && !(last && last->endsOperand()))
+                token.end = endOfRegularExpression(at);
+            else if (character == '{' && opensBody(last))
+                token.end = endOfBody(at);
+            else if (character == '(' || character == '[' || character == '{') {
+                token.role = Role::Open;
+                token.holdsItems = character == '{' || (character == '[' && !(last && last->endsOperand()));
+                for (; token.end < m_text.size() && m_text[token.end] <= markOfIndentation; ++token.end)
+                    token.marksOfIndentation += m_text[token.end] == markOfIndentation;
+                open.append(m_tokens.size());
+                m_openConditions.append(0);
+            } else if (character == ')' || character == ']' || character == '}') {
+                token.role = Role::Close;
+                standsAtItems = true;
+                if (around) {
+                    token.partner = open.takeLast();
+                    m_tokens[token.partner].partner = m_tokens.size();
+                    m_openConditions.removeLast();
+                }
+            } else {
+                token.end = endOfPunctuator(at);
+                token.role = roleOfPunctuator(token, last);
+                standsAtItems |= token.role == Role::Comma;
+            }
+            if (around && standsAtItems && token.hasLineBreakInFront)
+                m_tokens[*around].hasLineBreakAtItems = true;
+            at = token.end;
+            m_tokens.append(token);
+        }
+    }
+
+    // `${ a }` is printed `${a}`.
+    bool appendTemplate(Vector<Latin1Character>& printed, const QuotedToken& token) const
+    {
+        for (size_t at = token.start; at < token.end; ++at) {
+            size_t end = startsWith(at, "${"_s) ? endOfBody(at + 1) : notFound;
+            if (end > token.end || m_text[end - 1] != '}') {
+                printed.append(m_text[at]);
+                if (m_text[at] == '\\' && at + 1 < token.end)
+                    printed.append(m_text[++at]);
+                continue;
+            }
+            std::optional<Vector<Latin1Character>> value = print(m_text.subspan(at + 2, end - at - 3));
+            if (!value)
+                return false;
+            printed.append("${"_span);
+            printed.appendVector(*value);
+            printed.append('}');
+            at = end - 1;
+        }
+        return true;
+    }
+
+    // `new K()` is printed `new K` where nothing is read from it.
+    bool isIdleCallOfConstructor(const QuotedToken& open) const
+    {
+        if (!is(open, "("_s) || open.partner == notFound || &m_tokens[open.partner] != &open + 1)
+            return false;
+        const QuotedToken* behind = &open + 2;
+        if (behind <= &m_tokens.last() && (behind->role == Role::Dot || behind->role == Role::Open || behind->role == Role::Postfix || m_text[behind->start] == '`'))
+            return false;
+        const QuotedToken* callee = &open;
+        while (callee - 1 > m_tokens.begin() && (callee - 1)->role == Role::Operand && isPartOfName(m_text[(callee - 1)->start])) {
+            callee -= 1;
+            if ((callee - 1)->role != Role::Dot || is(*(callee - 1), "?."_s))
+                return callee != &open && is(*(callee - 1), "new"_s) && (callee - 1)->role == Role::Keyword;
+            callee -= 1;
+        }
+        return false;
+    }
+
+    bool isOverLines(const QuotedToken& open) const
+    {
+        return open.holdsItems && open.hasLineBreakAtItems && open.partner != notFound && &m_tokens[open.partner] != &open + 1;
+    }
+
+    // How often the line that holds the first token is indented.
+    std::optional<unsigned> findIndentation() const
+    {
+        unsigned linesAround = 0;
+        bool hasLines = false;
+        for (const QuotedToken& token : m_tokens) {
+            if (token.role == Role::Open) {
+                if (token.marksOfIndentation)
+                    return token.marksOfIndentation - 1 - std::min(linesAround, token.marksOfIndentation - 1);
+                if (isOverLines(token)) {
+                    hasLines = true;
+                    ++linesAround;
+                }
+            } else if (token.role == Role::Close && token.partner != notFound && isOverLines(m_tokens[token.partner]))
+                --linesAround;
+        }
+        return hasLines ? std::nullopt : std::optional<unsigned>(0);
+    }
+
+    bool needsBlank(const QuotedToken& last, const QuotedToken& token) const
+    {
+        bool isObject = m_text[token.role == Role::Close ? token.start : last.start] == (token.role == Role::Close ? '}' : '{');
+        if (token.role == Role::Close)
+            return isObject && last.role != Role::Open;
+        if (last.role == Role::Open)
+            return isObject;
+        switch (token.role) {
+        case Role::Comma:
+            // `[, , a]` has holes.
+            return last.role == Role::Comma;
+        case Role::Semicolon:
+        case Role::Postfix:
+        case Role::KeyColon:
+            return false;
+        case Role::Dot:
+            // `1 .toString`
+            return token.start > last.end && std::ranges::all_of(m_text.subspan(last.start, last.end - last.start), isASCIIDigit<Latin1Character>);
+        default:
+            break;
+        }
+        switch (last.role) {
+        case Role::Dot:
+        case Role::Spread:
+            return false;
+        case Role::Prefix:
+            // `- -a`
+            return token.role == Role::Prefix && m_text[last.start] == m_text[token.start] && m_text[token.start] != '!';
+        case Role::Comma:
+        case Role::Semicolon:
+        case Role::KeyColon:
+        case Role::Binary:
+            return true;
+        default:
+            break;
+        }
+        if (token.role == Role::Binary)
+            return true;
+        if (last.role == Role::Keyword)
+            return !(is(last, "function"_s) && is(token, "("_s));
+        if (token.role == Role::Open)
+            return false;
+        // A tagged template.
+        return m_text[token.start] != '`';
+    }
+
+    std::optional<Vector<Latin1Character>> print() const
+    {
+        std::optional<unsigned> indentation = findIndentation();
+        if (!indentation)
+            return std::nullopt;
+        Vector<Latin1Character> printed;
+        Vector<const QuotedToken*, 8> open;
+        const QuotedToken* last = nullptr;
+        for (const QuotedToken& token : m_tokens) {
+            const QuotedToken* next = &token == &m_tokens.last() ? nullptr : &token + 1;
+            if (isIdleCallOfConstructor(token) || (token.role == Role::Close && token.partner != notFound && isIdleCallOfConstructor(m_tokens[token.partner])))
+                continue;
+            if (token.role == Role::Comma && next && next->role == Role::Close) {
+                // `[a, ,]` has a hole at its end.
+                bool isBehindHole = m_text[next->start] == ']' && last && (last->role == Role::Comma || last->role == Role::Open);
+                if (!isBehindHole)
+                    continue;
+            }
+            bool closesLines = token.role == Role::Close && token.partner != notFound && isOverLines(m_tokens[token.partner]);
+            if (closesLines)
+                --*indentation;
+            if (token.role == Role::Close && !open.isEmpty())
+                open.removeLast();
+            bool startsItem = last && !open.isEmpty() && isOverLines(*open.last()) && (last == open.last() || last->role == Role::Comma);
+            if (closesLines || startsItem) {
+                printed.append('\n');
+                printed.appendUsingFunctor(*indentation * 2, [](size_t) {
+                    return Latin1Character(' ');
+                });
+            } else if (last && needsBlank(*last, token))
+                printed.append(' ');
+            // `a => a` is printed `(a) => a`.
+            bool isLoneParameter = token.role == Role::Operand && next && is(*next, "=>"_s);
+            std::span<const Latin1Character> spelled = m_text.subspan(token.start, token.end - token.start);
+            bool isEmptyBody = token.role == Role::Operand && spelled.front() == '{' && spelled.size() > 1 && last && is(*last, ")"_s) && std::ranges::all_of(spelled.subspan(1, spelled.size() - 2), isBlank);
+            if (isLoneParameter)
+                printed.append('(');
+            if (isEmptyBody)
+                printed.append("{}"_span);
+            else if (spelled.front() != '`')
+                printed.append(spelled);
+            else if (!appendTemplate(printed, token))
+                return std::nullopt;
+            if (isLoneParameter)
+                printed.append(')');
+            if (token.role == Role::Open) {
+                open.append(&token);
+                *indentation += isOverLines(token);
+            }
+            last = &token;
+        }
+        return printed;
+    }
+
+    std::span<const Latin1Character> m_text;
+    Vector<QuotedToken> m_tokens;
+    Vector<unsigned, 8> m_openConditions;
+};
+
+enum class QuotedText : bool { Other, TakesValues };
+
+static String asPrinted(std::span<const Latin1Character> text, QuotedText quoted, bool runsAsWritten = false)
+{
+    if (quoted == QuotedText::TakesValues && runsAsWritten)
+        return String::fromUTF8(text);
+    std::optional<Vector<Latin1Character>> withBlanks = quoted == QuotedText::TakesValues ? PrintedBlanks::print(text) : onOneLine(text);
+    if (!withBlanks)
+        return { };
+    Vector<Latin1Character> printed;
+    Vector<Latin1Character> withoutTypesAndBlanks = withoutTypes(withBlanks->span());
+    appendWithoutIdleBrackets(printed, runsAsWritten ? withoutTypesAndBlanks.span() : withShortLiterals(withoutTypesAndBlanks.span()).span());
+    printed.removeAllMatching([](Latin1Character character) {
+        return character == markOfPrintedKey || character == markOfIndentation;
+    });
+    // `"a" in Color.Green` is printed `"a" in 1 /* Green */`, and the expression ends with its last token.
+    if (spanHasSuffix(printed.span(), byteCast<Latin1Character>(" */"_span))) {
+        if (size_t comment = reverseFind(printed.span(), byteCast<Latin1Character>(" /* "_span)); comment != notFound)
+            printed.shrink(comment);
+    }
     return String::fromUTF8(printed.span());
+}
+
+// `found` lies in `text`, which is what the pieces count from.
+static String asPrinted(std::span<const Latin1Character> text, std::span<const Latin1Character> found, std::span<const TextPrintedInPlace> pieces, FindInText find)
+{
+    QuotedText quoted = find == findWrittenListAt || find == findWrittenIterations ? QuotedText::TakesValues : QuotedText::Other;
+    if (pieces.empty() || TextPrintedInPlace::sayFileRunsAsWritten(pieces))
+        return asPrinted(found, quoted, !pieces.empty());
+    Vector<Latin1Character> printed;
+    size_t start = found.data() - text.data();
+    appendWithTextPrintedInPlace(printed, text, start, start + found.size(), pieces);
+    return asPrinted(printed.span(), quoted);
 }
 
 // A column counts units of UTF-16, and the file is UTF-8.
@@ -1215,10 +1839,35 @@ static size_t offsetOfColumn(std::span<const Latin1Character> text, size_t lineS
     return std::min(at, lineEnd);
 }
 
-// What the function spells at the place.
-static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView name, FindInText find)
+enum class SearchedText : bool { OnlyKnownPlace, WholeFunction };
+
+// What `text[startOfSearched, endOfSearched)` spells around `place`, which counts from the start of `text` as the pieces do.
+// The place of an error lies in what `bun run` has. Of `const r = f(x); return r.y` that is `return f(x).y`, so the place lies in the initializer, and what failed is written around the name.
+static String findSpelledAround(std::span<const Latin1Character> text, size_t startOfSearched, size_t endOfSearched, size_t place, std::span<const TextPrintedInPlace> pieces, StringView name, FindInText find)
 {
-    std::span<const Latin1Character> found;
+    std::span<const Latin1Character> searched = text.subspan(startOfSearched, endOfSearched - startOfSearched);
+    Vector<size_t, 4> places { place };
+    for (size_t index = 0; index < places.size(); ++index) {
+        size_t within = places[index] - startOfSearched;
+        size_t lineStart = within;
+        while (lineStart && searched[lineStart - 1] != '\n')
+            --lineStart;
+        size_t lineEnd = std::min(WTF::find(searched, static_cast<Latin1Character>('\n'), within), searched.size());
+        std::span<const Latin1Character> found;
+        if (lineStart < lineEnd && find(searched, lineStart, lineEnd, name, within, found) == WrittenReads::Same)
+            return asPrinted(text, found, pieces, find);
+        for (const TextPrintedInPlace& piece : pieces) {
+            bool printsPlace = piece.isCopy && piece.startOfCopied <= places[index] && places[index] <= piece.endOfCopied;
+            if (printsPlace && piece.start >= startOfSearched && piece.start < endOfSearched && !places.contains(piece.start))
+                places.append(piece.start);
+        }
+    }
+    return { };
+}
+
+// What the function spells at the place.
+static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView name, FindInText find, SearchedText searched = SearchedText::WholeFunction)
+{
     // A file says which line and column it is, so only what holds that place counts.
     if (place->module && place->position.line && place->position.column) {
         const SourceFile* file = sourceFileOf(vm, place->module);
@@ -1226,14 +1875,30 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
             std::span<const Latin1Character> text = byteCast<Latin1Character>(file->bytes.span());
             size_t lineStart = file->lineStarts[place->position.line - 1];
             size_t lineEnd = place->position.line < file->lineStarts.size() ? file->lineStarts[place->position.line] - 1 : text.size();
-            if (lineStart < lineEnd && find(text, lineStart, lineEnd, name, offsetOfColumn(text, lineStart, lineEnd, place->position.column), found) == WrittenReads::Same)
-                return asPrinted(found);
-            found = { };
+            Vector<TextPrintedInPlace> pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::File);
+            if (String quote = findSpelledAround(text, 0, text.size(), offsetOfColumn(text, lineStart, lineEnd, place->position.column), pieces.span(), name, find); !quote.isNull())
+                return quote;
         }
     }
 
-    // The text of the function is all there is to go by. So this answers only where the line of the place, or else the whole function, has one such place, or spells each of them alike.
+    // An executable has the text of the function alone, and knows where that stood in the file.
     std::span<const Latin1Character> text = functionSourceBytesOfSource(place->function);
+    std::span<const Latin1Character> textOfAll = sourceBytesOfAllFunctions();
+    Vector<TextPrintedInPlace> pieces;
+    if (place->module && textOfAll.data())
+        pieces = textPrintedInPlaceOf(place->module, StartOfPrintedText::SourceBytesOfAllFunctions);
+    if (place->module && place->position.line && place->position.column) {
+        if (std::optional<PlaceInKeptText> found = findInKeptText(place->function, place->module, place->position)) {
+            if (String quote = findSpelledAround(textOfAll, found->startOfSearched, found->endOfSearched, found->at, pieces.span(), name, find); !quote.isNull())
+                return quote;
+        }
+    }
+
+    if (searched == SearchedText::OnlyKnownPlace || !text.data())
+        return { };
+
+    // Nothing says where in the text the place is. So this answers only where the line of the place, or else the whole function, has one such place, or spells each of them alike.
+    std::span<const Latin1Character> found;
     WrittenReads reads = WrittenReads::None;
     if (place->line) {
         size_t lineStart = 0;
@@ -1247,7 +1912,7 @@ static String findSpelled(VM& vm, const PlaceInFunctionText* place, StringView n
     // Types that took lines of their own are not in the text, so the line may be another.
     if (reads == WrittenReads::None)
         reads = find(text, 0, text.size(), name, std::nullopt, found);
-    return reads == WrittenReads::Same ? asPrinted(found) : String();
+    return reads == WrittenReads::Same ? asPrinted(textOfAll, found, pieces.span(), find) : String();
 }
 
 // Each place in `text[from, to)` that calls `name`, which is the callee as it is written or the last of its names. `found` holds the call with its arguments, and `new` in front of it.
@@ -1284,8 +1949,66 @@ static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size
     return found.data() ? WrittenReads::Same : WrittenReads::None;
 }
 
+// The call whose callee ends in the name that begins at `within`: that is the column which a stack trace gives for a call.
+static WrittenReads findWrittenCallAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    if (!within || *within >= to)
+        return WrittenReads::None;
+    size_t at = *within;
+    // `a[k](b)`: the column is that of the key. In `[f()]` and `a[f()]` it is that of `f`.
+    if (at > from + 1 && text[at - 1] == '[') {
+        if (WrittenReads reads = findWrittenCallsOfElements(text, at - 2, to, name, within, found); reads != WrittenReads::None)
+            return reads;
+    }
+    if (!isPartOfName(text[at]) || isASCIIDigit(text[at]) || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
+        return WrittenReads::None;
+    size_t open = at;
+    while (open < text.size() && isPartOfName(text[open]))
+        ++open;
+    if (open < text.size() && text[open] == '!')
+        ++open;
+    if (open + 1 < text.size() && text[open] == '?' && text[open + 1] == '.')
+        open += 2;
+    if (open >= text.size() || text[open] != '(')
+        return WrittenReads::None;
+    size_t start = at;
+    if (at && text[at - 1] == '.') {
+        size_t dot = at - 1;
+        if (dot && text[dot - 1] == '?')
+            --dot;
+        std::optional<size_t> path = startOfPathInFrontOf(text, dot);
+        if (!path)
+            return WrittenReads::Differ;
+        start = *path;
+    }
+    std::optional<size_t> close = findClosingBracket(text, open);
+    if (!close)
+        return WrittenReads::Differ;
+    found = text.subspan(start, *close + 1 - start);
+    return WrittenReads::Same;
+}
+
+// The engine's own C++ refuses what is not an object in a function that the program calls, or where it asks a value for its iterator.
+static WrittenReads findWrittenCallOrIterationAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    WrittenReads reads = findWrittenCallAt(text, from, to, name, within, found);
+    return reads == WrittenReads::None ? findWrittenIterations(text, from, to, name, within, found) : reads;
+}
+
 static String findAt(VM& vm, const PlaceInFunctionText* place, StringView name, FindInText find, bool& holdsForEveryName)
 {
+    // Asked one after the other, so that each is printed in its own way.
+    if (find == findWrittenCallOrIterationAt) {
+        String quote = findSpelled(vm, place, name, findWrittenCallAt);
+        return quote.isNull() ? findSpelled(vm, place, name, findWrittenIterations) : quote;
+    }
+    // `a[k]`, where the compiler knows what `k` holds. The function may read that name behind a dot elsewhere, and that is not what failed:
+    // where an element stands at the place and no read of the name, the rest of the function is not looked through for one.
+    if (find == findWrittenReads && findSpelled(vm, place, name, find, SearchedText::OnlyKnownPlace).isNull()
+        && !findSpelled(vm, place, "[]"_s, findWrittenElements, SearchedText::OnlyKnownPlace).isNull()) {
+        holdsForEveryName = true;
+        return findSpelled(vm, place, name, findWrittenElements);
+    }
     String quote = findSpelled(vm, place, name, find);
     // `a[k]`, where the name is what `k` held this time.
     if (quote.isNull() && find == findWrittenReads) {
@@ -1308,21 +2031,39 @@ static String findAt(VM& vm, const PlaceInFunctionText* place, StringView name, 
     return callee.length() > name.length() && callee.startsWith(name) && callee[name.length()] == '(' ? quote : String();
 }
 
-// What the function on top spells at the place that failed. A place asks for one name in one way, so its text is looked through once, however often it throws.
+// A place asks for one name in one way, so its text is looked through once, however often it throws.
+static String findOnce(VM& vm, const PlaceInFunctionText& place, StringView name, FindInText find)
+{
+    if (!place.address)
+        return { };
+    if (place.isWhereListIsWritten && (find == findWrittenIterations || find == findWrittenCallOrIterationAt || find == findWrittenElements))
+        find = findWrittenListAt;
+    QuotesOfPlaces::Answer& answer = quotesOfPlaces(vm).answers.add(place.address, QuotesOfPlaces::Answer { }).iterator->value;
+    if (answer.find != find || (!answer.holdsForEveryName && StringView(answer.name) != name)) {
+        bool holdsForEveryName = find == findWrittenElements;
+        String quote = findAt(vm, &place, name, find, holdsForEveryName);
+        answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
+    }
+    return answer.quote;
+}
+
+// `Object.keys(null)`: the function throws from the engine's own C++, which knows neither its name nor who called it.
+static String findCallOfNativeFunction(VM& vm)
+{
+    String quote;
+    withPlaceOfCallOfNativeFunction(vm, [&](const PlaceInFunctionText& place) {
+        quote = findOnce(vm, place, "()"_s, findWrittenCallOrIterationAt);
+    });
+    return quote;
+}
+
+// What the function on top spells at the place that failed.
 static String findOnTop(VM& vm, StringView name, FindInText find)
 {
     if (name.isEmpty() || !name.containsOnlyASCII())
         return { };
-    auto findOnce = [&](const PlaceInFunctionText& place) -> String {
-        if (!place.address)
-            return { };
-        QuotesOfPlaces::Answer& answer = quotesOfPlaces(vm).answers.add(place.address, QuotesOfPlaces::Answer { }).iterator->value;
-        if (answer.find != find || (!answer.holdsForEveryName && StringView(answer.name) != name)) {
-            bool holdsForEveryName = find == findWrittenElements;
-            String quote = findAt(vm, &place, name, find, holdsForEveryName);
-            answer = { find, name.toString(), WTF::move(quote), holdsForEveryName };
-        }
-        return answer.quote;
+    auto findOnce = [&](const PlaceInFunctionText& place) {
+        return AOT::findOnce(vm, place, name, find);
     };
     std::optional<PlaceInFunctionText> place = placeOnTopInFunctionText(vm);
     String quote;
@@ -1401,6 +2142,11 @@ JSObject* createDeletionFromNullishError(JSGlobalObject* globalObject, JSValue b
 JSObject* createIterationOfNullishError(JSGlobalObject* globalObject, JSValue iterated)
 {
     return createNotAnObjectErrorQuoting(findOnTop(globalObject->vm(), "of"_s, findWrittenIterations), globalObject, iterated);
+}
+
+JSObject* createPrivateNameOfNullishError(JSGlobalObject* globalObject, JSValue base)
+{
+    return createNotAnObjectErrorQuoting(findOnTop(globalObject->vm(), "#"_s, findWrittenPrivateNames), globalObject, base);
 }
 
 JSObject* createAbsentPrivateNameError(JSGlobalObject* globalObject, JSObject* (*create)(JSGlobalObject*))
@@ -1563,6 +2309,8 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
     // Only a test run takes files out, and only those that its build saw taken out.
     if (change == LoaderChange::TakeOutOfRequireCache)
         return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
+    if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
+        return createError(globalObject, withAOTErrorNote(makeString("Cannot store an entry under '"_s, changed, "' in require.cache: the build read no store under that key, so require(\""_s, changed, "\") was compiled to answer with the module. Spell the key where it is stored: require.cache[\""_s, changed, "\"] = entry. In a test, mock.module(\""_s, changed, "\", () => ({ .. })) replaces the module too."_s)));
     bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
     return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
 }
@@ -1639,6 +2387,11 @@ String deletionFromLockedBuiltinMessage(const String& property)
 String assignmentToLockedBuiltinMessage(const String& property)
 {
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
+}
+
+String assignmentThatBuildDidNotSeeMessage(ASCIILiteral property)
+{
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s)));
 }
 
 static constexpr ASCIILiteral pageOnCompiledTests = " (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)"_s;

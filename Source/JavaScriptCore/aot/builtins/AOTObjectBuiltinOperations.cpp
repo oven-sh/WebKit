@@ -18,6 +18,7 @@
 #include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTPropertyListCache.h"
@@ -412,6 +413,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPropertyIsEnumerable, size_t, (Instance* in
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (Object* compiled = compiledObjectOrNull(object); compiled && hasPendingStars(*compiled)) {
+        // The attributes of a binding are known before its accessor is made.
+        PropertySlot slot(object, PropertySlot::InternalMethodType::HasProperty);
+        bool isOwn = Object::getOwnPropertySlot(object, globalObject, name, slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        OPERATION_RETURN(scope, isOwn && !(slot.attributes() & PropertyAttribute::DontEnum));
+    }
     PropertyDescriptor descriptor;
     bool isOwn = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);

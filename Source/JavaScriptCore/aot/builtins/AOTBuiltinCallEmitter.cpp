@@ -11,6 +11,7 @@
 #include "AOTAccessEmitter.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinLocationWatch.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
@@ -348,32 +349,78 @@ Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset
     return property;
 }
 
+// One for each class that the receiver may be an instance of, where every class has the slot and one load reads them all. Otherwise the one that the call names.
+Vector<BuiltinOverloadID, 4> BuiltinCallEmitter::ownSlotsReadBy(const ValueContext& value, const BuiltinOverload& overload)
+{
+    auto hasWord = [&](BuiltinOverloadID id) {
+        return m_builtins.at(id).code.implementation.ownSlot.structure.index() < BuiltinWords::numberOfOwnSlotStructures;
+    };
+    BuiltinOverloadID named = value->overload();
+    if (!m_builtins.receiverClassOf(overload.builtin) || !hasWord(named))
+        return { };
+
+    Vector<BuiltinOverloadID, 4> slots;
+    const Type& receiver = typeOf(value->receiverOperand());
+    bool everyClassHasSlot = receiver.isObject() && receiver.hasOnlyClassObjects() && std::ranges::all_of(receiver.classes, [&](const ClassPart& part) {
+        BuiltinOverloadID slot = findOwnSlotOfInstances(m_builtins, part.builtinClass, m_builtins.at(overload.builtin).name);
+        if (!slot || !hasWord(slot) || !liesAtSamePlace(m_builtins, slot, named))
+            return false;
+        slots.append(slot);
+        return true;
+    });
+    if (!everyClassHasSlot || slots.isEmpty())
+        return { named };
+    return slots;
+}
+
 Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOverload& overload)
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
-    const BuiltinOwnSlot& slot = overload.code.implementation.ownSlot;
-    BuiltinClassID builtinClass = m_builtins.receiverClassOf(overload.builtin);
     Boxed receiver = boxedOperand(value, value->receiverOperand());
     auto readByName = [&] {
         return emitter<AccessEmitter>().getById(value, receiver, keyOf(overload), SiteCacheID());
     };
-    if (!builtinClass || slot.structure.index() >= BuiltinWords::numberOfOwnSlotStructures)
+    Vector<BuiltinOverloadID, 4> slots = ownSlotsReadBy(value, overload);
+    if (slots.isEmpty())
         return readByName();
 
     CellPointer object = unboxCell(receiver);
-    Word32 structureID = loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructureIDs) + slot.structure.index() * static_cast<ptrdiff_t>(sizeof(uint32_t)));
-    return either<Boxed>(equal(loadStructureID(object), structureID), [&] {
-        return loadProperty(object, propertyOffsetOfOwnSlot(m_builtins.at(builtinClass).type, slot.offset));
-    }, [&] {
-        LBasicBlock isNotLookedFor = newBlock();
-        LBasicBlock isLookedFor = newBlock();
-        m_out.branch(isZero(structureID).value(), rareEdge(isNotLookedFor), normalEdge(isLookedFor));
-        m_out.appendTo(isNotLookedFor);
-        callVoidOperation(value, RuntimeOperation::FindOwnSlotStructure, { word32(static_cast<int32_t>(value->overload().index())) }, { .isOnRarePath = true });
-        m_out.jump(isLookedFor);
-        m_out.appendTo(isLookedFor);
-        return readByName();
-    });
+    Word32 structureOfObject = loadStructureID(object);
+    LBasicBlock hasSlot = newBlock();
+    LBasicBlock hasOtherStructure = newBlock();
+    Word32 lastPublished = word32(0);
+    uint32_t wordsAsked = 0;
+    for (BuiltinOverloadID slot : slots) {
+        unsigned word = m_builtins.at(slot).code.implementation.ownSlot.structure.index();
+        wordsAsked |= 1u << word;
+        lastPublished = loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructureIDs) + word * static_cast<ptrdiff_t>(sizeof(uint32_t)));
+        bool isLast = slot == slots.last();
+        LBasicBlock next = isLast ? hasOtherStructure : newBlock();
+        m_out.branch(equal(structureOfObject, lastPublished).value(), normalEdge(hasSlot), isLast ? rareEdge(next) : normalEdge(next));
+        m_out.appendTo(next);
+    }
+
+    auto wereLookedFor = [&] {
+        if (slots.size() == 1)
+            return isNotZero(lastPublished);
+        Word32 asked = word32(static_cast<int32_t>(wordsAsked));
+        return equal(bitAnd(loadMutable32(AOT_INSTANCE_OFFSET(builtins.ownSlotStructuresLookedFor)), asked), asked);
+    };
+    LBasicBlock looksFor = newBlock();
+    LBasicBlock readsByName = newBlock();
+    m_out.branch(wereLookedFor().value(), normalEdge(readsByName), rareEdge(looksFor));
+    m_out.appendTo(looksFor);
+    for (BuiltinOverloadID slot : slots)
+        callVoidOperation(value, RuntimeOperation::FindOwnSlotStructure, { word32(static_cast<int32_t>(slot.index())) }, { .isOnRarePath = true });
+    m_out.jump(readsByName);
+
+    Join<Boxed> join(m_out);
+    m_out.appendTo(readsByName);
+    join.add(readByName());
+    m_out.appendTo(hasSlot);
+    const BuiltinOwnSlot& place = overload.code.implementation.ownSlot;
+    join.add(loadProperty(object, propertyOffsetOfOwnSlot(m_builtins.at(m_builtins.receiverClassOf(overload.builtin)).type, place.offset)));
+    return join.finish();
 }
 
 Boxed BuiltinCallEmitter::callCustomGetter(const OperationContext& context, BuiltinOverloadID id, Boxed receiver, bool receiverIsMatched)

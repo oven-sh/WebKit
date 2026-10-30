@@ -62,7 +62,7 @@ void runGeneratorOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
 {
     const ValueFlowUniverse& universe = context.universe();
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    ResumeMode mode = context.program().at(statement.function).at(statement.site).resumeMode();
+    ResumeMode mode = context.operationOf(statement).resumeMode();
     ClimbingSet generators = context.restrict(context.valueOf(operands[0]), universe.objects());
     std::span<const ValueFlowOperand> sent = operands.subspan(1, 1);
 

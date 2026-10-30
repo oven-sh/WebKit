@@ -107,6 +107,24 @@ void countLimitHit(VM& vm, LimitID limit)
         ++counters->limitHits[static_cast<size_t>(limit)];
 }
 
+void countStackListingAfterGivenUpCapture(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->stackListingsAfterGivenUpCaptures;
+}
+
+void countRopeFlattenedForPrefixTest(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->ropesFlattenedForPrefixTests;
+}
+
+void countNativeTextHashed(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->nativeTextsHashed;
+}
+
 uint64_t valueOf(VM& vm, RuntimeCounterID counter)
 {
     size_t index = static_cast<size_t>(counter);
@@ -215,7 +233,7 @@ void ArrivalCounts::record(JSValue receiver, uint32_t site)
     m_hasCalledNothingSinceArrival = true;
 }
 
-void ArrivalCounts::didCallOperation(Entry entry)
+NEVER_INLINE void ArrivalCounts::didCallOperation(Entry entry)
 {
     if (!m_hasCalledNothingSinceArrival || entry == Entry::operationAOTRecordArrival)
         return;
@@ -592,6 +610,10 @@ void dumpCounts(VM& vm, PrintStream& out)
     }
     dumpOperationCalls(vm, out);
     out.println(vm.hasBytecodeIntrinsicRegistry() ? 1 : 0, "\tmade:BytecodeIntrinsicRegistry");
+    RuntimeCounters* counters = vm.aotState().counters.get();
+    out.println(counters ? counters->stackListingsAfterGivenUpCaptures : 0, "\tmade:StackListingsAfterGivenUpCaptures");
+    out.println(counters ? counters->ropesFlattenedForPrefixTests : 0, "\tflattened:RopesForPrefixTests");
+    out.println(counters ? counters->nativeTextsHashed : 0, "\thashed:NativeTexts");
 
     forEachInstance(vm, [&](const Instance& instance) {
         if (!instance.runtime.counters.branchCounts)

@@ -176,6 +176,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTStringReplaceRegExp:
     case Entry::operationAOTStringReplaceAllRegExp:
     case Entry::operationAOTStringReplaceRegExpString:
+    case Entry::operationAOTStringReplaceRegExpWithFunction:
     case Entry::operationAOTStringSplitRegExp:
     case Entry::operationAOTStringMatchRegExp:
     case Entry::operationAOTStringSearchRegExp:

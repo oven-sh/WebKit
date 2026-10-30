@@ -257,6 +257,11 @@ public:
     void setRegistersToRelease(const RegisterSet& registers) { m_registersToRelease = registers; }
     const RegisterSet& registersToRelease() const { return m_registersToRelease; }
 
+    // Of a call: the children that the callee lets go of while it runs. They are the callee's from here on, so Air clears the places of this function that still hold
+    // such a value and are read no more: stack slots by stores in front of this, and the generator clears those of registersToRelease() that are not in use before it calls.
+    void setChildrenLetGoByCallee(BitVector&& children) { m_childrenLetGoByCallee = WTF::move(children); }
+    const BitVector& childrenLetGoByCallee() const { return m_childrenLetGoByCallee; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -348,6 +353,7 @@ private:
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
     RegisterSet m_registersToRelease;
+    BitVector m_childrenLetGoByCallee;
     std::optional<BitVector> m_frameWordsDeadAcrossSuspension;
     unsigned m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.

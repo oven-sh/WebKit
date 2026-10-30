@@ -232,6 +232,7 @@ inline constexpr ValueFlowCellName entriesPairsOfMap { ValueFlowNameKind::Hidden
 inline constexpr ValueFlowCellName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
 inline constexpr ValueFlowCellName proxyItselfName { ValueFlowNameKind::HiddenSlot, 0xfffffffa };
 inline constexpr ValueFlowCellName listedValuesOfProxyName { ValueFlowNameKind::HiddenSlot, 0xfffffff9 };
+inline constexpr ValueFlowCellName descriptorsAnsweredByProxyName { ValueFlowNameKind::HiddenSlot, 0xfffffff8 };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
@@ -242,6 +243,7 @@ inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameK
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
 inline constexpr ValueFlowName chainWithoutCopiesOntoRealmName { ValueFlowNameKind::PrototypeLink, 1 };
 inline constexpr ValueFlowCellName allocatedAsName { ValueFlowNameKind::AllocatedAs };
+inline constexpr ValueFlowCellName allocatedWithHolesName { ValueFlowNameKind::AllocatedAs, 1 };
 inline constexpr ValueFlowCellName awaitedValueName { ValueFlowNameKind::AwaitedValue };
 
 enum class ValueFlowMaskKind : uint8_t {
@@ -319,8 +321,41 @@ enum class ValueFlowStatementKind : uint8_t {
     ModulesLoadedByName,
 };
 
+// What rules ask of the text of an operation. It is the same in every round, so it is read once, and no rule opens the body of the function for it.
+enum class ValueFlowFactOfText : uint8_t {
+    HasSecondOperand = 1 << 0,
+    IsFreeName = 1 << 1,
+    HasRareFacts = 1 << 2,
+    HasCopyOfOperation = 1 << 3,
+    // Of an ElemGet: `object[name]` in `for (name in object)`.
+    ReadsUnderNameOfEnumerationOfSameObject = 1 << 4,
+    // Of an ElemSet: objectsReadUnderKeyOfStore() finds one object, or two. They stand behind the operands of the statement.
+    StoresWhatOneObjectHoldsUnderSameKey = 1 << 5,
+    StoresWhatTwoObjectsHoldUnderSameKey = 1 << 6,
+};
+
+// Of the few operations of which one of these holds, in the order of functions and sites.
+struct ValueFlowRareFactsOfText {
+    FunctionID function;
+    ValueID site;
+    // entryNamedByOperations() of the callee of a call, or of a PropGet itself.
+    BuiltinID entryNamed;
+    // Of a call whose statement has no key: the member that a longer look at the text finds.
+    PropertyKeyID keyOfMemberCalledOnItsHolder;
+    // Of an ElemGet or an ElemSet: `object["$" + name]`: the text that is written in front of the rest of the key.
+    StringID textThatKeyBeginsWith;
+};
+
+// An operation whose rule reads what the operation itself says: a layout and its fields, a module, the kind of an iterator. A Value holds all of that itself. In the order of functions and sites.
+struct ValueFlowCopyOfOperation {
+    FunctionID function;
+    ValueID site;
+    Value operation;
+};
+
 struct ValueFlowStatement {
     ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
+    OptionSet<ValueFlowFactOfText> factsOfText;
     Opcode opcode { };
     FunctionID function;
     ValueID site;

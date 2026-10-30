@@ -830,6 +830,8 @@ struct ValueFlowBuiltinApplication {
 
 using ValueFlowBuiltinApplicationFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&)>;
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
+// Of `among`: what the operands of a reached call list where nobody knows what is called.
+ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetID among);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetMakers&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>&);
@@ -951,6 +953,8 @@ void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
 void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
+// No answer: the program links the prototype objects of several classes above, or nobody knows through what.
+std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs&, LayoutID constructorFunction);
 inline LayoutID nearestLayoutAlwaysAbove(const FlowApplication& application, LayoutID id)
 {
     return nearestLayoutAlwaysAbove(application.layouts[id.index()].flow);

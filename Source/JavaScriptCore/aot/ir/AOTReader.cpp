@@ -60,6 +60,7 @@ bool Reader::readReplaceableBuiltins()
         AOT::sort(members, { }, &ReplaceableBuiltin::member);
         members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
     }
+    m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
     m_program.unlockReplaceableBuiltins();
     return true;
 }
@@ -378,7 +379,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
         reader.setPreparesFunctionsForTyping();
     if (!reader.run())
         return nullptr;
-    program->copyBorrowedLineStarts(build.parallelLoops());
+    program->copyBorrowedWordsOfPositions(build.parallelLoops());
     program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;

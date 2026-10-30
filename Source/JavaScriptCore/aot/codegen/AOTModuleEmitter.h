@@ -19,6 +19,7 @@ public:
     void generateImportModule(const ValueContext&);
     void generateRequireModule(const ValueContext&);
     void generateRecordRequire(const ValueContext&);
+    void generateCountExecution(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);
     void generateImportDynamic(const ValueContext&);

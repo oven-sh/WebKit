@@ -307,6 +307,14 @@ void FunctionSummaryView::mergeOnCallInto(EffectsOnEdges& effects) const
     m_masks->mergeInto(effects.handler, m_effects->handlerOnCall);
 }
 
+bool FunctionSummaryView::isRemovableWhenUnused() const
+{
+    constexpr uint8_t flagsOfWhatStays = CompactEffects::MayCallUnknownCode | CompactEffects::MaySuspend | CompactEffects::MayBeTerminated;
+    if (!m_summary && (m_effects->normalOnCall.flags() | m_effects->handlerOnCall.flags()) & flagsOfWhatStays)
+        return false;
+    return onCall().onAnyEdge().isRemovableWhenUnused();
+}
+
 FunctionSummary FunctionSummaryView::expanded() const
 {
     if (m_summary)

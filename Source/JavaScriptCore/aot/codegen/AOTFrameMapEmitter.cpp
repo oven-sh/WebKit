@@ -16,6 +16,7 @@
 #include "AirLimits.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
+#include "CCallHelpers.h"
 #include "GPRInfo.h"
 #include "RegisterAtOffsetList.h"
 
@@ -150,6 +151,38 @@ bool FrameMapEmitter::savesDeadPreservedRegister(const B3::StackmapGenerationPar
         }
         return true;
     }
+}
+
+void FrameMapEmitter::releaseSavedRegisters(CCallHelpers& jit, const B3::StackmapGenerationParams& params)
+{
+    const B3::Air::Code& code = params.code();
+    RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+    RegisterSet inUse = params.usedRegisters();
+    for (unsigned i = 0; i < params.size(); ++i) {
+        if (params[i].isReg())
+            inUse.add(params[i].reg(), IgnoreVectors);
+    }
+    auto isReloaded = [&](size_t index) {
+        if (index >= saves.registerCount())
+            return false;
+        Reg reg = saves.at(index).reg();
+        return code.calleeSavesClobberedAtSuspensions().contains(reg, IgnoreVectors) && !inUse.contains(reg, IgnoreVectors);
+    };
+    for (size_t index = 0; index < saves.registerCount(); ++index) {
+        if (!isReloaded(index))
+            continue;
+        CCallHelpers::Address address = code.addressInFrame(saves.at(index).offset());
+#if CPU(ARM64)
+        if (isReloaded(index + 1) && saves.at(index + 1).offset() == saves.at(index).offset() + static_cast<ptrdiff_t>(sizeof(CPURegister))) {
+            jit.loadPair64(address.base, CCallHelpers::TrustedImm32(address.offset), saves.at(index).reg().gpr(), saves.at(index + 1).reg().gpr());
+            ++index;
+            continue;
+        }
+#endif
+        jit.loadPtr(address, saves.at(index).reg().gpr());
+    }
+    if (savesDeadPreservedRegister(params))
+        jit.move(CCallHelpers::TrustedImm32(0), SavedFrame::preservedRegister);
 }
 
 std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, const B3::StackmapGenerationParams& params, const Roots& roots, unsigned promiseChild)

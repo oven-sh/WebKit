@@ -18,10 +18,12 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRegExpSummary.h"
+#include "AOTRemovableFeature.h"
 #include "AOTSlotPlan.h"
 #include "AOTStringUses.h"
 #include "AOTWasmModules.h"
 #include "YarrFlags.h"
+#include <algorithm>
 #include <array>
 #include <span>
 
@@ -35,6 +37,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .imageHasWebAssembly = mayHaveWebAssemblyModules(program),
         .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
         .callsTrapsOfProxies = flow.mayRunUnseenCode() || !flow.loadsOfMachineCode().empty() || !flow.usesOf(Builtins::Proxy).isEmpty() || !flow.usesOf(Builtins::ProxyRevocable).isEmpty(),
+        .matchesRegExps = flow.mayRunUnseenCode() || std::ranges::any_of(flow.featureUses(), [](const auto& use) { return use.feature == static_cast<uint32_t>(RemovableFeature::RegExp); }),
         .validates = recorded.validates,
         .checksProofs = recorded.validates || recorded.has(TestingSwitch::CheckProofsAtRunTime),
         .countsAllocations = recorded.countsBranches,

@@ -889,6 +889,16 @@ static ALWAYS_INLINE VM& vmFor(const JSCell* cell) { return cell->vm(); }
 template<typename First>
 concept CanFindVM = requires(First first) { vmFor(first); };
 
+template<CanFindVM First>
+static NEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS void didCallCountedOperation(First first, Entry entry)
+{
+    vmFor(first).aotState().runtimeTable->didCall(entry);
+    if constexpr (std::is_same_v<First, Instance*>) {
+        if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
+            arrivals->didCallOperation(entry);
+    }
+}
+
 // No primary definition: an operation whose calling convention matches no specialization fails to compile instead of going uncounted.
 template<Entry entry, auto operation, typename Function>
 struct CountedCall;
@@ -913,11 +923,7 @@ struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Res
     static constexpr bool isCounted = true;
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest) noexcept(isNoexcept)
     {
-        vmFor(first).aotState().runtimeTable->didCall(entry);
-        if constexpr (std::is_same_v<First, Instance*>) {
-            if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
-                arrivals->didCallOperation(entry);
-        }
+        didCallCountedOperation(first, entry);
         AOT_MUST_TAIL_CALL return operation(first, rest...);
     }
 };
@@ -1240,6 +1246,8 @@ void VMState::attachImage(VM& vm)
     for (const Image* each = image; each; each = each->above()) {
         parts.append(PartsOfImage());
         parts.last().image = each;
+        if (uint32_t offset = each->header().singleReturnSites[static_cast<unsigned>(StubFrameKind::EngineCallee)])
+            parts.last().returnAddressOfEngineCallee = each->sharedCodeCopy(0) + offset;
         sizeOfPages += sizeOfPagesAtStart(*each);
         sizeOfRegExpMatchOutput = std::max<size_t>(sizeOfRegExpMatchOutput, each->header().counts.maxRegExpOutputSize);
     }
@@ -1737,6 +1745,34 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
     }
 }
 
+void ProgramStatics::putBack(uint32_t offset, uint32_t size)
+{
+    std::span<const StaticsRun> runs = m_tables.staticsRuns();
+    auto initialWordAt = [&](uint32_t word) -> uint64_t {
+        auto run = std::ranges::upper_bound(runs, word, { }, &StaticsRun::firstWord);
+        if (run == runs.begin())
+            return 0;
+        --run;
+        return word - run->firstWord < run->numberOfWords ? run->bits() : 0;
+    };
+    // The collector's threads read the slots meanwhile: each is written at once.
+    auto putBackSlot = [&]<typename Slot>(Slot) {
+        at<Slot>(offset) = static_cast<Slot>(initialWordAt(offset / sizeof(uint64_t)) >> (offset % sizeof(uint64_t) * 8));
+        offset += sizeof(Slot);
+    };
+    for (uint32_t end = offset + size; offset < end;) {
+        uint32_t left = end - offset;
+        if (!(offset % sizeof(uint64_t)) && left >= sizeof(uint64_t))
+            putBackSlot(uint64_t());
+        else if (!(offset % sizeof(uint32_t)) && left >= sizeof(uint32_t))
+            putBackSlot(uint32_t());
+        else if (!(offset % sizeof(uint16_t)) && left >= sizeof(uint16_t))
+            putBackSlot(uint16_t());
+        else
+            putBackSlot(uint8_t());
+    }
+}
+
 uint32_t ProgramStatics::groupWithWord(uint32_t word) const
 {
     std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
@@ -1870,6 +1906,23 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     RELEASE_ASSERT(didWrite);
     if (traitsOf(representation).holdsCell)
         statics.didStoreRootInStatics(slot.offset);
+}
+
+JSCell* ProgramStatics::cellIn(const NamedVariableData& variable) const
+{
+    const ClosureTable& closures = m_instance.state->objects->closures;
+    if (variable.place() == NamedVariableData::Place::Closure)
+        return closures.closureIfCreated(variable.function());
+    uint32_t offset = variable.offset();
+    if (!isInitialized(offset))
+        return nullptr;
+    const uint8_t* word = m_instance.statics() + offset;
+    if (variable.place() == NamedVariableData::Place::NarrowWord)
+        return cellInSlot(SlotRepresentation::Cell32, word, m_instance.cellCageBase);
+    if (*reinterpret_cast<const uint64_t*>(word))
+        return cellInSlot(SlotRepresentation::JSValue, word, m_instance.cellCageBase);
+    std::optional<FunctionID> function = findFunctionVariable(m_tables, offset);
+    return function ? closures.closureIfCreated(*function) : nullptr;
 }
 
 template<typename Word, typename Functor>

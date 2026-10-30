@@ -108,14 +108,14 @@ static std::optional<InvalidPart> findInvalidStorage(const Instruction& instruct
     return std::nullopt;
 }
 
-static void printOrigin(IRPrinter& printer, const Instruction& instruction)
+static void printOrigin(IRPrinter& printer, const Instruction& instruction, std::optional<uint32_t> reported = std::nullopt)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
     bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
     bool isPartOfConstruction = printer.printsEngineFields() && instruction.isPartOfConstruction;
     if (!instruction.hasPosition() && !inlineFrame && !isTailCall && !isPartOfConstruction)
         return;
-    printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
+    printer.out().print(" @"_s, reported ? *reported : instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
     if (isTailCall)
@@ -446,10 +446,12 @@ void IRPrinter::printValue(const Function& function, ValueID id)
         }
         m_out.print("]"_s);
     }
-    printOrigin(*this, value);
-    if (auto written = function.writtenPositionOf(id))
+    const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value);
+    bool isShownAtStart = construction && construction->isShownAtStart;
+    printOrigin(*this, value, isShownAtStart ? std::optional<uint32_t>(construction->start) : std::nullopt);
+    if (auto written = isShownAtStart ? std::optional<uint32_t>(value.position) : function.writtenPositionOf(id))
         m_out.print(" @"_s, *written);
-    else if (const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value)) {
+    else if (construction) {
         m_out.print(" @"_s, construction->start);
         // The word stands behind a pair of positions.
         if (construction->isForCallers && value.hasPosition())

@@ -151,6 +151,8 @@ struct LazyFieldCreation {
     MemberConditions conditions;
 };
 std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
+// `Emitter.prototype.count = 0`, `emitter.count++`: an object has the value of its prototype until the first store gives it a field of its own.
+std::optional<LazyFieldCreation> planFieldCreationBelowInheritedValue(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
 
 Type storedTypeOf(const Program&, std::span<const LayoutID> receivers, PropertyKeyID, TypeArena&);
 

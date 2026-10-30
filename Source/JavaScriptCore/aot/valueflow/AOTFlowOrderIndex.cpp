@@ -160,6 +160,9 @@ static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID module
     const Module& module = program.at(moduleID);
     if (!canOwnVariablesOf(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
         return { };
+    // Between two runs of the body its variables are as they were before the first, and whatever an earlier run left behind may read them then.
+    if (module.flags.contains(ModuleFlags::RunsAgain))
+        return { };
     ModuleID file = program.at(module.body).module;
     if (index.modulesOfFunctionsEnteredWithoutMention.quickGet(moduleID.index()) || (file && index.modulesOfFunctionsEnteredWithoutMention.quickGet(file.index())))
         return { };

@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirStackSlot.h"
 #include "B3BasicBlockInlines.h"
 #include "B3ConstDoubleValue.h"
 #include "B3DominatingConditions.h"
@@ -22,6 +23,7 @@
 #include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
+#include "B3SlotBaseValue.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "B3VariableValue.h"
@@ -100,6 +102,7 @@ private:
         Value* tested { nullptr };
         // Which operand of the comparison it is, where the test branches on the comparison itself.
         std::optional<unsigned> testedOperandOfBranch;
+        Value* comparison { nullptr };
         bool testsCounterBeforeStep { false };
         Value* start { nullptr };
         Value* bound { nullptr };
@@ -132,6 +135,8 @@ private:
         PatchpointValue* poll { nullptr };
         // The turns that are written out poll once together and run in no stretches: only the loop itself, which takes fewer turns than are written out, goes without its poll.
         bool pollsOnceForAllWrittenOutTurns { false };
+        bool mayBeEnteredAgainBehindRareEdge { false };
+        bool firstTurnIsTestedInFront { false };
     };
 
     struct Counter {
@@ -301,6 +306,7 @@ private:
             plan.counter = counter->phi;
             plan.tested = tested;
             plan.testedOperandOfBranch = block->last()->child(0) == comparison && !branchesOnNumber ? std::optional<unsigned>(testedIndex) : std::nullopt;
+            plan.comparison = comparison;
             plan.testsCounterBeforeStep = tested == counter->phi;
             plan.start = counter->start;
             plan.bound = bound;
@@ -740,7 +746,7 @@ private:
 
     // A loop that goes on where the counter of a loop around it stands is that loop without some of its paths. Where such a path is not rare, the loop may be left and entered
     // again on every turn, and each time it would ask anew how many turns are left.
-    static bool mayBeEnteredOnAnyTurnOfLoopAround(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan)
+    static bool mayBeEnteredOnAnyTurnOfLoopAround(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan, RareEdges rareEdges)
     {
         Value* start = plan.start->foldIdentity();
         if (start->opcode() != Phi)
@@ -752,7 +758,9 @@ private:
                 if (block == plan.test)
                     continue;
                 for (const FrequentedBlock& successor : block->successors()) {
-                    if (!successor.isRare() && !loops.belongsTo(successor.block(), loop) && loops.belongsTo(successor.block(), *outer))
+                    if (successor.isRare() && rareEdges == RareEdges::EndTheWalk)
+                        continue;
+                    if (!loops.belongsTo(successor.block(), loop) && loops.belongsTo(successor.block(), *outer))
                         return true;
                 }
             }
@@ -811,8 +819,10 @@ private:
                 runsEveryTurn &= !blocksThatCanRun.contains(predecessor) || dominators.dominates(block, predecessor);
             if (!runsEveryTurn || endsMostlyElsewhere(block) || (!readTest(loops, loop, blocksThatCanRun, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, blocksThatCanRun, block, phiChildren, plan)))
                 continue;
-            if (mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan))
+            if (mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan, RareEdges::EndTheWalk))
                 return;
+            plan.mayBeEnteredAgainBehindRareEdge = mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan, RareEdges::AreFollowed);
+            plan.firstTurnIsTestedInFront = isTestedInFront(plan);
             m_plansOfCopiesThatPoll.append(WTF::move(plan));
             return;
         }
@@ -879,8 +889,45 @@ private:
         return demotedPhi->child(0)->as<VariableValue>()->variable();
     }
 
+    bool isTestedInFront(const Plan& plan) const
+    {
+        Dominators& dominators = m_proc.dominators();
+        auto isSame = [](Value* left, Value* right) {
+            left = left->foldIdentity();
+            right = right->foldIdentity();
+            return left == right || (left->hasInt() && right->hasInt() && left->type() == right->type() && left->asInt() == right->asInt());
+        };
+        for (BasicBlock* block = plan.preHeader; block; block = dominators.idom(block)) {
+            if (block->numPredecessors() != 1)
+                continue;
+            BasicBlock* predecessor = block->predecessor(0);
+            Value* last = predecessor->last();
+            if (last->opcode() != Branch || predecessor->successorBlock(0) == predecessor->successorBlock(1))
+                continue;
+            std::optional<Opcode> relation = predecessor->successorBlock(0) == block ? plan.relation : invertedRelation(plan.relation);
+            if (!relation)
+                continue;
+            Value* test = last->child(0)->foldIdentity();
+            if (test->opcode() == *relation && isSame(test->child(0), plan.start) && isSame(test->child(1), plan.bound))
+                return true;
+            if (test->opcode() == flippedRelation(*relation) && isSame(test->child(0), plan.bound) && isSame(test->child(1), plan.start))
+                return true;
+        }
+        return false;
+    }
+
+    // Where the counter has not passed its bound and the choice of loop knows how far apart the two ends lie, the first stretch of the copy ends a whole stretch from the start.
+    bool choiceOfLoopYieldsEndOfFirstStretch(const Plan& plan) const
+    {
+        if (!plan.firstTurnIsTestedInFront)
+            return false;
+        int64_t greatest = Limits::maxTurnsWithoutPoll * (plan.step > 0 ? plan.step : -plan.step);
+        IntegerInterval lowest = intervalFor(m_proc, plan.step > 0 ? plan.start : plan.bound, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed);
+        return lowest.min < 0 || lowest.max > greatest || (lowest.min == lowest.max && greatest + lowest.min <= std::numeric_limits<int32_t>::max());
+    }
+
     // A counter that has passed its bound is as far from it as can be: the copy takes the one turn of a loop that is tested at the bottom.
-    void appendChoiceOfLoop(const Plan& plan, BasicBlock* block, Value* counter, Value* bound, BasicBlock* headerOfCopy)
+    Value* appendChoiceOfLoop(const Plan& plan, BasicBlock* block, Value* counter, Value* bound, BasicBlock* headerOfCopy, bool yieldsEndOfFirstStretch = false)
     {
         Origin origin = plan.preHeader->last()->origin();
         bool rises = plan.step > 0;
@@ -893,8 +940,8 @@ private:
         Value* upperEnd = rises ? bound : counter;
         Value* lowerEnd = rises ? counter : bound;
         int64_t greatest = Limits::maxTurnsWithoutPoll * (rises ? plan.step : -plan.step);
-        auto appendTest = [&](Value* distance, BasicBlock* otherwise) {
-            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, block->appendIntConstant(m_proc, origin, distance->type(), greatest)));
+        auto appendTest = [&](Value* distance, BasicBlock* otherwise, int64_t lowerEndOfDistance = 0) {
+            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, block->appendIntConstant(m_proc, origin, distance->type(), greatest + lowerEndOfDistance)));
             block->setSuccessors(FrequentedBlock(plan.header), FrequentedBlock(otherwise, FrequencyClass::Rare));
         };
         // Where the lower end is not below zero, the upper end is no nearer to zero than to it: most loops are told by their upper end alone, without a subtraction.
@@ -902,14 +949,23 @@ private:
         IntegerInterval lowest = intervalFor(m_proc, lowerEnd, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed);
         if (lowest.min >= 0 && lowest.min <= greatest) {
             if (lowest.max <= greatest) {
-                appendTest(upperEnd, headerOfCopy);
-                return;
+                appendTest(upperEnd, headerOfCopy, yieldsEndOfFirstStretch ? static_cast<int64_t>(lowest.min) : 0);
+                return nullptr;
             }
             BasicBlock* endsFarFromZero = m_proc.addBlock();
             appendTest(upperEnd, endsFarFromZero);
             block = endsFarFromZero;
         }
+        // The place that the counter reaches in one stretch tells whether the loop has more turns than that. A sum that wraps around looks like a place far in front of the bound:
+        // then the copy runs, asks at the end of every turn whether the loop ends, and polls.
+        if (yieldsEndOfFirstStretch) {
+            Value* end = block->appendNew<Value>(m_proc, rises ? Add : Sub, origin, counter, block->appendIntConstant(m_proc, origin, counter->type(), lengthOfStretch(plan, counter->type())));
+            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, plan.relation, origin, end, bound));
+            block->setSuccessors(FrequentedBlock(headerOfCopy, FrequencyClass::Rare), FrequentedBlock(plan.header));
+            return end;
+        }
         appendTest(block->appendNew<Value>(m_proc, Sub, origin, upperEnd, lowerEnd), headerOfCopy);
+        return nullptr;
     }
 
     // A loop of more turns than one stretch runs in stretches too, in a copy of its own. Its test asks about the end of the stretch; only there is it asked whether the loop ends, and the loop polls.
@@ -917,14 +973,20 @@ private:
     void leavePollToCopy(RegionCloner& cloner, const Plan& plan)
     {
         if (!fitsOneStretch(plan)) {
-            // The end of the stretch takes a register. In a long turn that costs more than the poll, which is one instruction of many.
+            // The end of the stretch takes a register. A long turn has none to spare: there it lives in the frame, where a comparison reads memory in place.
+            // A loop that a rare path leaves for the loop around it begins a stretch each time it is entered again. That costs more than the poll of a long turn, which is one instruction of many,
+            // unless the choice of loop has computed the end of the first stretch anyway. A store of it would be one instruction more at every entry, so there it lives in a register.
             unsigned numberOfValues = 0;
             for (BasicBlock* block : plan.blocks) {
                 for (Value* value : *block)
                     numberOfValues += countsTowardsSize(value);
             }
-            if (plan.sideTests.isEmpty() && plan.testedOperandOfBranch && numberOfValues <= Limits::maxValuesPerTurnRunInStretches)
-                runCopyInStretches(cloner, plan);
+            // What another block reads too, or holds, the cloner has put into a variable by now, for every reader: the branch then names a Get, which has no operands.
+            bool branchStillNamesComparison = plan.testedOperandOfBranch && plan.test->last()->child(0) == plan.comparison;
+            bool isShortTurn = numberOfValues <= Limits::maxValuesPerTurnRunInStretches;
+            bool isEnteredAgainForNothing = plan.mayBeEnteredAgainBehindRareEdge && choiceOfLoopYieldsEndOfFirstStretch(plan);
+            if (plan.sideTests.isEmpty() && branchStillNamesComparison && (isShortTurn || isEnteredAgainForNothing || (isX86() && !plan.mayBeEnteredAgainBehindRareEdge)))
+                runCopyInStretches(cloner, plan, isShortTurn || isEnteredAgainForNothing ? EndOfStretchLives::InRegister : EndOfStretchLives::InFrame);
             else {
                 BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);
                 m_proc.deleteValue(plan.preHeader->values().takeLast());
@@ -934,12 +996,43 @@ private:
         removePolls(plan);
     }
 
-    void runCopyInStretches(RegionCloner& cloner, const Plan& plan)
+    enum class EndOfStretchLives : bool { InRegister, InFrame };
+
+    void runCopyInStretches(RegionCloner& cloner, const Plan& plan, EndOfStretchLives endOfStretchLives)
     {
         Origin origin = plan.test->last()->origin();
         Type type = plan.tested->type();
-        Variable* endOfStretch = m_proc.addVariable(type);
         unsigned testedOperand = *plan.testedOperandOfBranch;
+        Air::StackSlot* slotOfEnd = endOfStretchLives == EndOfStretchLives::InFrame ? m_proc.addStackSlot(sizeofType(type)) : nullptr;
+        if (slotOfEnd)
+            slotOfEnd->setIsDeadAtSuspensions(true);
+        Variable* endOfStretch = slotOfEnd ? nullptr : m_proc.addVariable(type);
+        auto appendEnd = [&](BasicBlock* block) -> Value* {
+            if (slotOfEnd)
+                return block->appendNew<MemoryValue>(m_proc, Load, type, origin, block->appendNew<SlotBaseValue>(m_proc, origin, slotOfEnd), 0, m_proc.heapOfStackSlots());
+            return block->appendNew<VariableValue>(m_proc, Get, origin, endOfStretch);
+        };
+        auto setEnd = [&](BasicBlock* block, Value* end) {
+            if (slotOfEnd)
+                block->appendNew<MemoryValue>(m_proc, Store, origin, end, block->appendNew<SlotBaseValue>(m_proc, origin, slotOfEnd), 0, m_proc.heapOfStackSlots());
+            else
+                block->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, end);
+        };
+        // One value at a time is alive here beside those of the loop: what this needed beyond the registers left over would be taken from them, for all of their turns.
+        auto storeEndOfStretchFrom = [&](BasicBlock* block, Value* from, BasicBlock* next) {
+            bool rises = plan.step > 0;
+            BasicBlock* endIsNearer = m_proc.addBlock(block->frequency());
+            BasicBlock* boundIsNearer = m_proc.addBlock(block->frequency());
+            Value* distance = rises ? block->appendNew<Value>(m_proc, Sub, origin, plan.bound, from) : block->appendNew<Value>(m_proc, Sub, origin, from, plan.bound);
+            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, Above, origin, distance, block->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type))));
+            block->setSuccessors(FrequentedBlock(endIsNearer), FrequentedBlock(boundIsNearer));
+            setEnd(endIsNearer, endIsNearer->appendNew<Value>(m_proc, rises ? Add : Sub, origin, from, endIsNearer->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type))));
+            endIsNearer->appendNew<Value>(m_proc, Jump, origin);
+            endIsNearer->setSuccessors(FrequentedBlock(next));
+            setEnd(boundIsNearer, plan.bound);
+            boundIsNearer->appendNew<Value>(m_proc, Jump, origin);
+            boundIsNearer->setSuccessors(FrequentedBlock(next));
+        };
 
         RegionCloner::BlockMap copies = cloner.cloneBlocks(plan.blocks.span());
         for (BasicBlock* block : plan.blocks) {
@@ -950,23 +1043,33 @@ private:
         }
 
         BasicBlock* entered = m_proc.addBlock(plan.preHeader->frequency());
-        entered->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, appendBoundOfStretch(m_proc, entered, origin, { plan.start, plan.bound, plan.relation, plan.step, BoundLiesBeyond::No }));
-        entered->appendNew<Value>(m_proc, Jump, origin);
-        entered->setSuccessors(FrequentedBlock(copies.get(plan.header)));
+        if (slotOfEnd) {
+            BasicBlock* boundLiesBeyond = m_proc.addBlock(plan.preHeader->frequency());
+            setEnd(entered, plan.bound);
+            entered->appendNew<Value>(m_proc, Branch, origin, entered->appendNew<Value>(m_proc, plan.relation, origin, plan.start, plan.bound));
+            entered->setSuccessors(FrequentedBlock(boundLiesBeyond), FrequentedBlock(copies.get(plan.header)));
+            storeEndOfStretchFrom(boundLiesBeyond, plan.start, copies.get(plan.header));
+        }
         m_proc.deleteValue(plan.preHeader->values().takeLast());
-        appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, entered);
+        const bool yieldsEndOfFirstStretch = !slotOfEnd && choiceOfLoopYieldsEndOfFirstStretch(plan);
+        Value* endOfFirstStretch = appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, entered, yieldsEndOfFirstStretch);
+        if (!slotOfEnd) {
+            if (yieldsEndOfFirstStretch && !endOfFirstStretch)
+                endOfFirstStretch = entered->appendNew<Value>(m_proc, plan.step > 0 ? Add : Sub, origin, plan.start, entered->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type)));
+            setEnd(entered, endOfFirstStretch ? endOfFirstStretch : appendBoundOfStretch(m_proc, entered, origin, { plan.start, plan.bound, plan.relation, plan.step, BoundLiesBeyond::No }));
+            entered->appendNew<Value>(m_proc, Jump, origin);
+            entered->setSuccessors(FrequentedBlock(copies.get(plan.header)));
+        }
 
         BasicBlock* test = copies.get(plan.test);
         BasicBlock* stays = test->successorBlock(plan.stayingSuccessorIndex);
         BasicBlock* leaves = test->successorBlock(!plan.stayingSuccessorIndex);
         BasicBlock* ended = m_proc.addBlock(test->frequency());
         BasicBlock* polls = m_proc.addBlock(test->frequency());
+        RELEASE_ASSERT(test->last()->child(0)->numChildren() == 2);
         Value* reached = test->last()->child(0)->child(testedOperand);
-        Value* end = m_proc.add<VariableValue>(Get, origin, endOfStretch);
-        Value* inStretch = m_proc.add<Value>(plan.relation, origin, reached, end);
-        test->appendNonTerminal(end);
-        test->appendNonTerminal(inStretch);
-        test->replaceLastWithNew<Value>(m_proc, Branch, origin, inStretch);
+        m_proc.deleteValue(test->values().takeLast());
+        test->appendNew<Value>(m_proc, Branch, origin, test->appendNew<Value>(m_proc, plan.relation, origin, reached, appendEnd(test)));
         test->setSuccessors(FrequentedBlock(stays), FrequentedBlock(ended, FrequencyClass::Rare));
 
         ended->appendNew<Value>(m_proc, Branch, origin, ended->appendNew<Value>(m_proc, plan.relation, origin, reached, plan.bound));
@@ -974,8 +1077,12 @@ private:
 
         // The next stretch is counted from the end of this one, which the counter has reached or passed by less than a step: whoever counted from the counter would keep it alive beside its successor, at the price of a move in every turn.
         polls->append(m_proc.clone(plan.poll));
-        Value* endReached = polls->appendNew<VariableValue>(m_proc, Get, origin, endOfStretch);
-        polls->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, appendBoundOfStretch(m_proc, polls, origin, { endReached, plan.bound, plan.relation, plan.step, BoundLiesBeyond::Yes }));
+        if (slotOfEnd) {
+            // The end in the frame is not read here: the load of the test would serve this reader too, and could no longer be part of the comparison. Opaque keeps the sum from being folded onto the counter.
+            storeEndOfStretchFrom(polls, polls->appendNew<Value>(m_proc, Opaque, origin, reached), stays);
+            return;
+        }
+        setEnd(polls, appendBoundOfStretch(m_proc, polls, origin, { appendEnd(polls), plan.bound, plan.relation, plan.step, BoundLiesBeyond::Yes }));
         polls->appendNew<Value>(m_proc, Jump, origin);
         polls->setSuccessors(FrequentedBlock(stays));
     }

@@ -21,8 +21,10 @@
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaOperations.h"
 #include "AOTThreads.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <span>
 #include <tuple>
@@ -459,6 +461,8 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
 {
     if (findRecordOfStoredField(program, placement, function, value, NameHasColumn::Yes))
         return 0;
+    if (value.opcode == Opcode::PropGet && value.asksOnlyTables())
+        return 0;
     // Flow has seen compiled objects come to this read. The table of fields answers for all their layouts alike, and the stub without a site asks it first: a site in front of it would stay empty.
     // A name that none of the layouts has is found above the object, and the table has nothing to say.
     if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
@@ -512,6 +516,60 @@ void collectSiteCacheRequests(const Program& program, const Placement& placement
     }
 }
 
+static bool isSameOperationAtSamePlace(const Value& value, const Value& other)
+{
+    return value.opcode == other.opcode && value.hasPosition() && value.position == other.position && value.inlineFrame == other.inlineFrame;
+}
+
+bool mayShareSiteCache(const Function& function, const Value& value, const Value& other)
+{
+    if (!isSameOperationAtSamePlace(value, other) || !value.hasSamePayloadAs(other) || !value.numberOfOperands() || value.numberOfOperands() != other.numberOfOperands())
+        return false;
+    ValueID receiver = sameObjectThroughCasts(function, value.operands()[0]).valueInFrontOfFacts();
+    ValueID otherReceiver = sameObjectThroughCasts(function, other.operands()[0]).valueInFrontOfFacts();
+    if (receiver == otherReceiver)
+        return true;
+    const Value& definition = function.at(receiver);
+    const Value& otherDefinition = function.at(otherReceiver);
+    if (isRematerializable(definition))
+        return definition.opcode == otherDefinition.opcode && definition.hasSamePayloadAs(otherDefinition);
+    return definition.opcode != Opcode::Parameter && isSameOperationAtSamePlace(definition, otherDefinition);
+}
+
+static void findRequestsThatShareCache(const Function& function, std::span<SiteCacheRequest> requests)
+{
+    Vector<uint32_t, 16> byOrigin;
+    for (uint32_t index = 0; index < requests.size(); ++index) {
+        if (!requests[index].runsAtMostOnce && function.at(requests[index].value).hasPosition())
+            byOrigin.append(index);
+    }
+    if (byOrigin.size() < 2)
+        return;
+    auto originOf = [&](uint32_t index) {
+        const Value& value = function.at(requests[index].value);
+        return std::tuple { value.position, value.inlineFrame, value.opcode };
+    };
+    AOT::sort(byOrigin, { }, [&](uint32_t index) {
+        return std::tuple_cat(originOf(index), std::tuple { requests[index].value });
+    });
+    Vector<uint32_t, 4> owners;
+    for (size_t position = 0; position < byOrigin.size(); ++position) {
+        if (position && originOf(byOrigin[position]) != originOf(byOrigin[position - 1]))
+            owners.shrink(0);
+        SiteCacheRequest& request = requests[byOrigin[position]];
+        auto owner = std::ranges::find_if(owners, [&](uint32_t index) {
+            return mayShareSiteCache(function, function.at(requests[index].value), function.at(request.value));
+        });
+        if (owner == owners.end()) {
+            owners.append(byOrigin[position]);
+            continue;
+        }
+        request.sharesCacheOf = requests[*owner].value;
+        if ((request.weight > requests[*owner].weight).predicted())
+            requests[*owner].weight = request.weight;
+    }
+}
+
 static void sortByPosition(const Program& program, const ParallelLoops& loops, std::span<SiteCacheRequest> requests)
 {
     Vector<std::pair<SiteCachePosition, SiteCacheRequest>> positioned(requests.size());
@@ -533,18 +591,29 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     const ParallelLoops& loops = build.parallelLoops();
 
     uint32_t numberOfSitesWithoutCache = 0;
+    Vector<SiteCacheRequest> requestsThatShareCache;
     auto collectRequests = [&](bool needsWeights) {
         auto requests = collectInParallel<SiteCacheRequest>(loops, program.functions.size(), [&](unsigned index, Vector<SiteCacheRequest>& found) {
             if (!program.functions[index].hasBody())
                 return;
+            size_t numberFoundBefore = found.size();
             if (requestsOfFunctions.empty())
                 collectSiteCacheRequests(program, placement, flow, heat, build, FunctionID(index), needsWeights, found);
             else
                 found.appendVector(requestsOfFunctions[index]);
+            findRequestsThatShareCache(program.functions[index], found.mutableSpan().subspan(numberFoundBefore));
         });
         numberOfSitesWithoutCache = static_cast<uint32_t>(requests.removeAllMatching([](const SiteCacheRequest& request) {
             return request.runsAtMostOnce;
         }));
+        requestsThatShareCache.shrink(0);
+        for (const SiteCacheRequest& request : requests) {
+            if (request.sharesCacheOf)
+                requestsThatShareCache.append(request);
+        }
+        requests.removeAllMatching([](const SiteCacheRequest& request) {
+            return !!request.sharesCacheOf;
+        });
         return requests;
     };
     // Where every request is served, the order by position below is the only one that anybody sees.
@@ -570,6 +639,19 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
         for (const SiteCacheRequest& request : groups[group])
             function.edit(request.value, ValueEdit::Definition).setSiteCache(SiteCacheID(static_cast<uint32_t>(&request - servedRequests.data())));
     });
+    std::atomic<uint32_t> numberOfUnservedCopies { 0 };
+    auto groupsThatShareCache = groupSitesByFunction(requestsThatShareCache.span());
+    forEachIndexInParallel(loops, groupsThatShareCache.size(), [&](unsigned group) {
+        Function& function = editor.atForPlacedWords(groupsThatShareCache[group].front().function);
+        for (const SiteCacheRequest& request : groupsThatShareCache[group]) {
+            if (SiteCacheID cache = std::as_const(function).at(request.sharesCacheOf).siteCache()) {
+                function.edit(request.value, ValueEdit::Definition).setSiteCache(cache);
+                continue;
+            }
+            build.gaveUp(LimitID::MaxSiteCaches, { .function = request.function, .value = request.value });
+            numberOfUnservedCopies.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
     times.didFinish("writeSiteCaches"_s);
 
     auto unservedRequests = requests.span().subspan(count);
@@ -577,7 +659,7 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
         build.gaveUp(LimitID::MaxSiteCaches, { .function = unservedRequests[index].function, .value = unservedRequests[index].value });
     });
 
-    numberOfSitesWithoutCache += static_cast<uint32_t>(unservedRequests.size());
+    numberOfSitesWithoutCache += static_cast<uint32_t>(unservedRequests.size()) + numberOfUnservedCopies.load(std::memory_order_relaxed);
     build.statistics().count(StatisticID::SiteCachesPlaced, count);
     build.statistics().count(StatisticID::SitesWithoutSiteCache, numberOfSitesWithoutCache);
     return SiteCaches(count, numberOfSitesWithoutCache);

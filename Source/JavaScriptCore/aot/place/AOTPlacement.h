@@ -476,7 +476,10 @@ struct SiteCacheRequest {
     FunctionID function;
     ValueID value;
     bool runsAtMostOnce { false };
+    ValueID sharesCacheOf { };
 };
+// Copies that a pass made of one operation, whose receivers are one value or come from one place in the text, remember in one cache.
+JS_EXPORT_PRIVATE bool mayShareSiteCache(const Function&, const Value&, const Value&);
 // The requests of one function, in front of the step that writes the requests of runs of stores or behind it.
 void collectSiteCacheRequests(const Program&, const Placement&, const FlowResults&, const Heat&, BuildContext&, FunctionID, bool needsWeights, Vector<SiteCacheRequest>&);
 // With requests by function: what collectSiteCacheRequests() gave for each function with a body. No value has got another number since.
@@ -529,6 +532,8 @@ private:
 
 // The table of modules keeps the path of a file in pieces: see ModuleDirectoryData. The pieces have to be strings of the program before its strings are numbered.
 JS_EXPORT_PRIVATE void internPiecesOfModulePaths(Program&);
+// An obfuscated executable says nothing about its sources: a module whose path the program can neither read nor find it by is named by its number. In front of internPiecesOfModulePaths().
+JS_EXPORT_PRIVATE void hidePathsOfModules(Program&, const FlowResults&, const BuildContext&);
 Placement numberAndEncode(ProgramEditor&, const PlacementInputs&, BuildContext&, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites, BodyScansForPlacement* = nullptr);
 JS_EXPORT_PRIVATE void checkPlacement(const Program&, const PlacementInputs&, const Placement&, const SiteCaches&, BuildContext&);
 

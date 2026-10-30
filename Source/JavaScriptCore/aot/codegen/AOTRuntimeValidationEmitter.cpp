@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsOfOperands.h"
@@ -17,10 +18,19 @@
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
+#include "AOTStubRegisters.h"
+#include "AOTTypeTestEmitter.h"
+#include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AllowMacroScratchRegisterUsage.h"
+#include "B3CheckValue.h"
+#include "B3StackmapGenerationParams.h"
+#include "CCallHelpers.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/SetForScope.h>
+#include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -88,8 +98,9 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (type.environment && representationOf(operand) == Representation::Cell)
             checkIsNotReleased(context, in<CellPointer>(operand), type.environment);
-        checkRetainedOperand(context, user, operand, operandIndex);
-        checkIsNoFrameArray(context, user, operand, operandIndex);
+        bool mustNotBeFrameArray = refusesFrameArray(user, operand, operandIndex);
+        if (!checkRetainedOperand(context, user, operand, operandIndex, mustNotBeFrameArray) && mustNotBeFrameArray)
+            checkIsNotFrameCell(context, get(operand), std::nullopt, filterOfRefusedFrameArray(user));
     });
     Effects effects = context.effects().onAnyEdge();
     if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs)) {
@@ -129,7 +140,7 @@ void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
     const Type& type = m_program.at(value->provenType());
     if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType, source);
+    checkHasType(value.id(), get(source), value->provenType(), ValidationFailureKind::AssumedType, source);
 }
 
 // The shape comes first: the slot of an object that is no receiver holds anything.
@@ -169,59 +180,59 @@ static bool mayBeArray(const Type& type)
     return type.anyObject || type.findClassPart(BuiltinClasses::Array);
 }
 
-void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
+// Returns whether the check refuses an array in a frame too.
+bool RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray)
 {
     if (callsOutlinedBody(m_program, user))
-        return;
-    // checkIsNoFrameArray() checks more for an array.
+        return false;
     FrameCellFilter asked = mayBeArray(typeOf(operand)) ? FrameCellFilter::AllButArrays : FrameCellFilter::All;
+    auto checkStaysOutOfUnknownMemory = [&] {
+        if (!mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
+            return false;
+        checkIsNotFrameCell(context, get(operand), std::nullopt, refusesFrameArray ? FrameCellFilter::All : asked);
+        return refusesFrameArray;
+    };
     const OperandInfo& info = operandInfoOf(user.opcode, operandIndex);
-    if (!info.uses.contains(OperandUse::Retains)) {
-        if (effectRuleOf(user.opcode) == EffectRule::Access && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt, asked);
-        return;
-    }
+    if (!info.uses.contains(OperandUse::Retains))
+        return effectRuleOf(user.opcode) == EffectRule::Access && checkStaysOutOfUnknownMemory();
     switch (info.retainedIn) {
     case RetainedIn::UnknownMemory:
-        if (mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt, asked);
-        return;
+        return checkStaysOutOfUnknownMemory();
     case RetainedIn::Operand: {
         ValueID retainer = user.operand(*info.retainingOperand);
         RELEASE_ASSERT(retainer);
         checkIsNotFrameCell(context, get(operand), get(retainer), asked);
-        return;
+        return false;
     }
     case RetainedIn::Result:
-        return;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t operandIndex)
+bool RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t operandIndex, bool)
 {
     // An outlined body is a part of the function that calls it, and may hand back what lies in the frame of that function.
     if (m_function.role == FunctionRole::OutlinedBody || !mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-        return;
+        return false;
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, m_function, m_function.at(operand));
     if (!numberOfResults) {
         checkIsNotFrameCell(context, get(operand), std::nullopt);
-        return;
+        return true;
     }
     for (uint32_t index = 0; index < *numberOfResults; ++index)
         checkIsNotFrameCell(context, generator().resultAt(operand, index), std::nullopt);
+    return false;
 }
 
-void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
+bool RuntimeValidationEmitter::refusesFrameArray(const Value& user, ValueID operand, uint32_t operandIndex)
 {
-    if (mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex))
-        checkIsNotFrameCell(context, get(operand), std::nullopt, FrameCellFilter::Arrays);
+    return mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
-void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t)
+bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t)
 {
-    if (m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall)
-        checkIsNotFrameCell(context, get(operand), std::nullopt);
+    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall;
 }
 
 void RuntimeValidationEmitter::validateResult(const ValueContext& value)
@@ -407,14 +418,78 @@ void RuntimeValidationEmitter::validateExit(const TerminatorContext& terminator)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The report prints only the class of what was found. It reads the class from a boxed value or a cell, and is told the representation of anything else.
+static uint32_t encodeReportedFailure(ValidationFailureKind kind, Operand found)
+{
+    bool isRead = found.representation == Representation::JSValue || found.representation == Representation::Cell || found.representation == Representation::Cell32;
+    return ReportedFailure::encode(kind, isRead ? Representation::Unchosen : found.representation);
+}
+
 void RuntimeValidationEmitter::failUnless(Condition condition, ValidationFailureKind kind, Operand found, ValueID id)
 {
+    if (condition.value()->isInt32(1))
+        return;
+    // Decoding takes blocks, and only the report needs what comes of it.
+    if (found.representation == Representation::Cell32) {
+        LBasicBlock doesNotHold = newBlock();
+        LBasicBlock continuation = newBlock();
+        m_out.branch(condition.value(), normalEdge(continuation), rareEdge(doesNotHold));
+        m_out.appendTo(doesNotHold);
+        reportFailure(kind, found, id);
+        m_out.appendTo(continuation);
+        return;
+    }
+
+    if (!m_reportGenerator) {
+        m_reportGenerator = createSharedTask<B3::StackmapGeneratorFunction>([stubCalls = &m_records.stubCalls](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            for (unsigned index = 0; index < 4; ++index) {
+                const B3::ValueRep& argument = params[index];
+                GPRReg destination = operationArgumentGPR(index + 1);
+                if (argument.isConstant()) {
+                    jit.move(CCallHelpers::TrustedImm64(argument.value()), destination);
+                    continue;
+                }
+                RELEASE_ASSERT(!index);
+                if (argument.isGPR())
+                    jit.move(argument.gpr(), destination);
+                else
+                    jit.load64(params.code().addressInFrame(argument.offsetFromFP()), destination);
+            }
+            stubCalls->reportChangedRegister(jit);
+        });
+    }
+    LValue arguments[] { reportedValueOf(found).value(), m_out.constInt64(encodeReportedFailure(kind, found)), m_out.constInt64(m_id.index()), m_out.constInt64(id.index()) };
+    B3::CheckValue* check = m_out.checkIsZero(logicalNot(condition).value());
+    for (LValue argument : arguments)
+        check->append(B3::ConstrainedValue(argument, B3::ValueRep::ColdAny));
+    check->setGenerator(m_reportGenerator);
+}
+
+void RuntimeValidationEmitter::failUnlessHasType(Operand operand, const TypeTestPlan& plan, ValidationFailureKind kind, ValueID id, TypeID typeThatRunTimeTests)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    if (std::optional<Condition> condition = emitter<TypeTestEmitter>().tryEmitAsOneCondition(operand, plan, CodeShape::Fast)) {
+        failUnless(*condition, kind, operand, id);
+        return;
+    }
+    if (typeThatRunTimeTests) {
+        Integer hasType = callWithoutSite<Integer>(RuntimeOperation::ValueHasType, { reportedValueOf(operand), word32(static_cast<int32_t>(typeThatRunTimeTests.index())) });
+        failUnless(isNotZero(hasType), kind, operand, id);
+        return;
+    }
     LBasicBlock doesNotHold = newBlock();
     LBasicBlock continuation = newBlock();
-    m_out.branch(condition.value(), normalEdge(continuation), rareEdge(doesNotHold));
+    OperationEmitter::branchOnType(operand, plan, { normalEdge(continuation), rareEdge(doesNotHold) });
     m_out.appendTo(doesNotHold);
-    reportFailure(kind, found, id);
+    reportFailure(kind, operand, id);
     m_out.appendTo(continuation);
+}
+
+void RuntimeValidationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    OperationEmitter::branchOnType(operand, plan, targets);
 }
 
 // The operation looks closer than generated code can, and returns where the statement holds.
@@ -468,11 +543,9 @@ void RuntimeValidationEmitter::reportUnreachable(ValueID id, PassID cutBy)
     callReport(ValidationFailureKind::UnreachableValue, cutBy == PassID::None ? Operand() : Operand(boxedConstant(jsNumber(static_cast<int32_t>(cutBy)))), id);
 }
 
-// The report prints only the class of what was found. It reads the class from a boxed value or a cell, and is told the representation of anything else.
 Word32 RuntimeValidationEmitter::reportedFailure(ValidationFailureKind kind, Operand found)
 {
-    bool isRead = found.representation == Representation::JSValue || found.representation == Representation::Cell || found.representation == Representation::Cell32;
-    return word32(static_cast<int32_t>(ReportedFailure::encode(kind, isRead ? Representation::Unchosen : found.representation)));
+    return word32(static_cast<int32_t>(encodeReportedFailure(kind, found)));
 }
 
 Boxed RuntimeValidationEmitter::reportedValueOf(Operand found)

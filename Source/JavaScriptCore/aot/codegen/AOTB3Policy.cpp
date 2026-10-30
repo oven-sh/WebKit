@@ -175,6 +175,8 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     else
         validation.level = lowestValidationLevel;
     validation.checksKnownPropertiesAtRunTime = build.validates();
+    validation.checksSpillSlots = build.options().checksSpillSlots;
+    validation.checksAllocatedRegisters = build.options().checksAllocatedRegisters;
     validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
@@ -188,6 +190,19 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.takesSumsOfNumbersToBeWhole = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
     validation.comparesAllLanesWithSign = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
     validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
+    validation.overlooksColdUsesOfClustersOverBlocks = build.isSabotaged(Sabotage::LiveRangesSplitTwiceHaveNoColdUses);
+    using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
+    static constexpr std::pair<Sabotage, MoveLeftOut> movesLeftOut[] = {
+        { Sabotage::StoresBehindClustersAreNotNeeded, MoveLeftOut::StoreBehindCluster },
+        { Sabotage::LoadsAheadOfClustersAreNotNeeded, MoveLeftOut::LoadAheadOfCluster },
+        { Sabotage::StoresAheadOfCallsAreNotNeeded, MoveLeftOut::StoreAheadOfClobber },
+        { Sabotage::LoadsBehindCallsAreNotNeeded, MoveLeftOut::LoadBehindClobber },
+        { Sabotage::StoresBehindSpilledDefinitionsAreNotNeeded, MoveLeftOut::StoreBehindSpilledDefinition },
+    };
+    for (auto [sabotage, move] : movesLeftOut) {
+        if (build.isSabotaged(sabotage))
+            validation.moveLeftOutByRegisterAllocator = move;
+    }
     return validation;
 }
 
@@ -222,8 +237,10 @@ static B3::Air::LiveRangeSplitPolicy liveRangeSplitPolicy()
 {
     B3::Air::LiveRangeSplitPolicy splitting;
     splitting.splitsAroundClobbersEarly = true;
+    splitting.splitsAroundClobbersThatRead = true;
+    splitting.keepsUnusedTmpsOnStackThroughLoops = true;
     splitting.spansStretchesOfClobbers = true;
-    splitting.limitsClobberSitesPerSplit = true;
+    splitting.leastCostOfSplitAroundClobber = 1.0f / 1024;
     splitting.splitsIntoClustersOverBlocks = true;
     splitting.splitsAroundFrame = true;
     return splitting;

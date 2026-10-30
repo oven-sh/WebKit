@@ -337,6 +337,18 @@ static void noteSets(State& state, MemberGuardAggregates aggregates)
     }
 }
 
+static void noteSetsThatWaitForALook(State& state, MemberGuardAggregates aggregates)
+{
+    if (!aggregates.count)
+        return;
+    const uint32_t* sets = state.tables.at<uint32_t>(aggregates.offset);
+    const uint64_t* words = wordsOfBits(state);
+    for (uint32_t index = 0; index < aggregates.count && !(sets[index] & MemberGuardAggregates::holdsWhileClear); ++index) {
+        if (!holds(words, sets[index]))
+            watchpointsOf(state).didSetMemberOf(sets[index], sets[aggregates.count + index]);
+    }
+}
+
 enum class SetsThatHeld : bool { StayClear, AreReadAgain };
 
 static void clearSetsContaining(State& state, const LayoutData& layout, const MemberGuardData& guard, SetsThatHeld setsThatHeld = SetsThatHeld::StayClear)
@@ -423,13 +435,49 @@ static bool isDeclaredBetween(State& state, const LayoutData& from, const Layout
 
 static void leaveGuardsOfStoresForLater(State& state, const LayoutData& layout, ClassSide side)
 {
+    std::span<const MemberGuardData> guards = guardsOf(layout, side, MemberGuardKind::PassedByStores);
+    if (guards.empty())
+        return;
+    BitVector declared(guards.size());
+    auto noteDeclared = [&](std::optional<uint32_t> key) {
+        auto found = key ? std::ranges::lower_bound(guards, *key, { }, [](const MemberGuardData& guard) {
+            return static_cast<uint32_t>(guard.name);
+        }) : guards.end();
+        if (found != guards.end() && found->name == *key)
+            declared.quickSet(found - guards.begin());
+    };
+    for (const LayoutData* next = &layout; next; next = state.objects->classes.assumedBaseOf(*next)) {
+        for (const MethodData& method : methodsOf(*next, side)) {
+            if (!(method.flags & methodHasComputedName))
+                noteDeclared(method.name);
+        }
+        if (side == ClassSide::Static) {
+            for (const FieldData& field : next->staticFields())
+                noteDeclared(field.name);
+        }
+    }
+    const ImplicitMemberKeys& implicit = watchpointsOf(state).implicitMemberKeys();
+    if (side == ClassSide::Prototype)
+        noteDeclared(implicit.constructor);
+    else {
+        noteDeclared(implicit.prototype);
+        noteDeclared(implicit.name);
+        noteDeclared(implicit.length);
+    }
+
+    MemberGuardWatchpoints::MethodTableUpdate update(state);
+    std::span<const MemberGuardAggregates> aggregates = layout.memberGuardAggregates();
+    size_t first = guards.data() - layout.memberGuards().data();
     bool leavesGuardsClear = false;
-    for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::PassedByStores)) {
-        if (!isDeclaredBetween(state, layout, nullptr, side, guard.name))
+    for (size_t index = 0; index < guards.size(); ++index) {
+        if (!declared.quickGet(index)) {
+            if (!aggregates.empty())
+                noteSetsThatWaitForALook(state, aggregates[first + index]);
             continue;
+        }
         if (!std::exchange(leavesGuardsClear, true) && side == ClassSide::Prototype)
             watchpointsOf(state).didLeaveGuardsOfStoresClear(MemberGuardAggregates::bitNumber(*layout.classData().guardWordsOffsetFor(side), 0), layout);
-        leaveForLater(state, layout, guard, SetsThatHeld::AreReadAgain);
+        leaveForLater(state, layout, guards[index], SetsThatHeld::AreReadAgain);
     }
 }
 

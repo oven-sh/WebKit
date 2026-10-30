@@ -853,6 +853,7 @@ private:
 #if ENABLE(AOT)
     void appendDate(DateInstance&);
     bool datesHaveBuiltinToJSON(JSObject& datePrototype);
+    bool readOwnMember(JSObject&, PropertyName);
     template<HasGap hasGap> void appendCompiledObject(JSObject&);
     bool tryAppendObjectWithExtraProperties(JSObject&);
     bool mayCompiledObjectHaveToJSON(JSObject&);
@@ -2127,6 +2128,13 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance
         append('n', 'u', 'l', 'l');
         return;
     }
+    if (m_vm.aotState().realmWhoseDatesAreWrittenInPlace != &m_globalObject) [[unlikely]] {
+        if (!readOwnMember(*asObject(structure->storedPrototype()), m_vm.propertyNames->toISOString)) {
+            recordFailure("date that may have its own toJSON"_s);
+            return;
+        }
+        m_vm.aotState().realmWhoseDatesAreWrittenInPlace = &m_globalObject;
+    }
     auto* cursor = buffer() + m_length;
     *cursor++ = '"';
     cursor = writeISODateTime(cursor, time);
@@ -2143,17 +2151,18 @@ bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& dat
     auto& names = *m_vm.propertyNames;
     for (auto* name : { names.toJSON.impl(), names.toISOString.impl(), names.valueOf.impl(), names.toPrimitiveSymbol.impl() })
         result &= datePrototype.structure()->isImmutablePropertyForReader(name);
-    // The prototype adds a member where it is first read. The general way reads these three on a date, in this order.
-    if (result && m_vm.aotState().realmWhoseDatesAreWrittenInPlace != &m_globalObject) {
-        for (auto* name : { names.toJSON.impl(), names.valueOf.impl(), names.toISOString.impl() }) {
-            PropertySlot slot(&datePrototype, PropertySlot::InternalMethodType::GetOwnProperty);
-            result &= JSObject::getOwnPropertySlot(&datePrototype, &m_globalObject, PropertyName(name), slot);
-        }
-        if (result)
-            m_vm.aotState().realmWhoseDatesAreWrittenInPlace = &m_globalObject;
-    }
+    // The prototype adds a member where it is first read. The general way reads these two on every date, in this order, and toISOString on a valid one.
+    if (result && m_vm.aotState().realmWhoseDatesAreWrittenInPlace != &m_globalObject)
+        result = readOwnMember(datePrototype, names.toJSON) && readOwnMember(datePrototype, names.valueOf);
     m_datesHaveBuiltinToJSON = triState(result);
     return result;
+}
+
+template<typename CharType, BufferMode bufferMode>
+bool FastStringifier<CharType, bufferMode>::readOwnMember(JSObject& object, PropertyName name)
+{
+    PropertySlot slot(&object, PropertySlot::InternalMethodType::GetOwnProperty);
+    return JSObject::getOwnPropertySlot(&object, &m_globalObject, name, slot);
 }
 
 template<typename CharType, BufferMode bufferMode>

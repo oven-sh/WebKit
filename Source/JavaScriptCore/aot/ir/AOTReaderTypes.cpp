@@ -236,6 +236,26 @@ static void forEachGroupInParallel(const ParallelLoops& loops, std::span<const u
 
 static constexpr uint64_t pairOf(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
 
+template<typename Listed>
+static void listSecondsByFirst(std::span<const Vector<uint64_t>> pairsInOrderOfSeconds, Vector<Vector<Listed>>& lists)
+{
+    Vector<uint32_t> sizes(FillWith { }, lists.size(), 0u);
+    for (const Vector<uint64_t>& pairs : pairsInOrderOfSeconds) {
+        for (uint64_t pair : pairs)
+            ++sizes[pair >> 32];
+    }
+    for (size_t first = 0; first < lists.size(); ++first) {
+        if (!sizes[first])
+            continue;
+        lists[first] = { };
+        lists[first].reserveInitialCapacity(sizes[first]);
+    }
+    for (const Vector<uint64_t>& pairs : pairsInOrderOfSeconds) {
+        for (uint64_t pair : pairs)
+            lists[pair >> 32].append(Listed(static_cast<uint32_t>(pair)));
+    }
+}
+
 AOT_THRESHOLD(size_t, maxLayoutsMetByNames, 128);
 
 static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
@@ -255,12 +275,7 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
                 found.append(pairOf(name, index));
         }
     });
-    parallelSort(loops, layoutsByName.mutableSpan(), std::less<uint64_t> { });
-    forEachGroupInParallel(loops, layoutsByName.span(), [&](uint32_t name, std::span<const uint64_t> group) {
-        layoutsWithName[name] = Vector<uint32_t>(group.size(), [&](size_t index) {
-            return static_cast<uint32_t>(group[index]);
-        });
-    });
+    listSecondsByFirst(singleElementSpan(layoutsByName), layoutsWithName);
 
     Vector<WireTypeConversion> met = collectInParallel<WireTypeConversion>(loops, numberOfLayouts, [&](unsigned type, Vector<WireTypeConversion>& found) {
         if (!isStructuralType(layouts[type]))
@@ -335,12 +350,12 @@ static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const
     uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
     DeclaredFamilies families { Vector<Vector<LayoutID>>(layouts.size()), BitVector(layouts.size()) };
     Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
-    forEachIndexInParallel(loops, (numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask, [&](unsigned task, unsigned worker) {
+    Vector<Vector<uint64_t>> foundByTasks((numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask);
+    forEachIndexInParallel(loops, static_cast<unsigned>(foundByTasks.size()), [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& stamps = stampsOfWorkers[worker];
         if (stamps.isEmpty())
             stamps.fill(0u, layouts.size());
-        Vector<uint64_t>& found = foundByWorkers[worker];
+        Vector<uint64_t>& found = foundByTasks[task];
         Vector<uint32_t, 16> worklist;
         for (uint32_t index = task * layoutsPerTask, end = std::min(numberOfLayouts, index + layoutsPerTask); index < end; ++index) {
             if (isEnvironment(layouts[index])) {
@@ -367,22 +382,13 @@ static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const
             }
         }
     });
-    ParallelArray<uint64_t> reachedByMember = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
-    parallelSort(loops, reachedByMember.mutableSpan(), std::less<uint64_t> { });
-    Vector<uint8_t> hasMembersWithoutLayout(FillWith { }, layouts.size(), static_cast<uint8_t>(0));
-    forEachGroupInParallel(loops, reachedByMember.span(), [&](uint32_t reached, std::span<const uint64_t> group) {
-        Vector<LayoutID>& members = families.members[reached];
-        members.reserveInitialCapacity(group.size());
-        for (uint64_t pair : group) {
+    listSecondsByFirst(foundByTasks.span(), families.members);
+    for (const Vector<uint64_t>& found : foundByTasks) {
+        for (uint64_t pair : found) {
             uint32_t member = static_cast<uint32_t>(pair);
-            members.append(LayoutID(member));
             if (!isEnvironment(layouts[member]) && has(layouts[member], LayoutFlags::HasMembersWithoutLayout))
-                hasMembersWithoutLayout[reached] = 1;
+                families.hasMembersWithoutLayout.quickSet(pair >> 32);
         }
-    });
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (hasMembersWithoutLayout[index])
-            families.hasMembersWithoutLayout.quickSet(index);
     }
     return families;
 }
@@ -607,10 +613,10 @@ static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& l
     uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
     Vector<Vector<FunctionID>> families(functions.size());
     Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> foundByWorkers(loops.width());
-    forEachIndexInParallel(loops, (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task, unsigned worker) {
+    Vector<Vector<uint64_t>> foundByTasks((numberOfFunctions + functionsPerTask - 1) / functionsPerTask);
+    forEachIndexInParallel(loops, static_cast<unsigned>(foundByTasks.size()), [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& stamps = stampsOfWorkers[worker];
-        Vector<uint64_t>& found = foundByWorkers[worker];
+        Vector<uint64_t>& found = foundByTasks[task];
         for (uint32_t index = task * functionsPerTask, end = std::min(numberOfFunctions, index + functionsPerTask); index < end; ++index) {
             if (isSignature(functions[index]))
                 continue;
@@ -625,13 +631,7 @@ static Vector<Vector<FunctionID>> collectFunctionFamilies(const ParallelLoops& l
             });
         }
     });
-    ParallelArray<uint64_t> membersByType = ParallelArray<uint64_t>::concatenationOf(loops, WTF::move(foundByWorkers));
-    parallelSort(loops, membersByType.mutableSpan(), std::less<uint64_t> { });
-    forEachGroupInParallel(loops, membersByType.span(), [&](uint32_t type, std::span<const uint64_t> group) {
-        families[type] = Vector<FunctionID>(group.size(), [&](size_t index) {
-            return FunctionID(static_cast<uint32_t>(group[index]));
-        });
-    });
+    listSecondsByFirst(foundByTasks.span(), families);
     return families;
 }
 

@@ -25,7 +25,16 @@ struct ValueFlowBehavior {
     std::span<const BuiltinName> namedMembers;
     std::span<const BuiltinName> calledMembers;
     bool describesRefusedOperands { false };
+    // The walk over keys, values and getters passes functions by.
+    bool namesFunctionsOnly { false };
+    // Of the objects that it meets it converts those that Number, String and their like have made. A proxy is none of them.
+    bool convertsOnlyBoxedPrimitives { false };
+    // In place of a proxy it takes the target, and asks no trap.
+    bool printsTargetsOfProxies { false };
 };
+
+// Whether an object that was made as an instance of one class, or of a class below it, may pass the test for another.
+bool mayBeInstanceOf(const BuiltinTable&, BuiltinClassID madeAs, BuiltinClassID tested);
 
 class ValueFlowBuiltinTables {
     WTF_MAKE_NONCOPYABLE(ValueFlowBuiltinTables);
@@ -48,9 +57,14 @@ public:
     ValueFlowObjectID objectStandingFor(BuiltinClassID builtinClass) const { return m_objectStandingForClass[builtinClass.index()]; }
     ValueSetID classesSurelyOf(BuiltinTypeID type) const { return m_classesSurelyOfType[type.index()]; }
     ValueSetID classesOfWhilePristine(BuiltinTypeID type) const { return m_classesOfTypeWhilePristine[type.index()]; }
+    // An object passes the test for the type only if it was made as one of these. `anything` where the class that an object was made as does not decide the test.
+    ValueSetID classesThatMayBeOf(BuiltinTypeID type) const { return m_classesThatMayBeOfType[type.index()]; }
+    ValueSetID objectsStandingForClasses() const { return m_objectsStandingForClasses; }
 
     ValueFlowBehaviorID behaviorOf(const BuiltinParameter& parameter) const { return m_behaviorOfParameter.get(&parameter); }
     ValueFlowBehaviorID behaviorOf(const OperandInfo& operand) const { return m_behaviorOfOperand.get(&operand); }
+    // The same behavior for a call that may convert what it prints: a proxy is asked like any object.
+    ValueFlowBehaviorID behaviorThatAsksProxies(ValueFlowBehaviorID behavior) const { return m_behaviorsThatAskProxies.get(behavior.index()); }
     const ValueFlowBehavior& at(ValueFlowBehaviorID behavior) const LIFETIME_BOUND { return m_behaviors[behavior.index()]; }
     unsigned numberOfBehaviors() const { return m_behaviors.size(); }
     ValueFlowBehaviorID conversionToPrimitive() const { return m_conversionToPrimitive; }
@@ -68,6 +82,8 @@ public:
     ValueSetID closuresThatEntriesDescribe() const { return m_closuresThatEntriesDescribe; }
     BuiltinID entryDescribing(ValueFlowObjectID closure) const;
     bool isCodeThatRecordsDescribe(FunctionID function) const { return m_codeThatRecordsDescribe.get(function.index()); }
+    // Rows name the function as one that their entry calls, each of those entries is declared, and the host calls it for nothing else.
+    bool isCalledForDeclaredEntriesAlone(RuntimeFunctionID function) const { return m_functionsCalledForDeclaredEntriesAlone.get(function.index()); }
     // What a call of the entry does to its operands the statements of its code say, as of any function of the program.
     bool isDescribedByCodeAlone(BuiltinID entry) const { return m_entriesDescribedByCodeAlone.get(entry.index()); }
 
@@ -80,11 +96,14 @@ private:
     Vector<ValueFlowObjectID> m_objectStandingForClass;
     Vector<ValueSetID> m_classesSurelyOfType;
     Vector<ValueSetID> m_classesOfTypeWhilePristine;
+    Vector<ValueSetID> m_classesThatMayBeOfType;
+    ValueSetID m_objectsStandingForClasses;
     Vector<ValueSetID> m_primitivesOfType;
     Vector<Vector<BuiltinClassID, 1>> m_classesAtOrBelow;
     Vector<ValueFlowBehavior> m_behaviors;
     HashMap<const BuiltinParameter*, ValueFlowBehaviorID> m_behaviorOfParameter;
     HashMap<const OperandInfo*, ValueFlowBehaviorID> m_behaviorOfOperand;
+    HashMap<uint32_t, ValueFlowBehaviorID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_behaviorsThatAskProxies;
     ValueFlowBehaviorID m_conversionToPrimitive;
     ValueFlowBehaviorID m_descriptionOfRefusedOperands;
     std::array<BuiltinName, 1> m_namesReadFromRefusedOperands { BuiltinNames::constructor };
@@ -95,6 +114,7 @@ private:
     Vector<BuiltinName> m_namesOfFunctionsWithTypedResults;
     BitVector m_entriesHoldingValueFromLibrary;
     BitVector m_codeThatRecordsDescribe;
+    BitVector m_functionsCalledForDeclaredEntriesAlone;
     BitVector m_entriesDescribedByCodeAlone;
     Vector<std::pair<ValueFlowObjectID, BuiltinID>> m_describedClosures;
     ValueSetID m_closuresThatEntriesDescribe;

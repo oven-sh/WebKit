@@ -34,7 +34,12 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 using ModuleList = Vector<uint32_t, 4>;
-using ModuleCallees = Vector<FunctionID, 1>;
+// A function to call, or a module that keeps no status itself and has run by then.
+struct ModuleStep {
+    FunctionID callee;
+    ModuleID moduleThatHasRun;
+};
+using ModuleCallees = Vector<ModuleStep, 1>;
 
 enum class SiteKind : uint8_t {
     // EvaluateModule in the body of its referrer, where every run of the body passes once and no handler stands around it.
@@ -326,6 +331,9 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
                 continue;
             ModuleCallSite site { id, valueID, value.module(), *kind };
             bool isFlagged = value.opcode == Opcode::EvaluateModule && value.isBare() && evaluated && value.referrer() == evaluated && !block.handler;
+            // The walk comes to a module once, so of two bare sites the first alone calls it. `require("./a.cjs"); delete require.cache[path]; require("./a.cjs")` runs the file at both:
+            // each site asks the status of the file.
+            isFlagged = isFlagged && !plan.program.at(site.target).flags.contains(ModuleFlags::MayBeEvicted);
             if (isFlagged && plan.isCalledWhereRequired.quickGet(site.target.index()))
                 flagged.append({ BlockID(blockIndex), site });
             else
@@ -443,8 +451,11 @@ static void walkFrom(EvaluationPlan& plan, ModuleID first)
             if (index != first.index() && plan.hasNoState.quickGet(index) && plan.startsItself.quickGet(index)) {
                 FunctionID body = program.modules[index].body;
                 if (!onlyReturns(program.at(body)))
-                    frame.callees->append(body);
+                    frame.callees->append(ModuleStep { body, { } });
             }
+            // require.cache of a test run lists the files that have run.
+            if (index != first.index() && program.modules[index].flags.contains(ModuleFlags::IsListedInCache))
+                frame.callees->append(ModuleStep { { }, ModuleID(index) });
             stack.removeLast();
             continue;
         }
@@ -463,7 +474,7 @@ static void walkFrom(EvaluationPlan& plan, ModuleID first)
         if (plan.hasNoState.quickGet(target) || (plan.isWalkedByCode.quickGet(target) && !plan.startsItself.quickGet(target)))
             stack.append(Frame { target, 0, callees });
         else if (plan.startsItself.quickGet(target))
-            callees->append(program.modules[target].body);
+            callees->append(ModuleStep { program.modules[target].body, { } });
     }
 }
 
@@ -493,6 +504,17 @@ static Value makeModuleOperation(Opcode opcode, ModuleID module)
     return value;
 }
 
+static void addStep(const Program& program, const ModuleStep& step, BuiltinID calledBuiltin, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
+{
+    if (step.callee) {
+        addCallOfModule(program, step.callee, calledBuiltin, add);
+        return;
+    }
+    // The loader may hold the status in a record, and the run time takes it from there.
+    add(makeModuleOperation(Opcode::BeginModuleEvaluation, step.moduleThatHasRun));
+    add(makeModuleOperation(Opcode::FinishModuleEvaluation, step.moduleThatHasRun));
+}
+
 // To evaluate a module with a state is to call this function: it evaluates what the module imports, in the order of the requests, and then runs the code of the module.
 static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const ModuleCallees& steps, TypeArena& types)
 {
@@ -507,9 +529,9 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
         arguments.append(copy);
     }
     builder.moveToEndOf(entry);
-    auto appendCallsOf = [&](std::span<const FunctionID> callees) {
-        for (FunctionID callee : callees) {
-            addCallOfModule(context.program, callee, { }, [&](Value&& value) {
+    auto appendCallsOf = [&](std::span<const ModuleStep> callees) {
+        for (const ModuleStep& callee : callees) {
+            addStep(context.program, callee, { }, [&](Value&& value) {
                 return builder.append(WTF::move(value));
             });
         }
@@ -522,6 +544,8 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
         BlockID stopped = builder.addBlock();
         for (unsigned index = 0; index < module.numberOfStepsBeforeItBegins; ++index) {
             appendCallsOf(steps.span().subspan(index, 1));
+            if (!module.filesRunWhileLoaded[index])
+                continue;
             ValueID stops = builder.append(makeModuleOperation(Opcode::StopLoadingBehindFile, module.filesRunWhileLoaded[index]));
             BlockID next = builder.addBlock();
             builder.emitBranch(stops, Target { stopped, { }, { } }, Target { next, { }, { } });
@@ -620,7 +644,7 @@ static bool asksWhoRequiredWhom(const Program& program, const FlowResults& flow)
 {
     if (!namesWaysToModuleObjects(program))
         return false;
-    if (!flow.hasResults() || !flow.unseenCode().empty())
+    if (!flow.hasResults() || !flow.unseenCode().empty() || flow.storesPathOfMainModule())
         return true;
     // `if (!module.parent)` asks whether somebody has required the file. `children` is a list whoever has required what.
     if (!flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty())
@@ -658,7 +682,8 @@ static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bo
             ModuleID target = value.module();
             BuiltinID calledBuiltin = value.isCallOfRequire() ? functionOfHostThatRequireCallsFor(program.at(target)) : BuiltinID();
             builder.setOrigin(value.origin());
-            std::span<const FunctionID> callees;
+            std::span<const ModuleStep> callees;
+            ModuleStep last;
             if (evaluated && bareSiteOf[id.index()])
                 callees = plan.calleesAtBareSites[evaluated.index()][bareSiteOf[id.index()] - 1].span();
             else if (!plan.isCalledWhereRequired.quickGet(target.index())) {
@@ -669,14 +694,20 @@ static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bo
                 require.setCalledBuiltin(calledBuiltin);
                 builder.insertBefore(point, WTF::move(require));
             } else if (plan.startsItself.quickGet(target.index()))
-                callees = singleElementSpan(program.at(target).body);
-            else
+                last.callee = program.at(target).body;
+            else {
+                // It has nothing to run, so it has no start that would store a status.
                 callees = plan.steps[target.index()].span();
-            for (FunctionID callee : callees) {
-                addCallOfModule(program, callee, calledBuiltin, [&](Value&& added) {
-                    return builder.insertBefore(point, WTF::move(added));
-                });
+                if (program.at(target).flags.contains(ModuleFlags::IsListedInCache))
+                    last.moduleThatHasRun = target;
             }
+            auto insert = [&](Value&& added) {
+                return builder.insertBefore(point, WTF::move(added));
+            };
+            for (const ModuleStep& callee : callees)
+                addStep(program, callee, calledBuiltin, insert);
+            if (last.callee || last.moduleThatHasRun)
+                addStep(program, last, calledBuiltin, insert);
         }
     }
     builder.applyInsertions();
@@ -750,7 +781,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad));
         // A file that the loader has asked for has no parent, and the run time knows which of several files it has asked for.
         bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
-        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk)
+        bool isListedFromRequireOn = module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::IsListedInCache);
+        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn)
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;
@@ -843,6 +875,15 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
                 isStart.quickSet(site.target.index());
         }
     }
+    // A module that runs again comes once more to what it imports, and reads from the state that it has run.
+    for (size_t index = 0; index < modules.size(); ++index) {
+        if (!modules[index].flags.contains(ModuleFlags::RunsAgain))
+            continue;
+        for (const ModuleRequest& request : modules[index].requests)
+            isStart.quickSet(request.target.index());
+        for (const ModuleCallSite& site : plan.bareSites[index])
+            isStart.quickSet(site.target.index());
+    }
     plan.hasNoState = findModulesWithoutState(plan, isStart);
 
     // What a program can tell of a `require` beyond the evaluation of the module.
@@ -891,8 +932,10 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
 
     BitVector isCalled(program.functions.size());
     auto noteCallees = [&](const ModuleCallees& callees) {
-        for (FunctionID callee : callees)
-            isCalled.quickSet(callee.index());
+        for (const ModuleStep& step : callees) {
+            if (step.callee)
+                isCalled.quickSet(step.callee.index());
+        }
     };
     for (size_t index = 0; index < modules.size(); ++index) {
         noteCallees(plan.steps[index]);
@@ -909,7 +952,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     for (uint32_t index : modulesWithState) {
         const Module& module = modules[index];
         const ModuleCallees& steps = plan.steps[index];
-        if (!plan.startsItself.quickGet(index) || (steps.isEmpty() && !isCalled.quickGet(module.body.index())))
+        bool callsNothing = std::ranges::none_of(steps, [](const ModuleStep& step) { return !!step.callee; });
+        if (!plan.startsItself.quickGet(index) || (callsNothing && !isCalled.quickGet(module.body.index())))
             continue;
         // An ES module that failed throws the same error at everybody who asks for it later. What a CommonJS module does is written in its record: a wrapper of a bundler counts as done once it has begun.
         bool keepsError = module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError);
@@ -917,16 +961,20 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         starts.last().beginsInCode = module.kind == ModuleKind::CommonJs && steps.isEmpty() && !onlyReturns(program.at(module.body));
         if (!importsCommonJSBeforeItBegins(index))
             continue;
-        auto firstOther = std::ranges::find_if(steps, [&](FunctionID callee) {
-            size_t called = moduleWithBody[callee.index()].index();
+        auto firstOther = std::ranges::find_if(steps, [&](const ModuleStep& step) {
+            if (!step.callee)
+                return false;
+            size_t called = moduleWithBody[step.callee.index()].index();
             bool runsCommonJS = modules[called].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[called]);
             return !runsCommonJS || plan.hasNoState.quickGet(called);
         });
+        while (firstOther != steps.begin() && !std::prev(firstOther)->callee)
+            --firstOther;
         starts.last().numberOfStepsBeforeItBegins = firstOther - steps.begin();
         if (!isAskedForByHost.quickGet(index))
             continue;
-        for (FunctionID callee : steps.span().first(starts.last().numberOfStepsBeforeItBegins))
-            starts.last().filesRunWhileLoaded.append(moduleWithBody[callee.index()]);
+        for (const ModuleStep& step : steps.span().first(starts.last().numberOfStepsBeforeItBegins))
+            starts.last().filesRunWhileLoaded.append(step.callee ? moduleWithBody[step.callee.index()] : ModuleID());
     }
 
     Vector<FunctionID> codeOfModule(modules.size());

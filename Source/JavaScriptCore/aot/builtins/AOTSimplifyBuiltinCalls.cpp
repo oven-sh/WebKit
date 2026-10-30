@@ -307,8 +307,15 @@ static std::optional<Value> simplifyIntrinsic(FunctionPassContext& context, cons
     switch (intrinsic.opcode) {
     case Opcode::HasJSType:
         return simplifyTestOfCellKind(context, intrinsic);
-    case Opcode::IsPristineArray:
+    case Opcode::IsPristineArray: {
+        // It asks whether `[...value]` does for `Array.from(value)`. It does for a Set that the built-in iterator walks too: the rule for its known value says so,
+        // and whoever folds constants knows what to do with a branch that hands the proof on.
+        const Type& value = context.program.typeOf(context.function, intrinsic.valueOperand());
+        const ClassPart* part = value.singleBuiltinClass();
+        if (part && part->builtinClass == BuiltinClasses::Set && !value.mayBeUndefinedOrNull() && pristineAspectsProvenBy(value, BuiltinClasses::Set).contains(PristineAspects::Names))
+            return std::nullopt;
         return makePristineTest(intrinsic.valueOperand(), BuiltinClasses::Array, { PristineAspects::Storage, PristineAspects::Names });
+    }
     case Opcode::ToLength:
         return simplifyIntegerConversion(context, intrinsic, integersUnchangedByToLength);
     case Opcode::ToIntegerOrInfinity:
@@ -992,6 +999,7 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
         didRewrite(simplifyInt32Conversions(context));
     didRewrite(simplifyStringReads(context, calls));
     didRewrite(simplifyConcatenatingCalls(context, calls));
+    didRewrite(testPartsOfConcatenations(context, calls));
     didRewrite(simplifyMatches(context, calls));
     didRewrite(simplifyLastPiecesOfSplits(context, calls));
     didRewrite(simplifySplitsOfConstants(context, calls));

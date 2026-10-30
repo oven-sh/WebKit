@@ -38,7 +38,8 @@ namespace AOT {
 struct OperationCall {
     enum class Returns : uint8_t { Value, Void, Double, Pair };
     enum class FirstArgument : uint8_t { Instance, GlobalObject, VM, None };
-    enum class Saves : uint8_t { Nothing, CallerSavedGPRs, CallerSavedRegisters };
+    // CallerSavedGPRsAndFewFPRs: of the floating-point registers, those that a call of an accessor keeps. For a stub that may also call one, so its caller has lost the others anyway.
+    enum class Saves : uint8_t { Nothing, CallerSavedGPRs, CallerSavedGPRsAndFewFPRs, CallerSavedRegisters };
 
     // operationArgumentGPR(1 .. count) are passed in memory: the second argument is countWord, the third their address.
     struct SpilledArguments {
@@ -92,6 +93,7 @@ struct PreservingCall {
 };
 
 void readTagsFromInstance(CCallHelpers&);
+RegisterSet floatingPointRegistersLostToAccessors(StubCallee);
 
 class StubAssembler final : public CCallHelpers {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -134,7 +136,8 @@ public:
     // What is in lostAnyway is neither stored nor loaded.
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, const Functor&);
     // For a stub that has no frame record, with the stack as at its entry.
-    template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const Functor&);
+    template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const Functor& functor) { preservingCallerSavedRegisters(hasResult, { }, functor); }
+    template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const RegisterSet& lostAnyway, const Functor&);
     template<typename Functor> void withSavedRegisters(const RegisterSet&, const Functor&);
     void callAndReturnPreservingRegisters(const PreservingCall&, const ScopedLambda<void()>& emitCall);
 
@@ -149,6 +152,7 @@ public:
     void callLeaf(Entry, unsigned bytesPushed = 0);
     // In the head of a call of an operation: the call goes to this one, which takes the same arguments.
     void jumpToOperationCallOf(Entry);
+    void jumpToCallOfOperation(Entry);
 
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
     void exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall&);
@@ -448,18 +452,18 @@ void StubAssembler::preserving(std::span<const GPRReg> saved, const Functor& fun
 }
 
 template<typename Functor>
-void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const Functor& functor)
+void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const RegisterSet& lostAnyway, const Functor& functor)
 {
 #if CPU(X86_64)
     emitFunctionPrologue();
     // The size of the save area aligns the stack of a stub that has pushed nothing, and the prologue pushed one register.
     subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
-    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, [&](unsigned bytes) {
+    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, lostAnyway, [&](unsigned bytes) {
         functor(bytes + 2 * static_cast<unsigned>(sizeof(CPURegister)));
     });
     emitFunctionEpilogue();
 #else
-    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, functor);
+    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, lostAnyway, functor);
 #endif
 }
 

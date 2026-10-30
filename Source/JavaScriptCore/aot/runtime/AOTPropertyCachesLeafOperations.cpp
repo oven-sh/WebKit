@@ -677,7 +677,7 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     for (JSObject* object = asObject(base); object; object = checksPrototypes ? object->getPrototypeDirect().getObject() : nullptr) {
         JSObject* holder = object;
         if (Object* compiled = compiledObjectOrNull(object)) {
-            if (mayHaveFieldWithNameOfLength(*compiled, length))
+            if (mayHaveFieldWithNameOfLength(*compiled, length) || hasPendingStars(*compiled))
                 return std::nullopt;
             holder = compiled->extraProperties();
             if (!holder)

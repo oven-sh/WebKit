@@ -987,18 +987,29 @@ struct KeysOfSpies {
 
 // Spies replace under several sets of keys what they replace under all those keys together. A test run has thousands of spies and of modules,
 // so the keys are gathered per set of holders, then per module, and the exports of a module are looked at once.
-Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& inputs)
+Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& inputs, std::span<const UnseenCodeRecord> unseenCode)
 {
     const Program& program = inputs.program;
     const BuiltinTable& builtins = program.builtins();
     const ValueFlowUniverse& universe = inputs.universe();
     BitVector spies(builtins.builtinCount());
     bool isUsed = false;
+    // An executable refuses a spy that its build has not seen.
+    bool loaderHandsOnEveryModule = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::LoadedModulesAreHandedToNativeCode)) != ValueSets::nothing;
+    // Nor where the test files come from disk: an entry point names what they do with the program.
+    bool followsSpiesOutOfSight = inputs.build.options().admitsReplacedBuiltins() && !inputs.build.options().admitsFilesRunByHost() && !loaderHandsOnEveryModule;
+    bool isSpyOutOfSight = false;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (!builtins.has(BuiltinMark::IsSpy, BuiltinID(index)))
             continue;
         spies.quickSet(index);
         isUsed |= !inputs.solver().usesOf(BuiltinID(index)).isEmpty();
+        // Nobody names a spy that is taken off what `Bun[name](path)` answers, or that text made at run time finds: whoever holds the object has its members.
+        Vector<ValueFlowObjectID, 32> objects;
+        universe.appendObjectsOf(BuiltinID(index), objects);
+        if (BuiltinID holder = builtins.at(BuiltinID(index)).holder)
+            universe.appendObjectsOf(holder, objects);
+        isSpyOutOfSight |= followsSpiesOutOfSight && std::ranges::any_of(objects, [&](ValueFlowObjectID spy) { return inputs.hasEscaped(spy) || inputs.isLost(spy); });
     }
     // `import { spyOn, jest } from "bun:test"`: the variables that stand for a spy, and for an object that has one.
     BitVector variablesOfSpies(program.variables.size());
@@ -1022,7 +1033,7 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
             }
         }
     }
-    if (!isUsed)
+    if (!isUsed && !isSpyOutOfSight)
         return { };
 
     ValueFlowHeapView heap(inputs);
@@ -1051,12 +1062,24 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
             spiedHolders.append({ holders, { } });
         spiedHolders[position.iterator->value].keys.add(maker, keys, mayBeAnyKey);
     };
+    // Where a spy is out of sight, a value that nobody knows and that is called may be one, or code that nobody has seen and that calls one. It may spy on what the call
+    // hands it. Only the namespace objects that the call lists count: with those that have escaped, every such call would open every export of the program.
+    ValueSetID handedToValuesNobodyKnows = isSpyOutOfSight ? valuesHandedToCalleesNobodyKnows(inputs, heap, universe.namespaces()) : ValueSets::nothing;
     forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
-        // Once code runs that nobody has seen the spies are out of sight, and every call of a value that nobody knows might be a spy on any export of any namespace
-        // object that has escaped. The run time refuses by name a spy on an export that the build has closed, so only the spies in sight count.
-        if (!application.isCalleeListed)
+        if (application.isCalleeListed) {
+            noteSpy(application.valueAt(BuiltinOperand::argument(0), maker), application.valueAt(BuiltinOperand::argument(1), maker));
             return;
-        noteSpy(application.valueAt(BuiltinOperand::argument(0), maker), application.valueAt(BuiltinOperand::argument(1), maker));
+        }
+        if (!followsSpiesOutOfSight)
+            return;
+        auto take = [&](ValueSetID values) {
+            if (!ValueSets::isComplement(values))
+                handedToValuesNobodyKnows = maker.unite(handedToValuesNobodyKnows, maker.intersect(values, universe.namespaces()));
+        };
+        take(application.thisValue);
+        take(application.otherArguments);
+        for (ValueSetID argument : application.arguments)
+            take(argument);
     });
 
     // Such a variable holds the unknown value too where somebody may have laid something else on the object of the module, and the unknown value covers a spy that has
@@ -1105,6 +1128,18 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
         if (holdsPlaceholder(spied.holders))
             keysOutOfSight.add(maker, spied.keys);
     }
+
+    forEachNamespaceIn(handedToValuesNobodyKnows, [&](ModuleID id) {
+        keysOfModule[id.index()].add(maker, ValueSets::nothing, true);
+    });
+
+    // Text that nobody has seen finds a spy by itself, and every namespace object that has escaped is within its reach: in an object that it is handed, on the global
+    // object, in a variable of the scope that it is evaluated in. The copy of a file that runs again has the text of the compiled file, whose spies are seen.
+    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [](const UnseenCodeRecord& record) {
+        return record.cause == UnseenCodeCause::EvaluatesText || (record.cause == UnseenCodeCause::RunsUnseenCode && record.builtin != Wire::none);
+    });
+    if (isSpyOutOfSight && runsTextNobodyHasSeen)
+        keysOutOfSight.add(maker, ValueSets::nothing, true);
 
     if (keysOutOfSight.isSpiedOn) {
         for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {

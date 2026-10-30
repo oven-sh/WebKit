@@ -59,13 +59,18 @@ public:
                 m_cloner.addBlock(block);
             for (BasicBlock* block : version->plan.excursion.blocks)
                 m_cloner.addBlock(block);
+            version->canCopySlowPaths = canCopySlowPaths(loops, version->plan);
+            if (!version->canCopySlowPaths)
+                continue;
+            for (BasicBlock* block : version->plan.region.slowPathBlocks)
+                m_cloner.addBlock(block);
         }
         m_cloner.demoteEscapingValues();
         m_proc.resetValueOwners();
         findSingleDefinitions();
 
         for (auto& version : m_versions)
-            version->returnsFromSlowPaths = canReturnFromSlowPaths(version->plan);
+            chooseWayBack(*version);
         for (unsigned i = m_versions.size(); i--;)
             buildFastPreHeader(*m_versions[i], i);
         storeValuesThatOnlyPreHeadersName();
@@ -89,14 +94,23 @@ private:
         {
         }
 
+        struct Counter {
+            Variable* variable;
+            int64_t step;
+        };
+
         LoopVersionPlan plan;
-        // An iteration of the original loop ends in front of the guards of the fast loop.
+        // What has left the fast loop by a slow path comes back in front of its guards at the end of the iteration.
         bool returnsFromSlowPaths { false };
+        bool canCopySlowPaths { false };
+        // Set where the iteration ends in a copy of the original loop. Otherwise every iteration of the original loop ends in front of the guards.
+        std::optional<Counter> counterOfCopiedSlowPaths;
         struct HeaderPhi {
             Value* phi;
             Value* valueInPreHeader;
         };
         Vector<HeaderPhi, 2> invariantHeaderPhis;
+        IndexSet<BasicBlock*> loopBlocks;
         RegionCloner::ValueMap headerPhisEqualToHoistedValues;
         std::optional<FastPreHeader> front;
         RegionCloner::ValueMap hoistedMap;
@@ -236,31 +250,261 @@ private:
 
     // The guards in front of the fast loop read variables, so they hold for the next iteration, whichever it is.
     // The guards of range checks start from the values that enter the loop, and hold for the first iteration only.
-    bool canReturnFromSlowPaths(const LoopVersionPlan& plan) const
+    static bool guardsStartFromVariables(const LoopVersionPlan& plan)
     {
         const RangeCheckPlan& rangeChecks = plan.rangeChecks;
-        if (!plan.isEnteredFromPreHeader || plan.unswitched || rangeChecks.clampsBound() || rangeChecks.strided || !rangeChecks.entryGuards.isEmpty() || !rangeChecks.decidedComparisons.isEmpty())
-            return false;
-        // A loop that may be entered again on any turn keeps its poll, its turns are not written out, and more values live around it. Beside a call that costs little.
-        // A call that writes, such as an allocation, takes a slow path of its own every so often, so a loop around one is sure to leave its fast version.
-        bool callsAndWritesInEveryTurn = false;
+        return plan.isEnteredFromPreHeader && !plan.unswitched && !rangeChecks.clampsBound() && !rangeChecks.strided && rangeChecks.entryGuards.isEmpty() && rangeChecks.decidedComparisons.isEmpty();
+    }
+
+    // A loop that may be entered again on any turn keeps its poll, its turns are not written out, and more values live around it. Beside a call that costs little.
+    // A call that writes, such as an allocation, takes a slow path of its own every so often, so a loop around one is sure to leave its fast version.
+    static bool callsAndWritesInEveryTurn(const LoopVersionPlan& plan)
+    {
         for (BasicBlock* block : plan.region.blocks) {
-            for (Value* value : *block)
-                callsAndWritesInEveryTurn |= isCall(value) && !isLoopPoll(value) && value->effects().writes;
+            for (Value* value : *block) {
+                if (isCall(value) && !isLoopPoll(value) && value->effects().writes)
+                    return true;
+            }
         }
-        if (!callsAndWritesInEveryTurn)
+        return false;
+    }
+
+    bool canReturnFromOriginalLoop(const LoopVersionPlan& plan) const
+    {
+        if (callsAndWritesInEveryTurn(plan))
+            return canCompareHeaderPhis(plan);
+        // A first turn that fails a guard on what changes from turn to turn says nothing of the next: without a way back the fast version would never run.
+        // Where the guards take nothing from in front of the loop and no phi of the header is hoisted, they need nothing more to hold for any turn.
+        if (!plan.hoisted.firstTurnMayFailPeeledGuard || !plan.hoisted.repeatedValues.isEmpty())
             return false;
-        bool canCompareHeaderPhis = true;
+        for (const HoistStep& step : plan.hoisted.steps) {
+            if (step.kind == HoistStep::Kind::Value && variableOfHeaderPhi(plan, step.value))
+                return false;
+        }
+        return true;
+    }
+
+    // The original of every other loop stays as it is, so whoever stays in it pays nothing for the way back. A turn that has left the fast loop ends in a copy of the original.
+    static bool canCopySlowPaths(NaturalLoops& loops, const LoopVersionPlan& plan)
+    {
+        const HotRegion& region = plan.region;
+        if (!guardsStartFromVariables(plan) || callsAndWritesInEveryTurn(plan))
+            return false;
+        for (BasicBlock* block : region.slowPathBlocks) {
+            if (loops.innerMostLoopOf(block) != region.loop || block->last()->type() != Void)
+                return false;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value))
+                    return false;
+            }
+        }
+        bool leavesFastLoop = false;
+        bool leavesOnlyRarely = true;
+        auto visit = [&](BasicBlock* block, bool isReachedRarely) {
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (region.contains(successor.block()) || !loops.belongsTo(successor.block(), *region.loop) || plan.excursion.contains(successor.block()))
+                    continue;
+                leavesOnlyRarely &= isReachedRarely || successor.isRare();
+                leavesFastLoop = true;
+            }
+        };
+        for (BasicBlock* block : region.blocks) {
+            if (!plan.hoisted.isHoisted(block->last()))
+                visit(block, false);
+        }
+        // A rare path that the fast version has a copy of may have ways out of its own.
+        IndexSet<BasicBlock*> likelyBlocks = findExcursionBlocksReachedWithoutRareEdge(plan);
+        for (BasicBlock* block : plan.excursion.blocks) {
+            if (!plan.hoisted.valuesValidInExcursion.contains(block->last()))
+                visit(block, !likelyBlocks.contains(block));
+        }
+        return leavesFastLoop && leavesOnlyRarely;
+    }
+
+    static IndexSet<BasicBlock*> findExcursionBlocksReachedWithoutRareEdge(const LoopVersionPlan& plan)
+    {
+        IndexSet<BasicBlock*> result;
+        Vector<BasicBlock*, 8> worklist;
+        auto visit = [&](BasicBlock* block) {
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (!successor.isRare() && plan.excursion.contains(successor.block()) && result.add(successor.block()))
+                    worklist.append(successor.block());
+            }
+        };
+        for (BasicBlock* block : plan.region.blocks)
+            visit(block);
+        while (!worklist.isEmpty())
+            visit(worklist.takeLast());
+        return result;
+    }
+
+    // A variable that every turn of the fast loop moves by one and the same step tells two turns apart.
+    std::optional<Version::Counter> findCounter(const LoopVersionPlan& plan) const
+    {
+        for (Value* phi : *plan.region.header) {
+            Variable* variable = variableOfHeaderPhi(plan, phi);
+            if (!variable || !phi->type().isInt() || plan.hoisted.isHoisted(phi))
+                continue;
+            int64_t step = 0;
+            bool isCounter = true;
+            forEachValueOfNextIteration(plan, variable, [&](Value* next) {
+                if ((next->opcode() != Add && next->opcode() != CheckAdd) || definitionOf(next->child(0)) != phi || !next->child(1)->hasInt() || !next->child(1)->asInt() || (step && step != next->child(1)->asInt())) {
+                    isCounter = false;
+                    return;
+                }
+                step = next->child(1)->asInt();
+            });
+            if (isCounter && step)
+                return Version::Counter { variable, step };
+        }
+        return std::nullopt;
+    }
+
+    void chooseWayBack(Version& version)
+    {
+        const LoopVersionPlan& plan = version.plan;
+        if (!guardsStartFromVariables(plan))
+            return;
+        if (canReturnFromOriginalLoop(plan)) {
+            version.returnsFromSlowPaths = true;
+            return;
+        }
+        if (version.canCopySlowPaths && canCompareHeaderPhis(plan))
+            version.counterOfCopiedSlowPaths = findCounter(plan);
+        version.returnsFromSlowPaths = !!version.counterOfCopiedSlowPaths;
+    }
+
+    bool isReloadedAfterLastWrite(const LoopVersionPlan& plan, const IndexSet<BasicBlock*>& loopBlocks, Value* reloaded) const
+    {
+        BasicBlock* block = reloaded->owner;
+        RangeSet<HeapRange> reads;
+        Value* firstLoad = nullptr;
+        for (Value* value = reloaded; loopBlocks.contains(value->owner); value = definitionOf(value->lastChild())) {
+            if (value->owner != block)
+                return false;
+            auto* memory = value->as<MemoryValue>();
+            if (memory && memory->isLoad()) {
+                Effects effects = memory->effects();
+                if (effects.readsMutability != Mutability::Immutable)
+                    effects.reads.addTo(reads);
+            } else if (value->opcode() != ZExt32 && value->opcode() != SExt32)
+                return false;
+            firstLoad = value;
+        }
+        if (!firstLoad)
+            return false;
+        auto clobbers = [&](Value* value) {
+            return value->effects().writes.overlaps(reads);
+        };
+        bool isAfterFirstLoad = false;
+        for (Value* value : *block) {
+            if (isAfterFirstLoad && clobbers(value))
+                return false;
+            isAfterFirstLoad |= value == firstLoad;
+        }
+        IndexSet<BasicBlock*> visited;
+        Vector<BasicBlock*, 8> worklist { block };
+        while (!worklist.isEmpty()) {
+            for (BasicBlock* successor : worklist.takeLast()->successorBlocks()) {
+                if (successor == plan.region.header || !loopBlocks.contains(successor))
+                    continue;
+                if (successor == block)
+                    return false;
+                if (!visited.add(successor))
+                    continue;
+                for (Value* value : *successor) {
+                    if (clobbers(value))
+                        return false;
+                }
+                worklist.append(successor);
+            }
+        }
+        return true;
+    }
+
+    template<typename Functor>
+    void forEachValueGivenInLoop(Version& version, Variable* variable, const Functor& functor) const
+    {
+        if (version.loopBlocks.isEmpty()) {
+            for (BasicBlock* block : version.plan.region.blocks)
+                version.loopBlocks.add(block);
+            for (BasicBlock* block : version.plan.region.slowPathBlocks)
+                version.loopBlocks.add(block);
+        }
+        for (BasicBlock* block : version.loopBlocks.values(m_proc)) {
+            for (Value* value : *block) {
+                if (value->opcode() == Set && value->as<VariableValue>()->variable() == variable)
+                    functor(definitionOf(value->child(0)));
+            }
+        }
+    }
+
+    bool isReloadedAfterLastWriteOfEveryIteration(Version& version, Variable* variable) const
+    {
+        bool result = true;
+        forEachValueGivenInLoop(version, variable, [&](Value* next) {
+            result = result && isReloadedAfterLastWrite(version.plan, version.loopBlocks, next);
+        });
+        return result;
+    }
+
+    bool isLoadedBeforeLoopAfterLastWrite(const LoopVersionPlan& plan, const IndexSet<BasicBlock*>& loopBlocks, Variable* variable, Value* reloaded) const
+    {
+        Value* entering = nullptr;
+        for (Value* value : *plan.region.preHeader) {
+            if (value->opcode() == Set && value->as<VariableValue>()->variable() == variable)
+                entering = definitionOf(value->child(0));
+        }
+        if (!entering)
+            return false;
+        BasicBlock* block = entering->owner;
+        RangeSet<HeapRange> reads;
+        Value* firstLoad = nullptr;
+        for (Value* inside = reloaded, *before = entering; inside != before; inside = definitionOf(inside->lastChild()), before = definitionOf(before->lastChild())) {
+            if (!loopBlocks.contains(inside->owner) || before->owner != block || inside->kind() != before->kind() || inside->type() != before->type())
+                return false;
+            auto* memory = before->as<MemoryValue>();
+            if (memory && memory->isLoad()) {
+                if (memory->offset() != inside->as<MemoryValue>()->offset())
+                    return false;
+                Effects effects = memory->effects();
+                if (effects.readsMutability != Mutability::Immutable)
+                    effects.reads.addTo(reads);
+            } else if (before->opcode() != ZExt32 && before->opcode() != SExt32)
+                return false;
+            firstLoad = before;
+        }
+        if (!firstLoad)
+            return false;
+        auto clobbers = [&](Value* value) {
+            return value->effects().writes.overlaps(reads);
+        };
+        for (BasicBlock* between = plan.region.preHeader; between != block; between = between->predecessor(0)) {
+            if (between->numPredecessors() != 1 || std::ranges::any_of(*between, clobbers))
+                return false;
+        }
+        bool isAfterFirstLoad = false;
+        for (Value* value : *block) {
+            if (isAfterFirstLoad && clobbers(value))
+                return false;
+            isAfterFirstLoad |= value == firstLoad;
+        }
+        return true;
+    }
+
+    bool canCompareHeaderPhis(const LoopVersionPlan& plan) const
+    {
+        bool result = true;
         for (const HoistStep& step : plan.hoisted.steps) {
             Variable* variable = step.kind == HoistStep::Kind::Value ? variableOfHeaderPhi(plan, step.value) : nullptr;
             if (!variable)
                 continue;
-            canCompareHeaderPhis &= step.value->type().isInt();
+            result &= step.value->type().isInt();
             forEachValueOfNextIteration(plan, variable, [&](Value* next) {
-                canCompareHeaderPhis &= next == step.value || plan.hoisted.isHoisted(next);
+                result &= next == step.value || plan.hoisted.isHoisted(next);
             });
         }
-        return canCompareHeaderPhis;
+        return result;
     }
 
     void hoistValue(Version& version, Value* value)
@@ -311,7 +555,8 @@ private:
                 RELEASE_ASSERT(computedAgain);
                 if (computedAgain == current)
                     return;
-                version.front->appendGuard(phi->origin(), Equal, current, computedAgain);
+                if (!isReloadedAfterLastWriteOfEveryIteration(version, variableOfHeaderPhi(version.plan, phi)))
+                    version.front->appendGuard(phi->origin(), Equal, current, computedAgain);
                 m_cloner.substitute(version.hoistedMap, next, current);
             });
         }
@@ -345,7 +590,20 @@ private:
             }
             if (!given || !isGivenOneValue)
                 continue;
-            version.front->appendGuard(phi->origin(), Equal, version.front->last()->appendNew<VariableValue>(m_proc, Get, phi->origin(), variable), given);
+            Value* current = version.front->last()->appendNew<VariableValue>(m_proc, Get, phi->origin(), variable);
+            bool isUpToDate = isReloadedAfterLastWriteOfEveryIteration(version, variable);
+            forEachValueOfNextIteration(plan, variable, [&](Value* next) {
+                isUpToDate = isUpToDate && isLoadedBeforeLoopAfterLastWrite(plan, version.loopBlocks, variable, next);
+            });
+            if (isUpToDate) {
+                forEachValueGivenInLoop(version, variable, [&](Value* next) {
+                    if (version.hoistedMap.get(next) == given)
+                        m_cloner.substitute(version.hoistedMap, next, current);
+                });
+                version.headerPhisEqualToHoistedValues.add(phi, current);
+                continue;
+            }
+            version.front->appendGuard(phi->origin(), Equal, current, given);
             version.headerPhisEqualToHoistedValues.add(phi, given);
         }
     }
@@ -540,8 +798,11 @@ private:
                 m_cloner.appendClone(terminal, copy, map);
                 copy->successors() = block->successors();
             }
-            for (BasicBlock*& successor : copy->successorBlocks()) {
-                if (successor == plan.region.header)
+            for (FrequentedBlock& edge : copy->successors()) {
+                BasicBlock*& successor = edge.block();
+                if (kind == CopyKind::Excursion && plan.excursion.rejoinsFastLoop(block, edge))
+                    successor = version.hotCopies.get(successor);
+                else if (successor == plan.region.header)
                     successor = nextIterationHeader;
                 else if (BasicBlock* successorCopy = copies.get(successor))
                     successor = successorCopy;
@@ -592,6 +853,10 @@ private:
     {
         if (!version.returnsFromSlowPaths)
             return;
+        if (version.counterOfCopiedSlowPaths) {
+            returnFromCopyOfSlowPaths(version);
+            return;
+        }
         const HotRegion& region = version.plan.region;
         auto redirect = [&](BasicBlock* block) {
             for (BasicBlock*& successor : block->successorBlocks()) {
@@ -603,6 +868,62 @@ private:
             redirect(block);
         for (BasicBlock* block : region.slowPathBlocks)
             redirect(block);
+    }
+
+    void returnFromCopyOfSlowPaths(Version& version)
+    {
+        const HotRegion& region = version.plan.region;
+        Vector<BasicBlock*, 16> blocks;
+        blocks.appendVector(region.blocks);
+        blocks.appendVector(region.slowPathBlocks);
+
+        // Coming back costs about what one turn of the fast loop saves: its guards, once more. Two turns in a row outside it say that it saves nothing here.
+        auto [counter, step] = *version.counterOfCopiedSlowPaths;
+        Origin origin = region.header->at(0)->origin();
+        Variable* counterBehindNextTurn = m_proc.addVariable(counter->type());
+        BasicBlock* entry = m_proc.addBlock();
+        entry->appendNew<VariableValue>(m_proc, Set, origin, counterBehindNextTurn, entry->appendIntConstant(m_proc, origin, counter->type(), std::numeric_limits<int32_t>::min()));
+        entry->appendNew<Value>(m_proc, Jump, origin);
+        entry->setSuccessors(FrequentedBlock(version.front->first()));
+        region.preHeader->replaceSuccessor(version.front->first(), entry);
+
+        BasicBlock* end = m_proc.addBlock();
+        Value* current = end->appendNew<VariableValue>(m_proc, Get, origin, counter);
+        Value* wasOutsideInTurnBefore = end->appendNew<Value>(m_proc, Equal, origin, current, end->appendNew<VariableValue>(m_proc, Get, origin, counterBehindNextTurn));
+        end->appendNew<VariableValue>(m_proc, Set, origin, counterBehindNextTurn, end->appendNew<Value>(m_proc, Add, origin, current, end->appendIntConstant(m_proc, origin, counter->type(), step)));
+        end->appendNew<Value>(m_proc, Branch, origin, wasOutsideInTurnBefore);
+        end->setSuccessors(FrequentedBlock(region.header, FrequencyClass::Rare), FrequentedBlock(version.front->first()));
+
+        RegionCloner::BlockMap copies = m_cloner.cloneBlocks(blocks.span());
+        BasicBlock* headerOfTurn = copies.get(region.header);
+        for (BasicBlock* block : blocks) {
+            BasicBlock* copy = copies.get(block);
+            copy->replaceSuccessor(headerOfTurn, end);
+            if (!region.contains(block))
+                m_slowPathBlocks.add(copy);
+        }
+        // A guard may fail for what the first turn sets up.
+        for (BasicBlock* block = version.front->first(); block != version.front->last();) {
+            BasicBlock* next = nullptr;
+            for (BasicBlock*& successor : block->successorBlocks()) {
+                if (successor == region.header)
+                    successor = headerOfTurn;
+                else
+                    next = successor;
+            }
+            RELEASE_ASSERT(next);
+            block = next;
+        }
+        auto leaveForTurn = [&](BasicBlock* block) {
+            for (BasicBlock*& successor : block->successorBlocks()) {
+                if (BasicBlock* copy = copies.get(successor))
+                    successor = copy;
+            }
+        };
+        for (BasicBlock* block : region.blocks)
+            leaveForTurn(version.hotCopies.get(block));
+        for (BasicBlock* block : version.plan.excursion.blocks)
+            leaveForTurn(version.excursionCopies.get(block));
     }
 
     CountedLoop fastLoopOf(Version& version)

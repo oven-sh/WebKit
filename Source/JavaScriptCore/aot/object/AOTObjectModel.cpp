@@ -531,7 +531,13 @@ struct StructureTable::VariantMaps {
             return false;
         if (variant.keysNamedByOrder || structure.hasKeyOrderOfOneObject())
             return false;
-        return !variant.outOfLineKeyOrder || equalSpans(structure.outOfLineKeyOrder(), *variant.outOfLineKeyOrder);
+        if (!variant.outOfLineKeyOrder)
+            return true;
+        std::span<const uint16_t> held = structure.outOfLineKeyOrder();
+        std::span<const uint16_t> asked = *variant.outOfLineKeyOrder;
+        if (countOf(outOfLineOrderWordFor(asked.size())) && held.size() > asked.size())
+            held = held.first(asked.size());
+        return equalSpans(held, asked);
     }
 
     explicit VariantMaps(VM& vm)
@@ -940,6 +946,12 @@ StructureTable::Variant StructureTable::variantOf(const CompiledStructure& struc
     return variant;
 }
 
+StructureTable::Variant StructureTable::variantWithKeyOrderOf(const CompiledStructure& structure)
+{
+    structure.endOutOfLineKeyOrder();
+    return variantOf(structure);
+}
+
 CompiledStructure* StructureTable::find(const Variant& variant) const
 {
     if (belongsToOneObject(variant))
@@ -989,7 +1001,7 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     if (recent.before == before && recent.prototype == encodedPrototype)
         return VariantMaps::decode(std::bit_cast<StructureID>(recent.after));
 
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.prototype = prototype;
     CompiledStructure* structure = findOrCreate(vm, variant);
     // Compiled code replays a transition by storing the StructureID and setting IsPristine, which a compiled object has where its prototype is not its layout's, in the cell: it looks for no cycle and tells nobody who depends on the chain.
@@ -1001,14 +1013,14 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
 
 CompiledStructure* StructureTable::asPrototype(VM& vm, const CompiledStructure& current)
 {
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.mayBePrototype = true;
     return findOrCreate(vm, variant);
 }
 
 CompiledStructure* StructureTable::withExtraProperties(VM& vm, const CompiledStructure& current, Structure* extraPropertiesStructureOrNull)
 {
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     Structure* named = extraPropertiesStructureOrNull;
     if (!named || !named->propertyAccessesAreCacheable() || !current.extraPropertiesSlot()) {
         if (variant.hasExtraProperties && !variant.extraPropertiesStructure)
@@ -1037,7 +1049,7 @@ CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStr
 {
     if (!current.extraPropertiesSlot() || !m_variants->requestedExtraPropertiesStructures.get(VariantMaps::requestedIndex(extraPropertiesStructure)))
         return nullptr;
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.hasExtraProperties = true;
     variant.extraPropertiesStructure = &extraPropertiesStructure;
     if (CompiledStructure* recent = m_variants->findRecent(variant))
@@ -1052,7 +1064,7 @@ CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStr
 CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const CompiledStructure& current, JSObject* extraProperties)
 {
     ASSERT(!current.extraPropertiesSlot() && !current.hasExtraProperties());
-    Variant variant = variantOf(current);
+    Variant variant = variantWithKeyOrderOf(current);
     variant.hasExtraProperties = true;
     variant.heldExtraProperties = extraProperties;
     return findOrCreate(vm, variant);
@@ -1309,6 +1321,15 @@ CompiledStructure::~CompiledStructure()
     delete rareData();
 }
 
+static size_t roomForKeyOrder(const CompiledStructure::ObjectParameters& parameters)
+{
+    AOT_THRESHOLD(size_t, smallestRoom, 16);
+    size_t size = parameters.outOfLineKeyOrder->size();
+    size_t numberOfFields = parameters.layout->numberOfFields;
+    size_t longest = std::min<size_t>(parameters.hasExtraProperties ? 2 * numberOfFields + 1 : numberOfFields, maxFieldsInOrder);
+    return std::max(size, std::min(longest, std::max(2 * size, smallestRoom)));
+}
+
 void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
 {
     static_assert(std::endian::native == std::endian::little);
@@ -1332,8 +1353,11 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
         m_flags.add(Flag::HasOtherPrototype);
     if (parameters.hasExtraProperties)
         m_flags.add(Flag::HasExtraProperties);
-    if (parameters.outOfLineKeyOrder)
+    if (parameters.outOfLineKeyOrder) {
         m_flags.add(Flag::HasOutOfLineKeyOrder);
+        if (parameters.hasExtraProperties)
+            m_heldKeyOrder.add(HeldKeyOrder::IsBesideExtraProperties);
+    }
     if (!parameters.hasOtherPrototype && !parameters.hasExtraProperties && parameters.prototype == JSValue(parameters.realm->objectPrototype()))
         m_flags.add(Flag::HasOnlyFieldsBelowObjectPrototype);
     setMayBePrototype(parameters.mayBePrototype);
@@ -1343,12 +1367,15 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
     std::unique_ptr<RareData> rareData;
     if (parameters.outOfLineKeyOrder || parameters.heldExtraProperties) {
         rareData = makeUnique<RareData>();
-        if (parameters.outOfLineKeyOrder)
-            rareData->outOfLineKeyOrder = Vector<uint16_t>(*parameters.outOfLineKeyOrder);
+        if (parameters.outOfLineKeyOrder) {
+            if (!parameters.keysNamedByOrder)
+                rareData->outOfLineKeyOrder.reserveInitialCapacity(roomForKeyOrder(parameters));
+            rareData->outOfLineKeyOrder.append(*parameters.outOfLineKeyOrder);
+        }
         if (parameters.keysNamedByOrder) {
             ASSERT(parameters.outOfLineKeyOrder);
             rareData->keysNamedByOrder = Vector<RefPtr<UniquedStringImpl>>(*parameters.keysNamedByOrder);
-            rareData->keyOrderBelongsToOneObject = true;
+            m_heldKeyOrder.add(HeldKeyOrder::IsOfOneObject);
         }
         rareData->heldExtraProperties.setWithoutWriteBarrier(parameters.heldExtraProperties);
     }

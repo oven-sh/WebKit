@@ -9,6 +9,7 @@
 
 #include "AOTOperationEmitter.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 
@@ -35,6 +36,10 @@ struct StateOfNewObject {
     uint32_t orderWord { 0 };
     bool mayHaveExtension { false };
     bool hasLayoutPrototype { true };
+    // The fields that those stores have created, sorted: a later store finds them listed.
+    Vector<PropertyKeyID, 8> createdKeys;
+
+    bool hasCreated(PropertyKeyID key) const { return std::ranges::binary_search(createdKeys, key.index(), { }, &PropertyKeyID::index); }
 
     friend bool operator==(const StateOfNewObject&, const StateOfNewObject&) = default;
 };
@@ -92,6 +97,12 @@ private:
     std::optional<PlaceOfStoreThatMayAdd> placeOfStoreThatMayAdd(ValueID);
     std::optional<StateOfNewObject> stateAtBirth(ValueID allocation) const;
     std::optional<StateOfNewObject> stateOfObjectsThatMeet(BlockID, ValueID parameter);
+    struct LastStateOfNewObject {
+        ValueID object;
+        ValueID user;
+        StateOfNewObject before;
+    };
+
     bool leavesObjectsAsTheyAre(ValueID);
     bool applyStoreBySlot(StateOfNewObject&, const Value& store) const;
     std::optional<FieldAccess> fieldCreatedByDefinition(const Value& definition) const;
@@ -131,6 +142,7 @@ private:
 
     // By value, for the stores that may add a field.
     Vector<uint32_t> m_storesThatMayAddInFront;
+    std::optional<LastStateOfNewObject> m_lastStateOfNewObject;
 };
 
 void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional<KeyOrderStep>& step, NOESCAPE const Invocable<void()> auto& otherwise)

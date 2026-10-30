@@ -133,6 +133,50 @@ public:
 
     void clear(uint32_t& list) { m_numberOfNumbers -= giveBack(std::exchange(list, 0)); }
 
+    // False if the list lacked the number. The others keep their order.
+    bool remove(uint32_t& list, uint32_t number)
+    {
+        uint32_t* name = &list;
+        for (unsigned shift = firstShift; *name && !(*name & isOneNumber); shift -= bitsDealtBy) {
+            uint32_t* words = m_words.at(*name);
+            if (words[0] == isDealtOut) {
+                name = &words[1 + listDealtTo(number, shift)];
+                continue;
+            }
+            uint32_t size = words[0];
+            uint32_t position = 1;
+            while (position <= size && words[position] != number)
+                ++position;
+            if (position > size)
+                return false;
+            // How many numbers a list holds says how much room it has, so a list that needs less room moves.
+            uint32_t shrunk = *name;
+            if (size == 2)
+                shrunk = words[3 - position] | isOneNumber;
+            else {
+                uint32_t* remaining = words;
+                if (roomFor(size - 1) != roomFor(size)) {
+                    shrunk = takeList(roomFor(size - 1));
+                    remaining = m_words.at(shrunk);
+                    for (uint32_t index = 1; index < position; ++index)
+                        remaining[index] = words[index];
+                }
+                for (uint32_t index = position; index < size; ++index)
+                    remaining[index] = words[index + 1];
+                remaining[0] = size - 1;
+            }
+            if (shrunk != *name)
+                giveBackList(std::exchange(*name, shrunk), roomFor(size));
+            --m_numberOfNumbers;
+            return true;
+        }
+        if (*name != (number | isOneNumber))
+            return false;
+        *name = 0;
+        --m_numberOfNumbers;
+        return true;
+    }
+
     // Of up to sixteen numbers the latest comes first.
     void forEach(uint32_t list, NOESCAPE const auto& functor) const
     {

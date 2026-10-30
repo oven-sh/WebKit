@@ -147,8 +147,9 @@ static_assert(OperandIndex::HasArrayStorage::array == testedOperandIndex);
 static_assert(OperandIndex::IsClosureOf::value == testedOperandIndex);
 static_assert(OperandIndex::IsEnumeratorCurrent::enumerator == testedOperandIndex);
 
-TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
+TestSiteReporter::TestSiteReporter(FunctionPassContext& context, TestSiteCandidates wantedCandidates)
     : m_context(context)
+    , m_wantedCandidates(wantedCandidates)
     , m_isClaimed(context.function.values.size())
     , m_awaitsExpansion(context.function.values.size())
 {
@@ -267,11 +268,22 @@ auto TestSiteReporter::candidates() -> std::span<const Candidate>
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             Opcode operation = function.at(values[index]).opcode;
-            if (testSiteOpcodes.contains(operation) && !m_awaitsExpansion.quickGet(values[index].index()))
-                m_candidates->append(Candidate { values[index], { block, index }, operation });
+            if (!testSiteOpcodes.contains(operation) || m_awaitsExpansion.quickGet(values[index].index()))
+                continue;
+            if (m_wantedCandidates == TestSiteCandidates::AccessesToObjectsMadeHere && !isAccessToObjectMadeHere(function.at(values[index])))
+                continue;
+            m_candidates->append(Candidate { values[index], { block, index }, operation });
         }
     }
     return m_candidates->span();
+}
+
+bool TestSiteReporter::isAccessToObjectMadeHere(const Value& access) const
+{
+    if (!isNamedAccess(access.opcode))
+        return false;
+    const Value& receiver = function().at(analyses().identityOf(access.operand(*receiverOf(access.opcode))));
+    return receiver.opcode == Opcode::NewObject && receiver.layout() && allocatesOwnLayout(program(), receiver);
 }
 
 bool TestSiteReporter::isWrittenInCatchClause(BlockID block)
@@ -329,16 +341,15 @@ bool TestSiteReporter::hasFailedTest(std::span<const Value> tests) const
 
 AOT_THRESHOLD(size_t, minFieldsOfBagOfOptions, 24);
 
-static Expected<bool> asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const Value& test)
+Expected<bool> asksForMoreThanLayoutsTell(const Program& program, const Function& function, const TypeArena& types, const Value& test)
 {
     if (test.opcode != Opcode::TypeTest)
         return false;
-    const Program& program = reporter.program();
-    const Type& tested = reporter.types().at(test.testedType());
+    const Type& tested = types.at(test.testedType());
     if (!tested.layouts)
         return false;
     // `handle.flags`, `handle.end()`, where the handle is an object of the host or a record that stands in for one: no test of layouts lets the object of the host pass, and it is as expected as the record.
-    if (tested.classes.isEmpty() && !program.expectedOrTypeOf(reporter.function(), test.operand(testedOperandIndex)).predicted().classes.isEmpty())
+    if (tested.classes.isEmpty() && !program.expectedOrTypeOf(function, test.operand(testedOperandIndex)).predicted().classes.isEmpty())
         return true;
     // `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
     return std::ranges::all_of(program.at(tested.layouts).completeMembers(), [&](LayoutID id) {
@@ -386,7 +397,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
         RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
-    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test).predicted() || !canPassWithOtherTests(*this, tests, test); }))
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(program(), function(), types(), test).predicted() || !canPassWithOtherTests(*this, tests, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.

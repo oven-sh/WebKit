@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
+#include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInstance.h"
@@ -48,7 +50,8 @@ static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationPa
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     RELEASE_ASSERT(params.context().frameIsSetUp);
-    CCallHelpers::Jump isInterrupted = jit.branchTest64(CCallHelpers::Signed, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit));
+    // On ARM64 a comparison with zero is a test of the sign bit, which sets no flags first.
+    CCallHelpers::Jump isInterrupted = jit.branch64(CCallHelpers::LessThan, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit), CCallHelpers::TrustedImm32(0));
     CCallHelpers::Label done = jit.label();
     params.addLatePath([=](CCallHelpers& jit) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -100,6 +103,14 @@ void HintEmitter::generateReleaseHint(const ValueContext& value)
     Operand released = get(value->valueOperand());
     if (!released.value || released.value->type() != B3::Int64 || released.value->hasInt64())
         return;
+    // A parameter that came on the stack is still in the word that the caller stored it to. Nothing reads that word again: this is the store that the program wrote.
+    if (entryConventionOf(m_function) == EntryConvention::Direct) {
+        if (std::optional<uint32_t> parameter = entryParameterIndexOf(m_function, value->valueOperand())) {
+            ArgumentLocation location = inputs().conventions.locationsOf(m_program, m_id).parameters[*parameter];
+            if (location.kind == ArgumentLocation::Kind::Stack)
+                m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.argumentBuffer, m_out.framePointer(), offsetOfStackWordFromFrame(location.stackIndex)));
+        }
+    }
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->append(released.value, B3::ValueRep::ColdAny);
     patchpoint->effects = B3::Effects::none();

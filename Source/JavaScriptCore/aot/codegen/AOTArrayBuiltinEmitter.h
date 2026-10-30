@@ -78,6 +78,7 @@ private:
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     void copyElements(const ArrayStorageForm&, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection);
+    void copyElements(const ArrayStorageForm&, const ArrayStorageForm& formOfTarget, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
     bool hasIntegerSpliceRange(const InlineCall&);
     std::optional<int64_t> deleteCountOfInlineSplice(const InlineCall&);

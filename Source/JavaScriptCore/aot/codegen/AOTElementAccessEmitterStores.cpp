@@ -156,7 +156,11 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 
     LBasicBlock isBeyondLength = newBlock();
     LBasicBlock isWithinLength = newBlock();
-    m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
+    // A loop that fills a list stores behind the last element in every turn.
+    if (store.opcode() == Opcode::PutArrayElement && store->isExpectedToAppend())
+        m_out.branch(test.isInside.value(), unlikelyEdge(isWithinLength), normalEdge(isBeyondLength));
+    else
+        m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);
@@ -239,8 +243,11 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath, NaNIndexMode::ProduceOutOfBoundsIndex);
     Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
     if (knownForm) {
-        // The guard accepts copy-on-write storage, which only the operation may replace.
-        branchUnless(hasWritableShape(mode, *knownForm), slowPath);
+        // A guard that did not ask accepts copy-on-write storage, which only the operation may replace.
+        if (!generator().hasGuardForWritableStorage(value))
+            branchUnless(hasWritableShape(mode, *knownForm), slowPath);
+        else if (generator().validatesOrChecksProofs())
+            emitter<RuntimeValidationEmitter>().checkPrecondition(value, hasWritableShapeIgnoringLock(mode, *knownForm));
         Operand rawElement = *rawElementToStore(*knownForm, stored, slowPath);
         storeInVector(value, *knownForm, elementsOf(array), index, rawElement, slowPath);
         m_out.jump(continuation);
@@ -427,6 +434,14 @@ void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });
+}
+
+void ElementAccessEmitter::generateAppendMembers(const ValueContext& value)
+{
+    ValueID list = sameObjectThroughCasts(m_function, value->arrayOperand()).valueInFrontOfFacts();
+    if (ArrayAllocationEmitter(generator()).membersThatFillLiteral(value.block(), list) == value.id())
+        return;
+    callVoidOperation(value, RuntimeOperation::AppendMembers, { in<CellPointer>(value->arrayOperand()), in<CellPointer>(value->sourceOperand()) });
 }
 
 } } } // namespace JSC::AOT::Typed

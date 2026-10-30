@@ -20,6 +20,8 @@
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -207,7 +209,7 @@ static bool canPassList(const Program& program, const Function& function, const 
     return pristineProofOf(PristineQuery { program, function }, function.at(superCall.value).listOperand(), requirement, superCall.point()) == PristineProof::Proven;
 }
 
-static FunctionID findParentTakingThis(const Program& program, const Function& function, const ValueSite& site)
+static FunctionID findParentTakingThis(const Program& program, const Function& function, const ValueSite& site, NOESCAPE const Invocable<bool(FunctionID)> auto& takesAllocatedThis)
 {
     const Value& superCall = function.at(site.value);
     if (superCall.opcode != Opcode::SuperConstruct && superCall.opcode != Opcode::SuperConstructList)
@@ -225,24 +227,25 @@ static FunctionID findParentTakingThis(const Program& program, const Function& f
     FunctionID entered = callees ? findEnteredVersion(program, program.at(callees).followed(), parent) : parent;
     if (!entered)
         return { };
-    if (!program.at(parent).captures.isEmpty() || !canConstructDirectly(program, parent) || !canTakeAllocatedThis(program, entered))
+    if (!program.at(parent).captures.isEmpty() || !canConstructDirectly(program, parent) || !takesAllocatedThis(entered))
         return { };
     if (superCall.opcode == Opcode::SuperConstructList && !canPassList(program, function, site, program.at(entered)))
         return { };
     return entered;
 }
 
-static bool canPassThisToSuper(const Program& program, const Function& function)
+static bool canPassThisToSuper(const Program& program, const Function& function, NOESCAPE const Invocable<bool(FunctionID)> auto& takesAllocatedThis)
 {
     Vector<ValueSite, 2> calls = collectOwnSuperCalls(function);
     if (calls.isEmpty() || !runsAtMostOneCall(function, calls.span()))
         return false;
     return std::ranges::all_of(calls, [&](const ValueSite& call) {
-        return !!findParentTakingThis(program, function, call);
+        return !!findParentTakingThis(program, function, call, takesAllocatedThis);
     });
 }
 
-bool canTakeAllocatedThis(const Program& program, FunctionID constructor)
+// Nothing where the answer hangs on the constructors above.
+static std::optional<bool> takesAllocatedThisWhateverIsAbove(const Program& program, FunctionID constructor)
 {
     const Function& function = program.at(constructor);
     if (!function.hasBody() || !function.mayBeCloned() || !function.constructedClass || function.has(FunctionFlags::HasThis) || function.results.size() != 1)
@@ -252,17 +255,67 @@ bool canTakeAllocatedThis(const Program& program, FunctionID constructor)
         return false;
     case ConstructorForm::Base:
         return !!findOwnAllocation(program, function);
-    case ConstructorForm::Derived: {
-        // The answer hangs on the constructors above. Asked anew for each class, a chain of classes takes the square of its length.
-        PropertyAccessCache* cache = program.propertyAccessCache();
-        if (!cache || ProvisionalFunctions::contains(constructor))
-            return canPassThisToSuper(program, function);
-        return findOrCompute(cache->constructorsTakingAllocatedThis, constructor, computeHash(constructor), [&] {
-            return PropertyAccessCache::TakesAllocatedThis { constructor, canPassThisToSuper(program, function) };
-        }).value;
-    }
+    case ConstructorForm::Derived:
+        return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool canTakeAllocatedThis(const Program& program, FunctionID constructor)
+{
+    // Asked anew for each class, a chain of classes takes the square of its length.
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    HashMap<FunctionID, bool> notKept;
+    auto isKept = [&](FunctionID asked) {
+        return cache && !ProvisionalFunctions::contains(asked);
+    };
+    auto find = [&](FunctionID asked) -> std::optional<bool> {
+        if (std::optional<bool> answer = takesAllocatedThisWhateverIsAbove(program, asked))
+            return answer;
+        if (!isKept(asked)) {
+            auto known = notKept.find(asked);
+            return known == notKept.end() ? std::nullopt : std::optional<bool>(known->value);
+        }
+        const PropertyAccessCache::TakesAllocatedThis* known = cache->constructorsTakingAllocatedThis.find(computeHash(asked), [&](const PropertyAccessCache::TakesAllocatedThis& entry) {
+            return entry.key == asked;
+        });
+        return known ? std::optional<bool>(known->value) : std::nullopt;
+    };
+
+    // A constructor waits until those above it have answered. The list stands in for calls as deep as the chain of classes is long.
+    if (std::optional<bool> answer = find(constructor))
+        return *answer;
+    Vector<FunctionID, 16> waiting { constructor };
+    HashSet<FunctionID> isWaiting { constructor };
+    for (;;) {
+        FunctionID current = waiting.last();
+        std::optional<bool> answer = find(current);
+        if (!answer) {
+            size_t numberWaiting = waiting.size();
+            bool canPass = canPassThisToSuper(program, program.at(current), [&](FunctionID above) {
+                if (std::optional<bool> known = find(above))
+                    return *known;
+                // One that waits for itself never gets an object to take.
+                if (!isWaiting.add(above).isNewEntry)
+                    return false;
+                waiting.append(above);
+                return true;
+            });
+            if (waiting.size() != numberWaiting)
+                continue;
+            if (isKept(current)) {
+                cache->constructorsTakingAllocatedThis.add(computeHash(current), PropertyAccessCache::TakesAllocatedThis { current, canPass }, [&](const PropertyAccessCache::TakesAllocatedThis& entry) {
+                    return entry.key == current;
+                });
+            } else
+                notKept.set(current, canPass);
+            answer = canPass;
+        }
+        waiting.removeLast();
+        isWaiting.remove(current);
+        if (waiting.isEmpty())
+            return *answer;
+    }
 }
 
 LayoutID layoutAllocatedBy(const Program& program, FunctionID constructor)
@@ -296,7 +349,9 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
     if (program.at(replacedType).layouts)
         return DeclaredType(Proven::byConstruction(replacedType));
     Type declared = Type::forLayoutSet(program.declaredMembersOf(original.constructedClass));
-    return DeclaredType(Proven::byConstruction(types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types))));
+    Vector<LayoutID, 8> below(program.layoutsBelow(original.constructedClass));
+    below.append(program.layoutsExpectedBelow(original.constructedClass));
+    return DeclaredType(Proven::byConstruction(types.intern(declared.unionWith(Type::forLayouts(below.span(), types), types))));
 }
 
 static ValueID addThisParameter(IRBuilder& builder)
@@ -412,7 +467,9 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
     const Program& program = inputs.program;
     Function& version = builder.function();
     const Value original = version.at(site.value);
-    FunctionID parent = findParentTakingThis(program, version, site);
+    FunctionID parent = findParentTakingThis(program, version, site, [&](FunctionID entered) {
+        return canTakeAllocatedThis(program, entered);
+    });
     if (!parent)
         return;
 
@@ -457,8 +514,37 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
         builder.mergeContinuation(expansion, continuationPredecessors[0]);
 }
 
+// The version of a constructor calls the version of the constructor above and reads what that takes and returns. Each built from within the one below, they take calls as deep as
+// the chain of classes is long. So the topmost that is not built yet goes first.
+static void buildVersionsAbove(DerivedFunctionInputs& inputs, FunctionID constructor)
+{
+    const Program& program = inputs.program;
+    Vector<FunctionID, 16> versions;
+    while (constructor && program.at(constructor).constructorForm() == ConstructorForm::Derived) {
+        const Function& function = program.at(constructor);
+        FunctionID parent;
+        for (const ValueSite& call : collectOwnSuperCalls(function)) {
+            parent = findParentTakingThis(program, function, call, [&](FunctionID entered) {
+                return canTakeAllocatedThis(program, entered);
+            });
+            if (parent)
+                break;
+        }
+        if (!parent)
+            break;
+        FunctionID version = inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::AllocatedThisVersion, parent));
+        if (!ProvisionalFunctions::contains(version) || inputs.derivedFunctions.isBuilt(version))
+            break;
+        versions.append(version);
+        constructor = parent;
+    }
+    for (size_t index = versions.size(); index--;)
+        program.at(versions[index]);
+}
+
 static void passThisToSuper(IRBuilder& builder, DerivedFunctionInputs& inputs, ValueID thisParameter)
 {
+    buildVersionsAbove(inputs, builder.function().derivation.source);
     Vector<ValueSite, 2> calls = collectOwnSuperCalls(builder.function());
     for (size_t index = calls.size(); index--;)
         passThisToSuperCall(builder, inputs, calls[index], thisParameter);

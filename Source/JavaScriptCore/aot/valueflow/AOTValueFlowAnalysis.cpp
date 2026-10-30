@@ -643,6 +643,8 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .masks = m_bodies.masks(),
         .statements = m_bodies.statements(),
         .operands = m_bodies.operands(),
+        .rareFactsOfText = m_bodies.rareFactsOfText(),
+        .copiesOfOperations = m_bodies.copiesOfOperations(),
         .edgesOnceReached = m_bodies.edgesOnceReached(),
         .seedsOnceReached = m_bodies.seedsOnceReached(),
         .functionsEnteredOnceReached = m_bodies.functionsEnteredOnceReached(),
@@ -677,10 +679,25 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         m_input.seedOfWidening = build.recordedOptions().layoutSeed;
         times.didFinish("solve: the program as it is"_s);
     }
+    m_input.ownerOfEdgesAndMasks = &m_bodies;
+    size_t bytesOfListsToPutAway = m_bodies.bytesOfWhatOnlyResultsRead();
+    m_bodies.putAwayWhatOnlyResultsRead(build.parallelLoops());
+    if (build.options().logging.logsPhaseTimes)
+        dataLogLn("AOT flow bytes | bodies: what only the results read | ", bytesOfListsToPutAway / KB, " KB | put away in ", m_bodies.bytesOfWhatIsPutAway() / KB, " KB");
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
-    m_solver->solve();
-    m_bodies.letGoOfEdgesAndMasks();
+    {
+        ParkedBodies parked(program.functions.mutableSpan(), build.parallelLoops());
+        build.giveFreedMemoryBack();
+        times.didFinish("solve: bodies parked"_s);
+        m_solver->readBodiesThrough(parked);
+        m_solver->solve();
+        build.statistics().count(StatisticID::FlowBodiesParked, parked.numberOfParkedFunctions());
+        build.statistics().count(StatisticID::FlowBodiesTakenBack, parked.numberTakenBackAtRead());
+        if (Options::logAOTPhaseTimes())
+            dataLogLn("AOT flow bodies | parked ", parked.numberOfParkedFunctions(), " | taken back at a read ", parked.numberTakenBackAtRead());
+    }
+    m_bodies.takeOutWhatWasPutAway(build.parallelLoops());
     times.didFinish("solve: rounds"_s);
     if (build.options().logging.logsPhaseTimes && m_input.reportsToBuild) {
         ValueFlowBytesByTable bytes;

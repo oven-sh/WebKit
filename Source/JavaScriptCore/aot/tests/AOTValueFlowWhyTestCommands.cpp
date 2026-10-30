@@ -304,6 +304,7 @@ static void printOutlivedEdges(PrintStream& out, ValueFlowSolution& solution)
         return logged.statement.index();
     });
     uint64_t outlived = 0;
+    HashMap<String, unsigned> outlivedBySort;
     uint64_t ofNodesAwake = 0;
     uint64_t ofStatementsAtRest = 0;
     uint64_t showing = 0;
@@ -322,11 +323,29 @@ static void printOutlivedEdges(PrintStream& out, ValueFlowSolution& solution)
         uint32_t record = solver.indexOfMadeNodes(key);
         if (askedFor.contains(record) || solver.statementOfMadeNodesAt(record) == logged.statement)
             continue;
+        bool isInGraph = false;
+        solver.graph().forEachPredecessor(logged.edge.to, [&](ValueFlowNodeID predecessor) {
+            isInGraph |= predecessor == logged.edge.from;
+        });
+        if (!isInGraph)
+            continue;
         ++outlived;
+        bool isAtRest = solver.isAtRest(logged.statement);
+        {
+            const ValueFlowNodeKey* keyOfTarget = solver.keyOfMadeNode(logged.edge.to);
+            const ValueFlowStatement& statement = solver.statementAt(logged.statement);
+            StringPrintStream sort;
+            sort.print(solver.numberOfUsesOfMadeNodesAt(record) ? "awake " : "at rest ", nameOf(key.kind), " > ", keyOfTarget ? nameOf(keyOfTarget->kind) : "node"_s, " by ");
+            if (statement.kind == ValueFlowStatementKind::Operation)
+                sort.print(statement.opcode);
+            else
+                sort.print(nameOf(statement.kind));
+            sort.print(isAtRest ? " at rest" : "");
+            outlivedBySort.add(sort.toString(), 0).iterator->value++;
+        }
         if (!solver.numberOfUsesOfMadeNodesAt(record))
             continue;
         ++ofNodesAwake;
-        bool isAtRest = solver.isAtRest(logged.statement);
         ofStatementsAtRest += isAtRest;
         ValueSetID fromOthers = ValueSets::nothing;
         solver.graph().forEachPredecessor(logged.edge.to, [&](ValueFlowNodeID predecessor) {
@@ -348,6 +367,16 @@ static void printOutlivedEdges(PrintStream& out, ValueFlowSolution& solution)
         out.print("      by ");
         printStatement(out, solver, logged.statement);
         out.println();
+    }
+    {
+        Vector<std::pair<String, unsigned>> sorts;
+        for (auto& entry : outlivedBySort)
+            sorts.append({ entry.key, entry.value });
+        std::ranges::sort(sorts, [](const auto& first, const auto& second) {
+            return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
+        });
+        for (auto& [sort, count] : sorts)
+            out.println("outlived: ", count, " ", sort);
     }
     out.println("outlived-edges ", outlived, " of ", edges.size(), " | out of nodes that are awake ", ofNodesAwake, " | of them logged by statements at rest ", ofStatementsAtRest, " | shows ", showing);
 

@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSCell.h>
 #include <JavaScriptCore/PropertyName.h>
 #include <array>
+#include <span>
 #include <wtf/IterationStatus.h>
 #include <wtf/ScopedLambda.h>
 
@@ -82,6 +83,8 @@ bool listExtraPropertiesInStructure(VM&, JSObject*);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
 // What JSObject::getOwnPropertySlot() finds on the ordinary object that would stand in the place of this one. Runs no code.
 JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
+// For native code that has the text of a name as characters of its own, such as a literal: the name, if the program has one with that text. Allocates nothing.
+JS_EXPORT_PRIVATE UniquedStringImpl* tryFindName(VM&, std::span<const Latin1Character>);
 // What a read by name finds on the compiled object itself.
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 // The results of reading enumerable, configurable, value, writable, get and set on the compiled object itself, in that order. An absent property leaves its value empty. Returns false if any result is unknown.

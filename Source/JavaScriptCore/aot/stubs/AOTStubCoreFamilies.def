@@ -30,6 +30,7 @@ v(RememberElement, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Nev
 
 // AOTStubsAllocation.cpp
 v(AllocateCell, CalledByCode, (Header, HeaderAndWords, HeaderAndZeros, HeaderAndWordsAndZeros), FormAxis | CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCell)
+v(InitializeObjectInFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), InitializeObjectInFrame)
 v(AllocateInstance, CalledByCode, (), CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState), AllocateInstance)
 v(AllocateInstanceOutOfLine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateInstanceOutOfLine)
 v(CopyObject, CalledByCode, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, ShapeWords, OrderWords, AllocatorState) | writes(AllocatorState), CopyObject)
@@ -79,6 +80,7 @@ AOT_STUB_FRONT_END(ToString, ToStringFrontEnd)
 v(MoveFewBytes, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(TypedArrayElements) | writes(TypedArrayElements), MoveFewBytes)
 v(GetByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(GetByValAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
+v(GetByValKeepingRegisters, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByValKeepingRegisters)
 v(PutByVal, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(PutByValAtIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(StoreElementOfCompiledObject, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StoreElementOfCompiledObject)
@@ -94,7 +96,7 @@ AOT_STUB_FRONT_END(Construct, ConstructFrontEnd)
 AOT_STUB_FRONT_END(SuperConstruct, SuperConstructFrontEnd)
 
 // AOTStubsBoxedCalls.cpp
-v(CallBoxedBuiltin, Handler, (ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ArraySort, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, SetAdd, SetDelete, SetHas, SetSize, StringIndexOf, StringSlice, StringStartsWith, StringToLowerCase, StringTrim, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
+v(CallBoxedBuiltin, Handler, (ArrayIncludes, ArrayIndexOf, ArrayIsArray, ArrayPush, ArraySlice, ArraySort, FunctionBind, IsNaN, JSONStringify, MapDelete, MapGet, MapHas, MapSet, MapSize, ObjectGetPrototypeOf, ObjectIs, ObjectSetPrototypeOf, RegExpTest, SetAdd, SetDelete, SetHas, SetSize, StringCharAt, StringCharCodeAt, StringCodePointAt, StringEndsWith, StringIncludes, StringIndexOf, StringReplace, StringReplaceAll, StringSlice, StringSplit, StringStartsWith, StringSubstring, StringToLowerCase, StringToUpperCase, StringTrim, StringTrimEnd, StringTrimStart, TypedArrayLength, WeakMapGet, WeakMapHas, WeakMapSet, WeakSetHas), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
 v(WeakMapSet, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, WeakMapSet)
 v(StringStartsWith, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringStartsWith)
 v(StringIndexOf, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringIndexOf)

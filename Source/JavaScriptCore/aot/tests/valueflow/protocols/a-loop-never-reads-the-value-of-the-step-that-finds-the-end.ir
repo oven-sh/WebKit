@@ -1,4 +1,4 @@
-# set = new Set; set.add(member); for (const each of set) each()     three times, and once over an array: for (const each of [member]) each()
+# set = new Set; set.add(member); for (const each of set) each()     three times, and once over an array: for (const each of [member, , member]) each()
 # The step that finds the end answers undefined (primitive 0) as its value. A for..of uses the value behind the branch on `done`, where the step has not found the end: what it gets is what the set holds.
 # Where the result is taken apart says nothing: the first loop does it behind the branch and the second in front of it, as the front end writes a loop.
 # The third loop uses the value where the step has found the end. The fourth goes over an array, where a hole reads as undefined.
@@ -58,7 +58,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Jump -> next b7()
   b9():
     v24 = Call v22
-    v25 = NewArray v3 contents=anything
+    v25 = NewArray v3, v3 contents=anything holes=[1]
     v26 = IteratorOpen v25
     Jump -> next b10()
   b10():

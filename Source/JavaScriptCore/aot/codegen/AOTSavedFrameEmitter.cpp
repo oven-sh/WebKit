@@ -203,7 +203,7 @@ void SavedFrameEmitter::generateAwaitCallBySavingFrame(const ValueContext& value
     for (ValueID argument : value->argumentsOperands().first(value->numberOfVariadicOperands() - numberOfHeldOperandsOf(value.value())))
         arguments.append(get(argument));
     arguments.append(undefined());
-    Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span()).as<Boxed>();
+    Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span(), { .callerSuspendsAtReturn = true }).as<Boxed>();
     define(value, Boxed(suspend(value, awaitCallBySavingFrame(), { returned.value() }, value->promiseOperand()).first));
 }
 

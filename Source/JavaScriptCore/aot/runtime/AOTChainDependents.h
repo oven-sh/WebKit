@@ -83,11 +83,17 @@ enum class StoreThroughChain : uint8_t { Unknown, CreatesOwnProperty, CallsSette
 
 StoreThroughChain storeThroughChain(const ChainWalk&);
 
+struct CreatedMembers {
+    JSObject* prototype;
+    Structure* structureOfDeclaredMemberHolders;
+};
+
 class ChainDependentOwner {
 public:
     virtual ~ChainDependentOwner() = default;
     virtual void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) = 0;
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
+    virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, const CreatedMembers&) { return false; }
 };
 
 enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };
@@ -118,6 +124,7 @@ public:
         if (m_objectsWithDependents.mayContain(changed))
             dropDependentsOn(changed, uidOrNull);
     }
+    void didCreateMembers(const CreatedMembers&);
     bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
     size_t numberOfDependents(JSObject*) const;
 

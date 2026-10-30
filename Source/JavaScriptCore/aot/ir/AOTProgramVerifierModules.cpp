@@ -106,6 +106,8 @@ static bool hasValidInterop(const Program& program, const Module& module)
 {
     if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
         return false;
+    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && module.kind != ModuleKind::Data)
+        return false;
     switch (module.kind) {
     case ModuleKind::SourceText:
         if (module.requireResult == RequireResult::ModuleExports)
@@ -549,7 +551,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter))
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.endsLoadOf && failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }

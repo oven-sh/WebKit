@@ -89,6 +89,8 @@ public:
         FunctionID caller { };
         const Typed::Value* call { nullptr };
         FunctionID declaration { };
+        // A value that the walk cannot tell, of one operation under one call. What is stored under it in one place is read under it in another.
+        ValueID unnamed { };
 
         bool isObjectOrArray() const { return literal || data || declaration; }
         friend bool operator==(const Constant&, const Constant&) = default;
@@ -226,6 +228,8 @@ private:
                 texts.appendIfNotContains(constant.regExp->pattern);
             else if (constant.primitive.kind() == Typed::KnownValue::Kind::String)
                 texts.appendIfNotContains(constant.primitive.asString());
+            else if (constant.unnamed)
+                m_sawEverything = false;
         }
         bool sawEveryText = m_sawEverything && !texts.isEmpty();
 
@@ -419,6 +423,7 @@ private:
         case Typed::Opcode::SharedRegExpLiteral:
             return { Constant { .regExp = Typed::RegExpLiteralInType { value.pattern(), value.regExpFlags().toRaw() } } };
         case Typed::Opcode::NewObject:
+        case Typed::Opcode::NewDictionary:
         case Typed::Opcode::NewArray:
         case Typed::Opcode::NewArrayLike:
         case Typed::Opcode::NewContiguousArray:
@@ -432,11 +437,11 @@ private:
             return fieldsOf(evaluate(activation, value.objectOperand()), value.key());
         case Typed::Opcode::GetArrayElement: {
             Constants arrays = evaluate(activation, value.arrayOperand());
-            return elementsOf(arrays, positionOf(activation, value.positionOperand()));
+            return elementsAt(activation, arrays, value.positionOperand());
         }
         case Typed::Opcode::ElemGet: {
             Constants arrays = evaluate(activation, value.objectOperand());
-            return elementsOf(arrays, positionOf(activation, value.propertyOperand()));
+            return elementsAt(activation, arrays, value.propertyOperand());
         }
         case Typed::Opcode::GetStringLength:
             return lengthsOf(evaluate(activation, value.stringOperand()));
@@ -572,6 +577,11 @@ private:
                 continue;
             }
             const Typed::Value* literal = object.literal ? &m_program.at(object.function).at(object.literal) : nullptr;
+            if (literal && literal->opcode == Typed::Opcode::NewDictionary) {
+                if (!addAll(values, valuesWrittenUnder(object, key)))
+                    return { };
+                continue;
+            }
             if (!literal || literal->opcode != Typed::Opcode::NewObject) {
                 m_sawEverything = false;
                 continue;
@@ -582,6 +592,11 @@ private:
                 return layout.fields[field].key == key;
             }) - fields.begin();
             if (index == fields.size()) {
+                if (Constants written = valuesWrittenUnder(object, key); !written.isEmpty()) {
+                    if (!addAll(values, written))
+                        return { };
+                    continue;
+                }
                 const Typed::Function& maker = m_program.at(object.function);
                 ValueID defined;
                 bool isFilledFromOthers = false;
@@ -606,17 +621,32 @@ private:
         return values;
     }
 
-    std::optional<uint32_t> positionOf(const Activation& activation, ValueID id)
+    Constants elementsAt(const Activation& activation, const Constants& arrays, ValueID id)
     {
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
         Constants positions = evaluate(activation, id);
-        bool isKnown = std::exchange(m_sawEverything, sawEverythingBefore) && positions.size() == 1 && positions[0].primitive.isNumber();
-        if (!isKnown)
-            return std::nullopt;
+        bool sawEveryPosition = std::exchange(m_sawEverything, sawEverythingBefore) && !positions.isEmpty();
+        bool areKeysOfTable = !positions.isEmpty() && std::ranges::all_of(positions, [](const Constant& position) {
+            return position.unnamed || position.primitive.kind() == Typed::KnownValue::Kind::String;
+        });
+        if (areKeysOfTable) {
+            m_sawEverything &= sawEveryPosition;
+            Constants values;
+            for (const Constant& table : arrays) {
+                for (const Constant& position : positions) {
+                    Typed::PropertyKeyID key = position.unnamed ? Typed::PropertyKeyID() : keyNamed(table, position.primitive.asString());
+                    if (!addAll(values, key ? fieldsOf({ table }, key) : table.literal ? valuesWrittenAt(table, position) : Constants()))
+                        return { };
+                }
+            }
+            return values;
+        }
+        if (!sawEveryPosition || positions.size() != 1 || !positions[0].primitive.isNumber())
+            return elementsOf(arrays, std::nullopt);
         double position = positions[0].primitive.asNumber();
         if (position < 0 || position != static_cast<uint32_t>(position))
-            return std::nullopt;
-        return static_cast<uint32_t>(position);
+            return elementsOf(arrays, std::nullopt);
+        return elementsOf(arrays, static_cast<uint32_t>(position));
     }
 
     Constants elementsOf(const Constants& arrays, std::optional<uint32_t> position)
@@ -646,6 +676,491 @@ private:
         while (Typed::isCastThatProvesNothing(function.at(id).opcode) || function.at(id).opcode == Typed::Opcode::AssumeType)
             id = function.at(id).valueOperand();
         return id;
+    }
+
+    static ValueID throughChecks(const Typed::Function& function, ValueID id)
+    {
+        for (;;) {
+            switch (function.at(id).opcode) {
+            case Typed::Opcode::Upcast:
+            case Typed::Opcode::Expect:
+            case Typed::Opcode::AssumeType:
+            case Typed::Opcode::CheckInitialized:
+            case Typed::Opcode::FinishObject:
+            case Typed::Opcode::RequireObjectCoercible:
+            case Typed::Opcode::RequireObject:
+                id = function.at(id).operand(0);
+                continue;
+            default:
+                return id;
+            }
+        }
+    }
+
+    // The operation that a value comes of: casts, tests on the way and conversions that leave a number as it is are looked through.
+    ValueID originOf(FunctionID id, const Typed::Function& function, ValueID value)
+    {
+        for (;;) {
+            value = throughChecks(function, value);
+            const Typed::Value& definition = function.at(value);
+            if (definition.opcode == Typed::Opcode::ToNumeric || definition.opcode == Typed::Opcode::ToNumber) {
+                value = definition.valueOperand();
+                continue;
+            }
+            std::optional<BlockParameter> merge = findMerge(id, function, value);
+            std::span<const Typed::Edge> edges = merge ? cfgOf(id).incomingEdges(merge->block) : std::span<const Typed::Edge>();
+            if (edges.size() != 1)
+                return value;
+            Typed::IncomingValue incoming = incomingValueOf(function, edges[0], merge->index);
+            ValueID arriving = incoming.kind == Typed::IncomingValue::Kind::Argument ? incoming.argument : operandNarrowedOnEdge(function, incoming.result);
+            if (!arriving)
+                return value;
+            value = arriving;
+        }
+    }
+
+    Constants evaluateOrName(const Activation& activation, ValueID id)
+    {
+        bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+        Constants values = evaluate(activation, id);
+        bool isKnown = std::exchange(m_sawEverything, sawEverythingBefore) && !values.isEmpty();
+        if (isKnown)
+            return values;
+        Constant unnamed = literalIn(activation, ValueID());
+        unnamed.unnamed = originOf(activation.function, m_program.at(activation.function), id);
+        if (!add(values, unnamed))
+            return { };
+        return values;
+    }
+
+    // An object or an array is written through what holds it.
+    enum class HolderKind : uint8_t {
+        Literal,
+        Variable,
+        Capture,
+        EnvironmentField,
+        Member,
+        Parameter,
+    };
+
+    struct Holder {
+        HolderKind kind;
+        uint32_t first;
+        uint32_t second { 0 };
+        friend auto operator<=>(const Holder&, const Holder&) = default;
+    };
+
+    struct WritingOperation {
+        Holder holder;
+        FunctionID function;
+        ValueID operation;
+    };
+
+    struct WrittenPlace {
+        ValueID container;
+        Typed::PropertyKeyID key { };
+        ValueID position { };
+        ValueID stored;
+        bool appends { false };
+    };
+
+    static constexpr Typed::OpcodeSet writingOpcodes { Typed::Opcode::PutSlot, Typed::Opcode::PropSet, Typed::Opcode::ElemSet, Typed::Opcode::PutArrayElement, Typed::Opcode::AppendElement, Typed::Opcode::CallBuiltin, Typed::Opcode::CallInline };
+    static constexpr Typed::OpcodeSet madeOrReturnedBy { Typed::Opcode::NewObject, Typed::Opcode::NewDictionary, Typed::Opcode::NewArray, Typed::Opcode::NewContiguousArray, Typed::Opcode::CallDirect };
+    static constexpr Typed::OpcodeSet holdingOpcodes { Typed::Opcode::PutModuleVariable, Typed::Opcode::NewClosure, Typed::Opcode::NewObject, Typed::Opcode::PutEnvironmentField, Typed::Opcode::PutSlot, Typed::Opcode::PropSet, Typed::Opcode::PropDefine, Typed::Opcode::CallDirect };
+
+    std::optional<WrittenPlace> placeWrittenBy(const Typed::Value& value) const
+    {
+        switch (value.opcode) {
+        case Typed::Opcode::PutSlot:
+        case Typed::Opcode::PropSet:
+            return WrittenPlace { .container = value.objectOperand(), .key = value.key(), .stored = value.valueOperand() };
+        case Typed::Opcode::ElemSet:
+            return WrittenPlace { .container = value.objectOperand(), .position = value.propertyOperand(), .stored = value.valueOperand() };
+        case Typed::Opcode::PutArrayElement:
+            return WrittenPlace { .container = value.arrayOperand(), .position = value.positionOperand(), .stored = value.valueOperand() };
+        case Typed::Opcode::AppendElement:
+            return WrittenPlace { .container = value.arrayOperand(), .stored = value.valueOperand(), .appends = true };
+        case Typed::Opcode::CallBuiltin:
+        case Typed::Opcode::CallInline: {
+            const BuiltinTable& table = m_program.builtins();
+            const BuiltinOverload& overload = table.at(value.overload());
+            if (overload.mode != BuiltinCallMode::Call || table.canonicalID(overload.builtin) != Builtins::ArrayPrototypePush)
+                return std::nullopt;
+            Typed::BuiltinCall call = builtinCallOf(m_program, value);
+            if (call.form != Typed::BuiltinCallForm::Whole || !call.receiver || call.arguments.size() != 1)
+                return std::nullopt;
+            return WrittenPlace { .container = call.receiver, .stored = call.arguments[0], .appends = true };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::optional<Holder> holderOf(FunctionID id, const Typed::Function& function, ValueID container) const
+    {
+        container = throughChecks(function, container);
+        const Typed::Value& value = function.at(container);
+        switch (value.opcode) {
+        case Typed::Opcode::NewObject:
+        case Typed::Opcode::NewDictionary:
+        case Typed::Opcode::NewArray:
+        case Typed::Opcode::NewContiguousArray:
+            return Holder { HolderKind::Literal, id.index(), container.index() };
+        case Typed::Opcode::GetModuleVariable:
+            return Holder { HolderKind::Variable, value.variable().index() };
+        case Typed::Opcode::GetCapture:
+            return Holder { HolderKind::Capture, sourceOf(value.function()).index(), value.index() };
+        case Typed::Opcode::GetEnvironmentField:
+            return Holder { HolderKind::EnvironmentField, value.layout().index(), value.field() };
+        case Typed::Opcode::GetSlot:
+        case Typed::Opcode::GetSlotOrUndefined:
+        case Typed::Opcode::PropGet:
+            return Holder { HolderKind::Member, value.key().index() };
+        case Typed::Opcode::Parameter: {
+            size_t index = function.blocks.first().parameters.find(container);
+            if (index == notFound)
+                return std::nullopt;
+            return Holder { HolderKind::Parameter, id.index(), static_cast<uint32_t>(index) };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // An operation that hands an object or an array to a holder. `held` is the operation that makes it, or a call that returns it.
+    struct Holding {
+        FunctionID function;
+        ValueID held;
+        Holder holder;
+        ValueID operation;
+
+        friend bool operator==(const Holding&, const Holding&) = default;
+    };
+
+    void forEachHoldingBy(FunctionID id, const Typed::Function& function, ValueID operation, const Typed::Value& use, NOESCAPE const Invocable<void(const Holding&)> auto& functor) const
+    {
+        auto hold = [&](ValueID operand, Holder holder) {
+            if (!operand)
+                return;
+            ValueID held = throughChecks(function, operand);
+            if (madeOrReturnedBy.contains(function.at(held).opcode))
+                functor(Holding { id, held, holder, operation });
+        };
+        switch (use.opcode) {
+        case Typed::Opcode::PutModuleVariable:
+            hold(use.valueOperand(), Holder { HolderKind::Variable, use.variable().index() });
+            break;
+        case Typed::Opcode::NewClosure: {
+            std::span<const ValueID> captures = use.capturesOperands();
+            for (uint32_t index = 0; index < captures.size() && use.function().index() < m_program.functions.size(); ++index)
+                hold(captures[index], Holder { HolderKind::Capture, sourceOf(use.function()).index(), index });
+            break;
+        }
+        case Typed::Opcode::NewObject: {
+            const Typed::Layout& layout = m_program.at(use.layout());
+            std::span<const uint32_t> fields = use.fields();
+            std::span<const ValueID> values = use.valuesOperands();
+            for (size_t index = 0; index < std::min(fields.size(), values.size()); ++index) {
+                hold(values[index], Holder { HolderKind::EnvironmentField, use.layout().index(), fields[index] });
+                hold(values[index], Holder { HolderKind::Member, layout.fields[fields[index]].key.index() });
+            }
+            break;
+        }
+        case Typed::Opcode::PutEnvironmentField:
+            hold(use.valueOperand(), Holder { HolderKind::EnvironmentField, use.layout().index(), use.field() });
+            break;
+        case Typed::Opcode::PutSlot:
+        case Typed::Opcode::PropSet:
+        case Typed::Opcode::PropDefine:
+            hold(use.valueOperand(), Holder { HolderKind::Member, use.key().index() });
+            break;
+        case Typed::Opcode::CallDirect: {
+            std::span<const ValueID> arguments = use.argumentsOperands();
+            for (uint32_t index = 0; index < arguments.size(); ++index)
+                hold(arguments[index], Holder { HolderKind::Parameter, use.function().index(), index });
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    void findWritesAndHoldings()
+    {
+        if (m_hasFoundWritesAndHoldings)
+            return;
+        m_hasFoundWritesAndHoldings = true;
+        const ParallelLoops& loops = m_context.parallelLoops();
+        unsigned numberOfFunctions = m_program.functions.size();
+        m_writingOperations = collectInParallel<WritingOperation>(loops, numberOfFunctions, [&](unsigned index, Vector<WritingOperation>& found) {
+            FunctionID id(index);
+            const Typed::Function& function = m_program.at(id);
+            forEachValueListedOrNot(m_program, id, writingOpcodes, [&](ValueID operation, const Typed::Value& value) {
+                std::optional<WrittenPlace> place = placeWrittenBy(value);
+                std::optional<Holder> holder = place ? holderOf(id, function, place->container) : std::nullopt;
+                if (holder)
+                    found.append(WritingOperation { *holder, id, operation });
+            });
+        });
+        m_holdings = collectInParallel<Holding>(loops, numberOfFunctions, [&](unsigned index, Vector<Holding>& found) {
+            FunctionID id(index);
+            const Typed::Function& function = m_program.at(id);
+            forEachValueListedOrNot(m_program, id, holdingOpcodes, [&](ValueID operation, const Typed::Value& use) {
+                forEachHoldingBy(id, function, operation, use, [&](const Holding& holding) {
+                    found.append(holding);
+                });
+            });
+        });
+        parallelSort(loops, m_writingOperations.mutableSpan(), [](const WritingOperation& a, const WritingOperation& b) {
+            return std::tuple { a.holder, a.function, a.operation } < std::tuple { b.holder, b.function, b.operation };
+        });
+        parallelSort(loops, m_holdings.mutableSpan(), [](const Holding& a, const Holding& b) {
+            return std::tuple { a.function, a.held, a.holder, a.operation } < std::tuple { b.function, b.held, b.holder, b.operation };
+        });
+    }
+
+    Vector<Holding, 4> holdingsOf(const Constant& container)
+    {
+        findWritesAndHoldings();
+        Vector<Holding, 4> holdings { Holding { container.function, container.literal, Holder { HolderKind::Literal, container.function.index(), container.literal.index() }, container.literal } };
+        auto addHoldingsOf = [&](FunctionID function, ValueID held) {
+            auto placeOf = [](const Holding& holding) {
+                return std::pair { holding.function, holding.held };
+            };
+            for (const Holding& holding : std::ranges::equal_range(m_holdings, std::pair { function, held }, { }, placeOf)) {
+                bool isKnown = holding.holder.kind != HolderKind::Parameter && holdings.containsIf([&](const Holding& other) {
+                    return other.holder == holding.holder;
+                });
+                if (!isKnown)
+                    holdings.append(holding);
+            }
+        };
+        addHoldingsOf(container.function, container.literal);
+        const Typed::Function& maker = m_program.at(container.function);
+        bool isReturned = container.call && std::ranges::any_of(maker.blocks, [&](const Typed::Block& block) {
+            return block.terminator.kind == Typed::TerminatorKind::Return && block.terminator.valueOperand() && throughChecks(maker, block.terminator.valueOperand()) == container.literal;
+        });
+        if (isReturned)
+            addHoldingsOf(container.caller, idOf(container.caller, *container.call));
+        return holdings;
+    }
+
+    // `where` is read as a literal is: the function, the call under which it runs, and for `literal` the operation that writes.
+    struct Write {
+        Constant where;
+        Typed::PropertyKeyID key { };
+        Constant position { };
+        ValueID stored;
+    };
+
+    struct Contents {
+        Vector<Write> writes;
+        Vector<Write> appends;
+        bool knowsOrderOfAppends { true };
+    };
+
+    static constexpr uint64_t notListed = std::numeric_limits<uint64_t>::max();
+
+    // By value: the place of its block in reverse post order, and below it the place of the value in the block.
+    const Vector<uint64_t>& placesIn(FunctionID id)
+    {
+        return m_places.ensure(id.index(), [&] {
+            const Typed::Function& function = m_program.at(id);
+            const Typed::CFG& cfg = cfgOf(id);
+            Vector<uint64_t> places;
+            places.fill(notListed, function.values.size());
+            for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+                if (!cfg.isReachable(Typed::BlockID(block)))
+                    continue;
+                uint64_t place = static_cast<uint64_t>(cfg.reversePostOrderIndex(Typed::BlockID(block))) << 32;
+                for (ValueID value : function.blocks[block].values)
+                    places[value.index()] = place++;
+            }
+            return places;
+        }).iterator->value;
+    }
+
+    Typed::BlockID blockAt(FunctionID id, uint64_t place) { return cfgOf(id).reversePostOrder()[place >> 32]; }
+
+    ValueID idOf(FunctionID function, const Typed::Value& value) const { return ValueID(static_cast<uint32_t>(&value - m_program.at(function).values.span().data())); }
+
+    // One store of the source may stand on two arms, of which one runs.
+    bool isOtherArmOf(const Write& a, const Write& b)
+    {
+        if (a.where.function != b.where.function || a.where.call != b.where.call)
+            return false;
+        const Typed::Function& function = m_program.at(a.where.function);
+        if (function.at(a.where.literal).position != function.at(b.where.literal).position || function.at(a.where.literal).inlineFrame != function.at(b.where.literal).inlineFrame)
+            return false;
+        const Vector<uint64_t>& places = placesIn(a.where.function);
+        Typed::BlockID blockOfA = blockAt(a.where.function, places[a.where.literal.index()]);
+        Typed::BlockID blockOfB = blockAt(a.where.function, places[b.where.literal.index()]);
+        const Typed::CFG& cfg = cfgOf(a.where.function);
+        return blockOfA != blockOfB && !cfg.blocksReachableFrom(blockOfA, { }).get(blockOfB.index()) && !cfg.blocksReachableFrom(blockOfB, { }).get(blockOfA.index());
+    }
+
+    void addWrites(Contents& contents, const Constant& container, const Activation& activation, ValueID operation)
+    {
+        if (placesIn(activation.function)[operation.index()] == notListed)
+            return;
+        WrittenPlace place = *placeWrittenBy(m_program.at(activation.function).at(operation));
+        bool writesContainer = evaluate(activation, place.container).containsIf([&](const Constant& written) {
+            return written.function == container.function && written.literal == container.literal && (!written.call || !container.call || written.call == container.call);
+        });
+        if (!writesContainer)
+            return;
+        Write write { .where = literalIn(activation, operation), .key = place.key, .stored = place.stored };
+        if (place.appends) {
+            bool isCounted = contents.appends.containsIf([&](const Write& other) {
+                return isOtherArmOf(write, other);
+            });
+            if (!isCounted)
+                contents.appends.append(write);
+            return;
+        }
+        if (!place.position) {
+            contents.writes.append(write);
+            return;
+        }
+        for (const Constant& position : evaluateOrName(activation, place.position)) {
+            write.position = position;
+            contents.writes.append(write);
+        }
+    }
+
+    void putAppendsInOrder(Contents& contents)
+    {
+        struct Place {
+            FunctionID function;
+            uint64_t outer;
+            uint64_t inner;
+        };
+        auto placeOf = [&](const Write& write) {
+            uint64_t place = placesIn(write.where.function)[write.where.literal.index()];
+            if (!write.where.call)
+                return Place { write.where.function, place, 0 };
+            return Place { write.where.caller, placesIn(write.where.caller)[idOf(write.where.caller, *write.where.call).index()], place };
+        };
+        for (const Write& write : contents.appends)
+            contents.knowsOrderOfAppends &= placeOf(write).function == placeOf(contents.appends[0]).function && placeOf(write).outer != notListed;
+        AOT::stableSort(contents.appends, [&](const Write& a, const Write& b) {
+            return std::tuple { placeOf(a).outer, placeOf(a).inner } < std::tuple { placeOf(b).outer, placeOf(b).inner };
+        });
+    }
+
+    // What is written into an object or an array after it was made, wherever that is done. It is found once for all walks: with a budget of its own, under no choice of an object and inside no other value.
+    const Contents& contentsOf(const Constant& container)
+    {
+        auto [entry, isNew] = m_contents.try_emplace(std::tuple { container.function.index(), container.literal.index(), container.call });
+        if (!isNew) {
+            if (entry->second)
+                return *entry->second;
+            ++m_walksCutShort;
+            return m_contentsBeingFound;
+        }
+        SetForScope budget(m_budget, maxValuesFollowed);
+        SetForScope testsBeingAnswered(m_testsBeingAnswered, 0u);
+        unsigned valuesFollowedBefore = std::exchange(m_valuesFollowed, 0);
+        unsigned walksCutShortBefore = m_walksCutShort;
+        bool sawEverythingBefore = m_sawEverything;
+        auto bindingsBefore = std::exchange(m_bindings, { });
+        auto activeBefore = std::exchange(m_active, { });
+        std::optional<Split> splitBefore = std::exchange(m_split, std::nullopt);
+
+        auto contents = makeUniqueWithoutFastMallocCheck<Contents>();
+        for (const Holding& holding : holdingsOf(container)) {
+            for (const WritingOperation& operation : std::ranges::equal_range(m_writingOperations, holding.holder, { }, &WritingOperation::holder)) {
+                if (holding.holder.kind == HolderKind::Parameter) {
+                    Activation caller { holding.function };
+                    addWrites(*contents, container, Activation { operation.function, &caller, &m_program.at(holding.function).at(holding.operation) }, operation.operation);
+                    continue;
+                }
+                if (operation.function == container.function) {
+                    addWrites(*contents, container, WhereMade(container).activation, operation.operation);
+                    continue;
+                }
+                bool isCalledDirectly = false;
+                for (const DirectCall& call : std::ranges::equal_range(m_directCalls, operation.function, { }, &DirectCall::callee)) {
+                    isCalledDirectly = true;
+                    Activation caller { call.caller };
+                    addWrites(*contents, container, Activation { operation.function, &caller, &m_program.at(call.caller).at(call.call) }, operation.operation);
+                }
+                if (!isCalledDirectly)
+                    addWrites(*contents, container, Activation { operation.function }, operation.operation);
+            }
+        }
+        putAppendsInOrder(*contents);
+
+        m_valuesFollowed = valuesFollowedBefore;
+        m_walksCutShort = walksCutShortBefore;
+        m_sawEverything = sawEverythingBefore;
+        m_bindings = WTF::move(bindingsBefore);
+        m_active = WTF::move(activeBefore);
+        m_split = WTF::move(splitBefore);
+        entry->second = WTF::move(contents);
+        return *entry->second;
+    }
+
+    Constants valuesWritten(const Constant& container, NOESCAPE const Invocable<bool(const Write&)> auto& isRead)
+    {
+        Constants values;
+        for (const Write& write : contentsOf(container).writes) {
+            if (isRead(write) && !addAll(values, evaluateOrName(WhereMade(write.where).activation, write.stored)))
+                return { };
+        }
+        return values;
+    }
+
+    Constants valuesWrittenUnder(const Constant& object, Typed::PropertyKeyID key)
+    {
+        const Typed::PropertyKey& name = m_program.at(key);
+        Constant text;
+        if (name.kind == Typed::PropertyKeyKind::Text && name.text)
+            text.primitive = Typed::KnownValue::string(name.text);
+        return valuesWritten(object, [&](const Write& write) {
+            if (write.position.unnamed)
+                m_sawEverything = false;
+            return write.key ? write.key == key : text.primitive.isKnown() && write.position == text;
+        });
+    }
+
+    // The key under which the object itself holds or is given a member of that name.
+    Typed::PropertyKeyID keyNamed(const Constant& object, StringID text)
+    {
+        auto isNamed = [&](Typed::PropertyKeyID key) {
+            const Typed::PropertyKey& name = m_program.at(key);
+            return name.kind == Typed::PropertyKeyKind::Text && name.text == text;
+        };
+        if (const Typed::DataNode::Object* data = object.data ? object.data->tryAs<Typed::DataNode::Object>() : nullptr) {
+            for (const Typed::DataMember& member : data->members) {
+                if (isNamed(member.key))
+                    return member.key;
+            }
+        }
+        if (!object.literal)
+            return { };
+        const Typed::Value& literal = m_program.at(object.function).at(object.literal);
+        if (literal.opcode == Typed::Opcode::NewObject) {
+            const Typed::Layout& layout = m_program.at(literal.layout());
+            for (uint32_t field : literal.fields()) {
+                if (isNamed(layout.fields[field].key))
+                    return layout.fields[field].key;
+            }
+        }
+        if (literal.opcode != Typed::Opcode::NewObject && literal.opcode != Typed::Opcode::NewDictionary)
+            return { };
+        for (const Write& write : contentsOf(object).writes) {
+            if (write.key && isNamed(write.key))
+                return write.key;
+        }
+        return { };
+    }
+
+    Constants valuesWrittenAt(const Constant& array, const Constant& position)
+    {
+        return valuesWritten(array, [&](const Write& write) {
+            return !write.key && write.position == position;
+        });
     }
 
     struct MappedArray {
@@ -739,8 +1254,10 @@ private:
         if (const Typed::DataNode::Array* data = array.data ? array.data->tryAs<Typed::DataNode::Array>() : nullptr)
             return data->elements.size();
         const Typed::Value* literal = array.literal ? &m_program.at(array.function).at(array.literal) : nullptr;
-        if (literal && literal->opcode == Typed::Opcode::NewArray && literal->holes().empty())
-            return literal->elementsOperands().size();
+        if (literal && literal->opcode == Typed::Opcode::NewArray && literal->holes().empty()) {
+            const Contents& contents = contentsOf(array);
+            return contents.knowsOrderOfAppends ? literal->elementsOperands().size() + contents.appends.size() : notFound;
+        }
         if (literal && literal->opcode == Typed::Opcode::NewContiguousArray)
             return elementsOfLongLiteral(array).size();
         if (literal && (literal->opcode == Typed::Opcode::NewArrayLike || isCall(literal->opcode))) {
@@ -755,8 +1272,13 @@ private:
         if (array.data)
             return { constantOf(array.data->as<Typed::DataNode::Array>().elements[index]) };
         const Typed::Value& literal = m_program.at(array.function).at(array.literal);
-        if (literal.opcode == Typed::Opcode::NewArray)
-            return evaluate(WhereMade(array).activation, literal.elementsOperands()[index]);
+        if (literal.opcode == Typed::Opcode::NewArray) {
+            size_t sizeWhenMade = literal.elementsOperands().size();
+            if (index < sizeWhenMade)
+                return evaluate(WhereMade(array).activation, literal.elementsOperands()[index]);
+            const Write& write = contentsOf(array).appends[index - sizeWhenMade];
+            return evaluate(WhereMade(write.where).activation, write.stored);
+        }
         if (literal.opcode == Typed::Opcode::NewContiguousArray)
             return evaluate(WhereMade(array).activation, elementsOfLongLiteral(array)[index]);
 
@@ -787,34 +1309,52 @@ private:
         return lengths;
     }
 
+    using TextsWhereBlocksEnd = std::map<std::pair<ValueID, Typed::BlockID>, Constants>;
+
     Constants textsBuiltUpTo(const Activation& activation, const Typed::Function& function, ValueID builder, ValueID end)
     {
+        uint64_t place = placesIn(activation.function)[end.index()];
+        if (place == notListed)
+            return { };
+        TextsWhereBlocksEnd remembered;
+        return textsBuiltIn(activation, function, builder, blockAt(activation.function, place), end, remembered);
+    }
+
+    // What the builder holds in front of `end`, and without an end where the block ends. The builder may have been begun blocks ago.
+    Constants textsBuiltIn(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::BlockID block, ValueID end, TextsWhereBlocksEnd& remembered)
+    {
+        if (!end) {
+            if (auto known = remembered.find({ builder, block }); known != remembered.end())
+                return known->second;
+        }
         if (!mayFollowAnotherValue())
             return { };
+        std::optional<BlockParameter> merge = findMerge(activation.function, function, builder);
+        bool arrivesAsParameter = merge && merge->block == block;
+        bool isBegunHere = !merge && function.at(block).values.contains(builder);
+        if (isBegunHere && function.at(builder).opcode != Typed::Opcode::StringBuilderBegin)
+            return { };
         Vector<Constants, 8> parts;
-        const Typed::Block* blockOfBuilder = nullptr;
-        if (std::optional<BlockParameter> merge = findMerge(activation.function, function, builder)) {
-            blockOfBuilder = &function.at(merge->block);
+        if (!isBegunHere) {
             const Typed::CFG& cfg = cfgOf(activation.function);
             Constants before;
-            for (Typed::Edge edge : cfg.incomingEdges(merge->block)) {
-                if (edge.from >= merge->block || isRuledOut(activation, function, cfg, edge))
+            for (Typed::Edge edge : cfg.incomingEdges(block)) {
+                if (!cfg.isReachable(edge.from) || cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block) || isRuledOut(activation, function, cfg, edge))
                     continue;
-                Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
-                if (incoming.kind != Typed::IncomingValue::Kind::Argument || !addAll(before, textsBuiltUpTo(activation, function, incoming.argument, ValueID())))
+                ValueID arriving = builder;
+                if (arrivesAsParameter) {
+                    Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
+                    if (incoming.kind != Typed::IncomingValue::Kind::Argument)
+                        return { };
+                    arriving = incoming.argument;
+                }
+                if (!addAll(before, textsBuiltIn(activation, function, arriving, edge.from, ValueID(), remembered)))
                     return { };
             }
             parts.append(WTF::move(before));
-        } else if (function.at(builder).opcode == Typed::Opcode::StringBuilderBegin) {
-            for (const Typed::Block& block : function.blocks) {
-                if (block.values.contains(builder))
-                    blockOfBuilder = &block;
-            }
         }
-        if (!blockOfBuilder)
-            return { };
 
-        for (ValueID id : blockOfBuilder->values) {
+        for (ValueID id : function.at(block).values) {
             const Typed::Value& value = function.at(id);
             if (id == builder || !Typed::OperandPosition::builder(value.opcode) || value.builderOperand() != builder)
                 continue;
@@ -833,7 +1373,9 @@ private:
         }
         if (end)
             return { };
-        return concatenated(parts.span());
+        Constants texts = concatenated(parts.span());
+        remembered.emplace(std::pair { builder, block }, texts);
+        return texts;
     }
 
     Constants concatenated(std::span<const Constants> parts)
@@ -984,6 +1526,8 @@ private:
     {
         if (constant.regExp || constant.isObjectOrArray())
             return type.withOnlyObjects().isNever() ? Typed::KnownBoolean::False : Typed::KnownBoolean::Unknown;
+        if (constant.unnamed)
+            return evaluateTypeTest(m_program, m_program.typeOf(m_program.at(constant.function), constant.unnamed), type);
         return constant.primitive.isKnown() && !constant.primitive.isObject() ? evaluateTypeTest(m_program, constant.primitive, type) : Typed::KnownBoolean::Unknown;
     }
 
@@ -1743,6 +2287,12 @@ private:
     UncheckedKeyHashMap<uint32_t, ValuesOfVariable, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_variables;
     HashMap<uint32_t, std::unique_ptr<Typed::CFG>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_cfgs;
     HashMap<uint32_t, Vector<BlockParameter>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blockParameters;
+    HashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
+    bool m_hasFoundWritesAndHoldings { false };
+    Vector<WritingOperation> m_writingOperations;
+    Vector<Holding> m_holdings;
+    std::map<std::tuple<uint32_t, uint32_t, const Typed::Value*>, std::unique_ptr<Contents>> m_contents;
+    Contents m_contentsBeingFound;
 };
 
 } // anonymous namespace
@@ -1831,7 +2381,7 @@ static void addCandidates(const Typed::Program& program, BuildContext& context, 
     StringView text = program.strings.viewOf(pattern, buffer);
     for (OptionSet<Yarr::Flags> flagSet : flagSets) {
         const RegExpSummary& summary = context.regExpSummaries().summaryOf(pattern, flagSet, text);
-        if (summary.isValid() && summary.atom.isNull())
+        if (summary.isValid())
             found.append(FoundRegExp { origin, pattern, flagSet, site });
     }
 }

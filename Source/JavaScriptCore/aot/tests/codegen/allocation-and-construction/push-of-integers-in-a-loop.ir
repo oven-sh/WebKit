@@ -16,6 +16,8 @@
 # REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
 # REQUIRES(ARM64): arm64 unsanitized-code
+# RUN(WAYS): lower-to-b3 optimized f1
+# REQUIRES(WAYS): unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -77,10 +79,8 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v2
 }
 
-# The list holds unboxed doubles. A push is inline: a test of the length against the capacity, the store of the element, the store of the new length.
+# The list holds unboxed doubles. A push is inline: a test of the length against the capacity, the store of the element, one more on the length.
 # CHECK-LABEL: steps by 1
-# CHECK: Int32 b@[[k]] = Phi(
-# CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:HasSpareArrayCapacity)
 # CHECK: Int32 b@[[fits]] = Below(b@[[length]], b@[[capacity]], {{*}}:HasSpareArrayCapacity)
 # CHECK-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
 # CHECK-NEXT: Successors: Then:#[[push]], Else:Rare:#
@@ -88,13 +88,14 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK: Double b@[[element]] = IToD(b@[[k]],
 # CHECK: Store(b@[[element]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties,
 # CHECK-NEXT: Int32 b@[[longer]] = Add(b@[[length]], $1(
-# CHECK-NEXT: Store(b@[[longer]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
 # The storage and its capacity are read ahead of the loop. Nothing in it calls, tests the kind of storage, or reads the list itself.
 # NONE-LABEL: steps by 1
 # NONE-NOT: Reads:JSObject_butterfly
 # NONE-NOT: Reads:Butterfly_vectorLength
+# The length is a variable of the loop. The storage gets it where the loop is left.
+# NONE-NOT: Butterfly_publicLength
 # NONE-NOT: Reads:JSCell
 # NONE-NOT: :CallDirect
 # The turns can be counted ahead of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
@@ -102,19 +103,35 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # NONE-LABEL: end of loop
 # The list is made with room for all the elements, since the loop says how many there will be. Growing is out of the loop.
 # CALLS: f1: size=
-# CALLS: operation operationAOTReserveArrayCapacity x1
-# CALLS-NEXT: stub ArrayPush x2
+# The turn that has to grow the list ends in a copy of its own, and the loop goes on as before behind it.
+# CALLS: operation operationAOTReserveArrayCapacity x2
+# CALLS-NEXT: stub ArrayPush x4
 # CALLS-NEXT: stub NewArrayWithLength.Double x1
 # CALLS-NEXT: stub NewEmptyArray.DoubleDefaultCapacity x1
 # CALLS-NOT: stub
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
-# Four of the nine are for the length, which stays in the storage: the load, the test, the addition, the store.
+# Two of the seven are for the length: the test, the addition.
+# Two of the rare nine, which run once in 1,048,576 turns, are the store in front of the poll and the read behind it.
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0, rare instructions: 7, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 7, patchpoints: 0
+# X64: loop #{{*}}, instructions: 7, patchpoints: 0, rare instructions: 9, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 6, patchpoints: 0
 # ARM64: loop #{{*}}, instructions: {{*}}, patchpoints: 0, rare instructions: {{*}}entered rarely
 # ARM64-NOT: , instructions:
+# The length is read in front of the loop and stored where the loop ends.
+# WAYS: Int32 b@{{*}} = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength,
+# WAYS: Int32 b@[[length]] = Phi(
+# WAYS: Int32 b@[[longer]] = Add(b@[[length]], $1(
+# WAYS: Store(b@[[longer]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
+# Where the list is full, perhaps nothing was pushed yet. Then nothing is stored: nobody may write to the storage of a literal.
+# WAYS: Int32 b@[[stored]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength,
+# WAYS-NEXT: Int32 b@[[differs]] = NotEqual(b@[[length]], b@[[stored]],
+# WAYS-NEXT: Branch(b@[[differs]], Terminal,
+# WAYS: Store(b@[[length]], b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
+# The copy of the loop that polls stores the length in front of the poll, where a collection may look at the list, and reads it again behind it.
+# WAYS: Store(b@{{*}}, b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength,
+# WAYS: isLoopPoll
+# WAYS: Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength,

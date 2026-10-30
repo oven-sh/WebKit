@@ -162,6 +162,15 @@ void ProgramAnalyses::estimateHeatFor(HeatFor heatFor)
     }
 }
 
+void ProgramAnalyses::dropHeat()
+{
+    // A runner that has stopped makes no other.
+    if (!m_heat || m_runner.isStopped())
+        return;
+    destroyResultsLater(m_runner.build(), m_inlining, m_heat);
+    m_runner.didInvalidate({ ProgramResult::Heat, ProgramResult::InliningSummaries });
+}
+
 const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
 {
     if (!m_heat) {

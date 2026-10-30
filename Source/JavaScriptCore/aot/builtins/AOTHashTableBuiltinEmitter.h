@@ -28,6 +28,7 @@ public:
 private:
     Boxed normalizedNumber(const OperationContext&, Number);
     Word32 hashOfBitsByOneMultiplication(Boxed normalizedKey);
+    LValue tagsNearTag(LValue eightTags, LValue tag, uint8_t distance);
     void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
     bool hasReceiverThatLeavesLoop(const InlineCall&);
     bool looksAmongTags(const InlineCall&);

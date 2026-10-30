@@ -1062,6 +1062,63 @@ static void testCopiesOfPropertiesByChunks()
         operationCalled = operation;
         AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(JSCell::structureIDOffset()), static_cast<uint32_t>(structures[1].address())));
         place = nullptr;
+
+        // A key order without a number lies in the Structure of the source. The target takes that Structure, unless the order stays with the source.
+        using Flag = CompiledStructure::Flag;
+        using HeldKeyOrder = CompiledStructure::HeldKeyOrder;
+        constexpr uint8_t flagsOfOrdered = static_cast<uint8_t>(Flag::HasOnlyPlainSlots) | static_cast<uint8_t>(Flag::HasOutOfLineKeyOrder);
+        auto& unordered = structures[0];
+        auto& ordered = structures[1];
+        uint8_t& flags = ordered.at<uint8_t>(CompiledStructure::offsetOfFlags());
+        uint8_t& heldKeyOrder = ordered.at<uint8_t>(CompiledStructure::offsetOfHeldKeyOrder());
+        uint32_t& orderWordOfSource = source.at<uint32_t>(offsetOfOrderWord);
+        flags = flagsOfOrdered;
+        source.at<uint32_t>(JSCell::structureIDOffset()) = static_cast<uint32_t>(ordered.address());
+        // The stub looks at the two only where something is kept at the place of the copy.
+        orderWordOfSource = outOfLineOrderWord;
+        emptyTarget();
+        MappedCopy copyOfNoSource;
+        const MappedCopy*& placeOfOrdered = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), source.at<uint64_t>(offsetOfOrderWord), 0)];
+        AOT_TEST_CHECK(!isCopiedByStub(head));
+        placeOfOrdered = &copyOfNoSource;
+        const MappedCopy*& placeOfCounted = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), (source.at<uint64_t>(offsetOfOrderWord) & ~static_cast<uint64_t>(orderAndCountMask)) | outOfLineOrderWordFor(3), 0)];
+        placeOfCounted = &copyOfNoSource;
+        for (uint32_t orderWord : { outOfLineOrderWord, outOfLineOrderWord | orderWordIsFrozen, outOfLineOrderWord | orderWordIntegrityBits, outOfLineOrderWordFor(3), outOfLineOrderWordFor(3) | orderWordIsFrozen }) {
+            orderWordOfSource = orderWord;
+            for (unsigned numberOfFields = 0; numberOfFields <= maxNumberOfFields; ++numberOfFields) {
+                layout.size = offsetOfFirstField + numberOfFields * sizeof(uint64_t);
+                emptyTarget();
+                AOT_TEST_CHECK(isCopiedByStub(head) && target.at<uint32_t>(offsetOfOrderWord) == (orderWord & orderAndCountMask) && target.at<uint32_t>(JSCell::structureIDOffset()) == static_cast<uint32_t>(ordered.address()));
+                for (unsigned index = 0; index <= maxNumberOfFields; ++index)
+                    AOT_TEST_CHECK(target.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) == (index < numberOfFields ? source.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) : untouched));
+            }
+        }
+        orderWordOfSource = outOfLineOrderWord;
+        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsOfOneObject)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(heldKeyOrder, static_cast<uint8_t>(HeldKeyOrder::IsBesideExtraProperties)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(Flag::HasOnlyPlainSlots)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasExtraProperties))));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(flags, static_cast<uint8_t>(flagsOfOrdered | static_cast<uint8_t>(Flag::HasOtherPrototype))));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(ordered.at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(ordered.at<uint64_t>(Structure::realmOffset()), static_cast<uint64_t>(16)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(ordered.at<uint64_t>(Structure::prototypeOffset()), static_cast<uint64_t>(16)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(unordered.at<uint8_t>(CompiledStructure::offsetOfFlags()), static_cast<uint8_t>(0)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(unordered.at<uint8_t>(CompiledStructure::offsetOfFlags()), static_cast<uint8_t>(static_cast<uint8_t>(Flag::HasOnlyPlainSlots) | static_cast<uint8_t>(Flag::HasOtherPrototype))));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(unordered.at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfShapeWord), shapeWordOf(10)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint8_t>(JSCell::typeInfoTypeOffset()), static_cast<uint8_t>(FinalObjectType)));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(orderWordOfSource, outOfLineOrderWord | orderWordHasExtraProperties));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(orderWordOfSource, outOfLineOrderWord | orderWordHasFieldOutsideSlot));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(instance.barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+        emptyTarget();
+        AOT_TEST_CHECK(!isCopiedByStub(head, 1) && !isCopiedByStub(head, 0, 1));
+        target.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
+        AOT_TEST_CHECK(!isCopiedByStub(head));
+        placeOfOrdered = nullptr;
+        placeOfCounted = nullptr;
+        flags = static_cast<uint8_t>(Flag::HasOnlyPlainSlots);
+        source.at<uint32_t>(JSCell::structureIDOffset()) = static_cast<uint32_t>(unordered.address());
+        orderWordOfSource = orderOfSource;
     }
 }
 

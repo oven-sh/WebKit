@@ -1,0 +1,69 @@
+# dict["on" + type]: where the sum of two parts is the key of one read that stands right behind it, one stub looks the property up by the parts. Nothing joins them first.
+# A sum that something else uses too, that has three parts, that is stored under, or that has a part whose conversion the program can see, is joined as before
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ofObject" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub GetByValOfKeyOfPair.OfCell x1
+# CHECK-NEXT: stub PollAtPrologue x1
+function f1 name="ofAnything" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# x86-64 boxes the number by a leaf stub, which costs the caller no frame there. ARM64 boxes it in line.
+# CHECK: f1: size=
+# CHECK-NOT: Concatenate
+# CHECK: stub GetByValOfKeyOfPair.OfAnyValue x1
+# CHECK-NEXT: stub PollAtPrologue x1
+function f2 name="throughCast" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = Upcast v3 castType=anything
+    v5 = ElemGet v0, v4
+    Return v5
+}
+# CHECK: f2: size=
+# CHECK-NEXT: stub GetByValOfKeyOfPair.OfCell x1
+# CHECK-NEXT: stub PollAtPrologue x1
+function f3 name="readTwice" parameters=[{type=object}, {type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = Strcat v2, v3 [isLikelyKey]
+    v5 = ElemGet v0, v4
+    v6 = ElemGet v1, v4
+    Return v6
+}
+# CHECK: f3: size=
+# CHECK-NEXT: stub ConcatenateKeyOfPair.Name x1
+# CHECK-NEXT: stub GetByValCachedCells x2
+function f4 name="storedUnder" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    ElemSet v0, v3, v2
+    Return v2
+}
+# CHECK: f4: size=
+# CHECK-NEXT: stub ConcatenateKeyOfPair.Name x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: stub PutByValCached.Strict x1
+function f5 name="threeParts" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2, v1 [isLikelyKey]
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK: f5: size=
+# CHECK-NEXT: operation operationAOTConcatenate x1
+# CHECK-NEXT: stub GetByValCachedCells x1
+function f6 name="partIsAnObject" parameters=[{type=object}, {type=string}, {type=object}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK: f6: size=
+# CHECK-NEXT: operation operationAOTToString x1
+# CHECK-NEXT: stub ConcatenateKeyOfPair.Name x1
+# CHECK-NEXT: stub GetByValCachedCells x1

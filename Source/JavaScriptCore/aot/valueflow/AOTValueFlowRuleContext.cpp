@@ -40,12 +40,15 @@ const Program& ValueFlowRuleContext::program() const { return *m_solver.m_input.
 const ValueFlowUniverse& ValueFlowRuleContext::universe() const { return *m_solver.m_input.universe; }
 const ValueFlowProgramNodes& ValueFlowRuleContext::nodes() const { return *m_solver.m_input.nodes; }
 uint64_t ValueFlowRuleContext::mostMembersToldApart() const { return m_solver.m_input.mostMembersToldApart; }
+bool ValueFlowRuleContext::followsSpiesOutOfSight() const { return m_solver.m_input.build && m_solver.m_input.build->options().admitsReplacedBuiltins() && !m_solver.m_input.build->options().admitsFilesRunByHost(); }
+bool ValueFlowRuleContext::runnerChoosesMainModule() const { return refusedCode().hostRunsFilesOutsideImage || (m_solver.m_input.build && m_solver.m_input.build->options().admitsReplacedBuiltins()); }
 
 void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
 {
     m_statement = statement;
     m_madeNodesOfStatement = m_solver.isMadeByRule(statement) && statement.index() < m_solver.numberOfStatements() ? m_solver.m_madeNodesOfStatement[statement.index() - m_solver.m_input.statements.size()] : UINT32_MAX;
     ++m_runEpoch;
+    m_isNativeWalk = m_madeNodesOfStatement != UINT32_MAX && m_solver.m_madeNodes[m_madeNodesOfStatement].key.isLookupByNativeWalk();
     m_isFirstRunOfStatementOfBody = m_solver.hasStatementOfBodyNeverRun(statement);
     m_filtersKnownEdges = !m_isFirstRunOfStatementOfBody || m_solver.m_isFullRound;
     m_firstEdgeOfRun = m_log.edges.size();
@@ -67,6 +70,7 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
     begin(statement);
     m_madeNodesOfStatement = madeNodes;
     m_keyOfStatementOfThisTurn = &key;
+    m_isNativeWalk = key.isLookupByNativeWalk();
     m_filtersKnownEdges = m_solver.m_isFullRound;
     m_rememberedByStatementOfThisTurn = { };
 }
@@ -224,6 +228,10 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
         }
     }
     return narrowed.span();
+}
+std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
+{
+    return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
 }
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
 
@@ -468,6 +476,13 @@ ClimbingSet ValueFlowRuleContext::valueWithin(ClimbingSet within, ValueFlowNodeI
     return restrict(ClimbingSet(valueHeldInGraph(m_solver.graph(), node)), within.m_set);
 }
 
+ClimbingSet ValueFlowRuleContext::coveredByUnknownObjectAmong(ClimbingSet objects)
+{
+    if (!m_solver.m_input.escaped)
+        return ClimbingSet();
+    return valueWithin(restrict(objects, m_maker.intersect(m_solver.m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_solver.m_objectsAlwaysFollowed))), m_solver.m_input.escaped);
+}
+
 ClimbingSet ValueFlowRuleContext::valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID node)
 {
     size_t numberWatched = m_log.partsWatched.size();
@@ -517,15 +532,6 @@ ValueSetID& ValueFlowRuleContext::rememberedByStatement()
 }
 
 bool ValueFlowRuleContext::isStatementOfBody() const { return m_statement.index() < m_solver.m_input.statements.size(); }
-
-bool ValueFlowRuleContext::wasAddedInEarlierRound(ValueFlowNodeID node, ClimbingSet set) const
-{
-    // Only the edges of earlier rounds have reached the graph's values, and all of them have.
-    if ((!m_unknownSource || !leavesOutSomeUnknownSource()) && !sets().contains(set.m_set, m_solver.m_input.placeholders.unknown))
-        return sets().isSubset(set.m_set, m_solver.graph().valueOf(node));
-    std::optional<ValueFlowNodeID> holding = m_solver.findMadeNode(keyOfConstant(set.m_set));
-    return holding && m_solver.graph().hasAdded(ValueFlowEdge { *holding, node });
-}
 
 bool ValueFlowRuleContext::isFirstToTieNamespaceInThisRound(ModuleID module)
 {
@@ -697,6 +703,24 @@ std::optional<ClimbingSet> ValueFlowRuleContext::peekAtWhatWasWritten(ClimbingSe
     return ClimbingSet(m_solver.valueForReadersOf(*node, m_maker));
 }
 
+ClimbingSet ValueFlowRuleContext::peekAtWhatIsWrittenThrough(ClimbingSet objects, ValueFlowName name)
+{
+    if (objects.m_set == ValueSets::nothing)
+        return ClimbingSet();
+    std::optional<ValueFlowNodeID> node = m_solver.findNodeMadeBeforeThisTurn(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
+    return node ? ClimbingSet(m_solver.valueForReadersOf(*node, m_maker)) : ClimbingSet();
+}
+
+ClimbingSet ValueFlowRuleContext::seenFromObjectUp(ValueFlowObjectID object) const
+{
+    return ClimbingSet(ValueSetID(m_solver.m_seenFromObjectUp[object.index()].load(std::memory_order_acquire)));
+}
+
+void ValueFlowRuleContext::noteSeenFromObjectUp(ValueFlowObjectID object, ClimbingSet seen)
+{
+    m_solver.m_seenFromObjectUp[object.index()].store(seen.m_set.index(), std::memory_order_release);
+}
+
 std::optional<ClimbingSet> ValueFlowRuleContext::sourcesOfCopiesSeenFrom(ClimbingSet objects)
 {
     if (m_turnOfSourcesOfCopiesSeen != m_solver.m_numberOfTurn)
@@ -800,6 +824,12 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
     return function && universe().builtinTables().isCodeThatRecordsDescribe(function);
 }
 
+// A read under a name, and the steps of protocols, which read under names.
+static bool goesOnThroughUnknownObjectByName(ValueFlowNameKind kind)
+{
+    return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::OpenedIterators || kind == ValueFlowNameKind::IteratedValues || kind == ValueFlowNameKind::IteratorResults || kind == ValueFlowNameKind::AwaitedValue;
+}
+
 ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name, LookupUse use)
 {
     ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
@@ -812,7 +842,52 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
     }
     if (receivers.m_set == ValueSets::nothing)
         return holdingNothing();
+    if (use == LookupUse::Any && isNativeWalk() && goesOnThroughUnknownObjectByName(name.kind))
+        return nodeFor(ValueFlowNodeKey::lookupByNativeWalk(receivers.m_set, name));
     return nodeFor(use == LookupUse::OnlyCalledOnReceiver ? ValueFlowNodeKey::lookupForCall(receivers.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
+}
+
+const Function& ValueFlowRuleContext::functionWithBody(FunctionID id) const { return m_solver.functionWithBody(id); }
+
+static const Value* copyOfOperationAt(std::span<const ValueFlowCopyOfOperation> all, FunctionID function, ValueID site)
+{
+    auto placeOf = [](FunctionID function, ValueID site) {
+        return static_cast<uint64_t>(function.index()) << 32 | site.index();
+    };
+    auto found = std::ranges::lower_bound(all, placeOf(function, site), { }, [&](const ValueFlowCopyOfOperation& copy) {
+        return placeOf(copy.function, copy.site);
+    });
+    return found != all.end() && found->function == function && found->site == site ? &found->operation : nullptr;
+}
+
+const Value& ValueFlowRuleContext::operationOf(const ValueFlowStatement& statement) const
+{
+    if (!statement.factsOfText.contains(ValueFlowFactOfText::HasCopyOfOperation))
+        return functionWithBody(statement.function).at(statement.site);
+    const Value* copy = copyOfOperationAt(m_solver.m_input.copiesOfOperations, statement.function, statement.site);
+    RELEASE_ASSERT(copy);
+    return *copy;
+}
+
+const Value& ValueFlowRuleContext::operationAt(FunctionID function, ValueID site) const
+{
+    const Value* copy = copyOfOperationAt(m_solver.m_input.copiesOfOperations, function, site);
+    return copy ? *copy : functionWithBody(function).at(site);
+}
+
+const ValueFlowRareFactsOfText* ValueFlowRuleContext::rareFactsOfText(const ValueFlowStatement& statement) const
+{
+    if (!statement.factsOfText.contains(ValueFlowFactOfText::HasRareFacts))
+        return nullptr;
+    auto placeOf = [](FunctionID function, ValueID site) {
+        return static_cast<uint64_t>(function.index()) << 32 | site.index();
+    };
+    std::span<const ValueFlowRareFactsOfText> all = m_solver.m_input.rareFactsOfText;
+    auto found = std::ranges::lower_bound(all, placeOf(statement.function, statement.site), { }, [&](const ValueFlowRareFactsOfText& facts) {
+        return placeOf(facts.function, facts.site);
+    });
+    RELEASE_ASSERT(found != all.end() && found->function == statement.function && found->site == statement.site);
+    return &*found;
 }
 
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
@@ -973,7 +1048,8 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
         add(nodes().ofHost(ValueFlowHostNode::UsedBuiltins), object);
     if (uses.contains(BuiltinUse::Written))
         add(nodes().ofHost(ValueFlowHostNode::WrittenBuiltins), object);
-    if (uses.containsAny({ BuiltinUse::Called, BuiltinUse::Constructed }))
+    bool readCountsAsCall = uses.contains(BuiltinUse::Read) && program().builtins().has(BuiltinMark::ReadLoadsCodeByName, program().builtins().canonicalID(builtin));
+    if (readCountsAsCall || uses.containsAny({ BuiltinUse::Called, BuiltinUse::Constructed }))
         add(nodes().ofHost(ValueFlowHostNode::RunBuiltins), object);
 }
 

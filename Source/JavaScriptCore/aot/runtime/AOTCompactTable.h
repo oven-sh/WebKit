@@ -86,12 +86,16 @@ public:
     static constexpr unsigned tagShiftOfTags = 16;
 
     // The index of a table with more than eight entries: the number of the entry in each slot, and behind all the numbers a tag byte for each slot.
-    // A tag is seven bits of the hash under a set bit, and 0 in a free slot. A key goes into its home slot if that is free, else into the first free slot of the eight that the home slot lies among,
-    // else of the following eight, and so on. No slot is ever freed. So a free home slot says that the key is absent, and so does a free slot among eight that were searched: one word compare looks at all eight tags.
+    // A tag is six bits of the hash under a set bit, and 0 in a free slot. A key goes into its home slot if that is free, else into the first free slot of the eight that the home slot lies among,
+    // else of the following eight, and so on. No slot is ever freed. So a free slot among eight that were searched says that the key is absent: one word compare looks at all eight tags.
+    // The lowest bit of a tag belongs to the slot, not to the key in it: it is set once a key that has this slot for its home went elsewhere. While it is clear, a key that is not in its home slot is absent,
+    // which is how most lookups of absent keys end, however full the index is.
     static constexpr unsigned slotsPerGroup = 8;
-    static constexpr unsigned tagShiftOfSlots = hashBits - 7;
+    static constexpr unsigned tagShiftOfSlots = hashBits - 6;
     static constexpr uint8_t takenSlot = 0x80;
-    static constexpr uint8_t tagOfSlot(unsigned hash) { return static_cast<uint8_t>(takenSlot | hash >> tagShiftOfSlots); }
+    static constexpr uint8_t keyLeftHomeSlot = 0x01;
+    static constexpr uint8_t tagOfSlot(unsigned hash) { return static_cast<uint8_t>(takenSlot | hash >> tagShiftOfSlots << 1); }
+    static constexpr bool hasTag(uint8_t tagInSlot, uint8_t tag) { return static_cast<uint8_t>(tagInSlot ^ tag) <= keyLeftHomeSlot; }
 
     template<SlotKind kind>
     struct SlotFormat {
@@ -351,6 +355,13 @@ public:
 
     static constexpr uint64_t onesOfTags = 0x0101010101010101ull;
     static ALWAYS_INLINE uint64_t freeSlotsAmong(uint64_t tags) { return ~tags & onesOfTags << 7; }
+    // A set bit at the top of each of eight tags that differs from the tag in nothing but keyLeftHomeSlot. The tag above such a one may be marked too.
+    static constexpr uint64_t belowDifferenceOfOtherTags = (keyLeftHomeSlot + 1) * onesOfTags;
+    static ALWAYS_INLINE uint64_t slotsWithTagAmong(uint64_t tags, uint8_t tag)
+    {
+        uint64_t difference = tags ^ tag * onesOfTags;
+        return (difference - belowDifferenceOfOtherTags) & ~difference & onesOfTags << 7;
+    }
 
     static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
     // The next slot behind `previous`, from the eight of the home slot on, whose tag may be this one. The home slot has been looked at. Keys are mostly in their home slot, so this is out of line.
@@ -374,14 +385,18 @@ public:
             const uint8_t* tags = SlotFormat<kind>::tagsOf(index, indexBits);
             uint32_t homeSlot = probeStartFor(indexBits, hash);
             uint8_t tag = tagOfSlot(hash);
-            if (!tags[homeSlot])
+            uint8_t tagAtHome = tags[homeSlot];
+            if (hasTag(tagAtHome, tag)) {
+                uint32_t entry = SlotFormat<kind>::entryAt(index, homeSlot);
+                if (matches(entry))
+                    return entry;
+            }
+            if (!(tagAtHome & keyLeftHomeSlot))
                 return std::nullopt;
-            uint32_t slot = tags[homeSlot] == tag ? homeSlot : nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot);
-            while (slot != noSlot) {
+            for (uint32_t slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot); slot != noSlot; slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot)) {
                 uint32_t entry = SlotFormat<kind>::entryAt(index, slot);
                 if (matches(entry))
                     return entry;
-                slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot == homeSlot ? noSlot : slot);
             }
             return std::nullopt;
         }
@@ -411,14 +426,18 @@ public:
         const uint8_t* tags = tagsOf(kind, index, indexBits);
         uint32_t homeSlot = probeStartFor(indexBits, hash);
         uint8_t tag = tagOfSlot(hash);
-        if (!tags[homeSlot])
+        uint8_t tagAtHome = tags[homeSlot];
+        if (hasTag(tagAtHome, tag)) {
+            uint32_t entry = entryAt(kind, index, homeSlot);
+            if (matches(entry))
+                return entry;
+        }
+        if (!(tagAtHome & keyLeftHomeSlot))
             return std::nullopt;
-        uint32_t slot = tags[homeSlot] == tag ? homeSlot : nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot);
-        while (slot != noSlot) {
+        for (uint32_t slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, noSlot); slot != noSlot; slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot)) {
             uint32_t entry = entryAt(kind, index, slot);
             if (matches(entry))
                 return entry;
-            slot = nextSlotWithTag(tags, indexBits, tag, homeSlot, slot == homeSlot ? noSlot : slot);
         }
         return std::nullopt;
     }
@@ -431,8 +450,10 @@ public:
         else {
             uint8_t* tags = SlotFormat<kind>::tagsOf(index, indexBits);
             uint32_t slot = probeStartFor(indexBits, hash);
-            if (tags[slot])
+            if (tags[slot]) {
+                tags[slot] |= keyLeftHomeSlot;
                 slot = findFreeSlotBehindHome(tags, indexBits, slot);
+            }
             SlotFormat<kind>::setEntryAt(index, slot, entry);
             tags[slot] = tagOfSlot(hash);
         }

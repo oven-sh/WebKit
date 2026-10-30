@@ -125,5 +125,5 @@ function f1 name="sum" module=m0 position=50 flags=[IsChecked, HasExplicitName] 
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 29, patchpoints: 3
-# ARM64: loop #{{*}}, instructions: 35, patchpoints: 5
+# X64: loop #{{*}}, instructions: 24, patchpoints: 3
+# ARM64: loop #{{*}}, instructions: 32, patchpoints: 4

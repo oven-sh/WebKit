@@ -94,6 +94,11 @@ public:
         std::get<CompiledFrameData>(m_frameData).frame.isAsyncFrame = isAsyncFrame;
     }
     StackFrame(VM&, JSCell* owner, const AOT::TraceFrame&, JSCell* callee);
+    // Whoever comes to own the frame tells the collector.
+    StackFrame(const AOT::TraceFrame& frame, JSCell* callee, WriteBarrierEarlyInitTag)
+        : m_frameData(CompiledFrameData { frame, WriteBarrier<JSCell>(callee, WriteBarrierEarlyInit) })
+    {
+    }
     static void appendCompiledFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
     const AOT::TraceFrame& compiledFrame() const { return std::get<CompiledFrameData>(m_frameData).frame; }
     JS_EXPORT_PRIVATE std::optional<AOT::SourcePosition> compiledPosition() const;

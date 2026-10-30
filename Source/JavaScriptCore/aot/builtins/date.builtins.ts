@@ -6,6 +6,7 @@ const clock = "ExternalState";
 const hostTimeZone = "ExternalState";
 const dateCache = "RuntimeState";
 const cachedCalendarFields = "InternalFields";
+const membersAddedWhenRead = "ExternalState";
 
 const component = b.f64.loose;
 const optionalComponent = component.optional;
@@ -289,7 +290,8 @@ export default b.declarations(
           capability: "heap",
           throws: true,
           uses: { this: [readsTime], key: b.inspected },
-          writes: [cachedCalendarFields],
+          reads: [membersAddedWhenRead],
+          writes: [cachedCalendarFields, membersAddedWhenRead],
           implementation: b.inline("DateToISOString", { otherwise: b.hostCall }),
         },
         {
