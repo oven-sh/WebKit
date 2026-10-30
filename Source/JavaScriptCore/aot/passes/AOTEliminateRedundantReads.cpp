@@ -25,6 +25,7 @@
 #include "AOTMemoryLocation.h"
 #include "AOTMethodDispatch.h"
 #include "AOTNaturalLoops.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTRepresentation.h"
@@ -5088,7 +5089,7 @@ struct LoopVersioner : LoopEditor {
     }
 };
 
-// `JSON.parse(text)[i].kind` in a loop that is expected to run. No layout of the program has the name and the program stores nothing under it, so whatever has it was made elsewhere, and no test of a layout can stand before the read.
+// `JSON.parse(text)[i].kind` in a loop that is expected to run. Nothing with a layout of the program is seen to arrive, and the program stores nothing under the name, so whatever has it was made elsewhere, and no test of a layout can stand before the read.
 // What the tables of the run time hold for the Structure of the object is read without a call. A read that they do not answer is unlikely and runs code, so it leaves the loop with the other unlikely paths.
 struct ReaderFromTables : LoopEditor {
     bool isCalled(ValueID read)
@@ -5155,7 +5156,9 @@ struct ReaderFromTables : LoopEditor {
         const Value& read = m_function.at(id);
         if (read.opcode != Opcode::PropGet || read.isFreeName() || read.isForTypeOf() || read.asksOnlyTables() || read.isTailCall)
             return false;
-        if (m_program.at(read.key()).kind != PropertyKeyKind::Text || m_program.nameClassOf(read.key()) != NameClass::Ordinary || !m_program.layoutsWithName(read.key()).empty())
+        if (m_program.at(read.key()).kind != PropertyKeyKind::Text || m_program.nameClassOf(read.key()) != NameClass::Ordinary)
+            return false;
+        if (read.receivers() && !arrivesWithoutLayoutOfProgram(m_context, block, read.objectOperand()))
             return false;
         // Of an object that the program has made something is known, and a method lies above the object, where the site of the read answers as well.
         if (!typeOf(read.objectOperand()).anyObject || isCalled(id))

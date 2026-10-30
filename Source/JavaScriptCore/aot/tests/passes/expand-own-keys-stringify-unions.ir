@@ -17,17 +17,17 @@ function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] re
 # CHECK: [[builder0]]: stringbuilder = StringBuilderBegin
 # CHECK: [[isArray0]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[others0]](| 0)
-# CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder0]]
+# CHECK-NEXT: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK: [[array0]]([[narrowed0]]: Array<number>):
 # CHECK: = IsPristine [[narrowed0]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: [[others0]]([[remaining0]]: string|L0|L1):
 # CHECK: = TypeTest [[remaining0]] testedType=object
+# CHECK: = StringBuilderFinish [[builder0]]
 # CHECK: = ShapeTest [[object0]] layouts=[L1]
 # CHECK: = ShapeTest [[object0]] layouts=[L0]
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfOther]]
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfPoint]]
-# CHECK: = StringBuilderFinish [[builder0]]
 }
 
 function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Array<L1> flags=[IsExpected]}] results=[{type=anything}] {
@@ -35,15 +35,19 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-# CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
-# CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
+# CHECK: = TypeTest v0 testedType=undefined
 # CHECK: StringBuilderDiscard [[builder1]]
+# CHECK-NEXT: = CallBuiltin -, v0, v1 overload=JSONStringify/0
+# CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
 # CHECK: [[threw1]]() role=CleanupHandler frequency=Rare:
 # CHECK-NEXT: [[exception1]]: exception = CatchException
 # CHECK-NEXT: JSONResetHolders [[builder1]]
 # CHECK-NEXT: Rethrow [[exception1]]
+# CHECK: testedType=null
+# CHECK: = JSONAppendToken [[builder1]], {{*}} jsonToken=Null
 # CHECK: [[isArray1]]: boolean = TypeTest {{*}} testedType=Array<L1>
 # CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](| 0), notTaken [[others1]](| 0)
+# CHECK: = StringBuilderFinish [[builder1]]
 # CHECK: [[array1]]([[narrowed1]]: Array<L1>) handler=[[threw1]]():
 # CHECK-NEXT: = IsPristine [[narrowed1]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: [[others1]]([[remaining1]]:
@@ -53,7 +57,6 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
 # CHECK: = CallDirect [[element1]], [[builder1]] function=[[serializerOfOther]]
 # CHECK: = ShapeTest [[object1]] layouts=[L0]
 # CHECK: = CallDirect [[object1]], [[builder1]] function=[[serializerOfPoint]]
-# CHECK: = StringBuilderFinish [[builder1]]
 }
 
 function f2 name="arrayOrMap" parameters=[{type=Array<number>|Map}] results=[{type=anything}] {

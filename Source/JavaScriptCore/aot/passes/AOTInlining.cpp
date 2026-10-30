@@ -23,6 +23,7 @@
 #include "AOTEffectsCache.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTEscapeAnalysis.h"
 #include "AOTExactBuffer.h"
 #include "AOTFlowResults.h"
 #include "AOTFreshResults.h"
@@ -602,6 +603,62 @@ static bool onlyForwardsRestParameter(const Program& program, const Function& fu
         }
     }
     return isHandedOn;
+}
+
+// `function pick(key, ...list) { return list[key] }`. In the entrypoint, which makes the list out of its surplus arguments, each of these reads goes to the arguments where they lie, and the list is not made.
+static void findReadsOfRestParameter(const Program& program, const Function& function, FunctionAnalyses& analyses, InliningSummary& summary)
+{
+    if (!function.has(FunctionFlags::HasRestParameter) || function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return;
+    const Block& entry = function.at(entryBlock);
+    unsigned restIndex = function.firstParameterIndex() + function.numberOfPositionalParameters();
+    if (restIndex >= entry.parameters.size())
+        return;
+
+    auto readsList = [&](const Value& user, uint32_t operandIndex) {
+        switch (user.opcode) {
+        case Opcode::AllGuards:
+        case Opcode::IsPristine:
+        case Opcode::HasArrayStorage:
+        case Opcode::IsInBounds:
+        case Opcode::ValidateType:
+        case Opcode::GetArrayLength:
+            return true;
+        case Opcode::PropGet:
+            return user.key() == program.keyOf(BuiltinNames::length);
+        case Opcode::CallBuiltin:
+            return operandIndex == OperandIndex::CallBuiltin::receiver && inlineImplementationOf(program, user) == InlineBuiltin::ArrayLength;
+        case Opcode::ElemGet:
+            return operandIndex == OperandIndex::ElemGet::object;
+        case Opcode::GetArrayElement:
+            return operandIndex == OperandIndex::GetArrayElement::array && !user.isPresent() && !user.readsHoleAsNaN();
+        case Opcode::CallList:
+        case Opcode::SuperConstructList:
+            return operandIndex == OperandIndex::CallList::list;
+        default:
+            return false;
+        }
+    };
+    const UseLists& useLists = analyses.useLists();
+    uint32_t bytesOfTests = 0;
+    Vector<ValueID, 4> names { entry.parameters[restIndex] };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (use.kind == Use::Kind::BlockSubject)
+                continue;
+            if (use.kind != Use::Kind::Operand)
+                return;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode) && user.opcode != Opcode::Check)
+                names.append(use.user);
+            else if (user.operandKind(use.operandIndex) != OperandKind::Guard && !readsList(user, use.operandIndex))
+                return;
+            if ((user.opcode == Opcode::IsPristine || user.opcode == Opcode::HasArrayStorage) && !isSlowPath(function, function.at(use.block)).predicted())
+                bytesOfTests = saturatingSum<uint32_t>(bytesOfTests, estimatedCodeBytes(program, function, user), CodeSize::branch);
+        }
+    }
+    summary.onlyReadsRestParameter = true;
+    summary.bytesOfTestsOfRestParameter = bytesOfTests;
 }
 
 static InliningSummary::Difference reversed(InliningSummary::Difference difference)
@@ -1194,6 +1251,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     summary.onlyForwardsRestParameter = onlyForwardsRestParameter(program, function, analyses, summary.codeBytes);
+    findReadsOfRestParameter(program, function, analyses, summary);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
     if (isCold(heat).predicted() && !(function.role == FunctionRole::Library && cfg.hasCycle()))
         return summary;
@@ -1475,6 +1533,9 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     TypeID narrowed = types.intersectionOf(builder.function().at(converted).expectedOrType().predicted(), expected);
     if (narrowed == TypeTable::never)
         narrowed = types.intersectionOf(proven, expected);
+    // Objects that the parameter declares, and of which none comes, say nothing of the objects that do.
+    if (!types.at(narrowed).hasObjects() && types.at(proven).hasObjects() && types.at(expected).hasObjects())
+        return converted;
     // An intersection may keep a part of one side that the subset test does not find in the other.
     if (narrowed == TypeTable::never || narrowed == proven || !types.at(narrowed).isSubsetOf(types.at(proven), program))
         return converted;
@@ -2034,6 +2095,8 @@ constexpr uint32_t storeIntoOwnAllocationBytes = 32;
 // What an entrypoint that has to convert the result pays to enter the tests: a frame, a call, a return.
 constexpr uint32_t bodyCopiedIntoHotEntrypointBytes = 48;
 AOT_THRESHOLD(uint32_t, bodyMovedToArmBytes, 32);
+// What makes the list of the surplus arguments: their number, room for them, the loop that copies them, and the call of the run time where there is no room.
+constexpr uint32_t listOfSurplusArgumentsBytes = CodeSize::allocation + CodeSize::indirectCall + 5 * CodeSize::simpleOperation;
 
 } // namespace InlineModel
 
@@ -2452,6 +2515,21 @@ static bool wouldCopySharedEntryChecksIntoEntrypoint(const FunctionPassContext& 
     return mayBeEnteredElsewhere(context, call.function(), call.inlineFrame);
 }
 
+// An entrypoint makes the list of its surplus arguments for the body. A copy of a body that only reads the list reads the arguments where they lie, so the code that makes the list goes, however seldom the entrypoint runs.
+// The tests that were split off the head of the function hand the list on to the body behind them.
+static uint32_t bytesOfListThatGoesWithCall(const FunctionPassContext& context, const InliningSummary& summary, const Value& call)
+{
+    const Program& program = context.program;
+    const Function& caller = context.function;
+    const Function& callee = program.at(call.function());
+    if (caller.role != FunctionRole::GenericEntrypoint || !callee.has(FunctionFlags::HasRestParameter) || !call.numberOfVariadicOperands())
+        return 0;
+    if (caller.at(sameObjectThroughCasts(caller, call.variadicOperands().back()).valueInFrontOfFacts()).opcode != Opcode::CreateRest)
+        return 0;
+    const InliningSummary& reader = callee.role == FunctionRole::EntryChecks ? context.inputs.inlining.of(program, callee.creator.as<CreatorRecord::EntryChecks>().body) : summary;
+    return reader.onlyReadsRestParameter ? saturatingSum<uint32_t>(InlineModel::listOfSurplusArgumentsBytes, reader.bytesOfTestsOfRestParameter) : 0;
+}
+
 static uint32_t inlineBudgetBytes(const FunctionPassContext& context, Expected<HeatClass> heat, unsigned depth)
 {
     uint64_t budget = 0;
@@ -2538,6 +2616,19 @@ static bool wouldOnlyMoveAllocationIntoCodeThatRunsOnce(FunctionPassContext& con
     }).predicted();
 }
 
+static bool wouldOnlyRepeatSharedSerializer(const FunctionPassContext& context, const Value& call, bool isRepeatedByCaller)
+{
+    const Function& caller = context.function;
+    if (context.program.at(call.function()).role != FunctionRole::Serializer || caller.role == FunctionRole::Serializer || isRepeatedByCaller)
+        return false;
+    constexpr size_t writtenObject = 0;
+    if (mayNameUnescapedAllocation(caller, argumentAt(call, writtenObject)))
+        return false;
+    return std::ranges::count_if(caller.values, [&](const Value& other) {
+        return other.opcode == Opcode::CallDirect && other.function() == call.function();
+    }) > 1;
+}
+
 static FunctionID functionAsWritten(const Program& program, FunctionID id)
 {
     while (FunctionID source = program.at(id).derivation.source)
@@ -2600,7 +2691,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // So with the function that has an arm for each function that a value may be.
     bool isOneRowOfMany = caller.role == FunctionRole::TableEntrypoint || isCallWithSharedArms(caller);
     Bets bets = isCold(heat).predicted() || depth >= InlineModel::depthWithoutBets || isOneRowOfMany ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = isCallWithSharedArms(caller) || wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
+    uint32_t budget = isCallWithSharedArms(caller) || wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) || wouldOnlyRepeatSharedSerializer(context, value, isRepeatedByCaller) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {
@@ -2615,7 +2706,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
-    bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
+    uint32_t bytesOfListThatGoes = bytesOfListThatGoesWithCall(context, summary, value);
+    bool leavesEntryChecksOutside = !bytesOfListThatGoes && wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
     // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
     bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
     bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
@@ -2642,6 +2734,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         verdict.benefits.add(InlineBenefit::FoldedCode);
     uint64_t callOverheadBytes = InlineModel::callOverheadBytes + uint64_t { InlineModel::argumentOverheadBytes } * value.numberOfOperands();
     addBenefit(InlineBenefit::CallOverhead, callOverheadBytes);
+    if (bytesOfListThatGoes)
+        addBenefit(InlineBenefit::SunkAllocation, bytesOfListThatGoes);
     // The place holds two ways to the callee already. A third is taken where it is no larger than the call in whose place it stands.
     if (standsBesideCallByValue(context, value)) {
         verdict.budgetBytes = 0;
@@ -2675,12 +2769,17 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());
             }).predicted();
+            // The list of the surplus arguments is counted above.
+            if (bytesOfListThatGoes && allocations)
+                --allocations;
             if (allocations)
                 addBenefit(InlineBenefit::SunkAllocation, allocations * bytesOfAllocation);
         }
     }
 
-    if (canInlineWholeBody && !isTooDeep && isWithinBudget())
+    // A body that nothing else enters moves to the arguments that it reads: nothing is copied.
+    bool movesToItsArguments = bytesOfListThatGoes && hasSingleCallSite(context, value.function(), value.inlineFrame, heat);
+    if (canInlineWholeBody && !isTooDeep && (isWithinBudget() || movesToItsArguments))
         verdict.decision = InlineDecision::Inline;
     else if ((isHot(heat).predicted() || runsInLoopAroundCaller) && summary.canInlineHead()) {
         verdict.decision = InlineDecision::InlineHead;

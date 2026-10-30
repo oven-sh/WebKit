@@ -19,15 +19,15 @@ function f0 name="expectedLayout" parameters=[{type=object}] results=[{type=anyt
 # CHECK-NEXT: Branch [[shape0]] -> taken [[call0]](| 0), notTaken
 # CHECK: [[done0]](v2: undefined|string):
 # CHECK-NEXT: Return v2
-# CHECK: [[generic0]]() frequency=Rare:
-# CHECK-NEXT: [[original0]]: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
-# CHECK-NEXT: Jump -> next [[done0]]([[original0]])
 # CHECK: frequency=Rare:
 # CHECK-NEXT: StringBuilderDiscard [[builder0]]
-# CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK-NEXT: [[original0]]: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+# CHECK-NEXT: Jump -> next [[done0]]([[original0]])
 # CHECK: [[call0]]({{*}}: guard):
 # CHECK-NEXT: [[outcome0]]: int[0, 2] = CallDirect v0, [[builder0]] function=[[serializerOfPoint]]
 # CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case
+# CHECK-NOT: StringBuilderReserve
+# CHECK-NOT: StringBuilderCheckpoint
 # CHECK: [[text0]]: string = StringBuilderFinish [[builder0]]
 # CHECK-NEXT: Jump -> next [[done0]]([[text0]])
 }
@@ -78,8 +78,8 @@ function f5 name="arrayOfLayout" parameters=[{type=Array<object>}] results=[{typ
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
 # CHECK: [[builder5]]: stringbuilder = StringBuilderBegin
-# CHECK: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder5]]
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: role=CleanupHandler
 # CHECK: JSONResetHolders [[builder5]]
 # CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
@@ -100,12 +100,12 @@ function f6 name="unionOfTwoLayouts" parameters=[{type=object}] results=[{type=a
     Return v2
 # CHECK: [[builder6]]: stringbuilder = StringBuilderBegin
 # CHECK: = ShapeTest v0 layouts=[L0]
-# CHECK: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder6]]
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: = ShapeTest v0 layouts=[L1]
 # CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfPoint]]
-# CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfOther]]
 # CHECK: = StringBuilderFinish [[builder6]]
+# CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfOther]]
 }
 
 function f7 name="oneArgument" parameters=[{type=number}] results=[{type=anything}] {

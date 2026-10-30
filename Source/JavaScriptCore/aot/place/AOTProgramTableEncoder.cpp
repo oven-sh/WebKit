@@ -908,7 +908,8 @@ void encodeDataTable(TableEncoder& encoder)
             },
             [](const NewClassRecord&) { },
             [](const TemplateObjectRecord&) { },
-            [](const DirectEvalRecord&) { });
+            [](const DirectEvalRecord&) { },
+            [](const FormatPatternRecord&) { });
     }
     AOT::sort(placedNodes, { }, &std::pair<uint32_t, DataID>::first);
     placedNodes.shrink(std::ranges::unique(placedNodes).begin() - placedNodes.begin());
@@ -2334,7 +2335,7 @@ static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id
             moved.isCopy = false;
             moved.bytes = printedTexts.last().span();
         }
-        if (!moved.isCopy)
+        if (!moved.isCopy && !isFromPrinter(moved))
             endOfBytes = piece.end;
         placed.append(moved);
     }
@@ -3164,18 +3165,18 @@ static void encodeNamedVariables(TableEncoder& encoder)
         RELEASE_ASSERT(!(placed.offset % sizeof(uint32_t)));
         named.append({ variable.module.index(), NamedVariableData::inStatics(encoder.shownStringNumber(variable.name), placed.offset, traits.isNarrowReference) });
     }
-    std::ranges::stable_sort(named, { }, &NamedVariable::module);
-    Vector<NamedVariableData> variables;
-    Vector<ModuleWithNamedVariablesData> modules;
-    for (const NamedVariable& variable : named) {
-        if (modules.isEmpty() || modules.last().module != variable.module)
-            modules.append({ variable.module, static_cast<uint32_t>(variables.size()) });
-        variables.append(variable.data);
+    std::ranges::sort(named, { }, [](const NamedVariable& variable) { return std::tuple(variable.module, variable.data.name, variable.data.placeAndNumber); });
+    NamedVariablesWriter writer;
+    for (size_t index = 0; index < named.size(); ++index) {
+        if (!index || named[index - 1].module != named[index].module) {
+            size_t end = index + 1;
+            while (end < named.size() && named[end].module == named[index].module)
+                ++end;
+            writer.beginModule(end - index);
+        }
+        writer.append(named[index].data);
     }
-    if (!modules.isEmpty())
-        modules.append({ UINT32_MAX, static_cast<uint32_t>(variables.size()) });
-    encoder.setTable(ProgramTableIndex::namedVariables, variables);
-    encoder.setTable(ProgramTableIndex::modulesWithNamedVariables, modules);
+    encoder.setTable(ProgramTableIndex::namedVariables, writer.bytes());
 }
 
 static bool isReadAsItStarts(const Program& program, const Variable& variable, const PlacedVariable& placed)

@@ -889,7 +889,8 @@ private:
         return demotedPhi->child(0)->as<VariableValue>()->variable();
     }
 
-    bool isTestedInFront(const Plan& plan) const
+    // The start may be a Phi: a rare way out that leads back in front of the loop brings the counter there, and has asked about it, as the way from above has.
+    bool isTestedInFront(const Plan& plan)
     {
         Dominators& dominators = m_proc.dominators();
         auto isSame = [](Value* left, Value* right) {
@@ -897,23 +898,35 @@ private:
             right = right->foldIdentity();
             return left == right || (left->hasInt() && right->hasInt() && left->type() == right->type() && left->asInt() == right->asInt());
         };
-        for (BasicBlock* block = plan.preHeader; block; block = dominators.idom(block)) {
-            if (block->numPredecessors() != 1)
-                continue;
-            BasicBlock* predecessor = block->predecessor(0);
-            Value* last = predecessor->last();
-            if (last->opcode() != Branch || predecessor->successorBlock(0) == predecessor->successorBlock(1))
-                continue;
-            std::optional<Opcode> relation = predecessor->successorBlock(0) == block ? plan.relation : invertedRelation(plan.relation);
-            if (!relation)
-                continue;
-            Value* test = last->child(0)->foldIdentity();
-            if (test->opcode() == *relation && isSame(test->child(0), plan.start) && isSame(test->child(1), plan.bound))
-                return true;
-            if (test->opcode() == flippedRelation(*relation) && isSame(test->child(0), plan.bound) && isSame(test->child(1), plan.start))
-                return true;
+        auto isTestedAbove = [&](Value* start, BasicBlock* from) {
+            for (BasicBlock* block = from; block; block = dominators.idom(block)) {
+                if (block->numPredecessors() != 1)
+                    continue;
+                BasicBlock* predecessor = block->predecessor(0);
+                Value* last = predecessor->last();
+                if (last->opcode() != Branch || predecessor->successorBlock(0) == predecessor->successorBlock(1))
+                    continue;
+                std::optional<Opcode> relation = predecessor->successorBlock(0) == block ? plan.relation : invertedRelation(plan.relation);
+                if (!relation)
+                    continue;
+                Value* test = last->child(0)->foldIdentity();
+                if (test->opcode() == *relation && isSame(test->child(0), start) && isSame(test->child(1), plan.bound))
+                    return true;
+                if (test->opcode() == flippedRelation(*relation) && isSame(test->child(0), plan.bound) && isSame(test->child(1), start))
+                    return true;
+            }
+            return false;
+        };
+        Value* start = plan.start->foldIdentity();
+        if (isTestedAbove(start, plan.preHeader))
+            return true;
+        if (start->opcode() != Phi)
+            return false;
+        for (UpsilonValue* upsilon : prepareToReadCounters()[start]) {
+            if (!isTestedAbove(upsilon->child(0)->foldIdentity(), upsilon->owner))
+                return false;
         }
-        return false;
+        return true;
     }
 
     // Where the counter has not passed its bound and the choice of loop knows how far apart the two ends lie, the first stretch of the copy ends a whole stretch from the start.

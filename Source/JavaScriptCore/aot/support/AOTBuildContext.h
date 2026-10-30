@@ -41,6 +41,7 @@ class ImagesBelow;
 class RegExpSummaries;
 
 namespace Typed {
+class FormatPatternPlans;
 class Program;
 class ScratchRealms;
 }
@@ -97,6 +98,7 @@ public:
     const ImagesBelow* imagesBelow() const { return m_imagesBelow.get(); }
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
+    Typed::FormatPatternPlans& formatPatternPlans() { return *m_formatPatternPlans; }
     B3::CompilationScratch& backEndScratch(unsigned worker);
     void destroyBackEndScratches();
     bool shouldDump(Typed::FunctionID function) const { return !m_functionsToDump || m_functionsToDump->get(function.index()); }
@@ -157,6 +159,7 @@ private:
     HostFunctionTexts m_functionTexts;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::ScratchRealms> m_scratchRealms;
+    std::unique_ptr<Typed::FormatPatternPlans> m_formatPatternPlans;
     std::optional<BitVector> m_functionsToDump;
     std::unique_ptr<const IdentifierNumbering> m_identifierNumbering;
     std::unique_ptr<const ImagesBelow> m_imagesBelow;

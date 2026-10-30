@@ -437,7 +437,11 @@ static bool isExpectedToBeIntegerOfUnknownSize(TestSiteReporter& reporter, Value
 static bool isAccessUnderTests(TestSiteReporter& reporter, ValueID operand)
 {
     ValueID identity = reporter.analyses().identityOf(operand);
-    return accessClassOf(reporter.function().at(identity).opcode) != AccessClass::None && reporter.isClaimed(identity);
+    const Value& access = reporter.function().at(identity);
+    if (accessClassOf(access.opcode) == AccessClass::None || !reporter.isClaimed(identity))
+        return false;
+    // The test that was asked for here is not placed.
+    return !isNamedAccess(access.opcode) || !arrivesWithoutLayoutOfProgram(reporter.context(), reporter.analyses().useLists().blockOf(identity), access.operand(*receiverOf(access.opcode)));
 }
 
 // What a field, an array or a variable of numbers holds arrives as a number. An access for which a rule in front of this one has just asked for tests delivers behind them what is expected of it.

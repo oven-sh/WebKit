@@ -118,9 +118,12 @@ bool isUnfinishedAllocationLeavingOut(const Program&, const Function&, ValueID o
 struct TestsOfEmptySlot {
     ProofSet proofs;
     MemberConditions conditions;
+    bool failOnceAccessorIsDefined { false };
 
     bool isEmpty() const { return proofs.isEmpty() && conditions.isEmpty(); }
 };
+
+bool failsOnceAccessorIsDefined(const PropertyAccessContext&, const MemberCondition&);
 
 enum class OptionKind : uint8_t {
     RecordOption = 1 << 0,

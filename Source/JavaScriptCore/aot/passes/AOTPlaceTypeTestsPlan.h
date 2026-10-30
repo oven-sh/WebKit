@@ -33,6 +33,8 @@ inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesW
 inline constexpr OpcodeSet opcodesPlaceTypeTestsLooksFor = testSiteOpcodes | OpcodeSet { Opcode::HasArrayElement, Opcode::IsSlotFilled };
 
 bool mayPlaceTestsOfAccessesByName(const Heat&, FunctionAnalyses&, BlockID);
+// A prediction: what arrives as the receiver in this function has none of the layouts of the program, whatever other callers hand over.
+bool arrivesWithoutLayoutOfProgram(FunctionPassContext&, BlockID, ValueID receiver);
 
 enum class PlannedTestPosition : uint8_t { BeforeUse, OnEdge };
 

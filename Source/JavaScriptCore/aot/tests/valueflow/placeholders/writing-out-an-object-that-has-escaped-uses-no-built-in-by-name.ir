@@ -2,7 +2,7 @@
 # The object has escaped before JSON.stringify gets it, so the unknown object stands above it.
 # Native code asks the unknown object for no member by name, also through this object. Once the walk read Symbol.toStringTag through it and 53 built-ins were used,
 # those of Intl, Temporal and WebAssembly among them: 3 to 101 lines by the order of flow's rules.
-# Object.prototype.toString and valueOf, which the object finds by itself, are not asked about here: whether they count as run still goes by that order.
+# Object.prototype.toString and valueOf, which the object finds by itself, count as run: writing-out-an-object-that-has-escaped-runs-what-it-finds-on-its-own-chain.ir.
 # RUN: valueflow-solve used
 # CHECK-NOT: SymbolToStringTag
 # CHECK: run JSONStringify

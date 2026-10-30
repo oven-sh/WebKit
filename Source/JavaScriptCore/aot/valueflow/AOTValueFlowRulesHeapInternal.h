@@ -22,7 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr ValueFlowCellName addedNamesName { ValueFlowNameKind::AddedNames };
 inline constexpr ValueFlowCellName internalFieldsName { ValueFlowNameKind::InternalFields };
 inline constexpr ValueFlowName everyPropertyOfListedHoldersOfExports { ValueFlowNameKind::EveryProperty, 2 };
-inline constexpr ValueFlowName everyPropertyUnderKeyOfProgramAlone { ValueFlowNameKind::EveryProperty, 8 };
 
 enum class HeapKeyClass : uint8_t {
     Name,
@@ -40,8 +39,6 @@ struct HeapKey {
     bool isComputed { false };
     bool namesNoSymbol { false };
     bool namesSymbolAlone { false };
-    // With namesEnumerableProperty: the key is no name of anything that the engine has put on the objects asked, hidden by a name of the program or not.
-    bool namesNoPropertyOfEngine { false };
 
     bool mayNameNonEnumerable(PropertyKeyID other) const { return (keyClass == HeapKeyClass::Unknown && !namesEnumerableProperty) || (keyClass == HeapKeyClass::Name && name == other); }
 };
@@ -49,7 +46,6 @@ struct HeapKey {
 inline constexpr HeapKey indexHeapKey { HeapKeyClass::Index, { } };
 inline constexpr HeapKey unknownHeapKey { HeapKeyClass::Unknown, { } };
 inline constexpr HeapKey enumeratedHeapKey { HeapKeyClass::Unknown, { }, true };
-inline constexpr HeapKey heapKeyOfProgramAlone { HeapKeyClass::Unknown, { }, true, HeapKeyReceivers::All, false, false, false, true };
 
 enum class HeapPropertyPart : uint8_t { Value, Getter, Setter };
 
@@ -63,7 +59,6 @@ struct HeapKeyUse {
     const ValueFlowOperand* stored { nullptr };
     bool tellsReceiversApart { false };
     bool isRead { false };
-    bool tellsEveryNameApart { false };
 };
 
 struct HeapReceiver {
@@ -334,7 +329,6 @@ private:
     void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
     bool readsRestArgumentOfInstance();
     bool listsNamesOfEnumeration();
-    bool findsNoPropertyOfEngineUnderKeyBeginningWith(StringID beginning, ClimbingSet receivers);
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
@@ -435,7 +429,7 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
 
     bool namesIndex = m_context.meet(keys, m_tables.numberKinds());
     AOT_THRESHOLD(uint32_t, mostNamesOfOneKeyToldApart, 32);
-    bool countsNamesOfProgramTogether = !use.tellsEveryNameApart && m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
+    bool countsNamesOfProgramTogether = m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
     bool hasNameOfProgram = false;
     m_context.forEachMemberInLine(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
         HeapKey key = keyNamed(m_universe.keyOf(constant));

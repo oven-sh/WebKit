@@ -15,7 +15,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 #define AOT_COUNT_INLINE_BUILTIN(name) + 1
-static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 12, "chooseFormOfArrayBuiltin needs a case for every member of the family");
+static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 15, "chooseFormOfArrayBuiltin needs a case for every member of the family");
 static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 6, "chooseFormOfArrayStorageBuiltin needs a case for every member of the family");
 #undef AOT_COUNT_INLINE_BUILTIN
 
@@ -92,6 +92,15 @@ static bool canSpliceInline(const InlineBuiltinSite& site)
     return !exceeds(site, LimitID::MaxInlineSpliceInsertions, arguments.size() - numberOfRangeArguments);
 }
 
+static bool canCopySplicedInline(const InlineBuiltinSite& site)
+{
+    constexpr size_t numberOfRangeArguments = 2;
+    std::span<const ValueID> arguments = site.arguments();
+    if (!areNumbers(site, arguments.first(std::min(arguments.size(), numberOfRangeArguments))))
+        return false;
+    return arguments.size() <= numberOfRangeArguments || !exceeds(site, LimitID::MaxInlineSpliceInsertions, arguments.size() - numberOfRangeArguments);
+}
+
 InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
 {
     bool isCompact = site.shape != CodeShape::Fast;
@@ -117,6 +126,12 @@ InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
         return twoWayIf(site, canSpliceInline(site));
     case InlineBuiltin::ArraySplicePrefix:
         return InlineForm::Whole;
+    case InlineBuiltin::ArrayWith:
+        return twoWayIf(site, !isCompact && site.arguments().size() == 2 && isNumberArgument(site, 0));
+    case InlineBuiltin::ArrayToReversed:
+        return twoWayIf(site, !isCompact && site.arguments().empty());
+    case InlineBuiltin::ArrayToSpliced:
+        return twoWayIf(site, !isCompact && canCopySplicedInline(site));
     case InlineBuiltin::ArrayUnshift:
         return twoWayIf(site, site.arguments().size() == 1);
     case InlineBuiltin::ArrayIterator:

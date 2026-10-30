@@ -23,7 +23,7 @@ function f0 name="overASet" parameters=[{type=Set<number, proven, pristine[Names
 # CHECK-NEXT: [[isUnchanged]]: boolean{{*}} = IsBuiltinLocationUnchanged member=SetPrototypeSymbolIterator
 # CHECK-NEXT: Branch [[isUnchanged]] -> taken [[own]](), notTaken [[asks]]()
 # CHECK: SetNext v0
-# CHECK: PropGet {{*}} key="done"
+# CHECK: = CallDirect {{*}} function={{*}} [isNeverInlined]
 # CHECK: [[own]]():
 # CHECK-NEXT: CollectionTable v0
 # CHECK: [[asks]]() frequency=Unlikely:

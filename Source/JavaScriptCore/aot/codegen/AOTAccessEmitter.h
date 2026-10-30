@@ -12,6 +12,7 @@
 #include "AOTRuntimeRecords.h"
 #include "Structure.h"
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -139,6 +140,20 @@ private:
         Condition didCopy;
     };
     std::optional<CopyAtAllocation> m_copyAtAllocation;
+
+    // `{ ...source, name, other }`: the definitions by name that come first behind a CopyObject whose copy is an ordinary object, with values that are there at the copy.
+    // One call copies and defines, when it knows how. The code behind it asks whether it did: nothing that can run other code stands between them.
+    struct DefinitionWithCopy {
+        ValueID definition;
+        uint32_t name;
+        Boxed value;
+    };
+    Vector<DefinitionWithCopy, 4> findDefinitionsWithCopy(const ValueContext& copy);
+    bool isThereAtCopy(ValueID copy, ValueID);
+    Boxed valueAtCopy(const ValueContext& copy, ValueID);
+    bool canTakeNames(ValueID);
+    std::optional<Vector<ValueID, 4>> copiesThatMeet(const Target&, size_t index);
+    BitVector m_definitionsWithCopy;
 };
 
 } } } // namespace JSC::AOT::Typed

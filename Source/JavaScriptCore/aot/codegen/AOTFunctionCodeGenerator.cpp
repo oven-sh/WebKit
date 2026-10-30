@@ -215,6 +215,7 @@ static BitVector findParametersWithoutObjects(const Program& program, const Func
 
 static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
 {
+    policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());

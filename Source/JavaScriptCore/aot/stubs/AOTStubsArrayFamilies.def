@@ -25,6 +25,8 @@ v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0
 
 // AOTStubsArraySlice.cpp
 v(ArraySlice, CalledByCode, (Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
+v(CreateArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateArguments)
+v(CreateMappedArguments, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, CreateMappedArguments)
 
 // AOTStubsArrayPush.cpp
 v(ArrayPush, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)

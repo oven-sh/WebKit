@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -85,7 +86,7 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (operand != ownedValue && generator().isValidatedWhereLookedAt(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
             checkIsSpecified(operand);
-        if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand))
+        if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand) || emitter<AccessEmitter>().leavesKeyToRead(operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.
         const Type& type = typeOf(operand);

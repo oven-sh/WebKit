@@ -10,10 +10,12 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTArrayStorageForms.h"
+#include "AOTCalleeSet.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyAccessInternal.h"
 #include "AOTProgramCaches.h"
 #include "AOTRepresentation.h"
 #include "AOTSchemaWalkers.h"
@@ -21,6 +23,7 @@
 #include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTValueIdentity.h"
+#include <array>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1022,6 +1025,170 @@ static void keepCellsInFieldsReadAsStrings(const FlowApplyContext& context)
     });
 }
 
+namespace {
+
+struct ClosureCreation {
+    FunctionID creator;
+    uint32_t block { 0 };
+    uint32_t index { 0 };
+    unsigned count { 0 };
+};
+
+class CallWalk {
+public:
+    CallWalk(const Program& program, const FlowResults& results, FunctionID target)
+        : m_program(program)
+        , m_results(results)
+        , m_target(target)
+        , m_visited(program.functions.size())
+    {
+    }
+
+    bool mayReachTarget(FunctionID caller, const Value& value)
+    {
+        if (Value::opcodesWithCallees.contains(value.opcode)) {
+            if (!value.callees() || !m_program.at(value.callees()).listsEveryCallee())
+                return true;
+            for (FunctionID callee : m_program.at(value.callees()).written().functions)
+                m_worklist.append(callee);
+        }
+        if (AccessSiteID site = PayloadWord::accessSite(value.opcode) ? value.accessSite() : AccessSiteID()) {
+            for (const FlowIndirectCall& call : m_results.indirectCallsFrom(caller)) {
+                if (call.site == site)
+                    m_worklist.append(call.callee);
+            }
+        }
+        while (!m_worklist.isEmpty()) {
+            FunctionID function = m_worklist.takeLast();
+            if (function == m_target)
+                return true;
+            if (function.index() >= m_visited.size() || m_visited.quickSet(function.index()))
+                continue;
+            const Function& body = m_program.at(function);
+            for (const FlowIndirectCall& call : m_results.indirectCallsFrom(function))
+                m_worklist.append(call.callee);
+            for (const Block& block : body.blocks) {
+                for (ValueID id : block.values) {
+                    const Value& inner = body.at(id);
+                    if (!Value::opcodesWithCallees.contains(inner.opcode))
+                        continue;
+                    if (!inner.callees() || !m_program.at(inner.callees()).listsEveryCallee())
+                        return true;
+                    for (FunctionID callee : m_program.at(inner.callees()).written().functions)
+                        m_worklist.append(callee);
+                }
+            }
+        }
+        return false;
+    }
+
+private:
+    const Program& m_program;
+    const FlowResults& m_results;
+    FunctionID m_target;
+    BitVector m_visited;
+    Vector<FunctionID, 16> m_worklist;
+};
+
+} // anonymous namespace
+
+static bool isCreatedBeforeInstances(const Program& program, const FlowResults& results, const ClosureCreation& creation, FunctionID constructor)
+{
+    if (creation.count != 1 || !program.at(creation.creator).isModuleBody())
+        return false;
+    const Function& creator = program.at(creation.creator);
+    CallWalk walk(program, results, constructor);
+    for (uint32_t block = 0; block <= creation.block; ++block) {
+        const BlockValues& values = creator.blocks[block].values;
+        size_t end = block == creation.block ? creation.index : values.size();
+        for (size_t index = 0; index < end; ++index) {
+            if (walk.mayReachTarget(creation.creator, creator.at(values[index])))
+                return false;
+        }
+    }
+    return true;
+}
+
+static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowResults& results)
+{
+    struct Candidate {
+        FieldReference field;
+        FunctionID getter;
+        FunctionID setter;
+        bool isProven { false };
+        bool isDefined { false };
+    };
+    PropertyAccessContext context { program, &results };
+    Vector<Candidate> candidates;
+    HashMap<uint32_t, ClosureCreation, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> creations;
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& layout = program.layouts[index];
+        if (layout.kind != LayoutKind::Instance || !layout.constructor)
+            continue;
+        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            FieldReference reference { LayoutID(index), field };
+            PropertyKeyID key = layout.fields[field].key;
+            if (!key || layout.fields[field].flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsPrivate }) || layout.fields[field].flow.prototypeName != PrototypeNameState::Unknown || !mayBeEmptyInSlot(program, reference.layout, reference))
+                continue;
+            MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, reference.layout, key, Access::Store, false });
+            if (inherited.kind != MemberKind::Accessor)
+                continue;
+            candidates.append({ reference, inherited.getter, inherited.setter, inherited.needsNoTest(), false });
+            for (FunctionID accessor : { inherited.getter, inherited.setter }) {
+                if (accessor && !inherited.needsNoTest())
+                    creations.add(accessor.index(), ClosureCreation { });
+            }
+        }
+    }
+    if (candidates.isEmpty())
+        return;
+
+    auto isDefinedBy = [&](const Candidate& candidate, const Function& function, const Value& definition) {
+        if (fieldAt(program, candidate.field).key != definition.key())
+            return false;
+        const Type& object = program.typeOf(function, definition.objectOperand());
+        if (object.anyObject)
+            return true;
+        if (!object.layouts)
+            return false;
+        std::span<const LayoutID> receivers = program.at(object.layouts).completeMembers();
+        return std::ranges::any_of(receivers, [&](LayoutID receiver) {
+            std::optional<FieldReference> field = findField(program, receiver, definition.key(), BaseChain::Predicted);
+            if (!field)
+                return false;
+            FieldReference declaration = declarationOf(program, *field);
+            return declaration.layout == candidate.field.layout && declaration.field == candidate.field.field;
+        });
+    };
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+            const BlockValues& values = function.blocks[block].values;
+            for (uint32_t position = 0; position < values.size(); ++position) {
+                const Value& value = function.at(values[position]);
+                if (value.opcode == Opcode::PropDefine) {
+                    for (Candidate& candidate : candidates)
+                        candidate.isDefined |= isDefinedBy(candidate, function, value);
+                    continue;
+                }
+                if (value.opcode != Opcode::NewClosure)
+                    continue;
+                auto found = creations.find(value.function().index());
+                if (found != creations.end())
+                    found->value = { FunctionID(index), block, position, found->value.count + 1 };
+            }
+        }
+    }
+    for (const Candidate& candidate : candidates) {
+        FunctionID constructor = program.at(candidate.field.layout).constructor;
+        bool isExpected = !candidate.isDefined && (candidate.isProven || std::ranges::all_of(std::array { candidate.getter, candidate.setter }, [&](FunctionID accessor) {
+            return !accessor || isCreatedBeforeInstances(program, results, creations.get(accessor.index()), constructor);
+        }));
+        if (isExpected)
+            program.at(candidate.field.layout).fields[candidate.field.field].flow.prototypeName = PrototypeNameState::AccessorOnPrototypes;
+    }
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -1063,6 +1230,8 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     times.didFinish("keepCellsInFieldsReadAsStrings"_s);
     applyBodyUpdates(context, editor, fieldsExpectedAsRead, keysOfWidenedFields, widenedVariables);
     times.didFinish("applyBodyUpdates"_s);
+    expectAccessorsDefinedBeforeInstances(program, results);
+    times.didFinish("expectAccessorsDefinedBeforeInstances"_s);
     ProgramCaches caches(program, build);
     computeOperandSummaries(program, results, build);
     times.didFinish("computeOperandSummaries"_s);

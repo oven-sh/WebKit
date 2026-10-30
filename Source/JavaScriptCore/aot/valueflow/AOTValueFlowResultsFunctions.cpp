@@ -15,6 +15,7 @@
 #include "AOTHeatGraph.h"
 #include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPrototypesAtCreation.h"
 #include "AOTSharedMemo.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -389,6 +390,28 @@ ValueSetID AccessorsUnderUnknownKeys::findOn(ValueSetMaker& maker, ValueSetID ob
     return accessors;
 }
 
+static ValueSetID findEscapedAccessors(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID receivers, ValueFlowName name)
+{
+    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heap.index().findNodesWrittenUnder(name);
+    if (!written)
+        return ValueSets::nothing;
+    const ValueSets& sets = inputs.sets();
+    ValueSetID escapedClosures = maker.intersect(inputs.universe().closures(), heap.escaped());
+    std::optional<ValueSetID> chain;
+    ValueSetID accessors = ValueSets::nothing;
+    for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
+        if (ValueSets::isComplement(node.value) || !sets.meet(node.value, escapedClosures))
+            continue;
+        if (!chain)
+            chain = heap.chainOf(maker, receivers);
+        if (sets.meet(node.objects, *chain))
+            accessors = maker.unite(accessors, maker.intersect(node.value, escapedClosures));
+    }
+    return accessors;
+}
+
+enum class GroupSource : bool { Rule, FinalState };
+
 static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& stampedCalls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -536,9 +559,42 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                     return call.kind == FlowIndirectCallKind::Accessor && sets.contains(escaped, universe.closureOf(call.callee));
                 }, firstOfStatement);
             };
-            auto add = [&](const EnteredGroup& group, const CalleeSet* stampThatListsCallees) {
+            std::optional<ValueSetID> knownEscapedAccessors;
+            auto escapedAccessorsAtSite = [&](ValueSetMaker& maker) {
+                if (knownEscapedAccessors)
+                    return *knownEscapedAccessors;
+                knownEscapedAccessors = ValueSets::nothing;
+                bool isRead = statement.opcode == Opcode::PropGet;
+                if (!listsWhatWasSeen || statement.kind != ValueFlowStatementKind::Operation || !statement.site || (!isRead && statement.opcode != Opcode::PropSet))
+                    return ValueSets::nothing;
+                static_assert(!OperandIndex::PropGet::object && !OperandIndex::PropSet::object);
+                ValueSetID receivers = std::as_const(heap).possibleValuesOf(maker, bodies.operandsOf(statement)[0]);
+                if (ValueSets::isComplement(receivers))
+                    return ValueSets::nothing;
+                PropertyKeyID key = function.at(statement.site).key();
+                // A read of a primitive starts at the prototype of its kind.
+                Vector<ValueFlowObjectID, 8> prototypesOfPrimitives;
+                sets.forEachMember(maker.intersect(receivers, maker.unite(universe.primitives(), universe.keys())), [&](ValueFlowObjectID primitive) {
+                    forEachPrototypeAtCreation(program, universe, primitive, [&](ValueFlowObjectID prototype) {
+                        prototypesOfPrimitives.append(prototype);
+                    }, [](SilentAboutPrototype) { });
+                });
+                ValueSetID starts = maker.unite(maker.intersect(receivers, universe.knownObjects()), maker.of(prototypesOfPrimitives.span()));
+                knownEscapedAccessors = findEscapedAccessors(inputs, heap, maker, starts, isRead ? ValueFlowName::getter(program, key) : ValueFlowName::setter(program, key));
+                return *knownEscapedAccessors;
+            };
+            // A rule sees an escaped object only until the unknown object covers it, and is not run again when that happens, so which escaped closures its groups name depends on the order of the rules.
+            // The final state answers instead, where it can: it lists no callbacks in a very large program, or of a call whose arguments it cannot tell apart.
+            auto add = [&](EnteredGroup group, const CalleeSet* stampThatListsCallees, GroupSource source) {
                 if (ValueSets::isComplement(group.callees))
                     return;
+                bool finalStateAnswers = listsWhatWasSeen && (!callbacksOfStatement || callbacksOfStatement->everyRowIsListed);
+                if (source == GroupSource::Rule && finalStateAnswers && sets.meet(group.callees, escaped)) {
+                    BorrowedValueSetMaker maker(inputs.makerPool());
+                    bool entersAccessors = group.kind == ValueFlowCallKind::Get || group.kind == ValueFlowCallKind::Set;
+                    ValueSetID kept = maker.get().unite(ValueSets::complement(escaped), entersAccessors ? escapedAccessorsAtSite(maker.get()) : ValueSets::nothing);
+                    group.callees = maker.get().intersect(group.callees, kept);
+                }
                 bool namesNoEscapedClosure = sets.size(group.callees) > inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
                 ValueSetID callees = group.callees;
                 if (sets.size(callees) >= fewestCalleesListedOnce) {
@@ -626,7 +682,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 BorrowedValueSetMaker maker(inputs.makerPool());
                 callbacksOfStatement = findCallbacksOfCall(inputs, maker.get(), statement, *stamp);
                 for (const CallbacksOfCall::Row& row : callbacksOfStatement->rows)
-                    add(EnteredGroup { row.closures, row.kind }, nullptr);
+                    add(EnteredGroup { row.closures, row.kind }, nullptr, GroupSource::FinalState);
             }
 
             Vector<uint32_t, 8> worklist;
@@ -636,7 +692,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             };
             forEachRequestOf(inputs, idOf(statement), [&](const EnteredGroup& group) {
                 bool isGroupOfCallees = (group.kind == ValueFlowCallKind::Call || group.kind == ValueFlowCallKind::Construct) && function.role != FunctionRole::Model;
-                add(group, isGroupOfCallees ? stamp : nullptr);
+                add(group, isGroupOfCallees ? stamp : nullptr, GroupSource::Rule);
             }, [&](ValueFlowStatementID made) {
                 noteAsker(numberOf(made));
                 follow(numberOf(made));
@@ -655,7 +711,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 ValueSetID accessors = accessorsUnderUnknownKeys->findOn(maker.get(), maker.get().intersect(receivers, universe.knownObjects()), function.at(statement.site).key(), kind);
                 if (accessors == ValueSets::nothing)
                     return false;
-                add(EnteredGroup { accessors, kind }, nullptr);
+                add(EnteredGroup { accessors, kind }, nullptr, GroupSource::FinalState);
                 return true;
             };
             if (!addAccessorsLaidOnReceivers() && worklist.isEmpty())
@@ -667,7 +723,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 if (!seen.add(number).isNewEntry)
                     continue;
                 for (const GroupOfStatement& entry : groupsOf(number))
-                    add(entry.group, nullptr);
+                    add(entry.group, nullptr, GroupSource::Rule);
                 for (uint32_t asked : statementsAskedFor.of(number))
                     follow(asked);
             }
@@ -732,11 +788,14 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             });
         }
     }
-    BitVector isCalledByHost = isEnteredByHost;
-    isCalledByHost.merge(getsRequests);
+    BitVector isCalledByHost = getsRequests;
+    for (size_t function : isEnteredByHost) {
+        if (!listsWhatWasSeen || !inputs.hasEscaped(universe.closureOf(FunctionID(static_cast<uint32_t>(function)))))
+            isCalledByHost.quickSet(function);
+    }
     for (size_t function : isCalledByHost)
         tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = getsRequests.quickGet(function) ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly });
-    stampedCalls.functionsEnteredWithoutStamp = BitVector(numberOfFunctions);
+    stampedCalls.functionsEnteredWithoutStamp = isEnteredByHost;
     for (const FlowIndirectCall& call : tables.functions.indirectCalls)
         stampedCalls.functionsEnteredWithoutStamp.quickSet(call.callee.index());
 

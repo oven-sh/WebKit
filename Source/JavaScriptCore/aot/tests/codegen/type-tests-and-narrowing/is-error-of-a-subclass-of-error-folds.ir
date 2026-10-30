@@ -99,11 +99,12 @@ function f2 name="Failure" module=m0 position=6 kind=DerivedConstructor flags=[H
     Return v5
 }
 
-# The generic body asks in place: it compares the type byte of the cell.
+# Only what Error has made for `super()` arrives, so the generic body does not look at the object either.
 # CHECK-LABEL: name="next" role=GenericVersion
-# CHECK: Int32 b@[[type]] = Load8Z(b@{{*}}, offset = 5, ControlDependent|ReadsImmutable|Reads:JSCell_typeInfoType
-# CHECK: Int32 b@[[isErrorCell]] = Equal(b@[[type]], $
-# CHECK-NEXT: Branch(b@[[isErrorCell]], Terminal
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[givenCount]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[givenSum]] = Add(b@[[givenCount]], b@[[givenCount]], {{*}}:Add)
+# CHECK-NEXT: Return(b@[[givenSum]], Terminal)
 # CHECK-LABEL: end of function
 # The parameter is a class that extends Error, and Error makes its objects. In the typed body Error.isError is true at build time: one arm is left, and the object is not looked at.
 # CHECK-LABEL: name="next" role=Source

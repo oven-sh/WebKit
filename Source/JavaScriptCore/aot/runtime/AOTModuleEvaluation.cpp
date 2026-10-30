@@ -3440,6 +3440,8 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         markNamespaceAsRequired(target);
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || targetData.kind == ModuleKind::Data))
         return;
+    if (isCommonJSFile)
+        noteRequireOfFile(target);
     // A file without a module object to hand out is shown neither as a child nor as a parent. Which file is the main one hangs on the calls that come before that is decided.
     if (m_isMainCommonJSModuleDecided && (!mayHandOutModuleObject(target) || !mayHandOutModuleObject(referrer)))
         return;
@@ -3528,6 +3530,22 @@ bool Modules::wasRequestedByLoader(ModuleID file)
     return wasRequested;
 }
 
+void Modules::noteRequireOfFile(ModuleID file)
+{
+    if (status(file) <= ModuleStatus::Linked && !wasRequestedByLoader(file))
+        m_filesLoadedByRequire.set(file.index());
+}
+
+bool Modules::wasLoadedSynchronously(ModuleID file)
+{
+    VMState::PartsOfImage& parts = m_instance.vm->aotState().parts[m_instance.program->position()];
+    if (!parts.filesWithKnownFirstLoad.set(file.index())) {
+        bool loadsSynchronously = host().loadsSynchronously && host().loadsSynchronously(m_instance.globalObject, moduleIDForHost(*m_instance.program, file));
+        parts.filesFirstLoadedSynchronously.set(file.index(), loadsSynchronously || m_filesLoadedByRequire.get(file.index()));
+    }
+    return parts.filesFirstLoadedSynchronously.get(file.index());
+}
+
 void Modules::findDistanceOfFiles(FilesBeingRun& load)
 {
     load.distanceOfFiles.fill(UINT32_MAX, m_table.size());
@@ -3582,7 +3600,11 @@ bool Modules::hasReachedLevelOf(FilesBeingRun& load, ModuleID file)
 void Modules::recordRequireFromOtherImage(ModuleID target, JSObject* moduleObjectOfReferrer)
 {
     bool isCommonJSFile = data(target).kind == ModuleKind::CommonJs;
-    if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || data(target).kind == ModuleKind::Data) || !mayHandOutModuleObject(target))
+    if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || data(target).kind == ModuleKind::Data))
+        return;
+    if (isCommonJSFile)
+        noteRequireOfFile(target);
+    if (!mayHandOutModuleObject(target))
         return;
     lookForMainCommonJSModule();
     LoadedModule& required = ensureLoaded(target);

@@ -111,10 +111,14 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
 {
     VM& vm = *instance->vm;
     JSGlobalObject* globalObject = instance->globalObject;
-    if (!canReadRestQuickly(source))
-        return nullptr;
     Structure* structure = globalObject->clonedArgumentsStructure();
     if (!hasContiguous(structure->indexingType()) || structure->mayInterceptIndexedAccesses() || structure->storedPrototypeObject()->needsSlowPutIndexing())
+        return nullptr;
+    if (structure->outOfLineCapacity() == initialOutOfLineCapacity) {
+        instance->allocation.calleeOfStrictArguments = calleeOfStrictCode(globalObject);
+        prepareInlineAllocation<ClonedArguments>(instance, InlineAllocation::Arguments, structure);
+    }
+    if (!canReadRestQuickly(source))
         return nullptr;
     ClonedArguments* result = ClonedArguments::createEmpty(vm, nullptr, structure, calleeOfStrictCode(globalObject), source.count, nullptr);
     if (!result)
@@ -180,6 +184,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateMappedArguments, JSCell*, (Instance* 
     ArgumentsObjectSource source = createArgumentSource(count, rest, parameters, Entry::operationAOTCreateMappedArguments);
     // A function with a mapped arguments object has a simple parameter list, so its length is its number of parameters.
     unsigned capacity = std::max<unsigned>(count, functionLengthOf(closure->function()));
+    instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::MappedArguments)].header = cellHeaderFor(globalObject->directArgumentsStructure());
     DirectArguments* result = DirectArguments::create(vm, globalObject->directArgumentsStructure(), count, capacity);
     result->setCallee(vm, closure);
     for (uint32_t i = 0; i < count; ++i) {

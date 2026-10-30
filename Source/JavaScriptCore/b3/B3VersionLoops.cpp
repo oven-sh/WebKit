@@ -579,14 +579,20 @@ private:
                 isGivenOneValue &= hoisted && (!given || given == hoisted);
                 given = hoisted;
             });
-            // A rare path that is copied into the fast version comes back to its header with whatever it has given the phi.
-            for (BasicBlock* block : plan.excursion.blocks) {
+            // A rare path that is copied into the fast version comes back to its header with whatever it has given the phi, in its own copy or in a block that it shares with the fast loop.
+            auto checkValuesGivenIn = [&](BasicBlock* block) {
                 for (Value* value : *block) {
                     if (value->opcode() != Set || value->as<VariableValue>()->variable() != variable)
                         continue;
                     Value* next = definitionOf(value->child(0));
                     isGivenOneValue &= plan.hoisted.valuesValidInExcursion.contains(next) && version.hoistedMap.get(next) == given;
                 }
+            };
+            for (BasicBlock* block : plan.excursion.blocks)
+                checkValuesGivenIn(block);
+            for (BasicBlock* block : plan.region.blocks) {
+                if (plan.excursion.sharedBlocks.contains(block))
+                    checkValuesGivenIn(block);
             }
             if (!given || !isGivenOneValue)
                 continue;

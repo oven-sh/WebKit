@@ -1,8 +1,8 @@
 # main.cjs: module.exports = exportedByMain; require("./helper.cjs"); Bun.main = globalThis.path; require.main.exports()        helper.cjs: module.exports = exportedByHelper
-# In a test run the runner itself stores into Bun.main, for each test file in its turn. A store of the program adds no file to those that may be the main module, and a large suite is not compiled again for it.
+# In a test run the runner itself stores into Bun.main, for each test file in its turn. A store of the program counts there as in an executable: `require.main` is what the cache holds under that path.
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: valueflow-solve calls
-# CHECK: f0 v10 -> f1
+# CHECK: f0 v10 ->{{*}} f1 f3{{*}}
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined

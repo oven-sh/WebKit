@@ -613,23 +613,6 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded
     jit.breakpoint();
 }
 
-[[nodiscard]] static Jump emitCreateThis(StubAssembler& jit, GPRReg word)
-{
-    Jump isClassConstructor = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
-    jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), operationArgumentGPR(1));
-    jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), operationArgumentGPR(2));
-    jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
-    jit.bindReturnLabel(StubFrameKind::ConstructAdapterMakesThis);
-    Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
-    jit.store64(GPRInfo::returnValueGPR, Address(fp, offsetOfConstructThis));
-    Jump hasThis = jit.jump();
-    isClassConstructor.link(&jit);
-    jit.store64(TrustedImm64(JSValue::ValueUndefined), Address(fp, offsetOfConstructThis));
-    hasThis.link(&jit);
-    return threw;
-}
-
 static void emitLoadConstructReceiver(StubAssembler& jit, GPRReg word, GPRReg base)
 {
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), calleeGPR);
@@ -673,14 +656,19 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     loadSlimClosureWord(jit, calleeGPR, word);
     hasWord.link(&jit);
 
-    // The word of a plain function that reads new.target has the address of its [[Call]] entry, which takes no new.target.
-    Jump isNotCallable = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
-    Jump needsConstructWord = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
-    isNotCallable.link(&jit);
-    Label hasConstructWord = jit.label();
+    Jump isNoPlainFunction = jit.branchTest64(CCallHelpers::NonZero, word, TrustedImm64((1ULL << ClosureWord::isNotCallableBit) | (1ULL << ClosureWord::takesNewTargetBit)));
     jit.store64(word, Address(fp, offsetOfConstructEntryWord));
 
-    Jump createThisThrew = emitCreateThis(jit, word);
+    Label makesThis = jit.label();
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), operationArgumentGPR(1));
+    jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), operationArgumentGPR(2));
+    jit.callOperation(Entry::operationAOTCreateThis, jit.reuseScratch(StubRegister::Operation));
+    jit.bindReturnLabel(StubFrameKind::ConstructAdapterMakesThis);
+    Jump createThisThrew = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.store64(GPRInfo::returnValueGPR, Address(fp, offsetOfConstructThis));
+
+    Label hasThis = jit.label();
     emitLoadConstructReceiver(jit, word, base);
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::ConstructAdapter);
@@ -692,6 +680,19 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     emitRareArgumentPaths(jit, entryCall);
     emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
+
+    // The word of a plain function that reads new.target has the address of its [[Call]] entry, which takes no new.target.
+    isNoPlainFunction.link(&jit);
+    Jump isNotCallable = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
+    Jump needsConstructWord = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
+    isNotCallable.link(&jit);
+    Label hasConstructWord = jit.label();
+    jit.store64(word, Address(fp, offsetOfConstructEntryWord));
+    jit.branchTest64(CCallHelpers::Zero, word, bitMask(ClosureWord::isNotCallableBit)).linkTo(makesThis, &jit);
+    // A class constructor allocates its object itself.
+    jit.store64(TrustedImm64(JSValue::ValueUndefined), Address(fp, offsetOfConstructThis));
+    jit.jump().linkTo(hasThis, &jit);
+
     emitFindConstructWord(jit, word, needsConstructWord, hasConstructWord, Address(fp, AdapterFrame::offsetOfNewTarget), jit.reuseScratch(StubRegister::T9));
 }
 

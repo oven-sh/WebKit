@@ -1256,6 +1256,7 @@ private:
         }
         Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
         Vector<ValueFlowObjectID> denseArrayLiterals;
+        Vector<ValueFlowObjectID> pairLiterals;
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
@@ -1264,6 +1265,8 @@ private:
                 proxiesFromNamedConstructor.append(object);
             if (universe.m_sites[site].isDenseArrayLiteral)
                 denseArrayLiterals.append(object);
+            if (universe.m_sites[site].isPairLiteral)
+                pairLiterals.append(object);
             if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
@@ -1273,6 +1276,7 @@ private:
         }
         universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
         universe.m_denseArrayLiterals = maker.of(denseArrayLiterals.span());
+        universe.m_pairLiterals = maker.of(pairLiterals.span());
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {

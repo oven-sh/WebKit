@@ -97,6 +97,7 @@ struct ModuleHost {
     JSObject* (*requirePrototype)(JSGlobalObject*);
     // A graph has come to a module with a mock whose factory has not run. Null in a host without mocks.
     void (*runMock)(JSGlobalObject*, ModuleID);
+    bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

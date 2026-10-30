@@ -141,6 +141,11 @@ void ModuleEmitter::generateRecordRequire(const ValueContext& value)
     callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
 }
 
+void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::WasLoadedSynchronously, { moduleIndex(value->module()) }));
+}
+
 void ModuleEmitter::generateCountExecution(const ValueContext& value)
 {
     Operand arguments[] { moduleIndex(value->module()), word32(static_cast<int32_t>(value->description().index())), word32(static_cast<int32_t>(value->counter())) };

@@ -79,6 +79,7 @@ struct JSONTextWriter final : Emission {
         Cursor cursor { { }, UINT_MAX };
         // Set where each arm brings the guard that the code behind the merge relies on.
         ValueID guard;
+        bool endsText { false };
     };
 
     struct TypeArm {
@@ -415,11 +416,20 @@ struct JSONTextWriter final : Emission {
     // An arm that has left for another merge point leaves the builder in no block. From there a jump is nothing, and so is going on at a merge point that no arm has reached.
     bool isInBlock() { return !!builder().currentBlock(); }
     MergePoint createMergePoint() { return { .frequency = currentFrequency() }; }
+    MergePoint createMergePointBehind(const Position& position) { return { .frequency = currentFrequency(), .endsText = position.kind == JSONPosition::Root }; }
 
     void jumpTo(MergePoint& merge, ValueID guard = { })
     {
         if (!isInBlock())
             return;
+        if (merge.endsText) {
+            RELEASE_ASSERT(!guard);
+            commit();
+            if (!merge.block)
+                merge.block = builder().addBlock(merge.frequency);
+            builder().emitJump(merge.block);
+            return;
+        }
         ensureCursor(0);
         if (!merge.block) {
             merge.block = builder().addBlock(merge.frequency);
@@ -439,7 +449,7 @@ struct JSONTextWriter final : Emission {
             RELEASE_ASSERT(!isInBlock());
             return;
         }
-        continueAt(merge.block, merge.cursor);
+        continueAt(merge.block, merge.endsText ? Cursor { } : merge.cursor);
     }
 
     void continueAt(BlockID block, Cursor cursor)
@@ -454,6 +464,15 @@ struct JSONTextWriter final : Emission {
             return;
         jumpTo(merge);
         continueAt(merge);
+    }
+
+    void leaveWithoutText()
+    {
+        RELEASE_ASSERT(m_whenThereIsNoText);
+        if (!isInBlock())
+            return;
+        m_cursor = { };
+        builder().emitJump(m_whenThereIsNoText);
     }
 
     void leaveAfterUnknownCode()
@@ -639,13 +658,13 @@ struct JSONTextWriter final : Emission {
         return builder().append(Opcode::JSONListedHolders, { m_stringBuilder });
     }
 
-    TypeArm beginTypeArm(ValueID value, TypeID tested, Expected<BlockFrequency> otherwise)
+    TypeArm beginTypeArm(ValueID value, TypeID tested, Expected<BlockFrequency> otherwise, Expected<BlockFrequency> ofArm = BlockFrequency::Normal)
     {
         TypeArm arm { evaluateTypeTest(program(), typeOf(value), program().at(tested)), value, value, { } };
         if (arm.matches != KnownBoolean::Unknown)
             return arm;
 
-        IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(builder().appendTypeTest(value, tested), testedOperandIndex, BlockFrequency::Normal, otherwise);
+        IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(builder().appendTypeTest(value, tested), testedOperandIndex, ofArm, otherwise);
         return { KnownBoolean::Unknown, branch.provenOnTaken, branch.provenOnNotTaken, branch.notTaken };
     }
 
@@ -670,12 +689,12 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        ValueID start = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
+        m_whenThereIsNoText = whenThereIsNoText;
         m_codeMayRunAroundValues = writingRunsCode(typeOf(value));
         appendValue(value, plan, Position { });
+        if (!isInBlock())
+            builder().moveToEndOf(builder().addBlock(BlockFrequency::Rare));
         commit();
-        ValueID end = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
-        emitJumpIf(builder().append(Opcode::StrictEq, { start, end }), whenThereIsNoText);
     }
 
     void appendValue(ValueID value, const ValuePlan& plan, const Position& position)
@@ -685,10 +704,11 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         for (TypeID nullish : { TypeTable::undefined, TypeTable::null }) {
-            TypeArm arm = beginTypeArm(value, nullish, BlockFrequency::Normal);
+            // Every type of a parameter holds null and undefined by here, whatever was written. Nobody serializes null by itself to speak of; in a field it is an ordinary value.
+            TypeArm arm = beginTypeArm(value, nullish, BlockFrequency::Normal, position.kind == JSONPosition::Root ? BlockFrequency::Unlikely : BlockFrequency::Normal);
             if (arm.matches == KnownBoolean::False)
                 continue;
 
@@ -696,7 +716,8 @@ struct JSONTextWriter final : Emission {
                 appendKeyOf(position);
                 appendToken(JSONToken::Null);
                 appendCommaOf(position);
-            }
+            } else if (position.kind == JSONPosition::Root)
+                leaveWithoutText();
             if (!endTypeArm(arm, done, start))
                 return;
             value = arm.remaining;
@@ -731,7 +752,7 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         BlockID generic;
         auto ensureGenericBlock = [&] {
@@ -822,7 +843,7 @@ struct JSONTextWriter final : Emission {
 
     void appendObjectParts(ValueID value, const ValuePlan& plan, const Position& position)
     {
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         auto appendParts = [&] {
             for (const ValuePlan& part : plan.parts) {
@@ -849,8 +870,10 @@ struct JSONTextWriter final : Emission {
 
     void appendGeneric(ValueID value, const Position& position)
     {
-        if (position.kind == JSONPosition::Root)
+        if (position.kind == JSONPosition::Root) {
+            leaveWithoutText();
             return;
+        }
 
         MergePoint done = createMergePoint();
         Cursor start = m_cursor;
@@ -926,7 +949,7 @@ struct JSONTextWriter final : Emission {
 
         bool isProperty = position.kind == JSONPosition::Property;
         Expected<BlockFrequency> frequency = currentFrequency();
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         BlockID generic = builder().addBlock(BlockFrequency::Rare);
         // A serializer that gives up has been called all the same, so what comes behind it has run unknown code.
         BlockID afterSerializerGaveUp = position.kind == JSONPosition::Root ? generic : builder().addBlock(BlockFrequency::Rare);
@@ -1586,6 +1609,7 @@ struct JSONTextWriter final : Emission {
     ValueID m_stringBuilder;
     BuiltinID m_calledBuiltin { };
     Cursor m_cursor { };
+    BlockID m_whenThereIsNoText;
     // The outermost first.
     Vector<Holder, 4> m_holders;
     bool m_codeMayRunAroundValues { false };

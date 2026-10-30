@@ -219,6 +219,8 @@ struct FlowSiteTables {
     bool keepsStorageOfListThatMayReadUndefined { false };
     // 0: flow says nothing. 1: no object that was seen to arrive has the name of the access. Else the number of the stamped set plus 2. Empty where nothing is stamped.
     Vector<uint32_t> receiversSeenAtSites;
+    // By site: all that the read or the call hands over, if it is an object, is plain data from outside, as out of JSON.parse. Empty where no flow results were asked for.
+    Vector<bool> sitesThatHandOverOnlyDataFromOutside;
     // Sorted by site.
     Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
@@ -308,10 +310,20 @@ struct FlowResultTables {
     std::unique_ptr<FlowApplication, FlowApplicationDeleter> application;
 };
 
+struct ConstantMember {
+    PropertyKeyID key;
+    KnownValue value;
+};
+
 struct ConstantLists {
     struct Entry {
         VariableID variable;
         Vector<KnownValue> elements;
+    };
+    // `const options = { style: "currency", currency: "USD" };`
+    struct ObjectEntry {
+        VariableID variable;
+        Vector<ConstantMember> members;
     };
 
     const Vector<KnownValue>* find(VariableID variable) const LIFETIME_BOUND
@@ -320,7 +332,14 @@ struct ConstantLists {
         return entry != entries.end() && entry->variable == variable ? &entry->elements : nullptr;
     }
 
+    const Vector<ConstantMember>* findObject(VariableID variable) const LIFETIME_BOUND
+    {
+        auto entry = std::ranges::lower_bound(objects, variable, { }, &ObjectEntry::variable);
+        return entry != objects.end() && entry->variable == variable ? &entry->members : nullptr;
+    }
+
     Vector<Entry> entries;
+    Vector<ObjectEntry> objects;
 };
 
 class FlowResults {
@@ -371,6 +390,7 @@ public:
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
     const FlowProxiesSeenAtSite* findProxiesSeenAt(AccessSiteID) const LIFETIME_BOUND;
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
+    const Vector<ConstantMember>* constantObjectIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.findObject(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
     std::span<const FlowIndirectCall> indirectCallsFrom(FunctionID callerAsRead) const LIFETIME_BOUND;
@@ -430,6 +450,8 @@ public:
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     std::span<const Wire::OtherOriginsRecord> otherOrigins() const LIFETIME_BOUND { return m_tables.sites.otherOrigins.span(); }
     bool seesOnlyFinishedObjects(AccessSiteID) const;
+    // A prediction: nothing that the program makes with a layout is seen to come out of the site.
+    bool handsOverOnlyDataFromOutside(AccessSiteID) const;
     bool mayCallBoundFunction(AccessSiteID) const;
     // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
     // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.

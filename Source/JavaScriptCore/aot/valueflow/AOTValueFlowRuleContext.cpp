@@ -41,7 +41,6 @@ const ValueFlowUniverse& ValueFlowRuleContext::universe() const { return *m_solv
 const ValueFlowProgramNodes& ValueFlowRuleContext::nodes() const { return *m_solver.m_input.nodes; }
 uint64_t ValueFlowRuleContext::mostMembersToldApart() const { return m_solver.m_input.mostMembersToldApart; }
 bool ValueFlowRuleContext::followsSpiesOutOfSight() const { return m_solver.m_input.build && m_solver.m_input.build->options().admitsReplacedBuiltins() && !m_solver.m_input.build->options().admitsFilesRunByHost(); }
-bool ValueFlowRuleContext::runnerChoosesMainModule() const { return refusedCode().hostRunsFilesOutsideImage || (m_solver.m_input.build && m_solver.m_input.build->options().admitsReplacedBuiltins()); }
 
 void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
 {
@@ -228,10 +227,6 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
         }
     }
     return narrowed.span();
-}
-std::span<const ValueFlowOperand> ValueFlowRuleContext::objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const
-{
-    return m_operandsInPlace.empty() ? m_solver.objectsReadUnderKeyOfStore(statement) : std::span<const ValueFlowOperand>();
 }
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
 

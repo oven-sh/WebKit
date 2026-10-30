@@ -459,6 +459,46 @@ static bool restingThreadsTakeTheNextLoop()
     return askedPoolOncePerHelper && numberOfCountedThreads().load() == width - 1;
 }
 
+struct TimesMemoryWasGivenBack {
+    std::atomic<unsigned> byAnyThread { 0 };
+    std::atomic<unsigned> byCaller { 0 };
+    std::atomic<Thread*> caller { nullptr };
+};
+
+static TimesMemoryWasGivenBack& timesMemoryWasGivenBack()
+{
+    static NeverDestroyed<TimesMemoryWasGivenBack> times;
+    return times;
+}
+
+static constexpr HostThreadPool poolThatCountsMemoryGivenBack { poolOfNewThreads.schedule, [] {
+    timesMemoryWasGivenBack().byAnyThread.fetch_add(1);
+    if (&Thread::currentSingleton() == timesMemoryWasGivenBack().caller.load())
+        timesMemoryWasGivenBack().byCaller.fetch_add(1);
+} };
+
+static bool callerGivesMemoryBackBesideTheOthersWork()
+{
+    constexpr unsigned width = 4;
+    TimesMemoryWasGivenBack& times = timesMemoryWasGivenBack();
+    times.byAnyThread = 0;
+    times.byCaller = 0;
+    times.caller = &Thread::currentSingleton();
+    ParallelLoops loops(width, &poolThatCountsMemoryGivenBack, Seconds::infinity());
+    loops.giveFreeMemoryBack();
+    bool doesItAtOnceWhereNobodyRests = times.byAnyThread.load() == 1 && times.byCaller.load() == 1;
+    runLoopThatNeedsEveryThread(loops);
+    waitForRestingThreads(loops, width - 1);
+    unsigned before = times.byAnyThread.load();
+    loops.giveFreeMemoryBack();
+    bool leavesItForLater = times.byCaller.load() == 1;
+    while (times.byAnyThread.load() < before + width - 1)
+        Thread::yield();
+    bool othersDidItAtOnce = times.byCaller.load() == 1;
+    runLoopThatNeedsEveryThread(loops);
+    return doesItAtOnceWhereNobodyRests && leavesItForLater && othersDidItAtOnce && times.byCaller.load() == 2 && times.byAnyThread.load() == before + width;
+}
+
 static bool restingThreadsGoBackToThePool()
 {
     constexpr unsigned width = 4;
@@ -638,6 +678,7 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "an array creates and destroys each element once"_s, parallelArrayCreatesAndDestroysEachElementOnce(loops));
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
+    printCheck(out, "the caller gives memory back beside the others' work"_s, callerGivesMemoryBackBesideTheOthersWork());
     printCheck(out, "pending tasks run by priority"_s, pendingTasksRunByPriority());
     printCheck(out, "a background loop yields to foreground loops"_s, backgroundLoopYieldsToForegroundLoop(words->threads));
     printCheck(out, "tasks run after their dependencies"_s, tasksRunAfterTheirDependencies(loops));

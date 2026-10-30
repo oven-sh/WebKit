@@ -12,6 +12,8 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTClaimsAboutClassesAndClosures.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTGrouping.h"
 #include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTLedgerVariables.h"
 #include "AOTNameCreatedSymbols.h"
@@ -1109,31 +1111,33 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
     });
 }
 
+// The same rule as expectedBaseOf(), on the results that are not applied yet.
+static LayoutID expectedBaseIn(const Program& program, const FlowApplication& application, LayoutID id)
+{
+    const LayoutFlow& flow = application.layouts[id.index()].flow;
+    switch (flow.baseState) {
+    case BaseState::Layout:
+        return flow.base;
+    case BaseState::Unknown:
+        return program.at(id).base;
+    case BaseState::None:
+        return application.layouts[id.index()].classFlow.prototypeBase;
+    case BaseState::BuiltinClass:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 // Every walk up the expected bases must end, so a linked base that closes a cycle is dropped.
 static void dropLinkedBasesInCycles(const Program& program, std::span<const LayoutID> basesLinkedByProgram, FlowApplication& application)
 {
-    // The same rule as expectedBaseOf(), on the results that are not applied yet.
-    auto expectedBase = [&](LayoutID id) -> LayoutID {
-        const LayoutFlow& flow = application.layouts[id.index()].flow;
-        switch (flow.baseState) {
-        case BaseState::Layout:
-            return flow.base;
-        case BaseState::Unknown:
-            return program.at(id).base;
-        case BaseState::None:
-            return application.layouts[id.index()].classFlow.prototypeBase;
-        case BaseState::BuiltinClass:
-            return { };
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    };
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID linked = basesLinkedByProgram[index];
         if (!linked || program.layouts[index].base || application.layouts[index].classFlow.prototypeBase != linked)
             continue;
         LayoutID current = linked;
         for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps)
-            current = expectedBase(current);
+            current = expectedBaseIn(program, application, current);
         if (current)
             application.layouts[index].classFlow.prototypeBase = LayoutID();
     }
@@ -1212,6 +1216,283 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
         }
     }
     dropLinkedBasesInCycles(program, basesLinkedByProgram.span(), application);
+}
+
+namespace {
+
+struct CallThatNamesPrototype {
+    LayoutID holder;
+    const ValueFlowStatement* statement { nullptr };
+    bool mayFollowConstruction { false };
+};
+
+struct PlaceOfDefinition {
+    FunctionID function;
+    ValueID site;
+    uint32_t definition { 0 };
+};
+
+struct ConstructionBehindCall {
+    LayoutID constructed;
+    ValueID call;
+};
+
+class SoleCallSites {
+public:
+    SoleCallSites(const Program& program, const FlowCallsOfProgram& calls)
+        : m_sites(program.functions.size())
+        , m_hasSeveral(program.functions.size())
+    {
+        for (const FlowCall& call : calls.calls) {
+            std::pair<FunctionID, ValueID>& site = m_sites[call.callee.index()];
+            if (call.caller == calls.host || (site.first && site != std::pair { call.caller, call.site }))
+                m_hasSeveral.quickSet(call.callee.index());
+            site = { call.caller, call.site };
+        }
+        for (const Vector<FunctionID>& callees : calls.calleeLists) {
+            for (FunctionID callee : callees)
+                m_hasSeveral.quickSet(callee.index());
+        }
+    }
+
+    std::optional<std::pair<FunctionID, ValueID>> of(FunctionID function) const
+    {
+        if (m_hasSeveral.quickGet(function.index()) || !m_sites[function.index()].first)
+            return std::nullopt;
+        return m_sites[function.index()];
+    }
+
+private:
+    Vector<std::pair<FunctionID, ValueID>> m_sites;
+    BitVector m_hasSeveral;
+};
+
+} // anonymous namespace
+
+static bool isAccessorDefinedByStatement(const Layout& holder, const ClassMember& member)
+{
+    bool isAccessor = member.kind == MethodKind::Getter || member.kind == MethodKind::Setter;
+    return isAccessor && member.key && member.side == ClassSide::Prototype && (holder.has(LayoutFlags::IsConstructorFunction) || member.isAssignedByProgram);
+}
+
+static bool mayDefineMemberUnder(const ValueFlowResultInputs& inputs, const ValueFlowStatement& call, PropertyKeyID key, ValueSetMaker& maker)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    ValueSetID named = possibleValuesOf(inputs, inputs.bodies().operandsOf(call)[OperandIndex::Call::arguments + 1], maker);
+    if (ValueSets::isComplement(named) || named == ValueSets::nothing)
+        return true;
+    return inputs.sets().anyMember(named, [&](ValueFlowObjectID value) {
+        switch (universe.kindOf(value)) {
+        case ValueFlowObjectKind::Key:
+            return universe.keyOf(value) == key;
+        case ValueFlowObjectKind::Builtin:
+        case ValueFlowObjectKind::ModuleBuiltin:
+        case ValueFlowObjectKind::Namespace:
+        case ValueFlowObjectKind::Closure:
+        case ValueFlowObjectKind::FunctionPrototype:
+        case ValueFlowObjectKind::Prototype:
+            return false;
+        default:
+            break;
+        }
+        LayoutID layout = universe.layoutOf(value);
+        return !layout || std::ranges::contains(inputs.program.at(layout).fields, key, &Field::key);
+    });
+}
+
+static Vector<ConstructionBehindCall> findConstructionsBehindCalls(const Program& program, const FlowCallsOfProgram& calls, FunctionID caller, std::span<const ValueID> sites)
+{
+    Vector<ConstructionBehindCall> constructions;
+    BitVector entered(program.functions.size());
+    BitVector listsEntered(calls.calleeLists.size());
+    Vector<FunctionID> worklist;
+    auto enter = [&](FunctionID callee) {
+        if (!entered.quickSet(callee.index()))
+            worklist.append(callee);
+    };
+    auto enterCalleesOf = [&](FunctionID function, ValueID site) {
+        for (const FlowCall& call : recordsWith(calls.calls.span(), function, &FlowCall::caller)) {
+            if (!site || call.site == site)
+                enter(call.callee);
+        }
+        for (const FlowCallOfList& call : recordsWith(calls.callsOfLists.span(), function, &FlowCallOfList::caller)) {
+            if ((site && call.site != site) || listsEntered.quickSet(call.calleeList))
+                continue;
+            for (FunctionID callee : calls.calleeLists[call.calleeList])
+                enter(callee);
+        }
+    };
+    for (ValueID site : sites) {
+        enterCalleesOf(caller, site);
+        while (!worklist.isEmpty()) {
+            FunctionID function = worklist.takeLast();
+            if (LayoutID constructed = program.at(function).constructedClass)
+                constructions.append({ constructed, site });
+            enterCalleesOf(function, { });
+        }
+    }
+    return constructions;
+}
+
+void noteAccessorsDefinedAfterObjectsAreMade(const ValueFlowResultInputs& inputs, const FlowCallsOfProgram& calls, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    FlowApplication& application = *tables.application;
+    auto holdsSuchAccessor = [&](uint32_t index) {
+        return std::ranges::any_of(application.layouts[index].classFlow.members, [&](const ClassMember& member) {
+            return isAccessorDefinedByStatement(program.layouts[index], member);
+        });
+    };
+    Vector<uint32_t> holdersOfAccessors = findIndicesInParallel(inputs.loops(), program.layouts.size(), holdsSuchAccessor);
+    if (holdersOfAccessors.isEmpty())
+        return;
+
+    Vector<Vector<LayoutID>> classesBelow(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (LayoutID base = program.layouts[index].constructor ? expectedBaseIn(program, application, LayoutID(index)) : LayoutID())
+            classesBelow[base.index()].append(LayoutID(index));
+    }
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classesAtOrBelowHolders;
+    auto classesAtOrBelow = [&](LayoutID holder) -> const BitVector& {
+        auto added = classesAtOrBelowHolders.add(holder.index(), BitVector());
+        if (added.isNewEntry) {
+            BitVector& below = added.iterator->value;
+            below.ensureSize(program.layouts.size());
+            Vector<LayoutID> worklist { holder };
+            while (!worklist.isEmpty()) {
+                LayoutID current = worklist.takeLast();
+                if (!below.quickSet(current.index()))
+                    worklist.appendVector(classesBelow[current.index()]);
+            }
+        }
+        return added.iterator->value;
+    };
+    BitVector holders(program.layouts.size());
+    for (uint32_t index : holdersOfAccessors) {
+        bool hidesField = false;
+        for (size_t storing : classesAtOrBelow(LayoutID(index))) {
+            hidesField |= std::ranges::any_of(application.layouts[index].classFlow.members, [&](const ClassMember& member) {
+                return isAccessorDefinedByStatement(program.layouts[index], member) && std::ranges::contains(program.layouts[storing].fields, member.key, &Field::key);
+            });
+        }
+        if (hidesField)
+            holders.quickSet(index);
+        else
+            classesAtOrBelowHolders.remove(index);
+    }
+    if (holders.isEmpty())
+        return;
+
+    Vector<CallThatNamesPrototype> definitions = collectInParallel<CallThatNamesPrototype>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<CallThatNamesPrototype>& found) {
+        if (!inputs.isReached(FunctionID(index)))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call)
+                continue;
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (operands.size() < OperandIndex::Call::arguments + 2 || !operands[OperandIndex::Call::arguments].node)
+                continue;
+            ValueSetID possible = inputs.solver().possibleValuesOf(operands[OperandIndex::Call::arguments].node);
+            ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
+            LayoutID holder = only ? universe.classLayoutOf(only) : LayoutID();
+            if (holder && holders.quickGet(holder.index()))
+                found.append({ holder, &statement });
+        }
+    });
+    if (definitions.isEmpty())
+        return;
+
+    SoleCallSites soleCallSites(program, calls);
+    Vector<PlaceOfDefinition> places;
+    for (uint32_t definition = 0; definition < definitions.size(); ++definition) {
+        size_t first = places.size();
+        places.append({ definitions[definition].statement->function, definitions[definition].statement->site, definition });
+        while (auto site = soleCallSites.of(places.last().function)) {
+            if (std::ranges::contains(places.span().subspan(first), site->first, &PlaceOfDefinition::function))
+                break;
+            places.append({ site->first, site->second, definition });
+        }
+    }
+    AOT::sort(places, { }, [](const PlaceOfDefinition& place) {
+        return std::tuple { place.function, place.site, place.definition };
+    });
+
+    for (size_t first = 0, end = 0; first < places.size(); first = end) {
+        FunctionID function = places[first].function;
+        while (end < places.size() && places[end].function == function)
+            ++end;
+        std::span<const PlaceOfDefinition> placesInFunction = places.span().subspan(first, end - first);
+        FunctionAnalyses analyses(AnalysisContext { inputs.build, program, nullptr, nullptr, function }, program.at(function));
+        Vector<BitVector> blocksLeadingToPlaces(placesInFunction.size(), [&](size_t index) {
+            BitVector leading(analyses.cfg().numNodes());
+            ValueLocation location = analyses.useLists().locationOf(placesInFunction[index].site);
+            Vector<BlockID> worklist;
+            if (location.placement == ValuePlacement::InBlock)
+                worklist.append(location.block);
+            while (!worklist.isEmpty()) {
+                for (BlockID predecessor : analyses.cfg().predecessors(worklist.takeLast())) {
+                    if (!leading.quickSet(predecessor.index()))
+                        worklist.append(predecessor);
+                }
+            }
+            return leading;
+        });
+        auto mayComeBefore = [&](ValueID call, const PlaceOfDefinition& place) {
+            ValueLocation location = analyses.useLists().locationOf(place.site);
+            ValueLocation locationOfCall = analyses.useLists().locationOf(call);
+            if (call == place.site || location.placement != ValuePlacement::InBlock || locationOfCall.placement != ValuePlacement::InBlock)
+                return false;
+            bool leadsToPlace = (locationOfCall.block == location.block && locationOfCall.index < location.index) || blocksLeadingToPlaces[&place - placesInFunction.data()].quickGet(locationOfCall.block.index());
+            return leadsToPlace && !analyses.dominates(place.site, ProgramPoint { locationOfCall.block, locationOfCall.index });
+        };
+        Vector<ValueID> callsBefore;
+        auto noteCall = [&](ValueID call) {
+            if (!callsBefore.isEmpty() && callsBefore.last() == call)
+                return;
+            if (std::ranges::any_of(placesInFunction, [&](const PlaceOfDefinition& place) { return mayComeBefore(call, place); }))
+                callsBefore.append(call);
+        };
+        for (const FlowCall& call : recordsWith(calls.calls.span(), function, &FlowCall::caller))
+            noteCall(call.site);
+        for (const FlowCallOfList& call : recordsWith(calls.callsOfLists.span(), function, &FlowCallOfList::caller))
+            noteCall(call.site);
+        if (callsBefore.isEmpty())
+            continue;
+        Vector<ConstructionBehindCall> constructions = findConstructionsBehindCalls(program, calls, function, callsBefore.span());
+        for (const PlaceOfDefinition& place : placesInFunction) {
+            CallThatNamesPrototype& definition = definitions[place.definition];
+            definition.mayFollowConstruction |= std::ranges::any_of(constructions, [&](const ConstructionBehindCall& construction) {
+                return classesAtOrBelow(definition.holder).quickGet(construction.constructed.index()) && mayComeBefore(construction.call, place);
+            });
+        }
+    }
+
+    AOT::stableSortInLine(definitions, { }, &CallThatNamesPrototype::holder);
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    for (std::span<const CallThatNamesPrototype> remaining = definitions.span(); !remaining.empty();) {
+        LayoutID holder = remaining.front().holder;
+        std::span<const CallThatNamesPrototype> ofHolder = recordsWith(remaining, holder, &CallThatNamesPrototype::holder);
+        remaining = remaining.subspan(ofHolder.size());
+        if (std::ranges::none_of(ofHolder, &CallThatNamesPrototype::mayFollowConstruction))
+            continue;
+        ClassFlow& flow = application.layouts[holder.index()].classFlow;
+        auto isDefinedAfterObjectsAreMade = [&](PropertyKeyID key) {
+            bool isDefined = false;
+            for (const CallThatNamesPrototype& definition : ofHolder) {
+                if (!mayDefineMemberUnder(inputs, *definition.statement, key, borrowedMaker.get()))
+                    continue;
+                if (!definition.mayFollowConstruction)
+                    return false;
+                isDefined = true;
+            }
+            return isDefined;
+        };
+        for (Vector<ClassMember>* list : { &flow.members, &flow.namedMembers } ) {
+            for (ClassMember& member : *list)
+                member.isDefinedAfterObjectsAreMade = isAccessorDefinedByStatement(program.at(holder), member) && isDefinedAfterObjectsAreMade(member.key);
+        }
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -619,7 +619,9 @@ StubSignature signatureOfCopyObjectFrontEnd(StubKey)
     return operationFrontEndSignature(4);
 }
 
-enum class CopiedBy : bool { Definitions, Stores };
+// With names: the operands are the source, the number of the first name, the count of the names and a list: the count, the numbers of the names, their values.
+// An ordinary object whose copy the table knows gets the names here. Any other is copied as ever, and the code behind the call writes the names into the copy: it asks objects.copyHasItsNames.
+enum class CopiedBy : uint8_t { Definitions, Stores, DefinitionsWithNames };
 
 static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
 {
@@ -637,6 +639,11 @@ static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
     RELEASE_ASSERT(noOverlap(source, excludedRun, count, jit.operand(3), copy, word, size, structure, instanceGPR));
     JumpList callsOperation;
     JumpList callsOperationWithoutExclusions;
+    const bool definesNames = copiedBy == CopiedBy::DefinitionsWithNames;
+    // The operands are as they came.
+    JumpList definesNamesByOperation;
+    // The list is in its register.
+    JumpList definesNamesByOperationWithList;
 
     constexpr int32_t wordSize = sizeof(uint64_t);
     constexpr int32_t chunkSize = 2 * wordSize;
@@ -734,8 +741,15 @@ static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
         callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
     }
     Jump isNotCell = jit.branchIfNotCell(source);
-    jit.move(count, word);
-    callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
+    if (!definesNames) {
+        jit.move(count, word);
+        callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
+    }
+    // A copy by the code below writes all three registers. Where it is left to the operation, the list says again what they held.
+    if (definesNames) {
+        jit.storePtr(kept, Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.listOfNamesOfCopy)));
+        jit.store32(TrustedImm32(0), Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.copyHasItsNames)));
+    }
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
 
     // The copy has the Structure of the source, and with it a key order that the Structure holds.
@@ -767,6 +781,114 @@ static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
     allocateAndCopy(true, finishNothing);
 
     isNotCompiledObject.link(&jit);
+    if (definesNames) {
+        const GPRReg firstName = excludedRun;
+        const GPRReg list = kept;
+        const GPRReg record = word;
+        const GPRReg scratch = structure;
+        const GPRReg butterfly = firstName;
+        JumpList isOccupied;
+        JumpList& cannot = definesNamesByOperationWithList;
+        static_assert(sizeof(NameInCopy) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(Allocator) && sizeof(IndexingHeader) == sizeof(EncodedJSValue));
+        constexpr int32_t offsetOfNames = sizeof(CopyWithNames);
+        jit.load32(Address(source, JSCell::structureIDOffset()), scratch);
+        jit.urshift32(scratch, TrustedImm32(copyWithNamesHashShift), record);
+        jit.add32(firstName, record);
+        jit.and32(TrustedImm32(numberOfPlacesOfCopiesWithNames - 1), record);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.copiesWithNames)), size);
+        jit.load32(BaseIndex(size, record, CCallHelpers::TimesFour), record);
+        definesNamesByOperation.append(jit.branchTest32(CCallHelpers::Zero, record));
+        jit.addPtr(size, record);
+        isOccupied.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(record, OBJECT_OFFSETOF(CopyWithNames, structureOfSource))));
+        isOccupied.append(jit.branch32(CCallHelpers::NotEqual, firstName, Address(record, OBJECT_OFFSETOF(CopyWithNames, firstName))));
+        jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, count)), size);
+        isOccupied.append(jit.branch32(CCallHelpers::NotEqual, size, count));
+        Jump hasOneName = jit.branch32(CCallHelpers::Equal, size, TrustedImm32(1));
+        Label compareNextName = jit.label();
+        jit.sub32(TrustedImm32(1), size);
+        jit.load32(BaseIndex(record, size, CCallHelpers::TimesEight, offsetOfNames + OBJECT_OFFSETOF(NameInCopy, name)), scratch);
+        jit.load32(BaseIndex(list, size, CCallHelpers::TimesEight, wordSize), copy);
+        isOccupied.append(jit.branch32(CCallHelpers::NotEqual, scratch, copy));
+        jit.branch32(CCallHelpers::Above, size, TrustedImm32(1)).linkTo(compareNextName, &jit);
+        hasOneName.link(&jit);
+
+        // From here on firstName and count hold other things.
+        jit.move(TrustedImm32(0), butterfly);
+        jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, storageSize)), size);
+        Jump hasNoStorage = jit.branchTest32(CCallHelpers::Zero, size);
+        jit.urshift32(size, TrustedImm32(1), scratch);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), count);
+        jit.loadPtr(BaseIndex(count, scratch, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), scratch);
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+        allocateCell(jit, copy, scratch, count, cannot);
+        jit.getEffectiveAddress(BaseIndex(copy, size, CCallHelpers::TimesOne, sizeof(IndexingHeader)), butterfly);
+        // The properties lie at the end of the storage. What the source has no counterpart for lies in front of them.
+        jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, storageSizeOfSource)), scratch);
+        jit.sub32(scratch, size);
+        Jump hasNoMoreStorage = jit.branchTest32(CCallHelpers::Zero, size);
+        Label zeroNextChunk = jit.label();
+        jit.sub32(TrustedImm32(chunkSize), size);
+        jit.store64(TrustedImm32(0), BaseIndex(copy, size, CCallHelpers::TimesOne));
+        jit.store64(TrustedImm32(0), BaseIndex(copy, size, CCallHelpers::TimesOne, wordSize));
+        jit.branchTest32(CCallHelpers::NonZero, size).linkTo(zeroNextChunk, &jit);
+        hasNoMoreStorage.link(&jit);
+        Jump sourceHasNoStorage = jit.branchTest32(CCallHelpers::Zero, scratch);
+        jit.move(scratch, size);
+        jit.loadPtr(Address(source, JSObject::butterflyOffset()), count);
+        jit.subPtr(size, count);
+        jit.subPtr(TrustedImm32(sizeof(IndexingHeader)), count);
+        jit.move(butterfly, copy);
+        jit.subPtr(size, copy);
+        jit.subPtr(TrustedImm32(sizeof(IndexingHeader)), copy);
+        Label copyNextChunkOfStorage = jit.label();
+        jit.sub32(TrustedImm32(chunkSize), size);
+        copyChunk(jit, count, copy, size, scratch, secondScratchOfChunk);
+        jit.branchTest32(CCallHelpers::NonZero, size).linkTo(copyNextChunkOfStorage, &jit);
+        sourceHasNoStorage.link(&jit);
+        hasNoStorage.link(&jit);
+
+        jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, cellSize)), size);
+        jit.urshift32(size, TrustedImm32(1), scratch);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), count);
+        jit.loadPtr(BaseIndex(count, scratch, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), scratch);
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+        allocateCell(jit, copy, scratch, count, cannot);
+        Jump hasNoInlineStorage = jit.branch32(CCallHelpers::Equal, size, TrustedImm32(chunkSize));
+        Label copyNextChunkOfCell = jit.label();
+        jit.sub32(TrustedImm32(chunkSize), size);
+        copyChunk(jit, source, copy, size, scratch, count);
+        jit.branch32(CCallHelpers::Above, size, TrustedImm32(chunkSize)).linkTo(copyNextChunkOfCell, &jit);
+        hasNoInlineStorage.link(&jit);
+        jit.storePtr(butterfly, Address(copy, JSObject::butterflyOffset()));
+        jit.load64(Address(record, OBJECT_OFFSETOF(CopyWithNames, header)), scratch);
+        jit.store64(scratch, Address(copy));
+
+        jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, count)), count);
+        jit.getEffectiveAddress(BaseIndex(list, count, CCallHelpers::TimesEight, wordSize), list);
+        Label storeNextValue = jit.label();
+        jit.sub32(TrustedImm32(1), count);
+        jit.load32(BaseIndex(record, count, CCallHelpers::TimesEight, offsetOfNames + OBJECT_OFFSETOF(NameInCopy, offset)), size);
+        jit.load64(BaseIndex(list, count, CCallHelpers::TimesEight), scratch);
+        Jump isOutsideCell = jit.branch32(CCallHelpers::LessThan, size, TrustedImm32(0));
+        jit.store64(scratch, BaseIndex(copy, size, CCallHelpers::TimesOne));
+        Jump isStored = jit.jump();
+        isOutsideCell.link(&jit);
+        jit.signExtend32ToPtr(size, size);
+        jit.store64(scratch, BaseIndex(butterfly, size, CCallHelpers::TimesOne));
+        isStored.link(&jit);
+        jit.branchTest32(CCallHelpers::NonZero, count).linkTo(storeNextValue, &jit);
+        jit.store32(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.copyHasItsNames)));
+        fenceAfterAllocation(jit);
+        jit.move(TrustedImm32(0), jit.secondResult());
+        jit.returnToCaller();
+
+        // Its place holds another copy. When more kinds of copies come here than the table holds, each going to the operation to take the place would cost more than all the table saves: one in many does, and the rest are copied by the code below.
+        isOccupied.link(&jit);
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.copiesThatFoundTheirPlaceOccupied)), record);
+        jit.add32(TrustedImm32(1), record);
+        jit.store32(record, Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.copiesThatFoundTheirPlaceOccupied)));
+        definesNamesByOperation.append(jit.branchTest32(CCallHelpers::Zero, record, TrustedImm32(copiesThatTakeAnOccupiedPlaceMask)));
+    }
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
     Jump hasButterfly = jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset()));
     // What tryCreateObjectViaCloning() asks of a Structure before it gives the copy the same one.
@@ -960,6 +1082,19 @@ static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
         });
     }
 
+    if (definesNames) {
+        callsOperationWithoutExclusions.link(&jit);
+        callsOperation.link(&jit);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.listOfNamesOfCopy)), kept);
+        definesNamesByOperationWithList.link(&jit);
+        jit.load32(Address(kept), count);
+        jit.load32(Address(kept, wordSize), excludedRun);
+        definesNamesByOperation.link(&jit);
+        isNotCell.link(&jit);
+        jit.tailCallOperation(Entry::RawCopyObjectAndDefine, OperationCall::FirstArgument::Instance);
+        return;
+    }
+
     // Nothing is copied out of undefined or null. The operation prepares the allocation.
     isNotCell.link(&jit);
     static_assert((JSValue::ValueUndefined & ~JSValue::UndefinedTag) == JSValue::ValueNull);
@@ -997,6 +1132,16 @@ StubSignature signatureOfAssignToNewObjectFrontEnd(StubKey)
 void generateAssignToNewObjectFrontEnd(StubAssembler& jit)
 {
     generateCopyObjectFrontEnd(jit, CopiedBy::Stores);
+}
+
+StubSignature signatureOfCopyObjectAndDefineFrontEnd(StubKey)
+{
+    return operationFrontEndSignature(4);
+}
+
+void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
+{
+    generateCopyObjectFrontEnd(jit, CopiedBy::DefinitionsWithNames);
 }
 
 } } // namespace JSC::AOT

@@ -398,6 +398,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     inputs.ledgerOfVariables = ledgerOfVariables.get();
     std::unique_ptr<ValueFlowNumbersOfValues> numbersOfValues;
     ValueFlowConstructions constructions;
+    FlowCallsOfProgram callsOfProgram;
     ValueFlowFieldContents fieldContents;
     std::unique_ptr<ValueFlowWritesToContainers, ValueFlowWritesToContainersDeleter> writesToContainers;
     BitVector layoutsOfDictionaries;
@@ -485,7 +486,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         numbersOfValues = prepareNumbersOfPositions(inputs, heap, tables);
     });
     auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
-        computeOrderResults(inputs, calls, tables);
+        callsOfProgram = computeOrderResults(inputs, calls, tables);
     });
     // A static field is a place to follow only where every read comes behind its store.
     auto numbers = add("numbers"_s, { numbersPrepared, locations, order }, [&](PhaseTimes&) {
@@ -505,6 +506,10 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto classes = add("classes"_s, { locations }, [&](PhaseTimes&) {
         computeClassResults(inputs, tables);
     });
+    auto accessorsDefinedLate = add("classes: accessors defined late"_s, { order, classes }, [&](PhaseTimes&) {
+        noteAccessorsDefinedAfterObjectsAreMade(inputs, callsOfProgram, tables);
+        build.destroyLater(WTF::move(callsOfProgram));
+    });
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
         writesUnderNewNames = computeBuiltinResults(inputs, WTF::move(usesOfLibraryCode), tables, ledgerOfBuiltinObjects);
         ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);
@@ -515,7 +520,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         listsToldApart = computeClosuresNeverCompared(inputs, heap, tables);
         computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
-    auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
+    auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, accessorsDefinedLate, storesListed, builtins }, [&](PhaseTimes&) {
         // From here on the ledger is asked about variables and fields alone.
         ledger.remove(LedgerPartKind::ClassesAndClosures);
         inputs.classesAndClosures = nullptr;

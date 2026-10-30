@@ -58,8 +58,6 @@ ValueFlowName foundName(const HeapKey& key, HeapPropertyPart part)
 
 ValueFlowName nameOfLookupForValue(const HeapKey& key)
 {
-    if (key.namesNoPropertyOfEngine)
-        return everyPropertyUnderKeyOfProgramAlone;
     return key.namesEnumerableProperty ? ValueFlowName { ValueFlowNameKind::EveryProperty, 1 } : foundName(key, HeapPropertyPart::Value);
 }
 
@@ -67,8 +65,6 @@ HeapKey keyOfFoundName(ValueFlowName name)
 {
     if (name == nameOfLookupForValue(enumeratedHeapKey))
         return enumeratedHeapKey;
-    if (name == everyPropertyUnderKeyOfProgramAlone)
-        return heapKeyOfProgramAlone;
     if (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter || name.kind == ValueFlowNameKind::MemberWritten)
         return { HeapKeyClass::Name, PropertyKeyID(name.payload) };
     if (name.kind == ValueFlowNameKind::Elements || name.kind == ValueFlowNameKind::GetterUnderUnknownKey || name.kind == ValueFlowNameKind::SetterUnderUnknownKey)
@@ -163,6 +159,7 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
         holders = m_context.maker().unite(holders, m_context.maker().intersect(m_tables.prototypeObjects(), ValueSets::complement(m_tables.under(key.name).holdersWithLockedLocation)));
         // `process.flag = 1` in evaluated text. Only under a key that the table takes for absent there: a read of what it lists stays exact, and so does whoever writes through it.
         holders = m_context.maker().unite(holders, m_tables.under(key.name).unescapedHoldersWithoutKey);
+        holders = m_context.maker().unite(holders, m_tables.under(key.name).unescapedFunctionsWithoutKey);
     }
     if (!isPrivateName)
         holders = withWhatImagesBelowStoredOn(holders, m_tables.under(key.name).holdersWithLockedLocation);
@@ -1591,7 +1588,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     readMembers(chain.objects, chain.start, key, result, builtinGetters);
     if (m_findsOwnPropertiesListedAbove)
         readOwnPropertiesListedAbove(chain.objects, result, builtinGetters);
-    if (key.namesEnumerableProperty && !key.namesNoPropertyOfEngine && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
+    if (key.namesEnumerableProperty && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
     if (mayHoldUndeclaredProperty(chain.objects, key)) {
         builtinGetters.append(m_tables.undescribedNativeCode());
@@ -1882,8 +1879,7 @@ void HeapRule::noteUseOfMembers(const HeapKey& key, BuiltinUse noted)
         if (noted == BuiltinUse::Read && !namesMember && m_builtins.at(member).holder && isNativeModuleThatNobodyNames(m_universe.objectOf(m_builtins.at(member).holder)))
             return;
         // Only a store that names the member on a holder that is seen to arrive makes every file a candidate for the main module. A large program is sure to store under some key into some object nobody follows.
-        // In a test run the runner itself stores there, for each test file in its turn.
-        if (noted == BuiltinUse::Written && namesMember && !m_context.runnerChoosesMainModule() && m_builtins.has(BuiltinMark::HoldsPathOfMainModule, m_builtins.canonicalID(member))) {
+        if (noted == BuiltinUse::Written && namesMember && m_builtins.has(BuiltinMark::HoldsPathOfMainModule, m_builtins.canonicalID(member))) {
             use(member, BuiltinUse::StoredByName);
             raiseHostFlag(m_context, ValueFlowHostNode::PathOfMainModuleIsStored);
         }

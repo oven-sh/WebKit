@@ -77,8 +77,8 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
         // So is the word of a built-in that the realm lacks.
-        // And what the tables of the run time do not answer, which only the test behind the read looks at.
-        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
+        // And what the tables of the run time or a site do not answer, which only the test behind the read looks at.
+        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin || definition.opcode == Opcode::ReadAboveFreshObject || (definition.opcode == Opcode::PropGet && definition.asksOnlyTables());
         if (mayBeEmpty)
             checkHasType(id, operand, type.withPrimitives(Primitive::Absent), ValidationFailureKind::ValueType, id);
         else

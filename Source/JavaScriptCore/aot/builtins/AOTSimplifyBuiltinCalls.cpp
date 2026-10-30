@@ -15,6 +15,7 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
+#include "AOTExpandOwnKeysInternal.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTInt32Conversions.h"
@@ -610,6 +611,10 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     if (!overload)
         return std::nullopt;
 
+    // `iterable[Symbol.iterator]()` of an iterator, valueOf() of a primitive: what is known of the object in front of the call is known of what comes out of it.
+    if (inlineImplementationOf(context.program, value) == InlineBuiltin::ReturnThis)
+        return makeIdentityCast(context.function, builtinCallOf(context.program, value).receiver);
+
     std::span<const ValueID> arguments = value.argumentsOperands();
     if (arguments.empty())
         return makeResultWithoutArguments(overload->builtin);
@@ -1006,6 +1011,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
+    didRewrite(formatFromPatterns(context));
+    didRewrite(leavePairsOfOwnEntriesUnmade(context, calls.span()));
     didRewrite(expandRangesOfViews(context, calls));
     didRewrite(definePlainPropertiesByName(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));

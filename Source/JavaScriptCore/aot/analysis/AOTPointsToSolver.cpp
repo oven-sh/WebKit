@@ -50,13 +50,13 @@ inline constexpr OperandUses declaredOperandUses = [] {
     return uses;
 }();
 
-using ObjectWord = ObjectWords::Word;
-using WordsOfObjects = std::span<const ObjectWords::Entry>;
-inline constexpr unsigned objectsPerWord = ObjectWords::objectsPerWord;
+using ObjectWord = SparseObjectSet::Word;
+using WordsOfObjects = std::span<const SparseObjectSet::Entry>;
+inline constexpr unsigned objectsPerWord = SparseObjectSet::objectsPerWord;
 
 void forEachObjectIn(WordsOfObjects words, NOESCAPE const Invocable<void(ObjectID)> auto& functor)
 {
-    for (const ObjectWords::Entry& entry : words) {
+    for (const SparseObjectSet::Entry& entry : words) {
         for (ObjectWord word = entry.word; word; word &= word - 1)
             functor(ObjectID(entry.index * objectsPerWord + std::countr_zero(word)));
     }
@@ -78,7 +78,7 @@ struct QueuedApplication {
 
 struct SlotState {
     ObjectSlot slot;
-    ObjectWords objects;
+    SparseObjectSet objects;
     Vector<SolvedContents, 1> contents;
     Vector<ValueID, 1> readers;
     Vector<ContentsApplication, 1> applications;
@@ -240,7 +240,7 @@ private:
     bool refersToOperand(ValueID value) { return askOnce(value, AnswerFromTypes::Question::RefersToOperand, ValueFlag::RefersToOperand, ValueFlag::RefersToNoOperand); }
     bool mayRunOtherCode(ValueID);
     // A copy: a set grows, and the table of all sets moves, while its members are looked at.
-    ObjectWords objectsOf(ValueID) const;
+    SparseObjectSet objectsOf(ValueID) const;
     ValueSetID ensureSet(ValueID);
     ValueID parameterFor(const Use& edgeUse) const;
     std::span<const NarrowedCopy> narrowedCopiesOf(ValueID subject) const;
@@ -320,13 +320,13 @@ private:
     Vector<NarrowedCopy> m_narrowedCopies;
     Vector<OptionSet<ValueFlag>> m_valueFlags;
     struct SetState {
-        ObjectWords objects;
+        SparseObjectSet objects;
         // Those whose uses are still to be looked at.
-        ObjectWords arrivals;
+        SparseObjectSet arrivals;
     };
     Vector<SetState> m_sets;
     Vector<bool> m_setsThatMayBeUntracked;
-    ObjectWords m_newContents;
+    SparseObjectSet m_newContents;
     BitVector m_valuesWithArrivals;
     Vector<QueuedApplication, 8> m_applicationWorklist;
     // An object has a place in the list once something is known of its contents. The list never moves: it has room for all objects from the start.
@@ -630,7 +630,7 @@ PointsToResults PointsToSolver::solve()
     findNarrowedCopies();
     findObjects();
     Vector<ObjectID, 16> arrivedObjects;
-    ObjectWords arrivedWords;
+    SparseObjectSet arrivedWords;
     size_t numberOfValues = m_function.values.size();
     for (size_t next = 0; !m_results.gaveUp;) {
         size_t position = m_valuesWithArrivals.findBit(next, true);
@@ -741,7 +741,7 @@ bool PointsToSolver::mayRunOtherCode(ValueID value)
     return result;
 }
 
-ObjectWords PointsToSolver::objectsOf(ValueID value) const
+SparseObjectSet PointsToSolver::objectsOf(ValueID value) const
 {
     ValueSetID set = m_results.setOfValue[value.index()];
     if (!set)
@@ -934,7 +934,7 @@ void PointsToSolver::addObjectSharingItsValue(ValueID value)
 
 void PointsToSolver::add(ValueID value, ObjectID object)
 {
-    ObjectWords::Entry entry = ObjectWords::entryOf(object);
+    SparseObjectSet::Entry entry = SparseObjectSet::entryOf(object);
     addAll(value, singleElementSpan(entry));
 }
 
@@ -1269,7 +1269,7 @@ void PointsToSolver::addOperandsRetainedInResult(ValueID result, const ArrivedOb
         if (!summary.uses.contains(OperandUse::Retains) || summary.retainedIn != RetainedIn::Result)
             return;
         ObjectSlot slot = slotInResult(user, index);
-        ObjectWords objects = objectsOf(stored);
+        SparseObjectSet objects = objectsOf(stored);
         for (ObjectID container : containers.objects)
             addContents(container, slot, objects.entries());
     });
@@ -1605,7 +1605,7 @@ void PointsToSolver::addReader(ObjectID container, ValueID reader, ObjectSlot sl
 // n calls of a value that may be any of n closures: all but the first find every closure called.
 void PointsToSolver::callObjects(const ArrivedObjects& arrived)
 {
-    for (const ObjectWords::Entry& entry : arrived.words) {
+    for (const SparseObjectSet::Entry& entry : arrived.words) {
         for (ObjectWord word = entry.word & ~m_calledObjects[entry.index]; word; word &= word - 1)
             callObject(ObjectID(entry.index * objectsPerWord + std::countr_zero(word)));
     }

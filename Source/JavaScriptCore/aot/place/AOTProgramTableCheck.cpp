@@ -239,16 +239,16 @@ static void checkSortedTables(const TableCheck& check)
         return file + 1 < check.tables.staticsOfFiles().size();
     }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.importsOfHeldFiles(), &ImportOfHeldFileData::key);
-    std::span<const ModuleWithNamedVariablesData> modulesWithNamedVariables = check.tables.modulesWithNamedVariables();
-    checkAscending(modulesWithNamedVariables, &ModuleWithNamedVariablesData::module);
-    checkAscending(modulesWithNamedVariables, &ModuleWithNamedVariablesData::firstVariable);
-    check.expect((modulesWithNamedVariables.empty() ? 0 : modulesWithNamedVariables.back().firstVariable) == check.tables.namedVariables().size() && std::ranges::all_of(check.tables.namedVariables(), [&](const NamedVariableData& variable) {
+    bool everyVariableExists = true;
+    bool endsWhereAModuleEnds = forEachNamedVariable(check.tables.namedVariables(), [](size_t) { }, [&](const NamedVariableData& variable) {
         if (variable.name >= check.program.strings.size())
-            return false;
-        if (variable.place() == NamedVariableData::Place::Closure)
-            return variable.function().index() < check.program.functions.size();
-        return variable.offset() + (variable.place() == NamedVariableData::Place::NarrowWord ? sizeof(uint32_t) : sizeof(uint64_t)) <= check.tables.instanceSizes.sizeOfStatics;
-    }), ProgramTableRule::TableOutOfBounds);
+            everyVariableExists = false;
+        else if (variable.place() == NamedVariableData::Place::Closure)
+            everyVariableExists &= variable.function().index() < check.program.functions.size();
+        else
+            everyVariableExists &= variable.offset() + (variable.place() == NamedVariableData::Place::NarrowWord ? sizeof(uint32_t) : sizeof(uint64_t)) <= check.tables.instanceSizes.sizeOfStatics;
+    });
+    check.expect(endsWhereAModuleEnds && everyVariableExists, ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
     checkAscending(check.tables.stateOfLibraryModules(), [](const StateOfLibraryModuleData& state) { return static_cast<uint64_t>(state.moduleAndKind) << 32 | state.first; });
     check.expect(std::ranges::all_of(check.tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {

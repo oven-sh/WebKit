@@ -66,7 +66,14 @@ struct CollectionDataRecord {
     friend void add(Hasher& hasher, const CollectionDataRecord& record) { add(hasher, record.data, record.hasValues); }
 };
 
-using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord>;
+struct FormatPatternRecord {
+    Vector<uint32_t> words;
+
+    friend bool operator==(const FormatPatternRecord&, const FormatPatternRecord&) = default;
+    friend void add(Hasher& hasher, const FormatPatternRecord& record) { add(hasher, record.words); }
+};
+
+using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord, FormatPatternRecord>;
 
 JS_EXPORT_PRIVATE uint32_t sizeInBytesOf(const Program&, const RequestRecord&);
 

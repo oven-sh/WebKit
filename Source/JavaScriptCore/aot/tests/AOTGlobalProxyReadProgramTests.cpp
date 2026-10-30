@@ -185,11 +185,92 @@ static void testOtherReceiversAreNotCached()
         { }, statementsWithOtherReceivers, { "--aotCountsPath=/dev/null"_s });
 }
 
+// `globalThis[key] = value` stores to the global object through its proxy: from the second store on, the same property takes no call of an operation that may run code.
+static constexpr ASCIILiteral programWithStoresByKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="write" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+)IR"_s;
+
+#define STATEMENTS_WITH_STORES_BY_KEY R"JS(
+const operations = ["PutByVal", "PutByValAndCache"];
+const calls = () => operations.reduce((sum, name) => sum + Number(aotOperationCount("operationAOT" + name)), 0);
+const measure = (what, write, key) => {
+    const callsBefore = calls();
+    let threw = false;
+    for (let i = 0; i < 100; i++) {
+        try { write(globalThis, key, i); } catch { threw = true; }
+    }
+    const callsMade = calls() - callsBefore;
+    print(what + ": " + globalThis[key] + (threw ? ", threw" : "") + (globalThis.printsCalls ? ", " + (callsMade <= 3 ? "cached" : callsMade >= 100 ? "not cached" : callsMade + " calls") : ""));
+};
+globalThis.publish = (write) => {
+    measure("first store adds it", write, "shared");
+    measure("own value", write, "shared");
+    const symbol = Symbol("shared");
+    write(globalThis, symbol, 1);
+    measure("own value under a symbol", write, symbol);
+    let stored;
+    Object.defineProperty(globalThis, "shared", { set(value) { stored = value; }, get() { return stored; }, configurable: true });
+    measure("setter", write, "shared");
+    Object.defineProperty(globalThis, "shared", { value: -1, writable: false, configurable: true });
+    measure("read only", write, "shared");
+    delete globalThis.shared;
+    print("deleted: " + ("shared" in globalThis));
+    measure("added again", write, "shared");
+    measure("value again", write, "shared");
+    globalThis.other = 5;
+    Object.freeze(globalThis.other);
+    measure("other", write, "other");
+    loadString("var ofScript = 1;");
+    measure("variable of a script", write, "ofScript");
+    print("read by name: " + loadString("ofScript"));
+    measure("inherited", write, "isPrototypeOf");
+    const other = createGlobalObject();
+    other.shared = 3;
+    const callsBefore = calls();
+    for (let i = 0; i < 100; i++) write(other, "shared", i);
+    print("other realm: " + other.shared + (globalThis.printsCalls ? ", " + (calls() - callsBefore >= 100 ? "not cached" : "cached") : ""));
+};
+)JS"
+
+#define OUTPUT_OF_STORES_BY_KEY(cached, notCached) \
+    OUTPUT_LINE("first store adds it: 99", cached) \
+    OUTPUT_LINE("own value: 99", cached) \
+    OUTPUT_LINE("own value under a symbol: 99", cached) \
+    OUTPUT_LINE("setter: 99", notCached) \
+    OUTPUT_LINE("read only: -1, threw", notCached) \
+    "deleted: false\n" \
+    OUTPUT_LINE("added again: 99", cached) \
+    OUTPUT_LINE("value again: 99", cached) \
+    OUTPUT_LINE("other: 99", cached) \
+    OUTPUT_LINE("variable of a script: 99", notCached) \
+    "read by name: 99\n" \
+    OUTPUT_LINE("inherited: 99", cached) \
+    OUTPUT_LINE("other realm: 99", notCached)
+
+static void testStoresByKeyFollowTheGlobalObject()
+{
+    checkOutputOfProgramInShell(programWithStoresByKey, OUTPUT_OF_STORES_BY_KEY(", cached", ", not cached") ""_s, { }, "globalThis.printsCalls = true;" STATEMENTS_WITH_STORES_BY_KEY ""_s, { "--aotCountsPath=/dev/null"_s });
+    for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
+        checkOutputOfProgramInShell(programWithStoresByKey, OUTPUT_OF_STORES_BY_KEY("", "") ""_s, { word }, STATEMENTS_WITH_STORES_BY_KEY ""_s, { "--aotCountsPath=/dev/null"_s });
+}
+
 std::span<const NativeTest> globalProxyReadProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "global-proxy-reads/programs/reads-follow-the-global-object"_s, testReadsFollowTheGlobalObject },
         { "global-proxy-reads/programs/other-receivers-are-not-cached"_s, testOtherReceiversAreNotCached },
+        { "global-proxy-reads/programs/stores-by-key-follow-the-global-object"_s, testStoresByKeyFollowTheGlobalObject },
     };
     return tests;
 }

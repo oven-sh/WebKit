@@ -103,7 +103,7 @@ private:
     std::optional<AllocationsByCase> findAllocationsByCase(const TerminatorContext&);
     void generateNewObjectChosenByTable(const ValueContext&, const AllocationChosenByTable&);
     ValueID findCopyThatFills(const ValueContext&);
-    CellPointer createArguments(const ValueContext&, RuntimeOperation, std::optional<CellPointer> callee);
+    CellPointer createArguments(const ValueContext&, std::optional<CellPointer> callee);
 
     AllocationChosenByTable m_allocationChosenByTable;
 };

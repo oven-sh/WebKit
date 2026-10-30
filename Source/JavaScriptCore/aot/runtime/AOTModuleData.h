@@ -9,6 +9,7 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVarint.h"
 #include <iterator>
 #include <optional>
 #include <span>
@@ -424,7 +425,7 @@ struct ImportOfHeldFileData {
     uint32_t importer;
 };
 
-// What a heap snapshot shows under the name of a module's variable.
+// What a heap snapshot shows under the name of a module's variable. The image holds these as bytes (forEachNamedVariable).
 struct NamedVariableData {
     enum class Place : uint32_t { Word, NarrowWord, Closure };
     static constexpr unsigned placeBits = 2;
@@ -441,11 +442,51 @@ struct NamedVariableData {
     FunctionID function() const { return FunctionID(placeAndNumber >> placeBits); }
 };
 
-// The last record names no module and ends the list of the one before.
-struct ModuleWithNamedVariablesData {
-    uint32_t module;
-    uint32_t firstVariable;
+// The table namedVariables, for each module that has such variables: how many, then each of them, in the order of their names: its name less
+// the one before, then its place less the last place of its kind, in any module, above two bits for the kind of place. Only a heap snapshot reads it.
+class NamedVariablesWriter {
+public:
+    void beginModule(size_t numberOfVariables) { appendVarint(m_bytes, numberOfVariables); m_lastName = 0; }
+    void append(const NamedVariableData& variable)
+    {
+        uint32_t number = variable.placeAndNumber >> NamedVariableData::placeBits;
+        uint32_t& last = m_lastNumber[variable.place() == NamedVariableData::Place::Closure];
+        appendVarint(m_bytes, variable.name - m_lastName);
+        appendVarint(m_bytes, zigZagEncode(static_cast<int64_t>(number) - last) << NamedVariableData::placeBits | static_cast<uint32_t>(variable.place()));
+        m_lastName = variable.name;
+        last = number;
+    }
+    const Vector<uint8_t>& bytes() const { return m_bytes; }
+
+private:
+    Vector<uint8_t> m_bytes;
+    uint32_t m_lastName { 0 };
+    uint32_t m_lastNumber[2] { };
 };
+
+// False if the bytes do not end where a module ends.
+bool forEachNamedVariable(std::span<const uint8_t> bytes, NOESCAPE const auto& beginModule, NOESCAPE const auto& visit)
+{
+    const uint8_t* cursor = bytes.data();
+    const uint8_t* end = cursor + bytes.size();
+    uint32_t lastNumber[2] { };
+    while (cursor < end) {
+        size_t numberOfVariables = readVarint(cursor);
+        beginModule(numberOfVariables);
+        uint32_t name = 0;
+        for (size_t index = 0; index < numberOfVariables; ++index) {
+            if (cursor >= end)
+                return false;
+            name += static_cast<uint32_t>(readVarint(cursor));
+            uint64_t word = readVarint(cursor);
+            uint32_t place = static_cast<uint32_t>(word & ((1u << NamedVariableData::placeBits) - 1));
+            uint32_t& last = lastNumber[place == static_cast<uint32_t>(NamedVariableData::Place::Closure)];
+            last += static_cast<uint32_t>(zigZagDecode(word >> NamedVariableData::placeBits));
+            visit(NamedVariableData { name, last << NamedVariableData::placeBits | place });
+        }
+    }
+    return cursor == end;
+}
 
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
@@ -486,8 +527,6 @@ static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
-static_assert(sizeof(NamedVariableData) == 8 && isImageRecord<NamedVariableData>);
-static_assert(sizeof(ModuleWithNamedVariablesData) == 8 && isImageRecord<ModuleWithNamedVariablesData>);
 static_assert(sizeof(StateOfLibraryModuleData) == 12 && isImageRecord<StateOfLibraryModuleData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
@@ -524,8 +563,7 @@ struct HashOfDirectory {
     v(directoriesOfModulesByPath, uint32_t) \
     v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
-    v(namedVariables, NamedVariableData) \
-    v(modulesWithNamedVariables, ModuleWithNamedVariablesData) \
+    v(namedVariables, uint8_t) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(stateOfLibraryModules, StateOfLibraryModuleData) \
     v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)

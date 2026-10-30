@@ -855,6 +855,12 @@ void AccessEmitter::generatePropDefine(const ValueContext& value)
             return;
         }
     }
+    if (m_definitionsWithCopy.get(value.id().index())) {
+        ifElse(isZero(Word32(m_out.load32(mutableInstanceField(AOT_INSTANCE_OFFSET(objects.copyHasItsNames))))), [&] {
+            putNamedProperty(value, object, PutMode::Define);
+        }, [] { });
+        return;
+    }
     putNamedProperty(value, object, PutMode::Define);
 }
 

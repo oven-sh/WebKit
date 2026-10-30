@@ -53,6 +53,7 @@ runtime NewFromData, NewSetFromData, NewMapFromData : JSCell* (uint32_t request)
 runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime CopyObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime AssignToNewObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
+runtime CopyObjectAndDefine : JSCell* (EncodedJSValue source, uint32_t firstName, uint32_t count, const EncodedJSValue* valuesAndNames) ; unknownCode
 runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime TryPutProperties : size_t (SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
@@ -225,6 +226,7 @@ runtime ImportModule : EncodedJSValue (uint32_t module, EncodedJSValue options, 
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode
 runtime ThrowModuleFailure : void (uint32_t failure, uint32_t isForRequire) ; reads(all) writes(AllocatorState, RuntimeState) throws collects

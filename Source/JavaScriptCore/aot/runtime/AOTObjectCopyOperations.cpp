@@ -761,6 +761,96 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
     OPERATION_RETURN(scope, copy);
 }
 
+// Whether every object with this Structure is copied word for word, into an object with the same Structure.
+static bool isCopiedWithItsStructure(JSGlobalObject* globalObject, Structure* structure)
+{
+    return checkStructureForClone(structure) && structure->canPerformFastPropertyEnumerationCommon() && structure->realm() == globalObject && structure->storedPrototype() == JSValue(globalObject->objectPrototype());
+}
+
+// The stub in front makes the next copy of an object with this Structure that gets these names.
+static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structureOfSource, JSObject* copy, std::span<const EncodedJSValue> names)
+{
+    static_assert(MarkedSpace::largeCutoff <= UINT16_MAX);
+    Structure* structure = copy->structure();
+    if (structure->typeInfo().type() != FinalObjectType || structure->isDictionary() || hasIndexedProperties(structure->indexingType()) || structure->inlineCapacity() != structureOfSource->inlineCapacity())
+        return;
+    size_t cellSize = roundUpToMultipleOf<MarkedSpace::sizeStep>(JSFinalObject::allocationSize(structure->inlineCapacity()));
+    size_t storageSizeOfSource = structureOfSource->outOfLineCapacity() * sizeof(EncodedJSValue);
+    size_t storageSize = structure->outOfLineCapacity() * sizeof(EncodedJSValue);
+    if (cellSize > MarkedSpace::largeCutoff || storageSize > MarkedSpace::largeCutoff || storageSize < storageSizeOfSource || names.size() > UINT16_MAX)
+        return;
+
+    Vector<NameInCopy, 8> namesInCopy;
+    for (EncodedJSValue name : names) {
+        uint32_t number = static_cast<uint32_t>(name);
+        UniquedStringImpl* uid = identifierAt(instance, number).impl();
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, uid, attributes);
+        if (!isValidOffset(offset) || attributes)
+            return;
+        if (isValidOffset(structureOfSource->get(vm, uid)))
+            structure->didCachePropertyReplacement(vm, offset);
+        namesInCopy.append({ number, offsetRelativeToBase(offset) });
+    }
+
+    std::span<uint8_t> table { instance->objects.copiesWithNames, sizeOfCopiesWithNames };
+    auto wordAt = [&](uint32_t offset) -> uint32_t& {
+        return *reinterpret_cast<uint32_t*>(table.subspan(offset, sizeof(uint32_t)).data());
+    };
+    auto recordAt = [&](uint32_t offset) -> CopyWithNames& {
+        return *reinterpret_cast<CopyWithNames*>(table.subspan(offset, sizeof(CopyWithNames)).data());
+    };
+    uint32_t size = sizeof(CopyWithNames) + namesInCopy.size() * sizeof(NameInCopy);
+    if (offsetOfFirstCopyWithNames + size > sizeOfCopiesWithNames)
+        return;
+    uint32_t offsetOfPlace = placeOfCopyWithNames(structureOfSource->id().bits(), namesInCopy[0].name) * sizeof(uint32_t);
+    // A record that loses its place to one of the same length gives it its bytes.
+    uint32_t offset = wordAt(offsetOfPlace);
+    if (!offset || recordAt(offset).count != namesInCopy.size()) {
+        if (offsetOfFirstCopyWithNames + wordAt(offsetOfTakenBytesOfCopiesWithNames) + size > sizeOfCopiesWithNames)
+            zeroSpan(table);
+        offset = offsetOfFirstCopyWithNames + wordAt(offsetOfTakenBytesOfCopiesWithNames);
+        wordAt(offsetOfTakenBytesOfCopiesWithNames) += size;
+    }
+    recordAt(offset) = {
+        .structureOfSource = structureOfSource->id().bits(),
+        .firstName = namesInCopy[0].name,
+        .header = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits(),
+        .count = static_cast<uint16_t>(namesInCopy.size()),
+        .cellSize = static_cast<uint16_t>(cellSize),
+        .storageSizeOfSource = static_cast<uint16_t>(storageSizeOfSource),
+        .storageSize = static_cast<uint16_t>(storageSize),
+    };
+    memcpySpan(table.subspan(offset + sizeof(CopyWithNames), namesInCopy.size() * sizeof(NameInCopy)), asBytes(namesInCopy.span()));
+    wordAt(offsetOfPlace) = offset;
+}
+
+// `{ ...source, name, other }`. The list holds the count, the numbers of the names and their values. A copy that is a compiled object gets the names from the code behind the call.
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyObjectAndDefine, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t, uint32_t count, const EncodedJSValue* list))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyObjectAndDefine);
+    JSValue source = JSValue::decode(encodedSource);
+    instance->objects.copyHasItsNames = 0;
+    JSObject* copy = copyObject(instance, globalObject, vm, source, 0, 0, nullptr);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (isCompiledObject(copy))
+        OPERATION_RETURN(scope, copy);
+
+    std::span<const EncodedJSValue> names { list + 1, count };
+    std::span<const EncodedJSValue> values { list + 1 + count, count };
+    Structure* structureOfCopy = copy->structure();
+    bool isCopiedByStub = source.isObject() && asObject(source)->structure() == structureOfCopy && isCopiedWithItsStructure(globalObject, structureOfCopy);
+    for (size_t index = 0; index < count; ++index) {
+        PutPropertySlot slot(copy, true);
+        defineDataProperty(instance, copy, identifierAt(instance, static_cast<uint32_t>(names[index])), JSValue::decode(values[index]), slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (isCopiedByStub)
+        rememberCopyWithNames(instance, vm, structureOfCopy, copy, names);
+    instance->objects.copyHasItsNames = 1;
+    OPERATION_RETURN(scope, copy);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAssignToNewObject, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAssignToNewObject);

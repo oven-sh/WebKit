@@ -652,7 +652,11 @@ Type ResultRules::unknown(const Value& value)
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
     const Type& source = context.typeOf(value.operand(operandIndex));
-    Type result = source.castTo(context.types.at(castType), context.types);
+    const Type& target = context.types.at(castType);
+    Type result = source.castTo(target, context.types);
+    // Where the objects that are declared are none of those that are proven to come, the declaration says nothing of which come: `list: { length: number }` is a layout, and arrays are handed in.
+    if (value.opcode == Opcode::AssumeType && context.level == TypeLevel::Expected && !result.hasObjects() && source.hasObjects() && target.hasObjects())
+        result = result.unionWith(target.withOnlyObjects(), context.types);
     // Only a cast that names a fact takes away that the word may be anything.
     if (source.mayBeUnspecified() && !(value.opcode == Opcode::AssumeType && value.factOperand()))
         return result.withPrimitives(Primitive::Unspecified);
@@ -929,6 +933,7 @@ struct ResultRulesWithoutType {
             return { };
         return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
             hasher.add(source.index(), castType.index());
+            hasher.add(static_cast<uint32_t>(value.opcode == Opcode::AssumeType && context.level == TypeLevel::Expected));
         });
     }
 
@@ -1100,7 +1105,7 @@ static constexpr OpcodeSet opcodesTypedAlikeAtBothLevels = []() consteval {
     return opcodes;
 }();
 
-static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::NarrowByField };
+static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::NarrowByField, Opcode::AssumeType };
 
 static void addKeyOfResult(auto& hasher, const TypingContext& context, const Value& value)
 {

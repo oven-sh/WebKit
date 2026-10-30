@@ -21,6 +21,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -78,6 +79,8 @@ public:
 
     bool mayHaveFailed(const Value& test, BlockID at) const;
     bool mayHaveFailedTestOf(ValueID subject, BlockID at) const;
+    bool leavesOpen(const Value& testOfMemberConditions, BlockID at, NOESCAPE const ScopedLambda<bool(const MemberConditionRecord&)>& isStateOfProgram) const;
+    bool mayHaveFailedOverStateOfProgram(BlockID at, NOESCAPE const ScopedLambda<bool(const MemberConditionRecord&)>& isStateOfProgram) const;
 
 private:
     TestConditions m_conditions;
@@ -288,6 +291,8 @@ private:
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;
     bool isWrittenInCatchClause(BlockID);
+    bool isStateOfProgram(const MemberConditionRecord&) const;
+    bool mayRunEveryTimeBehindFailedTest(BlockID);
     bool isAccessToObjectMadeHere(const Value&) const;
 
     FunctionPassContext& m_context;
@@ -307,6 +312,7 @@ private:
     BlockID m_blockOfHeatClass;
     bool m_blockIsCold { false };
     std::optional<BitVector> m_blocksOfCatchClauses;
+    std::optional<bool> m_testsStateOfProgram;
 };
 
 class TestSiteRewriter {

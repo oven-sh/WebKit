@@ -257,7 +257,7 @@ std::optional<Type> ValueFlowPositions::typeWhereOnlyInstancesOfBuiltinClassesAr
         Type alone = typeOfObject(member);
         if (alone.isSubsetOf(type, program))
             return false;
-        bool isInstance = alone.isObject() && alone.hasOnlyClassObjects() && !alone.classes.isEmpty();
+        bool isInstance = alone.isObject() && alone.hasOnlyClassObjects() && !alone.classes.isEmpty() && !m_inputs.classOfObjectMadeForSuperCall(member);
         turnsAwayInstance |= isInstance;
         return !isInstance;
     });
@@ -360,8 +360,8 @@ void ValueFlowPositions::addPrototypesThatAreKept(ValueSetID held, Type& type)
         return;
     bool areAllKept = true;
     m_inputs.sets().forEachMember(maker().intersect(held, m_inputs.universe().objects()), [&](ValueFlowObjectID member) {
-        // An object with a layout is no part of a class, but where its layout is one of dictionaries: then it counts as an Object.
-        if (!areAllKept || (m_inputs.universe().layoutOf(member) && !m_inputs.isDictionary(member)))
+        // An object with a layout is no part of a class, but where its layout is one of dictionaries: then it counts as an Object. What a built-in class makes for a class below it has the prototype of that class.
+        if (!areAllKept || (m_inputs.universe().layoutOf(member) && !m_inputs.isDictionary(member) && !m_inputs.classOfObjectMadeForSuperCall(member)))
             return;
         const ValueFlowContainerFacts* facts = m_inputs.containers->find(member);
         areAllKept = facts && facts->pristine.containsAny({ PristineAspects::Names, PristineAspects::Prototype });
@@ -459,8 +459,12 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
     case ValueFlowObjectKind::Site: {
         if (LayoutID layout = universe.layoutOf(member); layout && !m_inputs.isLayoutOfDictionaries(layout)) {
             const ValueFlowSite* site = universe.siteOf(member);
-            if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult)
-                break;
+            if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult) {
+                BuiltinClassID builtinClass = m_inputs.classOfObjectMadeForSuperCall(member);
+                if (!builtinClass || builtins.at(builtinClass).hasClosureInstances)
+                    break;
+                return builtinClass;
+            }
             const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(member);
             if (picked && picked->mayBeOtherObject)
                 break;

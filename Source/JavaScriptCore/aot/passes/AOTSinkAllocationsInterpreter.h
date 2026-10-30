@@ -191,6 +191,7 @@ private:
     void requireCellsOfListedElements(VirtualObjectID, const BuildCause&);
 
     void readArgumentList(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
+    bool executeBoundsTestOnArgumentList(ValueID);
     void readArguments(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
     void storeArgument(ValueID store, VirtualObjectID, const VirtualFieldAccess&);
     void forwardArgumentList(ValueID call, VirtualObjectID);

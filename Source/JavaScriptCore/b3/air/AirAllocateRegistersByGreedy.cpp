@@ -4888,8 +4888,6 @@ private:
     std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, const Vector<unsigned, 16>& blocks, const BitVector& isAmongBlocks, float limit, float& cost)
     {
         TmpData& otherData = m_map.get<bank>(other);
-        if (otherData.stage != Stage::Assigned || otherData.spillability != TmpData::Spillability::Spillable || otherData.splitFrom || isConstDef<bank>(other))
-            return std::nullopt;
         auto intervals = otherData.liveRange.intervals().span();
         auto useDefs = useDefsOf(other);
         size_t intervalIndex = 0;
@@ -5010,6 +5008,9 @@ private:
             ASSERT(std::ranges::is_sorted(blocks));
         };
         auto passesThroughBlockWhereTheyMeet = [&](Tmp other, const Interval& intervalOfOther) {
+            TmpData& otherData = m_map.get<bank>(other);
+            if (otherData.stage != Stage::Assigned || otherData.spillability != TmpData::Spillability::Spillable || otherData.splitFrom || isConstDef<bank>(other))
+                return false;
             auto intervals = tmpData.liveRange.intervals().span();
             auto first = std::ranges::upper_bound(intervals, intervalOfOther.begin(), { }, [](const Interval& interval) {
                 return interval.end();

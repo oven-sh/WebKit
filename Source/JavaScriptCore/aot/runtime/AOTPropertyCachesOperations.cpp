@@ -738,9 +738,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* ins
     OPERATION_RETURN(scope);
 }
 
-static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue property, JSValue value, bool isStrict)
+static void putByVal(Instance* instance, JSValue base, JSValue property, JSValue value, bool isStrict)
 {
-    VM& vm = globalObject->vm();
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (base.isUndefinedOrNull()) [[unlikely]] {
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, property));
@@ -757,6 +758,8 @@ static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue propert
     }
     auto key = property.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
+    if (tryReplaceGlobalProperty(instance, vm, base, key.impl(), value))
+        return;
     PutPropertySlot slot(base, isStrict);
     scope.release();
     base.put(globalObject, key, value, slot);
@@ -771,7 +774,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
         if (index && !globalObject->isHavingABadTime() && !object->anyObjectInChainMayInterceptIndexedAccesses() && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue)))
             OPERATION_RETURN(scope);
     }
-    putByVal(globalObject, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
+    putByVal(instance, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
     OPERATION_RETURN(scope);
 }
 
@@ -854,7 +857,7 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
     } else if (base.isObject())
         name = nameForKeyedCache(globalObject, property);
     if (!name)
-        RELEASE_AND_RETURN(scope, putByVal(globalObject, base, property, value, isStrict));
+        RELEASE_AND_RETURN(scope, putByVal(instance, base, property, value, isStrict));
 
     JSObject* object = asObject(base);
     CachedName cachedName { name->impl(), std::nullopt };

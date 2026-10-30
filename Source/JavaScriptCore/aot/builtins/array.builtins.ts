@@ -425,7 +425,7 @@ export default b.declarations(
           ...allocationEffects,
           uses: { this: [b.readsContents()] },
           ...rareMethod("arrayProtoFuncToReversed"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayToReversed", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -444,7 +444,7 @@ export default b.declarations(
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()], items: b.inspected },
           ...rareMethod("arrayProtoFuncToSpliced"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayToSpliced", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,
@@ -468,7 +468,7 @@ export default b.declarations(
           readsStateBeforeConversions: true,
           uses: { this: [b.readsContents()], value: b.inspected },
           ...rareMethod("arrayProtoFuncWith"),
-          implementation: b.hostCall,
+          implementation: b.inline("ArrayWith", { otherwise: b.hostCall }),
         },
         {
           this: arrayLike,

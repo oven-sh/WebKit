@@ -33,6 +33,7 @@
 #include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {
@@ -540,6 +541,55 @@ static void apply(B3::Procedure& proc, const Update& update)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A load of a whole slot cannot take its value from a store to the low word of the slot: it waits until that store has reached the cache, which costs a turn of a small loop
+// five times over. So the low word is for a slot that nothing reads whole soon after the update: not in the loop of the update, and not on the way out of it, unless that way is rare.
+static void rejectLowWordUpdatesThatWholeReadsFollow(B3::Procedure& proc, const Vector<Update, 4>& updates, const HashSet<B3::Value*>& loadsThatStay, BitVector& isRejected)
+{
+    HashMap<B3::Value*, Vector<unsigned, 1>> lowWordUpdatesOfBase;
+    HashSet<B3::Value*> loadsOfLowWordUpdates;
+    for (unsigned index = 0; index < updates.size(); ++index) {
+        const Update& update = updates[index];
+        if (update.kind != UpdateKind::AddToLowWordThenBranchOnCarry || isRejected.quickGet(index))
+            continue;
+        lowWordUpdatesOfBase.add(update.store->lastChild(), Vector<unsigned, 1> { }).iterator->value.append(index);
+        if (!loadsThatStay.contains(update.load))
+            loadsOfLowWordUpdates.add(update.load);
+    }
+    if (lowWordUpdatesOfBase.isEmpty())
+        return;
+
+    constexpr double readsPerUpdateThatCostLessThanTheLowWordSaves = 1.0 / 32;
+    B3::Dominators& dominators = proc.dominators();
+    B3::NaturalLoops& loops = proc.naturalLoops();
+    auto readFollows = [&](const Update& update, B3::BasicBlock* reader) {
+        B3::BasicBlock* writer = update.store->owner;
+        if (reader->frequency() < writer->frequency() * readsPerUpdateThatCostLessThanTheLowWordSaves)
+            return false;
+        if (const B3::NaturalLoop* loop = loops.innerMostLoopOf(writer))
+            return loops.belongsTo(reader, *loop) || dominators.dominates(writer, reader);
+        return dominators.dominates(writer, reader);
+    };
+    for (B3::BasicBlock* block : proc) {
+        for (B3::Value* value : *block) {
+            auto* read = value->as<B3::MemoryValue>();
+            if (!read || read->opcode() != B3::Load || read->type() != B3::Int64 || loadsOfLowWordUpdates.contains(read))
+                continue;
+            auto found = lowWordUpdatesOfBase.find(read->lastChild());
+            if (found == lowWordUpdatesOfBase.end())
+                continue;
+            bool isFollowed = std::ranges::any_of(found->value, [&](unsigned index) {
+                return updates[index].store->offset() == read->offset() && readFollows(updates[index], block);
+            });
+            if (!isFollowed)
+                continue;
+            for (unsigned index : found->value) {
+                if (updates[index].store->offset() == read->offset())
+                    isRejected.quickSet(index);
+            }
+        }
+    }
+}
+
 static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
 {
     if (!isX86_64())
@@ -557,6 +607,7 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
         return false;
 
     BitVector isRejected(updates.size());
+    HashSet<B3::Value*> loadsThatStay;
     HashMap<B3::Value*, unsigned> updateForValue;
     for (unsigned index = 0; index < updates.size(); ++index) {
         const Update& update = updates[index];
@@ -582,8 +633,10 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
                     || (child == update.biasedSum && user == update.comparison);
                 if (isInternalUse)
                     continue;
-                if (update.kind != UpdateKind::CompareThenAdd && (child == update.load || child == update.extended))
+                if (update.kind != UpdateKind::CompareThenAdd && (child == update.load || child == update.extended)) {
+                    loadsThatStay.add(update.load);
                     continue;
+                }
                 if (child == update.sum && findExitDominating(proc, update, user))
                     update.sumUsersOnExits.appendIfNotContains(user);
                 else
@@ -591,6 +644,8 @@ static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
             }
         }
     }
+
+    rejectLowWordUpdatesThatWholeReadsFollow(proc, updates, loadsThatStay, isRejected);
 
     bool changed = false;
     for (unsigned index = 0; index < updates.size(); ++index) {

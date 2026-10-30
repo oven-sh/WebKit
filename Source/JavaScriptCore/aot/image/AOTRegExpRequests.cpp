@@ -109,6 +109,7 @@ public:
         , m_context(context)
     {
         uint32_t numberOfFunctions = program.functions.size();
+        m_usesOfClosures.grow(numberOfFunctions);
         Vector<CollectedOperation> operations = collectInParallel<CollectedOperation>(context.parallelLoops(), numberOfFunctions, [&](unsigned index, Vector<CollectedOperation>& found) {
             forEachValueListedOrNot(program, FunctionID(index), { Typed::Opcode::PutModuleVariable, Typed::Opcode::CallDirect, Typed::Opcode::NewClosure }, [&](ValueID id, const Typed::Value& value) {
                 if (value.opcode == Typed::Opcode::PutModuleVariable)
@@ -1608,6 +1609,12 @@ private:
         m_sawEverything = false;
         Constants values;
         for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
+            // Nothing can be followed any more, and a function may have thousands of callers.
+            if (m_valuesFollowed >= m_budget) {
+                ++m_valuesFollowed;
+                ++m_walksCutShort;
+                break;
+            }
             std::span<const ValueID> arguments = m_program.at(call.caller).at(call.call).argumentsOperands();
             if (numberOfParameters == arguments.size() && !addAll(values, evaluate(Activation { call.caller }, arguments[index])))
                 return { };
@@ -1887,12 +1894,56 @@ private:
         return isWithinLimits;
     }
 
+    struct UseOfClosure {
+        ValueID closure;
+        ValueID use;
+        friend bool operator==(const UseOfClosure&, const UseOfClosure&) = default;
+        friend auto operator<=>(const UseOfClosure&, const UseOfClosure&) = default;
+    };
+
+    // The body of a module makes thousands of closures in hundreds of thousands of values, and the walk asks for the uses of its closures again and again.
+    const Vector<UseOfClosure>& usesOfClosuresIn(FunctionID maker)
+    {
+        std::unique_ptr<Vector<UseOfClosure>>& uses = m_usesOfClosures[maker.index()];
+        if (uses)
+            return *uses;
+        uses = makeUniqueWithoutFastMallocCheck<Vector<UseOfClosure>>();
+        const Typed::Function& function = m_program.at(maker);
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            ValueID id(index);
+            const Typed::Value& use = function.at(id);
+            auto note = [&](ValueID operand) {
+                ValueID closure = throughCasts(function, operand);
+                if (function.at(closure).opcode == Typed::Opcode::NewClosure)
+                    uses->append({ closure, id });
+            };
+            if (use.opcode == Typed::Opcode::Call || use.opcode == Typed::Opcode::CallResolved)
+                note(use.calleeOperand());
+            else if (use.opcode == Typed::Opcode::CallDirect) {
+                for (ValueID operand : use.argumentsOperands())
+                    note(operand);
+            }
+            forEachBuiltinCall(use, [&](const Typed::BuiltinCall& call) {
+                if (call.form != Typed::BuiltinCallForm::Whole)
+                    return;
+                for (const BuiltinCallback& callback : m_program.builtins().at(call.overload).flow.callbacks) {
+                    if (ValueID callee = call.operandAt(callback.callee))
+                        note(callee);
+                }
+            });
+        }
+        AOT::sort(*uses);
+        uses->shrink(std::ranges::unique(*uses).begin() - uses->begin());
+        return *uses;
+    }
+
     bool addArgumentsGivenToClosures(Constants& values, FunctionID callee, uint32_t parameter)
     {
         for (const DirectCall& closure : std::ranges::equal_range(m_closures, sourceOf(callee), { }, &DirectCall::callee)) {
             const Typed::Function& maker = m_program.at(closure.caller);
             Activation inMaker { closure.caller };
-            for (const Typed::Value& use : maker.values) {
+            for (const UseOfClosure& useOfClosure : std::ranges::equal_range(usesOfClosuresIn(closure.caller), closure.call, { }, &UseOfClosure::closure)) {
+                const Typed::Value& use = maker.at(useOfClosure.use);
                 if (callsValue(maker, use, closure.call)) {
                     std::span<const ValueID> arguments = use.argumentsOperands();
                     if (!addAll(values, evaluate(inMaker, parameter < arguments.size() ? arguments[parameter] : ValueID())))
@@ -2280,6 +2331,7 @@ private:
     Vector<Store> m_stores;
     Vector<DirectCall> m_directCalls;
     Vector<DirectCall> m_closures;
+    Vector<std::unique_ptr<Vector<UseOfClosure>>> m_usesOfClosures;
     Vector<FunctionID, 2> m_functionsOfMap;
     HashMap<uint64_t, Vector<ValueID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_longLiterals;
     std::optional<Typed::ScratchRealm> m_scratchRealm;

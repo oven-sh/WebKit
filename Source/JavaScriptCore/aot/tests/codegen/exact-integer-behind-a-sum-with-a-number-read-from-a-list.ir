@@ -1,0 +1,25 @@
+# (sum + list[i]) | 0 where the list holds numbers: one test that the element is a whole int32, and behind it the sum is computed in integers. Where the test fails it is computed in numbers.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lowWordOfSumWithElement" parameters=[{type=i32}, {type=Array<number>}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: i32, v1: Array<number>, v2: int[0, 100]):
+    v3 = HasArrayStorage v1 arrayStorage=Double
+    TestAndBranch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: guard):
+    v5 = IsElementPresent v1, v2, v4 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6: guard):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v1, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v9 = Add v0, v8 form=Numbers
+    v10 = Integer integer=0
+    v11 = BitOr v9, v10 form=Numbers
+    Return v11
+  b3():
+    Return v0
+}

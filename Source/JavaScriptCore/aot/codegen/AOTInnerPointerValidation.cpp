@@ -895,43 +895,50 @@ private:
                 m_end[root] = 0;
             m_end[root] = std::max(m_end[root], endOf(m_facts[head]));
         }
-        m_valuesMadeInNotedBlock.shrink(0);
+        m_choicesOfNotedBlock.shrink(0);
         for (unsigned choice = m_firstChoiceOfBlock[block]; choice != none; choice = m_facts[choice].nextHeadInBlock)
-            m_valuesMadeInNotedBlock.append({ find(choice), choice });
-        for (unsigned owner : std::ranges::equal_range(m_ownersMadeInBlocks, block, { }, [&](unsigned value) { return m_facts[value].block; }))
-            m_valuesMadeInNotedBlock.append({ find(owner), owner });
-        AOT::sort(m_valuesMadeInNotedBlock);
+            m_choicesOfNotedBlock.append({ find(choice), choice });
+        AOT::sort(m_choicesOfNotedBlock);
     }
 
     // The load that made a pointer whose owner is last read in front of the position, if there is one.
     const B3::MemoryValue* findLoadWithoutOwner(unsigned pointer, unsigned block, unsigned position, bool givesCells)
     {
         ++m_query;
+        auto spans = [&](unsigned value) {
+            const Facts& facts = m_facts[value];
+            return facts.block == block && facts.created < position && endOf(facts) >= position;
+        };
         m_classesToAsk.shrink(0);
         m_classesToAsk.append(find(pointer));
         m_queryOfClass[m_classesToAsk[0]] = m_query;
         while (!m_classesToAsk.isEmpty()) {
-            for (unsigned index = m_facts[m_classesToAsk.takeLast()].firstOwner; index != none; index = m_owners[index].next) {
+            unsigned firstOwner = m_facts[m_classesToAsk.takeLast()].firstOwner;
+            for (unsigned index = firstOwner; index != none; index = m_owners[index].next) {
+                if (spans(m_owners[index].value))
+                    m_queryOfHeldClass[find(m_owners[index].value)] = m_query;
+            }
+            for (unsigned index = firstOwner; index != none; index = m_owners[index].next) {
                 const Owner& owner = m_owners[index];
                 unsigned root = find(owner.value);
+                bool isPointer = m_facts[root].classFlags & IsPointer;
+                // By the load and not by the owner: another load from this owner may give a pointer that the scan does not know.
+                if (!isPointer && !givesCells && contains(m_rules.fieldsThatHoldPointersTheScanKnows.span(), owner.load->range()))
+                    continue;
                 if (std::exchange(m_queryOfClass[root], m_query) == m_query)
                     continue;
-                if (m_facts[root].classFlags & IsPointer) {
+                if (isPointer) {
                     m_classesToAsk.append(root);
                     continue;
                 }
-                if (!givesCells && contains(m_rules.fieldsThatHoldPointersTheScanKnows.span(), owner.load->range()))
-                    continue;
                 if (!(m_facts[root].classFlags & HasOrdinaryDefinition))
                     continue;
                 if (m_blockOfEnd[root] == block && m_end[root] >= position)
                     continue;
-                auto spans = [&](unsigned value) {
-                    const Facts& facts = m_facts[value];
-                    return facts.block == block && facts.created < position && endOf(facts) >= position;
-                };
-                auto madeHere = std::ranges::equal_range(m_valuesMadeInNotedBlock, root, { }, &std::pair<unsigned, unsigned>::first);
-                if (std::ranges::any_of(madeHere, [&](const auto& made) { return spans(made.second); }))
+                if (m_queryOfHeldClass[root] == m_query)
+                    continue;
+                auto choices = std::ranges::equal_range(m_choicesOfNotedBlock, root, { }, &std::pair<unsigned, unsigned>::first);
+                if (std::ranges::any_of(choices, [&](const auto& choice) { return spans(choice.second); }))
                     continue;
                 return owner.load;
             }
@@ -1058,14 +1065,10 @@ private:
     void report()
     {
         AOT::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
-        for (const Owner& owner : m_owners) {
-            if (!(m_facts[owner.value].memberFlags & IsHead))
-                m_ownersMadeInBlocks.append(owner.value);
-        }
-        AOT::sort(m_ownersMadeInBlocks, { }, [&](unsigned value) { return m_facts[value].block; });
         m_blockOfEnd.fill(none, m_facts.size());
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());
+        m_queryOfHeldClass.fill(0, m_facts.size());
         unsigned notedBlock = none;
         ReportedPlaces reported;
         for (unsigned pointer : m_pointers) {
@@ -1126,8 +1129,7 @@ private:
     Vector<bool> m_isFollowed;
     Vector<unsigned> m_firstHeadOfBlock;
     Vector<unsigned> m_firstChoiceOfBlock;
-    Vector<unsigned> m_ownersMadeInBlocks;
-    Vector<std::pair<unsigned, unsigned>> m_valuesMadeInNotedBlock;
+    Vector<std::pair<unsigned, unsigned>> m_choicesOfNotedBlock;
     Vector<unsigned> m_headOfRegister;
     Vector<unsigned> m_tailOfRegister;
     ValueByBlockAndUnit m_headOfUnit;
@@ -1155,6 +1157,7 @@ private:
     Vector<unsigned> m_blockOfEnd;
     Vector<unsigned> m_end;
     Vector<unsigned> m_queryOfClass;
+    Vector<unsigned> m_queryOfHeldClass;
     Vector<unsigned> m_classesToAsk;
     unsigned m_query { 0 };
 };

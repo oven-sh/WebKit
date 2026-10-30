@@ -16,6 +16,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
+#include "AOTIdentifierNumbering.h"
 #include "AOTObjectCreationEmitter.h"
 #include "AOTObjectWords.h"
 #include "AOTPendingStars.h"
@@ -222,6 +223,181 @@ void AccessEmitter::copyDataProperties(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+static bool isConstantWithCopy(const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode::Undefined:
+    case Opcode::Null:
+    case Opcode::Boolean:
+    case Opcode::Integer:
+    case Opcode::Double:
+    case Opcode::String:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool AccessEmitter::isThereAtCopy(ValueID copy, ValueID id)
+{
+    return analyses().dominates(id, analyses().useLists().pointOf(copy)) || isConstantWithCopy(m_function.at(id));
+}
+
+Boxed AccessEmitter::valueAtCopy(const ValueContext& copy, ValueID id)
+{
+    if (analyses().dominates(id, analyses().useLists().pointOf(copy.id())))
+        return in<Boxed>(id);
+    const Value& value = m_function.at(id);
+    switch (value.opcode) {
+    case Opcode::Undefined:
+        return undefined();
+    case Opcode::Null:
+        return boxedConstant(jsNull());
+    case Opcode::Boolean:
+        return boxedConstant(jsBoolean(value.boolean()));
+    case Opcode::Integer:
+        return boxedConstant(jsNumber(static_cast<double>(value.integer())));
+    case Opcode::Double:
+        return boxedConstant(jsNumber(withoutPayload(value.number())));
+    case Opcode::String:
+        return boxCell(emitter<ConstantEmitter>().stringConstant(copy, value.string()));
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// Whether this copy may be made by the call that also defines names on it.
+bool AccessEmitter::canTakeNames(ValueID id)
+{
+    const Value& value = m_function.at(id);
+    if (value.opcode != Opcode::CopyObject || value.assigns() || value.request() || !value.excludedKeys().empty() || !value.excludedOperands().empty())
+        return false;
+    const Type& typeOfSource = typeOf(value.sourceOperand());
+    BlockID block = analyses().useLists().pointOf(id).block;
+    return (typeOfSource.anyObject || typeOfSource.primitives & ~cellPrimitives) && !findCopyIntoCopy(m_function, m_function.at(block), id);
+}
+
+// The copies that come together in a block as one parameter, when each comes straight from where it is made, and nothing else comes there. A copy that shares the block with the others gets the names of that block only if all of them do.
+std::optional<Vector<ValueID, 4>> AccessEmitter::copiesThatMeet(const Target& target, size_t index)
+{
+    FunctionAnalyses& analyses = this->analyses();
+    Vector<ValueID, 4> copies;
+    for (BlockID predecessor : analyses.cfg().predecessors(target.block)) {
+        const Terminator& terminator = m_function.at(predecessor).terminator;
+        const Target* way = nullptr;
+        if (terminator.kind == TerminatorKind::Jump)
+            way = &terminator.next();
+        else if (terminator.isConditionalBranch())
+            way = terminator.taken().block == target.block ? nullptr : &terminator.notTaken();
+        if (!way || way->block != target.block || index >= way->arguments.size())
+            return std::nullopt;
+        ValueID other = analyses.identityOf(way->arguments[index]);
+        if (!canTakeNames(other) || analyses.useLists().pointOf(other).block != predecessor)
+            return std::nullopt;
+        if (terminator.isConditionalBranch()) {
+            const Value& test = m_function.at(terminator.conditionOperand());
+            if (test.opcode != Opcode::TypeTest || analyses.identityOf(test.valueOperand()) != other || !emitter<ShapeTestEmitter>().hasOnlyCompiledObjects(m_program.at(test.testedType())))
+                return std::nullopt;
+        }
+        const Block& block = m_function.at(predecessor);
+        if (block.handler)
+            return std::nullopt;
+        std::span<const ValueID> values = block.values.span();
+        for (size_t at = analyses.useLists().pointOf(other).index + 1; at < values.size(); ++at) {
+            const Value& value = m_function.at(values[at]);
+            bool usesOther = false;
+            value.forEachChild([&](ValueID child) {
+                usesOther |= child && analyses.identityOf(child) == other;
+            });
+            if ((usesOther && value.opcode != Opcode::TypeTest) || analyses.effectsOf(values[at]).normal.mayRunOtherCode())
+                return std::nullopt;
+        }
+        copies.append(other);
+    }
+    return copies;
+}
+
+// The way of an ordinary copy is followed from the CopyObject: it fails every test for layouts of compiled objects. Nobody else has the copy before the first operation that is handed it.
+Vector<AccessEmitter::DefinitionWithCopy, 4> AccessEmitter::findDefinitionsWithCopy(const ValueContext& copy)
+{
+    Vector<DefinitionWithCopy, 4> found;
+    FunctionAnalyses& analyses = this->analyses();
+    Vector<ValueID, 2> names { copy.id() };
+    auto isCopy = [&](ValueID id) {
+        return id && names.contains(analyses.identityOf(id));
+    };
+    auto handsOnCopy = [&](const Target& target) {
+        return std::ranges::any_of(target.arguments, isCopy);
+    };
+    const NaturalLoop* loop = analyses.naturalLoops().innerMostLoopOf(copy.block());
+    Vector<BlockID, 4> visited { copy.block() };
+    BlockID block = copy.block();
+    Vector<ValueID, 4> copiesHere { copy.id() };
+    size_t index = analyses.useLists().pointOf(copy.id()).index + 1;
+    while (true) {
+        const Block& current = m_function.at(block);
+        if (current.handler && handsOnCopy(*current.handler))
+            return found;
+        std::span<const ValueID> values = current.values.span();
+        for (; index < values.size(); ++index) {
+            const Value& value = m_function.at(values[index]);
+            bool usesCopy = false;
+            value.forEachChild([&](ValueID child) {
+                usesCopy |= isCopy(child);
+            });
+            if (analyses.effectsOf(values[index]).normal.mayRunOtherCode() && value.opcode != Opcode::PropDefine)
+                return found;
+            if (!usesCopy || value.opcode == Opcode::TypeTest)
+                continue;
+            if (value.opcode != Opcode::PropDefine || isCopy(value.valueOperand()))
+                return found;
+            PropertyKeyID key = value.key();
+            NameClass nameClass = m_program.nameClassOf(key);
+            if (m_program.at(key).kind != PropertyKeyKind::Text || nameClass == NameClass::Index || nameClass == NameClass::CanonicalNumericString || nameClass == NameClass::Proto)
+                return found;
+            std::optional<uint32_t> name = build().identifierNumbering().numberOf(key);
+            if (!name || std::ranges::contains(found, *name, &DefinitionWithCopy::name))
+                return found;
+            if (!std::ranges::all_of(copiesHere, [&](ValueID each) { return isThereAtCopy(each, value.valueOperand()); }))
+                return found;
+            found.append({ values[index], *name, valueAtCopy(copy, value.valueOperand()) });
+        }
+
+        const Terminator& terminator = current.terminator;
+        const Target* next = nullptr;
+        if (terminator.kind == TerminatorKind::Jump)
+            next = &terminator.next();
+        else if (terminator.isConditionalBranch()) {
+            const Value& test = m_function.at(terminator.conditionOperand());
+            if (test.opcode == Opcode::TypeTest && isCopy(test.valueOperand()) && emitter<ShapeTestEmitter>().hasOnlyCompiledObjects(m_program.at(test.testedType())))
+                next = &terminator.notTaken();
+        }
+        if (!next || visited.contains(next->block))
+            return found;
+        const Block& following = m_function.at(next->block);
+        std::span<const ValueID> arguments = next->arguments.span();
+        auto handedOn = std::ranges::find_if(arguments, isCopy);
+        if (handedOn == arguments.end()) {
+            if (analyses.naturalLoops().innerMostLoopOf(next->block) != loop || (analyses.cfg().predecessors(next->block).size() > 1 && copiesHere.size() > 1))
+                return found;
+        } else {
+            if (visited.size() != 1 || std::ranges::count_if(arguments, isCopy) != 1 || !found.isEmpty())
+                return found;
+            size_t position = handedOn - arguments.begin();
+            std::optional<Vector<ValueID, 4>> copies = copiesThatMeet(*next, position);
+            if (!copies || !copies->contains(copy.id()))
+                return found;
+            copiesHere = std::move(*copies);
+            names.append(following.parameters.span()[position]);
+            // Every way into this block has just made a copy, in whichever loop it lies.
+            loop = analyses.naturalLoops().innerMostLoopOf(next->block);
+        }
+        block = next->block;
+        visited.append(block);
+        index = 0;
+    }
+}
+
 void AccessEmitter::generateCopyObject(const ValueContext& value)
 {
     Boxed source = in<Boxed>(value->sourceOperand());
@@ -238,6 +414,19 @@ void AccessEmitter::generateCopyObject(const ValueContext& value)
     // The copy of a compiled object is an object of its layout, which only the copy by itself makes.
     const Type& typeOfSource = typeOf(value->sourceOperand());
     bool mayBeOtherThanCompiledObject = typeOfSource.anyObject || typeOfSource.primitives & ~cellPrimitives;
+    if (canTakeNames(value.id())) {
+        if (Vector<DefinitionWithCopy, 4> definitions = findDefinitionsWithCopy(value); !definitions.isEmpty()) {
+            Vector<Boxed, 12> list { Boxed(m_out.constInt64(definitions.size())) };
+            for (const DefinitionWithCopy& definition : definitions)
+                list.append(Boxed(m_out.constInt64(definition.name)));
+            for (const DefinitionWithCopy& definition : definitions) {
+                list.append(definition.value);
+                m_definitionsWithCopy.set(definition.definition.index());
+            }
+            define(value, callOperation<CellPointer>(value, RuntimeOperation::CopyObjectAndDefine, { source, word32(static_cast<int32_t>(definitions[0].name)), word32(static_cast<int32_t>(definitions.size())), argumentBuffer(list.span()) }));
+            return;
+        }
+    }
     if (!second || !mayBeOtherThanCompiledObject) {
         define(value, copyByOperation());
         return;

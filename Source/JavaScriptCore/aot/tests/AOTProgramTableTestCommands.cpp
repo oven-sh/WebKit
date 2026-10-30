@@ -795,13 +795,13 @@ static void printModules(const TablesContext& context)
         if (uncompiled.typeAttribute != UncompiledModuleData::noTypeAttribute)
             RecordLine(context, "typeAttribute"_s).field("module"_s, ModuleID(uncompiled.module)).field("type"_s, StringID(uncompiled.typeAttribute));
     }
-    std::span<const ModuleWithNamedVariablesData> modulesWithNamedVariables = tables.modulesWithNamedVariables();
-    for (size_t index = 0; index + 1 < modulesWithNamedVariables.size(); ++index) {
-        uint32_t first = modulesWithNamedVariables[index].firstVariable;
-        for (const NamedVariableData& variable : tables.namedVariables().subspan(first, modulesWithNamedVariables[index + 1].firstVariable - first))
-            RecordLine(context, "namedVariable"_s).field("module"_s, ModuleID(modulesWithNamedVariables[index].module)).field("name"_s, variable.nameString())
-                .flag("isNarrow"_s, variable.place() == NamedVariableData::Place::NarrowWord).flag("isClosure"_s, variable.place() == NamedVariableData::Place::Closure);
-    }
+    uint32_t moduleWithNamedVariables = 0;
+    forEachNamedVariable(tables.namedVariables(), [&](size_t) {
+        ++moduleWithNamedVariables;
+    }, [&](const NamedVariableData& variable) {
+        RecordLine(context, "namedVariable"_s).field("group"_s, moduleWithNamedVariables - 1).field("name"_s, variable.nameString())
+            .flag("isNarrow"_s, variable.place() == NamedVariableData::Place::NarrowWord).flag("isClosure"_s, variable.place() == NamedVariableData::Place::Closure);
+    });
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
         RecordLine(context, "runtimeModule"_s).field("id"_s, RuntimeModuleID(runtimeModule.registryID)).field("module"_s, ModuleID(runtimeModule.module));
     for (const CompiledRuntimeFunctionData& runtimeFunction : tables.compiledRuntimeFunctions()) {
@@ -973,6 +973,9 @@ static void printRequest(const TablesContext& context, const RequestRecord& reco
         },
         [&](const CollectionDataRecord&) {
             printCollectionDataRequest(context, offset);
+        },
+        [&](const FormatPatternRecord& pattern) {
+            RecordLine(context, "request"_s, offset).word("FormatPattern"_s).field("words"_s, static_cast<uint32_t>(pattern.words.size()));
         });
 }
 

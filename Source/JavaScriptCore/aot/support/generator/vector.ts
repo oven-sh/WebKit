@@ -180,6 +180,9 @@ inline constexpr bool isMendedAfterMovingAsBytes = false;
 template<typename T>
 inline constexpr bool movesAsBytesAndMayBeMended = movesAsBytes<T> || isMendedAfterMovingAsBytes<T>;
 
+template<typename T>
+void mendAfterMovingAsBytes(T& moved, ptrdiff_t distance);
+
 #if !ASAN_ENABLED && COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
 template<typename T, size_t size>
 inline constexpr bool isMendedAfterMovingAsBytes<T[size]> = isMendedAfterMovingAsBytes<T>;

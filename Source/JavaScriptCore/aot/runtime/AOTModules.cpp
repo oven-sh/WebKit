@@ -150,21 +150,28 @@ void ModuleEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     environment->m_modules.analyzeVariables(environment, environment->m_index, analyzer);
 }
 
-static std::span<const NamedVariableData> namedVariablesOf(const ProgramTables& tables, uint32_t indexAmongModulesWithNamedVariables)
+std::span<const NamedVariableData> Modules::namedVariablesOf(uint32_t indexAmongModulesWithNamedVariables) const
 {
-    std::span<const ModuleWithNamedVariablesData> modules = tables.modulesWithNamedVariables();
-    uint32_t first = modules[indexAmongModulesWithNamedVariables].firstVariable;
-    return tables.namedVariables().subspan(first, modules[indexAmongModulesWithNamedVariables + 1].firstVariable - first);
+    uint32_t first = m_firstNamedVariables[indexAmongModulesWithNamedVariables];
+    return m_namedVariables.subspan(first, m_firstNamedVariables[indexAmongModulesWithNamedVariables + 1] - first);
 }
 
 void Modules::willAnalyzeHeap(VM& vm)
 {
     const ProgramTables& tables = m_table.programTables();
-    if (tables.modulesWithNamedVariables().empty())
+    if (tables.namedVariables().empty())
         return;
-    uint32_t numberOfModules = static_cast<uint32_t>(tables.modulesWithNamedVariables().size() - 1);
-    if (m_namesOfVariables.isEmpty())
-        m_namesOfVariables.grow(tables.namedVariables().size());
+    if (m_namedVariables.isEmpty()) {
+        bool endsWhereAModuleEnds = forEachNamedVariable(tables.namedVariables(), [&](size_t) {
+            m_firstNamedVariables.append(m_namedVariables.size());
+        }, [&](const NamedVariableData& variable) {
+            m_namedVariables.append(variable);
+        });
+        RELEASE_ASSERT(endsWhereAModuleEnds);
+        m_firstNamedVariables.append(m_namedVariables.size());
+        m_namesOfVariables.grow(m_namedVariables.size());
+    }
+    uint32_t numberOfModules = m_firstNamedVariables.size() - 1;
 
     // No collection may start between here and the one that takes the snapshot.
     DeferGCForAWhile deferGC(vm);
@@ -173,13 +180,13 @@ void Modules::willAnalyzeHeap(VM& vm)
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         if (!m_environments.isEmpty() && m_environments[index])
             continue;
-        std::span<const NamedVariableData> variables = namedVariablesOf(tables, index);
+        std::span<const NamedVariableData> variables = namedVariablesOf(index);
         bool holdsCell = std::ranges::any_of(variables, [&](const NamedVariableData& variable) {
             return m_state.statics->cellIn(variable);
         });
         if (!holdsCell)
             continue;
-        size_t first = variables.data() - tables.namedVariables().data();
+        size_t first = m_firstNamedVariables[index];
         for (size_t offset = 0; offset < variables.size(); ++offset)
             m_namesOfVariables[first + offset] = AtomString(ProgramStrings::text(tables, variables[offset].nameString()));
         created.append({ index, ModuleEnvironment::create(vm, structure, *this, index) });
@@ -196,9 +203,8 @@ void Modules::willAnalyzeHeap(VM& vm)
 
 void Modules::analyzeVariables(ModuleEnvironment* environment, uint32_t indexAmongModulesWithNamedVariables, HeapAnalyzer& analyzer) const
 {
-    const ProgramTables& tables = m_table.programTables();
-    std::span<const NamedVariableData> variables = namedVariablesOf(tables, indexAmongModulesWithNamedVariables);
-    size_t first = variables.data() - tables.namedVariables().data();
+    std::span<const NamedVariableData> variables = namedVariablesOf(indexAmongModulesWithNamedVariables);
+    size_t first = m_firstNamedVariables[indexAmongModulesWithNamedVariables];
     for (size_t offset = 0; offset < variables.size(); ++offset) {
         if (JSCell* cell = m_state.statics->cellIn(variables[offset]))
             analyzer.analyzeVariableNameEdge(environment, cell, m_namesOfVariables[first + offset].impl());
@@ -326,29 +332,11 @@ bool Modules::wasLoadedByImport(ModuleID module)
                 continue;
             if (request.targetModule() == imported)
                 return true;
-            // A statement of a test file that the loader has linked. It knows the file by its path.
-            if (data(request.targetModule()).isUncompiledCode()) {
-                LoadedModule* linked = loadedIfExists(request.targetModule());
-                if (linked && linked->uncompiledRecord && linked->resolvedKey.string() == m_table.pathText(file))
-                    return true;
-                continue;
-            }
             if (!reached.set(request.target()))
                 toFollow.append(request.targetModule());
         }
     }
     return false;
-}
-
-// The loader has the record of a file that it linked for a test file, or walked. `delete require.cache[path]` takes the file out of the loader too: whoever asks it for the
-// path from then on gets the file from disk. A store leaves the loader as it is.
-void Modules::takeOutOfLoader(ModuleID module)
-{
-    ModuleID file = fileOf(module);
-    for (ModuleID known : { file, moduleWithExportsOf(file) }) {
-        if (ModuleRecord* record = m_records.get(known))
-            loader()->removeEntryOfRecord(record);
-    }
 }
 
 void Modules::evict(ModuleID module)
@@ -747,8 +735,6 @@ JSValue Modules::readExportIfInitialized(ModuleID module, unsigned index) const
     case ModuleExportKind::Variable:
         return ProgramStatics::readVariableWithoutAllocating(m_instance, moduleExport.variable);
     case ModuleExportKind::Namespace: {
-        if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
-            return linkedWith;
         JSObject* namespaceObject = namespaceIfCreated(moduleExport.targetModule(), targetPhaseOf(moduleExport));
         return namespaceObject ? JSValue(namespaceObject) : JSValue();
     }
@@ -801,8 +787,6 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
         return value;
     }
     case ModuleExportKind::Namespace:
-        if (JSObject* linkedWith = namespaceThatCompiledCodeHolds(moduleExport.targetModule(), targetPhaseOf(moduleExport)))
-            return linkedWith;
         RELEASE_AND_RETURN(scope, moduleNamespace(moduleExport.targetModule(), targetPhaseOf(moduleExport)));
     case ModuleExportKind::Indirect: {
         const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
@@ -1325,21 +1309,6 @@ JSObject* Modules::createTableOfExports()
     JSObject* table = constructEmptyObject(vm, m_instance.globalObject->nullPrototypeObjectStructure());
     table->convertToDictionary(vm);
     return table;
-}
-
-// `export * as space from "./file.cjs"`, read off the namespace object of the exporter. A module that has run keeps what it was linked with, and its code reads that here.
-// Whoever asks for the file behind a second load gets another object: captureExportsAgain().
-JSObject* Modules::namespaceThatCompiledCodeHolds(ModuleID module, ModulePhase phase) const
-{
-    // As createNamespace() goes from a file to its face.
-    if (data(module).kind == ModuleKind::CommonJs) {
-        if (std::optional<ModuleID> face = m_table.faceOfFile(module); face && data(*face).capturesExports())
-            module = *face;
-    }
-    if (phase != ModulePhase::Evaluation || !m_modulesWithEarlierNamespaceInValue.get(module.index()))
-        return nullptr;
-    JSValue held = value(module);
-    return held ? asObject(held) : nullptr;
 }
 
 JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
@@ -2804,7 +2773,6 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         }
     }
 
-    count(m_instance, RuntimeCounterID::CompiledModulesWalkedByLoader);
     UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash> keys;
     WTF::Vector<Identifier, 8> keptAlive;
     for (const ModuleRequestData& request : m_table.imports(module)) {
@@ -3056,6 +3024,11 @@ static NEVER_INLINE RuntimeCounters::CountedFile* findCountedFile(Instance& inst
         return makeUnique<RuntimeCounters::CountedFile>();
     }).iterator->value.get();
     return files[module];
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWasLoadedSynchronously, size_t, (Instance* instance, uint32_t module))
+{
+    return modulesOf(*instance).wasLoadedSynchronously(ModuleID(module));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountExecution, void, (Instance* instance, uint32_t module, uint32_t description, uint32_t counter))
@@ -3531,8 +3504,6 @@ static void evictFromItsImage(JSGlobalObject* realm, ModuleID moduleOfHost, Take
     }
     modules->forgetFormAnsweredFirst(module);
     modules->evict(module);
-    if (takenOutBy == TakenOutBy::Deletion && modules->isEvicted(module))
-        modules->takeOutOfLoader(module);
     if (standsInPlaceOfFile)
         modules->leaveToHostUnlessItHasRun(module);
 }
@@ -3776,7 +3747,7 @@ void willStorePathOfMainModule(JSGlobalObject* realm)
 {
     bool isDecidedInCode = false;
     for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
-        // ValueFlowRuleContext::runnerChoosesMainModule()
+        // In a test run the runner itself stores there, for each test file in its turn.
         if (hasFlag(instance->options().admitted(), AdmittedCode::FilesRunByHost) || hasFlag(instance->options().admitted(), AdmittedCode::ReplacedBuiltins))
             return;
         isDecidedInCode |= !instance->program->holdsLibraryAlone() && !instance->program->storesPathOfMainModule();
@@ -4046,7 +4017,6 @@ void willChangeRequireOverride(JSGlobalObject* realm, RequireOverride location, 
 
 void willStoreLoaderOfExtension(JSGlobalObject* realm, StringView extension)
 {
-    auto scope = DECLARE_THROW_SCOPE(realm->vm());
     for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
         Modules* modules = instance->state->modules.get();
         if (!modules)
@@ -4427,9 +4397,7 @@ bool ModuleRecord::setIsAskingHost(JSGlobalObject* globalObject, bool isAskingHo
 uint8_t ModuleRecord::willAskHostForRequest()
 {
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
-    // A module that the loader walks asks it for compiled modules. One that compiled code loads asks only for what the loader links, and a compiled file among that
-    // is the root of a graph of its own.
-    bool wasWalkingRequests = modules().setIsWalkingRequests(!m_compiledRequests.isEmpty());
+    bool wasWalkingRequests = modules().setIsWalkingRequests(true);
     bool wasAskingHost = modules().setIsAskingHost(true);
     return static_cast<uint8_t>(wasAskingHost) | static_cast<uint8_t>(wasWalkingRequests) << 1;
 }

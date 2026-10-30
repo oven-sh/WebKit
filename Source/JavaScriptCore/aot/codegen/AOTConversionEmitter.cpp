@@ -520,6 +520,15 @@ static int64_t largestMagnitudeIn(Range range)
     return std::max(std::abs(range.minimum), std::abs(range.maximum));
 }
 
+// What was read is likely a whole number if the program goes on to add it to an integer and truncate. What was computed, like `x + width * 0.5`, is as likely not, and a branch on it would be taken at random.
+std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::wholeNumberReadFromStorage(LValue number)
+{
+    if (number->type() != B3::Double || (number->opcode() != B3::Load && number->opcode() != B3::Phi))
+        return std::nullopt;
+    Word32 word = low32(toInteger(Number(number)));
+    return ExactInteger { .value = signExtended(word), .range = Range::int32(), .word = word, .holdsWhile = equal(toNumber(word), Number(number)) };
+}
+
 std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number)
 {
     auto whileBoth = [&](Condition first, Condition second) {
@@ -579,8 +588,15 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
     case B3::Add:
     case B3::Sub: {
         std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
-        std::optional<ExactInteger> right = left ? findExactIntegerBehind(number->child(1)) : std::nullopt;
-        if (!right || (left->mayBeRounded && right->mayBeRounded))
+        std::optional<ExactInteger> right = findExactIntegerBehind(number->child(1));
+        if (!left && !right)
+            return std::nullopt;
+        // `sum = (sum + list[i]) | 0` over a list held as numbers: in numbers each turn waits for the last through three conversions. A test of the element waits for the load alone.
+        if (!left)
+            left = wholeNumberReadFromStorage(number->child(0));
+        else if (!right)
+            right = wholeNumberReadFromStorage(number->child(1));
+        if (!left || !right || (left->mayBeRounded && right->mayBeRounded))
             return std::nullopt;
         bool isSum = number->opcode() == B3::Add;
         ExactInteger result {

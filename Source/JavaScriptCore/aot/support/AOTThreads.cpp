@@ -428,9 +428,12 @@ void ParallelLoops::giveFreeMemoryBack() const
     askThreadsAtWorkForFreeMemory();
     if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
         return;
-    giveFreeMemoryOfCurrentThreadBackIfAsked();
     RestingThreads::Task task { [](void*) { }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
-    for (unsigned left = numberOfRestingThreads(); left && m_restingThreads->tryHandOver(task); --left) { }
+    bool hasWokenThread = false;
+    for (unsigned left = numberOfRestingThreads(); left && m_restingThreads->tryHandOver(task); --left)
+        hasWokenThread = true;
+    if (!hasWokenThread)
+        giveFreeMemoryOfCurrentThreadBackIfAsked();
 }
 
 unsigned ParallelLoops::numberOfRestingThreads() const

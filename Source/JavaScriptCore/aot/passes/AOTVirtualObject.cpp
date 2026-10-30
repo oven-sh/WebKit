@@ -1034,12 +1034,18 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
     const Program& program = context.program;
     if (std::optional<int64_t> index = integerConstantThroughCasts(program, context.function, position)) {
         // The other accesses go on to the property of that name. This test asks for an element, and none is at a position that is no index.
-        if (*index < 0 || *index > static_cast<int64_t>(MAX_ARRAY_INDEX))
-            return access.opcode == Opcode::IsElementPresent ? createAbsentAccess() : VirtualFieldAccess { };
+        if (*index < 0 || *index > static_cast<int64_t>(MAX_ARRAY_INDEX)) {
+            if (access.opcode == Opcode::IsElementPresent)
+                return createAbsentAccess();
+            return readsUndefinedWhenAbsent && description.kind == VirtualObjectKind::ArgumentList ? createDynamicElementAccess(position) : VirtualFieldAccess { };
+        }
         return createFieldAccess(VirtualField::element(static_cast<uint32_t>(*index)), PresentField::IsOwnData, whenAbsent);
     }
     // A read at an unknown number gives undefined for every number that is no position of an element.
     if (readsUndefinedWhenAbsent && program.typeOf(context.function, position).isNumber())
+        return createDynamicElementAccess(position);
+    // A read of the arguments in the frame makes a list for itself where the key turns out to be no number. No prototype of an array holds a getter of the program's, so nobody else ever sees that list.
+    if (description.kind == VirtualObjectKind::ArgumentList && access.opcode == Opcode::ElemGet)
         return createDynamicElementAccess(position);
     // The test in front of a read of a present element is answered for a list that is not built only where every position of the index's range holds an element.
     if (isArray && access.opcode == Opcode::GetArrayElement && access.isPresent() && program.typeOf(context.function, position).isInteger())

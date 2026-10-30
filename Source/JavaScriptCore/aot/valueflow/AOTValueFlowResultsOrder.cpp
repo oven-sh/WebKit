@@ -308,7 +308,7 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     return order;
 }
 
-void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls&, FlowResultTables& tables)
+FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls&, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
@@ -359,6 +359,7 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
             application.bodies[read.function.index()].readsAfterInitialization.append(read.value);
     }
     tables.wholeProgram.moduleOrder = WTF::move(moduleOrder);
+    return { WTF::move(orderInputs.calls), WTF::move(orderInputs.callsOfLists), WTF::move(orderInputs.calleeLists), orderInputs.host() };
 }
 
 } } } // namespace JSC::AOT::Typed

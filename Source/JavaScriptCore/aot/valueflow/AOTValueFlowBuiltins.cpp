@@ -1278,12 +1278,20 @@ private:
             return false;
         ClimbingSet entries = m_context.restrict(valueAt(BuiltinPlace { .kind = BuiltinPlaceKind::IteratedValues, .operand = BuiltinOperand::argument(0) }), m_universe.objects());
         constexpr OptionSet<ObjectMutation> mutationsOfContents { ObjectMutation::StoreAfterCreation, ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::DeleteField, ObjectMutation::ChangePrototype };
-        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), entries))
+        // A pair that the program writes says what it holds until something changes it, and any change counts: `pair.pop()` takes a value away.
+        ClimbingSet pairLiterals = m_context.restrict(entries, m_universe.pairLiterals());
+        ClimbingSet otherEntries = m_context.restrict(entries, ValueSets::complement(m_universe.pairLiterals()));
+        bool someEntryIsOtherwise = holdsAnything(m_context.membersMissingFrom(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), otherEntries))
+            || holdsAnything(m_context.markedAmong(pairLiterals, OptionSet<ObjectMutation>::all()))
+            || m_context.holdsAnyOf(pairLiterals, m_context.nodes().ofHost(ValueFlowHostNode::ArraysThatMayHaveHoles))
             || m_context.holdsAnyOf(entries, escaped()) || m_context.holdsAnyOf(entries, ValueFlowProgramNodes::lost()) || holdsAnything(m_context.markedAmong(entries, mutationsOfContents));
         if (someEntryIsOtherwise) {
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
             return false;
         }
+        // The numbers in a Map are followed from the objects that Object.entries() is given. A pair that the program writes is not one of them.
+        if (holdsAnything(pairLiterals))
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay), only(m_context, m_resultObject));
         m_context.add(m_context.written(only(m_context, m_resultObject), entriesPairsOfMap), entries);
         for (const BuiltinTransfer& transfer : m_overload->flow.transfers) {
             RELEASE_ASSERT(transfer.to.kind == BuiltinPlaceKind::ResultSlot);
@@ -3396,23 +3404,11 @@ std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext& cont
         if (kind == PropertyKeyKind::Text || (listed == OwnKeys::All && kind != PropertyKeyKind::PrivateName && kind != PropertyKeyKind::EnginePrivateName && kind != PropertyKeyKind::ModulePrivateName))
             keys.append(universe.keyConstant(key));
     };
-    ValueSetID withNamesOfNativeCode = context.maker().unite(context.maker().unite(universe.instancesBelowBuiltinClasses(), universe.instancesBelowLibraryClasses()), universe.objectsThatMayBeAnything());
     context.forEachMember(objects, [&](ValueFlowObjectID object) {
         // The prototype object of a constructor function is born with `constructor` alone, which is not enumerable.
         if (LayoutID layout = universe.classLayoutOf(object); layout && program.at(layout).has(LayoutFlags::IsConstructorFunction)) {
             if (listed != OwnKeys::EnumerableStrings)
                 list(program.keyOf(BuiltinNames::constructor));
-            return;
-        }
-        // What a class declares on its prototype object is not enumerable.
-        if (universe.classLayoutOf(object) && listed == OwnKeys::EnumerableStrings)
-            return;
-        // What a constructor of the program makes is born without a name. The stores of its declared fields are not counted as added names.
-        if (universe.kindOf(object) == ValueFlowObjectKind::Instance && program.at(universe.layoutOf(object)).constructor && !context.sets().contains(withNamesOfNativeCode, object)) {
-            for (const Field& field : program.at(universe.layoutOf(object)).fields) {
-                if (field.key)
-                    list(field.key);
-            }
             return;
         }
         const ValueFlowSite* site = universe.kindOf(object) == ValueFlowObjectKind::Site ? universe.siteOf(object) : nullptr;
@@ -4736,6 +4732,7 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     auto find = [&](BuiltinName name) {
         ClimbingSet prototypes(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects);
         ClimbingSet ofClassesWithInstances = context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), context.valueWithin(prototypes, ValueFlowProgramNodes::escaped()));
+        ofClassesWithInstances = context.unite(ofClassesWithInstances, context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects)));
         context.forEachMemberInLine(ofClassesWithInstances, [&](ValueFlowObjectID prototype) {
             BuiltinID method = builtins.findOwnMember(builtins.canonicalID(universe.builtinOf(prototype)), name);
             if (!method)
@@ -4745,6 +4742,8 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
             });
             if (isWrittenInJavaScript)
                 methods.append(universe.objectOf(method));
+            else
+                context.use(method, BuiltinUse::Called);
         });
     };
     forEachNameCalledIn(behavior, find);

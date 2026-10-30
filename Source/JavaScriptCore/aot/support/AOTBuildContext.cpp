@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFormatPatternPlanner.h"
 #include "AOTHeaps.h"
 #include "AOTIR.h"
 #include "AOTIdentifierNumbering.h"
@@ -105,6 +106,7 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
     , m_backEndScratches(m_options.threadCount)
     , m_regExpSummaries(makeUnique<RegExpSummaries>(static_cast<unsigned>(m_options.limits[LimitID::RegExpNestingDepthWithCode])))
     , m_scratchRealms(makeUniqueWithoutFastMallocCheck<Typed::ScratchRealms>())
+    , m_formatPatternPlans(makeUniqueWithoutFastMallocCheck<Typed::FormatPatternPlans>())
     , m_deferredDestroyer(makeUnique<DeferredDestroyer>())
 {
     if (!m_diagnostics.hasErrors() && wire.threadCount > m_options.threadCount)

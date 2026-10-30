@@ -203,8 +203,8 @@ void ArrayBuiltinEmitter::removeElementAtEnd(const InlineCall& call, bool remove
     finishInlineCall(call, join.finish());
 }
 
-// Whether this function goes on to store a named property into the array that the call makes.
-bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
+template<typename Functor>
+bool ArrayBuiltinEmitter::anyUserOfResult(const InlineCall& call, const Functor& isWanted)
 {
     constexpr unsigned maxValuesFollowed = 16;
     const UseLists& useLists = analyses().useLists();
@@ -222,7 +222,7 @@ bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
             switch (use.kind) {
             case Use::Kind::Operand: {
                 const Value& user = m_function.at(use.user);
-                if (user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object)
+                if (isWanted(user, use))
                     return true;
                 if (isCast(user.opcode))
                     follow(use.user);
@@ -244,6 +244,29 @@ bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
     return false;
 }
 
+// Whether this function goes on to store a named property into the array that the call makes.
+bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
+{
+    return anyUserOfResult(call, [](const Value& user, const Use& use) {
+        return user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object;
+    });
+}
+
+// The plan of the function has its readers and its stores test for doubles, and it converts an array of integers where such a test fails.
+bool ArrayBuiltinEmitter::resultIsTestedForDoubles(const InlineCall& call)
+{
+    return anyUserOfResult(call, [](const Value& user, const Use&) {
+        switch (user.opcode) {
+        case Opcode::ConvertToDoubleStorage:
+            return true;
+        case Opcode::HasArrayStorage:
+            return user.arrayStorage() == ArrayStorage::Double;
+        default:
+            return false;
+        }
+    });
+}
+
 void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
 {
     bool hasNumberBounds = call.numberOfArguments() <= 2 && std::ranges::all_of(call.arguments(), [&](ValueID bound) {
@@ -253,17 +276,38 @@ void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
         return;
     CellPointer array = receiverOf(call);
     bool withPropertyRoom = resultGetsNamedProperties(call);
-    StubCallResult copy;
-    if (!call.numberOfArguments())
-        copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
-    else {
-        Integer start = wholeNumberOrElse(call.argument(0), missBlockOf(call));
-        Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : integer(arraySliceToEnd);
-        copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), end.value() });
+    Integer start = call.numberOfArguments() ? wholeNumberOrElse(call.argument(0), missBlockOf(call)) : Integer();
+    Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : Integer();
+    Join<CellPointer> join(m_out);
+    const ArrayStorageForm& wholeNumbers = arrayStorageFormOf(ArrayStorage::Int32);
+    if (!withPropertyRoom && call.context().shape() != CodeShape::Compact && formOfCopy(call, wholeNumbers).kind != wholeNumbers.kind) {
+        LBasicBlock holdsWholeNumbers = newBlock();
+        LBasicBlock holdsOtherElements = newBlock();
+        branch(elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), wholeNumbers), { normalEdge(holdsWholeNumbers), normalEdge(holdsOtherElements) });
+
+        m_out.appendTo(holdsWholeNumbers);
+        missUnless(call, elements().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names }));
+        Integer from = integer(0);
+        Integer count;
+        join.add(copyIntoNewArray(call, wholeNumbers, [&](Integer length) {
+            if (start)
+                from = clampToLength(start, length);
+            Integer left = sub(end ? clampToLength(end, length) : length, from);
+            return count = select(lessThan(left, 0), 0, left);
+        }, [&](const ArrayStorageForm& made, ArrayElements source, ArrayElements target) {
+            copyElements(wholeNumbers, made, { source, from }, { target, integer(0) }, count, CopyDirection::Forward);
+        }));
+
+        m_out.appendTo(holdsOtherElements);
     }
-    Boxed copied(copy.first);
-    missUnless(call, isNotEmpty(copied));
-    finish(call, copied);
+    StubCallResult copy;
+    if (!start)
+        copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
+    else
+        copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), (end ? end : integer(arraySliceToEnd)).value() });
+    missUnless(call, isNotEmpty(Boxed(copy.first)));
+    join.add(CellPointer(copy.first));
+    finish(call, join.finish());
 }
 
 void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)

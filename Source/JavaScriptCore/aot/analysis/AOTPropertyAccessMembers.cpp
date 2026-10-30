@@ -652,6 +652,40 @@ static MemberAnswer findTupleMember(const PropertyAccessContext& context, const 
     return findInheritedMember(context, query);
 }
 
+bool mayBeEmptyInSlot(const Program& program, LayoutID layout, FieldReference reference)
+{
+    const FieldFlow& flow = flowOf(program, reference);
+    return program.at(layout).kind == LayoutKind::Instance
+        && flow.occupancy == Occupancy::Unknown
+        && flow.location.deferral == ClosureDeferral::Unknown
+        && fieldAt(program, reference).form.isEmpty()
+        && staysInSlot(program, reference);
+}
+
+bool mayBeEmptyBelowAccessor(const Program& program, LayoutID layout, FieldReference reference)
+{
+    return flowOf(program, reference).prototypeName == PrototypeNameState::AccessorOnPrototypes && mayBeEmptyInSlot(program, layout, reference);
+}
+
+static std::optional<MemberAnswer> findAccessorAboveField(const PropertyAccessContext& context, const MemberQuery& query, FieldReference field)
+{
+    const Program& program = context.program;
+    if (query.isOwnLookup || query.access == Access::Define || isPrivateName(program, query.key) || !mayBeEmptyBelowAccessor(program, query.layout, field))
+        return std::nullopt;
+    MemberAnswer inherited = findMemberOnPrototypes(context, query);
+    if (inherited.kind != MemberKind::Accessor)
+        return std::nullopt;
+    MemberAnswer walked;
+    requireLookupPastObject(program, walked, inherited, query, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
+    return finishAtChainEnd(WTF::move(walked), WTF::move(inherited));
+}
+
+bool isEmptyBelowAccessor(const PropertyAccessContext& context, LayoutID layout, PropertyKeyID key)
+{
+    std::optional<FieldReference> field = findField(context.program, layout, key, BaseChain::Proven);
+    return field && findAccessorAboveField(context, { MemberStart::Instance, layout, key, Access::Store, false }, *field);
+}
+
 MemberAnswer findInstanceMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;
@@ -677,6 +711,8 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     if (std::optional<FieldReference> found = findField(program, query.layout, key, BaseChain::Proven)) {
         if (builtinBase)
             return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
+        if (std::optional<MemberAnswer> accessor = findAccessorAboveField(context, query, *found))
+            return WTF::move(*accessor);
 
         bool storesValue = query.access == Access::Store || query.access == Access::Define;
         if (storesValue && !isPrivateName(program, key) && isNeverStored(program, *found))

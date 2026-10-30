@@ -36,14 +36,11 @@ void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NO
 }
 
 ValueID definitionThroughTests(const Function&, ValueID);
+// TryReExportFields passes on the names of its source, or leaves that to the loop that is written behind it. This is a step of that loop.
+bool walksNamesThatAreReExported(const Function&, const Value& stepOfEnumeration);
 BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
 PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, const Function&, const Value& call);
 bool readsUnderNameOfEnumerationOfSameObject(const Function&, const Value& read);
-// `"$" + name`, `"on" + kind + suffix`: the text on the left, where it is written out, is not empty and is ASCII.
-StringID textThatSumBeginsWith(const Program&, const Function&, ValueID);
-// `target[key] = source[key]`, `target[key] = test ? first[key] : second[key]`: the objects that what is stored was read from, under the very key of the store. Nothing where anything else may be stored.
-// They stand behind the operands of the statement of the store.
-Vector<ValueID, 2> objectsReadUnderKeyOfStore(const Function&, const Value& store);
 
 bool hasRuleOfItsOwn(Opcode);
 inline constexpr OperandUses usesThatMayCreateHoles = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor };

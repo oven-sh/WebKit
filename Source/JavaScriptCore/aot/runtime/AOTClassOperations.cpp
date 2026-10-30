@@ -150,8 +150,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisSlow(Instance*, JSCell* constructor, JSCell* newTarget);
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createCompiledThis(Instance*, JSCell* constructor, JSCell* newTarget);
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisOfOtherNewTarget(Instance*, JSCell* constructor, JSCell* newTarget);
 
+// `new f()`: asks nothing about a second function, so what it looks at fits the registers that a call may clobber and it saves none.
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSCell*, (Instance* instance, JSCell* constructor, JSCell* newTarget))
+{
+    if (constructor != newTarget) [[unlikely]]
+        [[clang::musttail]] return createThisOfOtherNewTarget(instance, constructor, newTarget);
+    VM& vm = *instance->vm;
+    if (Structure* structure = rememberedStructureOfThis(vm, newTarget, newTarget)) [[likely]] {
+        if (compiledLayoutOrNull(structure))
+            [[clang::musttail]] return createCompiledThis(instance, constructor, newTarget);
+        if (JSObject* object = tryCreateFinalObjectInline(vm, structure)) [[likely]]
+            return { object, nullptr };
+    }
+    [[clang::musttail]] return createThisSlow(instance, constructor, newTarget);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES createThisOfOtherNewTarget(Instance* instance, JSCell* constructor, JSCell* newTarget)
 {
     VM& vm = *instance->vm;
     if (Structure* structure = rememberedStructureOfThis(vm, constructor, newTarget)) [[likely]] {

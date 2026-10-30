@@ -73,6 +73,11 @@ bool ChainDependents::hasChainDependent(VM&, uint32_t structureIDBits, UniquedSt
     return m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits));
 }
 
+JSGlobalObject* ChainDependents::realm() const
+{
+    return m_state.instance.globalObject;
+}
+
 ChainDependentOwnerID ChainDependents::addOwner(ChainDependentOwner& owner)
 {
     RELEASE_ASSERT(m_owners.size() < static_cast<size_t>(ChainDependentOwnerID::NoOwner));
@@ -360,7 +365,7 @@ void RuntimeHooks::didMakeStructureForAddition(VM&, Structure* made)
 }
 
 
-bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, const ChainDependent& dependent)
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, ChainDependents& ofOwner, const ChainDependent& dependent)
 {
     ChainWalk walk = walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, uid);
     if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
@@ -368,11 +373,10 @@ bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverSt
     if (!walk.dependsOnChain())
         return true;
 
-    // The walk passes lazy class prototypes of globalObject's Instance only, and they report to its ChainDependents only.
-    State* state = stateOrNull(receiverStructure);
-    if (!state || &state->instance != Instance::of(globalObject))
+    // The walk passes lazy class prototypes of globalObject only, and they report to the images of that realm only.
+    if (receiverStructure->realm() != globalObject || ofOwner.realm() != globalObject)
         return false;
-    state->chainDependents->add(walk.changeableObjects.span(), dependent);
+    ofOwner.add(walk.changeableObjects.span(), dependent);
     return true;
 }
 

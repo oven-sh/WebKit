@@ -102,6 +102,14 @@ static SiteContent contentOf(const BuiltinUseInputs& inputs, const Value& use)
         content.add(use.calleeKey());
         content.add(use.callees());
         content.add(use.expectedResult().index());
+        if (ValueID id = findReadOfCallee(inputs.program, function, use)) {
+            const Value& read = function.at(id);
+            content.add(static_cast<uint32_t>(read.opcode));
+            if (read.opcode == Opcode::CallBuiltin) {
+                content.add(read.overload().index());
+                content.addTypesOf(function, read.receiverOperand());
+            }
+        }
         break;
     case Opcode::Construct:
         content.add(use.callees());

@@ -245,7 +245,7 @@ static std::optional<ArrayMethodCall> libraryMethodCallOf(const Program& program
     return ArrayMethodCall { method, id, operands[*thisParameter], WTF::move(arguments) };
 }
 
-std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const Function& function, ValueID id)
+std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const Function& function, ValueID id, ChainOperandProofs proofs)
 {
     const Value& value = function.at(id);
     if (value.opcode == Opcode::GetArrayLength)
@@ -256,7 +256,8 @@ std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const F
         return libraryMethodCallOf(program, function, id);
 
     BuiltinCall call = builtinCallOf(program, value);
-    if (call.form != BuiltinCallForm::Whole || !call.receiver)
+    bool waitsForTestOfReceiver = call.form == BuiltinCallForm::AnyReceiver && proofs == ChainOperandProofs::MayStillCome;
+    if ((call.form != BuiltinCallForm::Whole && !waitsForTestOfReceiver) || !call.receiver)
         return std::nullopt;
     const BuiltinOverload& overload = program.builtins().at(call.overload);
     bool isCallOrRead = overload.mode == BuiltinCallMode::Call || overload.mode == BuiltinCallMode::Get;
@@ -389,7 +390,7 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     return step;
 }
 
-Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone, BlockID onlyBlock)
+Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone, BlockID onlyBlock, ChainOperandProofs proofs)
 {
     const Program& program = context.program;
     const Function& function = context.function;
@@ -505,7 +506,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         while (true) {
             ValueID receiver = consumer.receiver;
             ValueID producer = analyses.sameObjectThroughCasts(receiver).valueInFrontOfFacts();
-            std::optional<ArrayMethodCall> link = arrayMethodCallOf(program, function, producer);
+            std::optional<ArrayMethodCall> link = arrayMethodCallOf(program, function, producer, proofs);
             if (!link || analyses.useLists().blockOf(producer) != chain.block || !isUsedOnlyBy(receiver, consumer))
                 return receiver;
             switch (link->method->role) {
@@ -587,7 +588,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         for (size_t index = values.size(); index--;) {
             if (isInChain.get(values[index].index()))
                 continue;
-            if (std::optional<ArrayMethodCall> call = arrayMethodCallOf(program, function, values[index]))
+            if (std::optional<ArrayMethodCall> call = arrayMethodCallOf(program, function, values[index], proofs))
                 tryChain(block, *call);
         }
     };
@@ -645,11 +646,11 @@ static bool mayAccessSameMemory(const Effects& a, const Effects& b)
         || (b.mayRunOtherCode() && !a.reads.restrictedTo(orderedHeaps).isEmpty());
 }
 
-ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs)
+ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const ArrayChain& chain, ChainOperandProofs proofs, bool* startsOverAfterThrow)
 {
     const Program& program = context.program;
     FunctionAnalyses& analyses = context.analyses;
-    std::optional<ArrayMethodCall> last = arrayMethodCallOf(program, context.function, chain.lastCall);
+    std::optional<ArrayMethodCall> last = arrayMethodCallOf(program, context.function, chain.lastCall, proofs);
     RELEASE_ASSERT(last);
 
     ProgramPoint point { chain.block, analyses.useLists().locationOf(chain.firstCall()).index };
@@ -705,12 +706,20 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
             effects.last().merge(context.inputs.effects.unknownCode());
     }
 
+    bool mayRunAgain = std::ranges::all_of(effects, [](const Effects& step) {
+        return !canBeObserved(step) && step.alwaysCompletes();
+    });
+    bool differsOnlyInWhatIsThrown = false;
     for (size_t earlier = 0; earlier < effects.size(); ++earlier) {
         for (size_t later = earlier + 1; later < effects.size(); ++later) {
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
             bool earlierStopsAmongLaterCalls = earlier < mayStopAfterFirstCall.size() ? mayStopAfterFirstCall[earlier] : mayStop(a);
             bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
+            if (stopsDiffer && mayRunAgain) {
+                differsOnlyInWhatIsThrown = true;
+                stopsDiffer = false;
+            }
             if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
                 return ArrayChainDeclineReason::CallbacksInterfere;
             if (mayStop(b) && canBeObserved(a))
@@ -748,6 +757,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         if (!isCallOfChain(analyses.sameObjectThroughCasts(values[index]).valueInFrontOfFacts()) && analyses.effectsOf(values[index]).onAnyEdge().interferesWith(moved))
             return ArrayChainDeclineReason::ValueBetweenLinksInterferes;
     }
+    if (startsOverAfterThrow)
+        *startsOverAfterThrow = differsOnlyInWhatIsThrown;
     return ArrayChainDeclineReason::None;
 }
 
@@ -896,6 +907,53 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
         arguments.append(insert(WTF::move(separator)));
     }
 
+    if (chain.startsOverAfterThrow) {
+        builder.applyInsertions();
+        const BlockValues& valuesOfChain = function.at(chain.block).values;
+        Vector<std::pair<ValueID, Value>, 8> written;
+        for (size_t index : erasedIndexes)
+            written.append({ valuesOfChain[index], function.at(valuesOfChain[index]) });
+        written.append({ chain.lastCall, function.at(chain.lastCall) });
+        Expected<BlockFrequency> frequency = function.at(chain.block).frequency;
+        builder.eraseValues(chain.block, erasedIndexes);
+
+        IRBuilder::Expansion expansion = builder.beginExpansion({ chain.block, static_cast<uint32_t>(function.at(chain.block).values.find(chain.lastCall)) });
+        auto finish = [&](ValueID result) {
+            if (expansion.results.isEmpty())
+                builder.endExpansion(expansion, std::span<const ValueID>());
+            else
+                builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(resultType))));
+        };
+        std::optional<Target> outerHandler = builder.handler();
+        BlockID asWritten = builder.addHandlerBlock(BlockRole::CatchHandler, ValueID());
+        builder.setHandler(Target { asWritten, { }, { } });
+        BlockID traversal = builder.addBlock(frequency);
+        builder.setHandler(WTF::move(outerHandler));
+        builder.emitJump(traversal);
+
+        builder.moveToEndOf(traversal);
+        builder.setOrigin(origin);
+        ValueID fused = appendDirectCall(builder, { .callee = step, .arguments = arguments.span(), .isAlwaysInlined = true });
+        finish(fused);
+
+        builder.moveToEndOf(asWritten);
+        builder.setOrigin(written.last().second.origin());
+        builder.append(Opcode::CatchValue, { });
+        Vector<ValueID, 8> copies;
+        for (auto& [original, value] : written) {
+            value.forEachOperand([&](ValueID& operand, uint32_t) {
+                for (size_t index = 0; index < copies.size(); ++index) {
+                    if (written[index].first == operand)
+                        operand = copies[index];
+                }
+            });
+            builder.setOrigin(value.origin());
+            copies.append(builder.append(WTF::move(value)));
+        }
+        finish(copies.last());
+        return;
+    }
+
     Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
     // A step that is called calls each callback by value, and costs more than the methods that it stands for.
     call.setIsAlwaysInlined(true);
@@ -956,6 +1014,19 @@ static bool takeProofsOfPristineTests(FunctionPassContext& context, ValueID arra
     return !passingEdges.isEmpty();
 }
 
+// Taken only where the chain goes in with them: a chain that stays as it is would take them again in every round, behind whoever drops what nobody uses.
+static bool wouldFuseWithProofsOfPristineTests(FunctionPassContext& context, const ArrayChain& chain)
+{
+    if (checkInterleaving(context, chain, ChainOperandProofs::MayStillCome) != ArrayChainDeclineReason::None)
+        return false;
+    Function trial = context.function;
+    FunctionAnalyses analyses(context.analyses.context(), trial);
+    FunctionPassContext trialContext { context.program, context.inputs, context.id, trial, analyses, context.types, context.strings, context.build };
+    if (!takeProofsOfPristineTests(trialContext, chain.source))
+        return false;
+    return checkInterleaving(trialContext, chain) == ArrayChainDeclineReason::None;
+}
+
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVector& calls)
 {
     if (context.function.role == FunctionRole::ChainStep || context.function.enclosingRuntimeFunction)
@@ -967,11 +1038,11 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
     Vector<ArrayChain> accepted;
     PassOutcome outcomeWithoutChain = PassOutcome::Unchanged;
     for (ArrayChain& chain : findArrayChains(context, &calls)) {
-        ArrayChainDeclineReason obstacle = checkInterleaving(context, chain);
-        // Only for a call that is copied in if it stays: a chain that stays as it is would take the proofs again in every round, behind whoever drops what nobody uses.
-        if (obstacle == ArrayChainDeclineReason::SourceIsNotPristine && calls.get(chain.lastCall.index()) && takeProofsOfPristineTests(context, chain.source)) {
+        ArrayChainDeclineReason obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow);
+        bool takesProofs = obstacle == ArrayChainDeclineReason::SourceIsNotPristine && (calls.get(chain.lastCall.index()) || wouldFuseWithProofsOfPristineTests(context, chain));
+        if (takesProofs && takeProofsOfPristineTests(context, chain.source)) {
             outcomeWithoutChain = PassOutcome::Changed;
-            obstacle = checkInterleaving(context, chain);
+            obstacle = checkInterleaving(context, chain, ChainOperandProofs::Required, &chain.startsOverAfterThrow);
         }
         if (obstacle == ArrayChainDeclineReason::None)
             accepted.append(WTF::move(chain));
@@ -1015,13 +1086,40 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
 
     context.function = WTF::move(fused);
     context.build.statistics().count(StatisticID::ArrayChainsFused, accepted.size());
-    // A chain is rewritten inside its block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
-    context.keptAnalyses = controlFlowAnalyses;
+    // A chain that never starts over is rewritten inside its block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
+    if (std::ranges::none_of(accepted, &ArrayChain::startsOverAfterThrow))
+        context.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
+}
+
+// A test of the result of a call in front of the method that reads it stands between the two calls of a chain until its block goes, and a list made by a method of a tested list passes it.
+static bool hasMethodCallBehindTestOfLastResult(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.hasPristineTest())
+        return false;
+    const UseLists& useLists = analyses.useLists();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID value : function.at(block).values) {
+            if (!arrayMethodCallOpcodes.contains(function.at(value).opcode))
+                continue;
+            std::optional<ArrayMethodCall> call = arrayMethodCallOf(context.program, function, value);
+            if (!call || call->method->role == ChainMethodRole::Range)
+                continue;
+            ValueID producer = analyses.sameObjectThroughCasts(call->receiver).valueInFrontOfFacts();
+            std::optional<ArrayMethodCall> link = arrayMethodCallOf(context.program, function, producer);
+            if (link && link->method->role != ChainMethodRole::End && useLists.blockOf(producer) != block)
+                return true;
+        }
+    }
+    return false;
 }
 
 PassOutcome fuseArrayChains(FunctionPassContext& context)
 {
+    if (hasMethodCallBehindTestOfLastResult(context) && eliminateGuards(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
     return fuseArrayMethodsTakenAlone(context, { });
 }
 

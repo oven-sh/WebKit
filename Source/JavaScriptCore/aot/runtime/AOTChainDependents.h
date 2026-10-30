@@ -127,6 +127,7 @@ public:
     void didCreateMembers(const CreatedMembers&);
     bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
     size_t numberOfDependents(JSObject*) const;
+    JSGlobalObject* realm() const;
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
@@ -175,7 +176,8 @@ void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 // NotSpelledByProgram: the name is no index either. No class declares a member under such a name.
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
-bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, const ChainDependent&);
+// The number of an owner means something to the ChainDependents that gave it out, and to no other.
+bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);
 
 PropertyWalk::Presence presenceForStructure(VM&, Structure*, UniquedStringImpl*);
 

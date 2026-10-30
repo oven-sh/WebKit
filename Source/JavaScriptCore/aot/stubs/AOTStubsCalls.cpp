@@ -74,6 +74,7 @@ StubSignature signatureOfCallNotClosureWithCount(StubKey) { return callConventio
 StubSignature signatureOfCallBoundFunction(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfConstructValue(StubKey) { return callConventionSignatureWithCount(); }
 StubSignature signatureOfCallEngineCallee(StubKey) { return callConventionSignatureWithCount(); }
+StubSignature signatureOfCallEngineFunction(StubKey) { return callConventionSignatureWithCount(); }
 
 StubSignature signatureOfCallResolvedValue(StubKey)
 {
@@ -352,11 +353,14 @@ static void emitCallBoundFunction(StubAssembler& jit, const CallRegisters& regis
     jit.jumpToStub(callBoundFunction(jit.callPosition()));
 }
 
-static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isEngineCallee)
+static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isEngineCallee, JumpList& isFunctionOfEngine)
 {
     jit.linkToStub(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))), callHostFunction(count));
     JumpList isBoundFunction;
     isBoundFunction.append(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID))));
+
+    // Most of what comes here is a function of text made at run time.
+    Jump isFunction = jit.branchIfType(calleeGPR, JSFunctionType);
 
     JumpList isNotCompiled;
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, isNotCompiled);
@@ -366,28 +370,27 @@ static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& reg
     // String, Boolean, Number, Object .. as a callback. Under validation the run time calls every native function that is called by value.
     if (!jit.options().validates)
         jit.linkToStub(jit.branchIfType(calleeGPR, InternalFunctionType), callInternalFunction(CodeSpecializationKind::CodeForCall, count));
-    Jump isNoFunction = jit.branchIfNotType(calleeGPR, JSFunctionType);
+    isEngineCallee.append(jit.branchIfNotType(calleeGPR, ProxyObjectType));
+    // ProxyObject::createStructure(): only a proxy of a function has the flag.
+    jit.linkToStub(jit.branchTest8(CCallHelpers::NonZero, Address(calleeGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)), callProxy(count));
+    isEngineCallee.append(jit.jump());
+
+    isFunction.link(&jit);
     loadStructure(jit, calleeGPR, registers.word);
     jit.loadPtr(Address(registers.word, Structure::classInfoOffset()), registers.scratch);
     isBoundFunction.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionClassInfo))));
     if (jit.options().imageHasWebAssembly) {
         jit.loadRuntimePointer(Entry::WebAssemblyFunctionClassInfo, registers.word);
-        isEngineCallee.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word));
+        isFunctionOfEngine.append(jit.branchPtr(CCallHelpers::Equal, registers.scratch, registers.word));
     }
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), registers.scratch);
     Jump isTagged = jit.branchTestPtr(CCallHelpers::NonZero, registers.scratch, TrustedImm32(JSFunction::rareDataTag));
     jit.linkToStub(jit.branchIfType(registers.scratch, NativeExecutableType), callHostFunction(count));
-    isEngineCallee.append(jit.jump());
+    isFunctionOfEngine.append(jit.jump());
     isTagged.link(&jit);
     jit.loadPtr(Address(registers.scratch, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), registers.scratch);
     jit.linkToStub(jit.branchIfType(registers.scratch, NativeExecutableType), callHostFunction(count));
-    isEngineCallee.append(jit.jump());
-
-    isNoFunction.link(&jit);
-    isEngineCallee.append(jit.branchIfNotType(calleeGPR, ProxyObjectType));
-    // ProxyObject::createStructure(): only a proxy of a function has the flag.
-    jit.linkToStub(jit.branchTest8(CCallHelpers::NonZero, Address(calleeGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)), callProxy(count));
-    isEngineCallee.append(jit.jump());
+    isFunctionOfEngine.append(jit.jump());
 
     isBoundFunction.link(&jit);
     emitCallBoundFunction(jit, registers, count, isEngineCallee);
@@ -408,16 +411,21 @@ void generateCallValue(StubAssembler& jit)
     Label isCell = jit.label();
 
     JumpList isEngineCallee;
+    JumpList isFunctionOfEngine;
     Jump isNeither = emitEnterClosureCell(jit, registers, count, isEngineCallee);
 
     isNeither.link(&jit);
     jit.bindEntry(callValueNotClosure(count, jit.callPosition()));
-    emitCallNotPlainClosure(jit, registers, count, isEngineCallee);
+    emitCallNotPlainClosure(jit, registers, count, isEngineCallee, isFunctionOfEngine);
 
     isEngineCallee.link(&jit);
-    jit.bindEntry(callValueEngineCallee(count, jit.callPosition()));
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineCallee());
+
+    isFunctionOfEngine.link(&jit);
+    jit.bindEntry(callValueEngineCallee(count, jit.callPosition()));
+    jit.move(TrustedImm32(count), countGPR);
+    jit.jumpToStub(callEngineFunction());
 
     jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
@@ -993,6 +1001,7 @@ void generateCallEngineCallee(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
     mayBeCallable.link(&jit);
 
+    jit.bindEntry(callEngineFunction());
     emitSpillArgumentsAndPushFrame(jit);
     if (jit.options().validates)
         emitCallNativeFunctionByOperation(jit, count, frame);

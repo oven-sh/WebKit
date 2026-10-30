@@ -647,6 +647,10 @@ static void checkValuesByPosition(TestRealm realm)
         "Object.assign([1, 2], { name: 1 })"_s,
         "[1.5, , 3.5]"_s,
         "[1.5, Infinity, -Infinity]"_s,
+        "[NaN]"_s,
+        "[1.5, NaN, -0, 2]"_s,
+        "[NaN, , 3]"_s,
+        "Array.from({ length: 5000 }, (_, index) => index % 7 ? index / 8 : NaN)"_s,
         "Array.from({ length: 5000 }, (_, index) => index * 7919 - 9999999)"_s,
         "Array.from({ length: 5000 }, (_, index) => -1.7976931348623157e308 / (index + 1))"_s,
     };

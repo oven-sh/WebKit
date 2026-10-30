@@ -286,7 +286,6 @@ public:
         return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
     }
     void leaveToHostUnlessItHasRun(ModuleID);
-    void takeOutOfLoader(ModuleID);
     void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
@@ -431,6 +430,7 @@ public:
     void mockWhatRequireAnswered(ModuleID, JSObject* exports);
     void mockWhatRequireCacheHolds(ModuleID, JSObject* exports);
     void recordRequire(ModuleID, ModuleID referrer);
+    bool wasLoadedSynchronously(ModuleID file);
     JSObject* moduleObject(ModuleID);
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
@@ -461,6 +461,7 @@ public:
 
     void willAnalyzeHeap(VM&);
     void analyzeVariables(ModuleEnvironment*, uint32_t indexAmongModulesWithNamedVariables, HeapAnalyzer&) const;
+    std::span<const NamedVariableData> namedVariablesOf(uint32_t indexAmongModulesWithNamedVariables) const;
 
 private:
     friend class RequestToHostScope;
@@ -543,7 +544,6 @@ private:
     Identifier moduleKey(ModuleID);
     Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
-    JSObject* namespaceThatCompiledCodeHolds(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
     JSObject* createNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions);
     JSObject* createTableOfExports();
@@ -674,6 +674,9 @@ private:
     Structure* m_namespaceStructure { nullptr };
     Structure* m_environmentStructure { nullptr };
     Vector<ModuleEnvironment*> m_environments;
+    // The table namedVariables as rows, made for the first heap snapshot.
+    Vector<NamedVariableData> m_namedVariables;
+    Vector<uint32_t> m_firstNamedVariables;
     // A heap snapshot keeps pointers to these until it is written.
     Vector<AtomString> m_namesOfVariables;
     Structure* m_extensibleNamespaceStructure { nullptr };
@@ -724,6 +727,7 @@ private:
     FilesBeingRun* m_innermostFilesBeingRun { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
+    void noteRequireOfFile(ModuleID file);
     bool hasReachedLevelOf(FilesBeingRun&, ModuleID file);
     void findDistanceOfFiles(FilesBeingRun&);
     BitVector m_modulesWithMarkOfRequire;
@@ -898,6 +902,7 @@ private:
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;
+    BitVector m_filesLoadedByRequire;
     void noteModulesLoadedWith(ModuleID root);
     // A bit for each module, read for the heads of groups.
     Vector<uint64_t> m_loadedGroups;

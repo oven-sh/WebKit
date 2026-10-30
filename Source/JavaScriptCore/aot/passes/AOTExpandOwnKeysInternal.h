@@ -21,7 +21,8 @@ inline constexpr OpcodeSet opcodesOfKeyOrderTests { Opcode::HasKeyOrder, Opcode:
 // ExpandOwnKeys has nothing to do in a function without any of these.
 inline constexpr OpcodeSet ownKeyExpansionOpcodes = opcodesOfWalks | opcodesOfKeyOrderTests | OpcodeSet { Opcode::ForInStep };
 
-enum class OwnKeyWalk : uint8_t { Keys, Values, Entries, Assign, Spread, Copy, Stringify, StringifyIntoText };
+// FlatEntries: what Object.entries lists, the keys and values one behind the other in one list.
+enum class OwnKeyWalk : uint8_t { Keys, Values, Entries, FlatEntries, Assign, Spread, Copy, Stringify, StringifyIntoText };
 
 struct OwnKeyWalkSite {
     OwnKeyWalk walk { OwnKeyWalk::Values };
@@ -75,6 +76,9 @@ private:
 };
 
 std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext&, const UnchangedAllocations&, const OwnKeyWalkSite&);
+
+// `entries = Object.entries(object)` that is only asked for its length and read at positions below it, each pair only to be taken apart. A part of SimplifyBuiltinCalls: it comes before tests are placed on the reads.
+unsigned leavePairsOfOwnEntriesUnmade(FunctionPassContext&, std::span<const ValueSite> builtinCalls);
 
 } } } // namespace JSC::AOT::Typed
 

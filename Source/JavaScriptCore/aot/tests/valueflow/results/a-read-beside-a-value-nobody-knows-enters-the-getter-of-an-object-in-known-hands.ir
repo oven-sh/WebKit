@@ -1,0 +1,33 @@
+# shared = { get size() { return 3 } }; (name ? shared : handedIn).size; publish(the getter)
+# The getter is in hands nobody knows, `shared` is not: the read finds the getter on `shared` whatever else it is handed, so it is an indirect call of that site
+# RUN: valueflow-results
+# CHECK: function f1 cause=ReachesNativeCode
+# CHECK: access [[read]] function=f0 kind=Read {{*}}witness=f0:v8
+# CHECK: indirect f0 [[read]] -> f1 Accessor Once
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shared"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="size"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="handedIn" [isFreeName]
+    v5 = PropGet v3 key="name" [isFreeName]
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v4)
+  b3(v7: anything):
+    v8 = PropGet v7 key="size"
+    v9 = PropGet v3 key="publish" [isFreeName]
+    v10 = Call v9, -, v1
+    Return
+}
+function f1 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=3
+    Return v1
+}

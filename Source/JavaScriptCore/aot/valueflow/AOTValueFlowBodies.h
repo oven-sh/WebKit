@@ -85,6 +85,8 @@ struct ValueFlowSite {
     bool isDenseArrayLiteral { false };
     // Of what a built-in function answers: f(), f(a). So f.bind(receiver) binds no argument.
     bool isAnswerOfCallWithOneArgumentAtMost { false };
+    // An array written with a first and a second element: `["a", 1]`. It says what new Map() takes as a key and a value.
+    bool isPairLiteral { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -210,6 +212,7 @@ public:
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
     ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
     ValueSetID denseArrayLiterals() const { return m_denseArrayLiterals; }
+    ValueSetID pairLiterals() const { return m_pairLiterals; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -278,6 +281,7 @@ private:
     Vector<ValueSetID> m_sureInstancesOfClass;
     ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
     ValueSetID m_denseArrayLiterals { ValueSets::nothing };
+    ValueSetID m_pairLiterals { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -441,10 +445,11 @@ enum class ValueFlowHostNode : uint8_t {
     ExportsOfEntriesStoredInModuleCache,
     PathOfMainModuleIsStored,
     LoaderFunctionsSeenToBeStored,
+    BuiltinObjectsAboveEscapedObjects,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 87;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::LoaderFunctionsSeenToBeStored) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 88;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

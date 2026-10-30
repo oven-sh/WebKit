@@ -24,7 +24,7 @@ function f0 name="overAMap" parameters=[{type=Map<number, number, proven, pristi
 # CHECK-NEXT: [[isUnchanged]]: boolean{{*}} = IsBuiltinLocationUnchanged member=MapPrototypeSymbolIterator
 # CHECK-NEXT: Branch [[isUnchanged]] -> taken [[own]](), notTaken [[asks]]()
 # CHECK: MapNext v0
-# CHECK: PropGet {{*}} key="done"
+# CHECK: = CallDirect {{*}} function={{*}} [isNeverInlined]
 # CHECK: [[own]]():
 # CHECK-NEXT: CollectionTable v0
 # CHECK: [[asks]]() frequency=Unlikely:

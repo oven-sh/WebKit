@@ -40,7 +40,7 @@ static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, O
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
     Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
-    Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
+    Opcode::NewMapFromData, Opcode::NewFormatterWithPattern, Opcode::FormatDateWithPattern, Opcode::FormatNumberWithPattern, Opcode::CopyDataProperties, Opcode::CopyObject
 });
 
 static constexpr OpcodeSet opcodesWithOtherWords = Value::opcodesWithAllocation | Value::opcodesWithRegExpRecord | Value::opcodesWithRequest | Value::opcodesWithStaticsOffset | Value::opcodesWithOrderWord | Value::opcodesWithGuardBit;
@@ -235,6 +235,10 @@ struct WordResolver {
         case Opcode::NewSetFromData:
         case Opcode::NewMapFromData:
             return RequestRecord { CollectionDataRecord { value.data(), value.opcode == Opcode::NewMapFromData } };
+        case Opcode::NewFormatterWithPattern:
+        case Opcode::FormatDateWithPattern:
+        case Opcode::FormatNumberWithPattern:
+            return RequestRecord { FormatPatternRecord { Vector<uint32_t>(value.formatPattern()) } };
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }

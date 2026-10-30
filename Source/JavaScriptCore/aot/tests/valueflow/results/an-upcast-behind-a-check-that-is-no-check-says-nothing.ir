@@ -7,8 +7,8 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="alone"
 # CHECK: = AssumeType v0 provenType=undefined|null|Object
-# CHECK: b2([[there]]: undefined|Object):
-# CHECK-NEXT: [[alone]]: undefined|Object = Upcast [[there]] castType=anything|absent
+# CHECK: b2([[there]]: undefined|Object ~ Object):
+# CHECK-NEXT: [[alone]]: undefined|Object ~ Object = Upcast [[there]] castType=anything|absent
 # CHECK-NEXT: = PropGet [[alone]] key="missing"
 # CHECK-LABEL: function f2 name="either"
 # CHECK: = AssumeType v1 provenType=undefined|null|Object

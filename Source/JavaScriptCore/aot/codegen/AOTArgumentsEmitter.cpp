@@ -133,7 +133,22 @@ void ArgumentsEmitter::generateGetMyArgumentByVal(const ValueContext& value)
 
     if (slowPath) {
         m_out.appendTo(slowPath);
-        join.add(readFromMaterializedList(value, in<Boxed>(key)));
+        Boxed boxedKey = in<Boxed>(key);
+        // Such a key names "true", "false", "null" or "undefined". The list holds no property of those names, and its prototypes are built-ins, which are read-only in an executable and hold none either.
+        uint16_t occurring = keyType.primitives;
+        if (occurring & Primitive::Boolean) {
+            LBasicBlock isNotBoolean = newBlock();
+            branchUnless(isBoolean(boxedKey), isNotBoolean);
+            join.add(undefined());
+            m_out.appendTo(isNotBoolean);
+        }
+        if (occurring & Primitive::UndefinedOrNull) {
+            LBasicBlock isNamed = newBlock();
+            branchUnless(isUndefinedOrNull(boxedKey, occurring), isNamed);
+            join.add(undefined());
+            m_out.appendTo(isNamed);
+        }
+        join.add(readFromMaterializedList(value, boxedKey));
     }
     define(value, join.finish());
 }

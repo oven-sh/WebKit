@@ -315,14 +315,15 @@ ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& func
     ArrayStorage named = program.at(allocation.type).singleBuiltinClass()->arrayStorage;
     if (named != ArrayStorage::Other)
         return named;
-    if (isFilledArrayOfHoles(function, allocation))
+    // The list of the surplus arguments has room for any value.
+    if (isFilledArrayOfHoles(function, allocation) || allocation.opcode == Opcode::CreateRest)
         return ArrayStorage::Contiguous;
     return allocation.opcode == Opcode::NewArray ? arrayStorageOfLiteral(program, allocation) : named;
 }
 
 bool allocatesWritableStorage(const Function& function, const Value& allocation)
 {
-    return allocation.opcode == Opcode::NewArray || isFilledArrayOfHoles(function, allocation);
+    return allocation.opcode == Opcode::NewArray || allocation.opcode == Opcode::CreateRest || isFilledArrayOfHoles(function, allocation);
 }
 
 static bool holdsDeclaredType(const Value& slotOperation)

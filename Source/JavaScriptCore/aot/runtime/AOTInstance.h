@@ -180,9 +180,9 @@ struct LazyStringWords {
 };
 
 // Behind DefaultFinalObject: the same object with room in its cell for two more properties, for four more and so on.
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, DefaultFinalObject };
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject };
 static constexpr unsigned numberOfRoomierFinalObjects = 13;
-static constexpr unsigned numberOfInlineAllocations = 10 + numberOfRoomierFinalObjects;
+static constexpr unsigned numberOfInlineAllocations = 12 + numberOfRoomierFinalObjects;
 static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
 
 struct InlineAllocationData {
@@ -216,6 +216,8 @@ struct AllocationWords {
     // What a GetterSetter holds in place of a getter and of a setter that it lacks. Null until InlineAllocation::GetterSetter has its allocator.
     JSCell* getterOfAccessorWithoutGetter;
     JSCell* setterOfAccessorWithoutSetter;
+    // What the `arguments` object of strict code has as its callee. Null until InlineAllocation::Arguments has its allocator.
+    JSCell* calleeOfStrictArguments;
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
     // Of an array of values that lies in a frame. Zero unless the Structure of such arrays is pristine in every aspect.

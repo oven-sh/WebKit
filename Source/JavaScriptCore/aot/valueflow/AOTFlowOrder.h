@@ -69,6 +69,14 @@ struct FlowCallOfList {
     friend auto operator<=>(const FlowCallOfList&, const FlowCallOfList&) = default;
 };
 
+// Who calls whom, sorted by caller and site. A function that somebody else may enter is called by `host`.
+struct FlowCallsOfProgram {
+    Vector<FlowCall> calls;
+    Vector<FlowCallOfList> callsOfLists;
+    Vector<Vector<FunctionID>> calleeLists;
+    FunctionID host;
+};
+
 struct FlowStaticFieldAccess {
     VariableID variable;
     FunctionID function;

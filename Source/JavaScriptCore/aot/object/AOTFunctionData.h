@@ -384,6 +384,15 @@ static constexpr uint8_t markOfPrintedKey = 1;
 // Behind the `[` or `{` of what is printed over several lines: one, and one more for each indentation of the line that holds the bracket. Whoever shows the text takes them out too.
 static constexpr uint8_t markOfIndentation = 2;
 
+// In front of and behind a function or a class as Bun's printer printed it at the build: it prints the statements of a body anew, and they are not what the file spells.
+// Nobody reads what stands between the two, and whoever shows the text takes them out. A list in such a function is quoted by itself, so the pieces beneath this one count.
+static constexpr uint8_t markOfTextFromPrinter = 3;
+
+inline bool isFromPrinter(const TextPrintedInPlace& piece)
+{
+    return !piece.isCopy && !piece.bytes.empty() && piece.bytes.front() == markOfTextFromPrinter;
+}
+
 // text[from, to) as `bun run` has it. `pieces` are those of the module, and count from the start of `text`.
 template<typename Character>
 void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Character> text, size_t from, size_t to, std::span<const TextPrintedInPlace> pieces)

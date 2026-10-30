@@ -662,6 +662,9 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
     // An array that is never built has no storage for anybody to see, so the test goes the way it was expected to.
     if (!description.canBeBuilt)
         return KnownBoolean::True;
+    // The list of the surplus arguments is made with room for any value, wherever and whenever it is built.
+    if (description.kind == VirtualObjectKind::ArgumentList)
+        return knownBoolean(test.arrayStorage() == ArrayStorage::Contiguous);
     if (description.kind != VirtualObjectKind::Array)
         return KnownBoolean::Unknown;
 
@@ -676,7 +679,8 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
 
 static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    if (!isArray(context.family.descriptionOf(shape)))
+    // How many arguments a frame holds is known when it runs.
+    if (!isArray(context.family.descriptionOf(shape)) || context.family.descriptionOf(shape).kind == VirtualObjectKind::ArgumentList)
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
     if (position.kind() == KnownValue::Kind::Integer)

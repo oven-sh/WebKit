@@ -12,6 +12,7 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
+#include <wtf/BitVector.h>
 #include <wtf/Box.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -37,6 +38,7 @@ class RegExpLiterals;
 class RuntimeReporter;
 class RuntimeTable;
 class VMPropertyCaches;
+struct FormatPatternState;
 struct FunctionTables;
 struct QuotesOfPlaces;
 struct Instance;
@@ -68,6 +70,10 @@ private:
     T* m_part { nullptr };
 };
 
+struct FormatPatternStateDeleter {
+    void operator()(FormatPatternState*) const;
+};
+
 struct VMState {
     WTF_MAKE_NONCOPYABLE(VMState);
 public:
@@ -95,6 +101,8 @@ public:
         Vector<Identifier> keysOfFilesInImagesBelow;
         // By the same number: Modules::placeInRealm().
         Vector<uint32_t> filesInImagesBelow;
+        BitVector filesWithKnownFirstLoad;
+        BitVector filesFirstLoadedSynchronously;
     };
 
     void attachImage(VM&);
@@ -204,6 +212,7 @@ public:
     std::unique_ptr<CacheRegistry> caches;
     std::unique_ptr<RuntimeCounters> counters;
     std::unique_ptr<RuntimeReporter> reporter;
+    std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
     Vector<PartsOfImage, 1> parts;
     UniqueArray<int> regExpMatchOutput;

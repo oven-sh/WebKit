@@ -329,9 +329,8 @@ enum class ValueFlowFactOfText : uint8_t {
     HasCopyOfOperation = 1 << 3,
     // Of an ElemGet: `object[name]` in `for (name in object)`.
     ReadsUnderNameOfEnumerationOfSameObject = 1 << 4,
-    // Of an ElemSet: objectsReadUnderKeyOfStore() finds one object, or two. They stand behind the operands of the statement.
-    StoresWhatOneObjectHoldsUnderSameKey = 1 << 5,
-    StoresWhatTwoObjectsHoldUnderSameKey = 1 << 6,
+    // Of a ForInStep: walksNamesThatAreReExported().
+    WalksNamesThatAreReExported = 1 << 5,
 };
 
 // Of the few operations of which one of these holds, in the order of functions and sites.
@@ -342,8 +341,6 @@ struct ValueFlowRareFactsOfText {
     BuiltinID entryNamed;
     // Of a call whose statement has no key: the member that a longer look at the text finds.
     PropertyKeyID keyOfMemberCalledOnItsHolder;
-    // Of an ElemGet or an ElemSet: `object["$" + name]`: the text that is written in front of the rest of the key.
-    StringID textThatKeyBeginsWith;
 };
 
 // An operation whose rule reads what the operation itself says: a layout and its fields, a module, the kind of an iterator. A Value holds all of that itself. In the order of functions and sites.

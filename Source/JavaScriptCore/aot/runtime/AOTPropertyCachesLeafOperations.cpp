@@ -497,6 +497,19 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     return LeafAnswer::Yes;
 }
 
+// A property of the global object that a store through globalThis has filed: filing it fired what watched its replacement, as for any store that a stub makes.
+static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject* proxy, UniquedStringImpl* uid, JSValue value)
+{
+    JSGlobalObject* target = instance->globalObject;
+    if (proxy != target->globalThis())
+        return LeafAnswer::TakeSlowPath;
+    const Slot* filed = instance->state->propertyCaches->findByKey(target->structure(), uid, SlotAccess::Store);
+    if (!filed || !filed->has(Slot::isOwn) || (filed->kind != Slot::Kind::Value && filed->kind != Slot::Kind::FarValue))
+        return LeafAnswer::TakeSlowPath;
+    target->putDirectOffset(*instance->vm, filed->offsetInStorage(), value);
+    return LeafAnswer::Yes;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key, EncodedJSValue encodedValue))
 {
     LeafOperationScope leaf(*instance->vm);
@@ -507,6 +520,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
         answer = LeafAnswer::Yes;
     else if (name.kind == KeyNameKind::Name && base->type() == FinalObjectType)
         answer = putToFinalObject(instance, asObject(base), name.uid, value);
+    else if (name.kind == KeyNameKind::Name && base->type() == GlobalProxyType)
+        answer = putToGlobalObjectThroughItsProxy(instance, asObject(base), name.uid, value);
     else if (Object* object = name.kind == KeyNameKind::Name ? compiledObjectOrNull(base) : nullptr)
         answer = putToCompiledObject(instance, object, name.uid, value);
     return static_cast<size_t>(answer);

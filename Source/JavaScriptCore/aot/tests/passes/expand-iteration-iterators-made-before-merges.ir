@@ -440,4 +440,4 @@ function f12 name="madeInLoopAroundOpen" parameters=[{type=Map<string, number>},
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v

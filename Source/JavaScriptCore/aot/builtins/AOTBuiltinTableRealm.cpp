@@ -365,6 +365,8 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
     visitIfCreated(BuiltinClasses::String, realm->stringObjectStructure());
     visitIfCreated(BuiltinClasses::Error, realm->errorStructureConcurrently());
     visitIfCreated(BuiltinClasses::Date, realm->dateStructureConcurrently());
+    visitIfCreated(BuiltinClasses::IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently());
+    visitIfCreated(BuiltinClasses::IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently());
 #define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) visitIfCreated(BuiltinClasses::name##Array, realm->typedArrayStructureConcurrently(Type##name, false));
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
 #undef AOT_VISIT_TYPED_ARRAY_STRUCTURE

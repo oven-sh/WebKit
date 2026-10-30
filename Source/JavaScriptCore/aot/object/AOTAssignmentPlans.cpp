@@ -649,7 +649,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             creatableFieldNames.append(property.name);
     }
     auto isIntercepted = [&](UniquedStringImpl* name) {
-        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, ChainDependent { name, index, m_chainDependentOwner });
+        return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, *m_state.chainDependents, ChainDependent { name, index, m_chainDependentOwner });
     };
     if (std::ranges::any_of(addedNames.span(), isIntercepted) || std::ranges::any_of(creatableFieldNames.span(), isIntercepted))
         return notePlanWithoutUse("a prototype intercepts a name that a store may create"_s);

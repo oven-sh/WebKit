@@ -110,7 +110,7 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator };
 
 bool isOutlinedIteration(const Function&);
 // Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.
@@ -121,6 +121,8 @@ Function buildCallWithElements(const DerivedFunctionKey&, DerivedFunctionInputs&
 // Calls a value that is one of the functions its type lists. It has an arm for each of them, for all the places that call a value of the type with arguments of these kinds.
 Function buildCallWithSharedArms(const DerivedFunctionKey&, DerivedFunctionInputs&);
 bool isCallWithSharedArms(const Function&);
+// All that it enters.
+std::span<const FunctionID> calleesOfCallWithSharedArms(const Program& program LIFETIME_BOUND, const Function&);
 // The lowest byte of the node of a key. What is above it belongs to the kind.
 constexpr OutlinedIteration kindOfOutlinedBody(uint32_t node) { return static_cast<OutlinedIteration>(node & 0xff); }
 

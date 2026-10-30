@@ -2095,15 +2095,17 @@ static bool hasNoEffectInLoop(FunctionPassContext& context, const Block& block)
     });
 }
 
+// Some whole number goes at least one step towards a bound in every turn, every turn asks whether it is there, and the bound is the same in all of them:
+// it stands in front of the loop, or the loop makes it anew from what stands there. A variable has a direction only where its least step is not zero.
 static bool isCountedAndEnds(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    const InductionVariable* counter = context.analyses.inductionVariables().of(loop).counter();
-    if (!counter || counter->step.kind != InductionStepKind::Constant || !counter->step.constant)
-        return false;
-    const InductionTest* test = counter->controllingTest();
-    if (!test || test->boundKind == LoopBoundKind::Unknown || !isBoundingRelation(test->relation, counter->direction))
-        return false;
-    return context.program.typeOf(context.function, counter->parameter).isInteger() && context.program.typeOf(context.function, test->bound).isInteger();
+    auto isInteger = [&](ValueID id) {
+        return context.program.typeOf(context.function, id).isInteger();
+    };
+    return std::ranges::any_of(context.analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& variable) {
+        const InductionTest* test = variable.boundingTest();
+        return test && test->boundKind != LoopBoundKind::Unknown && isInteger(variable.parameter) && isInteger(test->bound);
+    });
 }
 
 static bool alwaysTerminates(FunctionPassContext& context, const BitVector& body)
@@ -2364,6 +2366,7 @@ namespace {
 struct ShortLoop {
     BlockID header;
     uint64_t numberOfTurns { 0 };
+    bool exitsAfterLastTurn { false };
     Vector<BlockID, 8> region;
     Vector<Edge, 2> entries;
     Vector<Edge, 2> backEdges;
@@ -2385,7 +2388,7 @@ static std::optional<ShortLoop> planTurnsInFrontOf(FunctionPassContext& context,
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
-    ShortLoop found { loop.header(), numberOfTurns, { }, { }, { } };
+    ShortLoop found { loop.header(), numberOfTurns, false, { }, { }, { } };
     uint64_t bytes = 0;
     for (unsigned index = 0; index < loop.size(); ++index) {
         if (loops.innerMostLoopOf(loop.at(index)) != &loop)
@@ -2413,35 +2416,74 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
         return std::nullopt;
-    return planTurnsInFrontOf(context, loop, *numberOfTurns);
+    std::optional<ShortLoop> found = planTurnsInFrontOf(context, loop, *numberOfTurns);
+    if (found)
+        found->exitsAfterLastTurn = true;
+    return found;
 }
 
-// The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.
-static void unroll(FunctionPassContext& context, const ShortLoop& loop)
+// The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last.
+static void unroll(FunctionPassContext& context, std::span<const ShortLoop> loops)
 {
     Function& function = context.function;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
-    Vector<std::unique_ptr<RegionCloner>> turns;
-    for (uint64_t turn = 0; turn < loop.numberOfTurns; ++turn) {
-        turns.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
-        turns.last()->cloneBlocks(loop.region.span(), [](ValueID, Value&) { });
+    using Turns = Vector<std::unique_ptr<RegionCloner>, 8>;
+    Vector<Turns> turnsByLoop(loops.size());
+    HashMap<BlockID, size_t> loopContaining;
+    for (size_t index = 0; index < loops.size(); ++index) {
+        for (uint64_t turn = 0; turn < loops[index].numberOfTurns; ++turn) {
+            turnsByLoop[index].append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+            turnsByLoop[index].last()->cloneBlocks(loops[index].region.span(), [](ValueID, Value&) { });
+        }
+        for (BlockID block : loops[index].region)
+            loopContaining.add(block, index);
     }
 
-    for (Edge entry : loop.entries)
-        builder.redirectEdge(entry, turns.first()->cloneOf(loop.header), Arguments(targetOf(function, entry).arguments));
-    for (size_t turn = 0; turn < turns.size(); ++turn) {
-        BlockID next = turn + 1 < turns.size() ? turns[turn + 1]->cloneOf(loop.header) : loop.header;
-        for (Edge backEdge : loop.backEdges) {
-            Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
-            builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
+    for (size_t index = 0; index < loops.size(); ++index) {
+        const ShortLoop& loop = loops[index];
+        const Turns& turns = turnsByLoop[index];
+        auto enterAtFirstTurn = [&](Edge entry) {
+            builder.redirectEdge(entry, turns.first()->cloneOf(loop.header), Arguments(targetOf(function, entry).arguments));
+        };
+        for (Edge entry : loop.entries) {
+            enterAtFirstTurn(entry);
+            // An exit edge of another unrolled loop: its clones enter here too.
+            if (auto exited = loopContaining.find(entry.from); exited != loopContaining.end()) {
+                for (const std::unique_ptr<RegionCloner>& turn : turnsByLoop[exited->value])
+                    enterAtFirstTurn({ turn->cloneOf(entry.from), entry.targetIndex });
+            }
+        }
+        for (size_t turn = 0; turn < turns.size(); ++turn) {
+            BlockID next = turn + 1 < turns.size() ? turns[turn + 1]->cloneOf(loop.header) : loop.header;
+            for (Edge backEdge : loop.backEdges) {
+                Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
+                builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
+            }
+        }
+        if (loop.exitsAfterLastTurn) {
+            builder.setOrigin(function.at(loop.header).terminator.origin());
+            BlockID neverReached = builder.addBlock(BlockFrequency::Rare);
+            builder.moveToEndOf(neverReached);
+            builder.emitUnreachable();
+            for (Edge backEdge : loop.backEdges)
+                builder.redirectEdge(backEdge, neverReached, { });
         }
     }
     context.analyses.didChangeControlFlow();
-    RegionCloner::repairSSA(context.analyses, turns.span());
+    {
+        SSARepair repair(builder, context.analyses);
+        for (const Turns& turns : turnsByLoop)
+            RegionCloner::addVariablesTo(repair, context.analyses, turns.span());
+        repair.run();
+    }
     context.analyses.didChangeControlFlow();
-    for (const std::unique_ptr<RegionCloner>& turn : turns) {
-        if (!comesBackPastNoOtherMark(context, turn->cloneOf(loop.header)))
-            eraseLoopHints(builder, function, turn->cloneOf(loop.header));
+    for (size_t index = 0; index < loops.size(); ++index) {
+        for (const std::unique_ptr<RegionCloner>& turn : turnsByLoop[index]) {
+            if (!comesBackPastNoOtherMark(context, turn->cloneOf(loops[index].header)))
+                eraseLoopHints(builder, function, turn->cloneOf(loops[index].header));
+        }
+        if (loops[index].exitsAfterLastTurn && !comesBackPastNoOtherMark(context, loops[index].header))
+            eraseLoopHints(builder, function, loops[index].header);
     }
 }
 
@@ -2498,41 +2540,41 @@ static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& c
         }
         return false;
     };
-    PassOutcome outcome = PassOutcome::Unchanged;
-    for (uint64_t taken = 0; taken < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++taken) {
-        std::optional<ShortLoop> found;
-        Vector<ValueID, 4> initializations;
-        NaturalLoops& loops = context.analyses.naturalLoops();
-        for (unsigned index = 0; index < loops.numLoops() && !found; ++index) {
-            const NaturalLoop& loop = loops.loop(index);
-            if (!initializes(loop) || !isExpectedToRun(context, loop).predicted())
-                continue;
-            std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
-            if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))
-                continue;
-            initializations = findInitializationsOfEveryTurn(context, *plan);
-            if (!initializations.isEmpty())
-                found = WTF::move(plan);
-        }
-        if (!found)
-            break;
-        unroll(context, *found);
+    Vector<ShortLoop> found;
+    Vector<Vector<ValueID, 4>> initializationsByLoop;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    for (unsigned index = 0; index < loops.numLoops(); ++index) {
+        const NaturalLoop& loop = loops.loop(index);
+        if (!initializes(loop) || !isExpectedToRun(context, loop).predicted())
+            continue;
+        std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
+        if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))
+            continue;
+        Vector<ValueID, 4> initializations = findInitializationsOfEveryTurn(context, *plan);
+        if (initializations.isEmpty())
+            continue;
+        found.append(WTF::move(*plan));
+        initializationsByLoop.append(WTF::move(initializations));
+    }
+    if (found.isEmpty())
+        return PassOutcome::Unchanged;
+    unroll(context, found.span());
 
-        IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
-        for (BlockID block : found->region) {
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (size_t loop = 0; loop < found.size(); ++loop) {
+        for (BlockID block : found[loop].region) {
             const BlockValues& values = function.at(block).values;
             BitVector erasedIndexes;
             for (size_t index = 0; index < values.size(); ++index) {
-                if (initializations.contains(values[index]))
+                if (initializationsByLoop[loop].contains(values[index]))
                     erasedIndexes.set(index);
             }
             if (!erasedIndexes.isEmpty())
                 builder.eraseValues(block, erasedIndexes);
         }
-        context.analyses.didChangeValues();
-        outcome = PassOutcome::Changed;
     }
-    return outcome;
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
 }
 
 PassOutcome unrollShortLoops(FunctionPassContext& context)
@@ -2546,17 +2588,16 @@ PassOutcome unrollShortLoops(FunctionPassContext& context)
     });
     if (!mayHaveShortLoop)
         return outcome;
-    for (uint64_t unrolled = 0; unrolled < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++unrolled) {
-        std::optional<ShortLoop> found;
-        NaturalLoops& loops = context.analyses.naturalLoops();
-        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
-            found = findShortLoop(context, loops.loop(index));
-        if (!found)
-            break;
-        unroll(context, *found);
-        outcome = PassOutcome::Changed;
+    Vector<ShortLoop> found;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    for (unsigned index = 0; index < loops.numLoops(); ++index) {
+        if (std::optional<ShortLoop> loop = findShortLoop(context, loops.loop(index)))
+            found.append(WTF::move(*loop));
     }
-    return outcome;
+    if (found.isEmpty())
+        return outcome;
+    unroll(context, found.span());
+    return PassOutcome::Changed;
 }
 
 } } } // namespace JSC::AOT::Typed

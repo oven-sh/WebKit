@@ -123,6 +123,7 @@ static CalleeCandidates calleeCandidatesOf(const Program& program, const Functio
 }
 
 // Flow counts a function among the callers of whatever it has followed to one of the calls in it. What flow says is stored ahead of every caller of a function holds in those, and a test may pass in another.
+// The function with the arms for many places lists what its places have shown, by flow or by a type. Flow has followed nothing to the call in it: isCallWithSharedArms().
 static bool isFollowedTo(const Program& program, const Value& operation, FunctionID callee)
 {
     if (!Value::opcodesWithCallees.contains(operation.opcode))
@@ -256,7 +257,8 @@ static bool isValueInside(const ValueInsertion& insertion, ValueID value, TypeID
 
 static TypeID requiredTypeOf(const ValueInsertion& insertion, const DeclaredType& target)
 {
-    return TypingContext { insertion.context.program, insertion.function, insertion.types }.typeIDOf(target);
+    // The callee may be a function that another task has made, with types of that task.
+    return insertion.types.adopt(TypingContext { insertion.context.program, insertion.function, insertion.types }.typeIDOf(target));
 }
 
 static ValueID insertWithOrigin(const ValueInsertion& insertion, Value&& value)
@@ -1376,7 +1378,7 @@ struct SharedArms {
         RELEASE_ASSERT(kindOfOutlinedBody(key.node) == OutlinedIteration::CallWithSharedArms);
         return { key.parameter, !!(key.node >> namesCalleeSetShift & 1), key.node >> numberOfArgumentsShift, !!(key.node >> passesThisShift & 1), static_cast<uint8_t>(key.node >> numbersShift) };
     }
-    std::span<const FunctionID> functions(const Program& program) const LIFETIME_BOUND
+    std::span<const FunctionID> functions(const Program& program LIFETIME_BOUND) const
     {
         return namesCalleeSet ? program.at(CalleeSetID(list)).written().functions : program.at(TypeID(list)).functions.span();
     }
@@ -1854,7 +1856,7 @@ struct CallResolver {
             .isAlwaysInlined = newTarget ? program.at(writtenFunctionOf(program, arm.callee)).has(FunctionCapabilities::MakesNoTailCallIfConstructed) : original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
             .calleeKeptInFrame = arm.keepsCalleeInFrame ? closure : ValueID(),
-            .calleeIsPredicted = !isFollowedTo(program, original, arm.closureFunction),
+            .calleeIsPredicted = isCallWithSharedArms(function) || !isFollowedTo(program, original, arm.closureFunction),
         });
     }
 
@@ -2686,7 +2688,7 @@ struct CallResolver {
                 .isTailCall = !!original.isTailCall,
                 .callsOwnFunctionObject = callsOwnFunctionObject,
                 .calleeKeptInFrame = keepsCalleeInFrame ? closure : ValueID(),
-                .calleeIsPredicted = !isFollowedTo(program, original, only),
+                .calleeIsPredicted = isCallWithSharedArms(function) || !isFollowedTo(program, original, only),
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
             becomeUpcast(function, site.position.value, result);
@@ -3943,6 +3945,12 @@ PassOutcome resolveCalls(FunctionPassContext& context)
     return CallResolver { context, false }.run();
 }
 
+std::span<const FunctionID> calleesOfCallWithSharedArms(const Program& program, const Function& function)
+{
+    RELEASE_ASSERT(isCallWithSharedArms(function));
+    return SharedArms::decode({ .role = function.role, .target = FunctionID(), .parameter = function.derivation.parameter, .node = function.derivation.node }).functions(program);
+}
+
 Function buildCallWithSharedArms(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
 {
     const Program& program = inputs.program;
@@ -3989,6 +3997,8 @@ Function buildCallWithSharedArms(const DerivedFunctionKey& key, DerivedFunctionI
     if (arms.passesThis)
         call.setThisValueOperand(parameters[1]);
     call.setArgumentsOperands(parameters.span().subspan(1 + arms.passesThis));
+    // Each place that calls this function has shown that the value is one of these. So nothing else is entered, behind the arms either, and a place keeps across its call what it kept across the call of the value.
+    call.setCallees(inputs.types.intern(CalleeSet::complete(Vector<FunctionID>(arms.functions(program)), { })));
     ValueID result = builder.append(WTF::move(call));
     if (resultType != TypeTable::anything) {
         if (inputs.build.validates())
@@ -4158,7 +4168,7 @@ static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassCont
     for (LayoutID layout : plan.receivers) {
         MemberAnswer inherited = findPrototypeMember({ program, &context.inputs.flow }, { MemberStart::ClassPrototype, declaredLayoutOf(program, layout), query.key, query.access, false });
         bool isSameMember = inherited.kind == plan.member.kind && inherited.method == plan.member.method && inherited.getter == plan.member.getter && inherited.setter == plan.member.setter;
-        if (!isSameMember || !inherited.receiverProofs.isEmpty())
+        if (!isSameMember || !inherited.receiverProofs.isEmpty() || findField(program, layout, query.key, BaseChain::Proven))
             return std::nullopt;
         addConditions(conditions, inherited.conditions.span());
         if (ownPropertyGainOf(program, layout, query.key) != OwnPropertyGain::Impossible)
@@ -4574,7 +4584,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         BuiltinID calledBuiltin = call.calledBuiltin();
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
-        bool calleeIsPredicted = !isFollowedTo(context.program, call, function);
+        bool calleeIsPredicted = isCallWithSharedArms(context.function) || !isFollowedTo(context.program, call, function);
         // reportClosureTest() only checks the names where the caller's frame is given up.
         bool isNamedByCallee = !mayBeCalledDirectly(context.program, function) || (recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function));
         bool testsNames = std::ranges::any_of(rewriter.tests(), [](const Value& test) { return test.opcode == Opcode::AreFunctionNamesUnchanged; });

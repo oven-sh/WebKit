@@ -212,7 +212,7 @@ static MemberPartition computePartition(const PropertyAccessContext& context, st
                 likelyPosition = field->field;
         }
 
-        if (field && fieldAnswer && fieldAnswer->first == builtinBase && !(storesValue && isNeverStored(program, *field))) {
+        if (field && fieldAnswer && fieldAnswer->first == builtinBase && !(storesValue && isNeverStored(program, *field)) && !mayBeEmptyBelowAccessor(program, id, *field)) {
             MemberAnswer answer = fieldAnswer->second;
             answer.holder = field->layout;
             answer.field = field->field;

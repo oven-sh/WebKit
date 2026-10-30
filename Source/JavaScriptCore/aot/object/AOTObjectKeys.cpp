@@ -540,6 +540,8 @@ void Object::didCreateField(State& stateAtHand, const FieldData& field, bool wit
     if (withStorage)
         willCreateField(state, field);
     const LayoutData& layout = this->layout();
+    if (layout.isClass())
+        state.objects->classes.didShadowMember(layout, state.objects->layouts.nameOf(vm(), field));
     if (layout.keysAreNeverEnumerated)
         return;
     KeyOrderTable& keyOrders = state.objects->keyOrders;

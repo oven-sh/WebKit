@@ -321,13 +321,53 @@ void ObjectInterpreter::readArgumentList(ValueID read, VirtualObjectID object, c
     std::optional<Value> replacement;
     if (description && description->kind == VirtualObjectKind::ArgumentList)
         replacement = makeArgumentListRead(access, description->firstArgument);
-    if (!replacement || !isResultTypeWithin(program(), function(), *replacement, program().typeOf(function(), read)))
+    if (!replacement)
         return executeOnCell(read, 0);
 
-    if (isRewriting()) {
-        resolveOperands(*replacement);
-        replaceRead(read, emitReplacement(m_sinking, *this, read, WTF::move(*replacement)));
+    // A key that is no number is made a property key first, and where it is an object, code of the program does that.
+    if (access.lookup == FieldLookup::DynamicElement && !program().typeOf(function(), access.dynamicIndex).isNumber()) {
+        requireCell(access.dynamicIndex, causeOf(read, OperandIndex::ElemGet::property));
+        forgetFieldsWrittenBy(read);
+        if (!singleDescriptionOf(object))
+            return executeOnCell(read, 0);
     }
+    if (!isRewriting())
+        return;
+
+    // The arguments are what the list would hold, so what is proven of a read of the list is proven of the argument.
+    TypeID type = function().at(read).type;
+    bool assumesTypeOfRead = !isResultTypeWithin(program(), function(), *replacement, program().at(type));
+    resolveOperands(*replacement);
+    ValueID argument = emitReplacement(m_sinking, *this, read, WTF::move(*replacement));
+    if (assumesTypeOfRead && m_sinking.context().build.validates())
+        cursor().emit(makeValidateType(argument, type));
+    replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, Proven::byRulesWithoutChecks(type))) : argument);
+}
+
+// The list is as long as the frame says. The test becomes that comparison: both edges of its branch stay live, and the list stays unbuilt on both.
+bool ObjectInterpreter::executeBoundsTestOnArgumentList(ValueID id)
+{
+    const Value& test = function().at(id);
+    if (test.opcode != Opcode::IsInBounds)
+        return false;
+    VirtualObjectID list = objectOf(test.arrayOperand());
+    const VirtualObjectDescription* description = list ? singleDescriptionOf(list) : nullptr;
+    if (!description || description->kind != VirtualObjectKind::ArgumentList)
+        return false;
+
+    m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
+    if (!isRewriting())
+        return true;
+
+    IRBuilder& builder = cursor().builder();
+    ValueID position = resolve(test.positionOperand());
+    ValueID isInBounds = cursor().emit(IRBuilder::make(Opcode::Less, { position, cursor().emit(makeRestLength(description->firstArgument)) }));
+    if (program().typeOf(function(), test.positionOperand()).integers.minimum < 0) {
+        ValueID isIndex = cursor().emit(IRBuilder::make(Opcode::GreaterEq, { position, builder.appendInteger(0) }));
+        isInBounds = cursor().emitSelection(isIndex, isInBounds, builder.appendBoolean(false), TypeTable::boolean);
+    }
+    replaceRead(id, isInBounds);
+    return true;
 }
 
 void ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)

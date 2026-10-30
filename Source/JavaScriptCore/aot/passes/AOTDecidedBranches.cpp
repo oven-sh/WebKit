@@ -956,8 +956,18 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
         if (terminator.kind == TerminatorKind::Jump && isRarerThan(function.at(terminator.next().block).frequency, actual).predicted())
             jumpsToRarerBlocks.append(Edge { block, 0 });
     };
+    // Past a block as frequent as the test, rare blocks are the failing sides of other tests.
+    BitVector isReachedThroughRareBlocks(function.blocks.size());
+    isReachedThroughRareBlocks.quickSet(target.index());
+    Vector<BlockID, 16> worklist { target };
+    while (!worklist.isEmpty()) {
+        for (BlockID next : analyses.cfg().successors(worklist.takeLast())) {
+            if (isRarerThan(function.at(next).frequency, actual).predicted() && !isReachedThroughRareBlocks.quickSet(next.index()))
+                worklist.append(next);
+        }
+    }
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
+        if (isReachedThroughRareBlocks.quickGet(block.index()) && function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
             raise(block);
     }
     // What a block always goes on to runs as often as the block. The way behind a failed test often joins one that is rarer still. What lies behind the tests there stays as it is until they are decided too.

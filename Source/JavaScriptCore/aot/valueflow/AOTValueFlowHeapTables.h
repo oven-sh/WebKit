@@ -48,6 +48,8 @@ struct ValueFlowMembersUnderKey {
     ValueSetID hostClassesWithSuchMethod { ValueSets::nothing };
     // The objects that do not escape with the object that holds them, `process` say, on which the table takes the key for absent. Code that nobody has seen finds them all the same.
     ValueSetID unescapedHoldersWithoutKey { ValueSets::nothing };
+    // The same of functions, `Buffer.from` say. There are many, and under nearly every key this is the set of them all.
+    ValueSetID unescapedFunctionsWithoutKey { ValueSets::nothing };
 };
 
 struct ValueFlowPropertyKeptForLife {
@@ -305,6 +307,13 @@ private:
     Vector<HolderListingName> m_prototypesOfInstancesWithNames;
     // Namespaces and constructors with a list of all members on every object of the chain, which are passed by where the members of their holder escape.
     Vector<BuiltinID> m_listedHoldersThatDoNotEscape;
+    // The functions and methods of that kind, by the object that they inherit from: whether a key is absent there is asked once for all of them.
+    struct ListedFunctionsBelow {
+        BuiltinID inheritsFrom;
+        ValueSetID functions;
+    };
+    Vector<ListedFunctionsBelow, 2> m_listedFunctionsThatDoNotEscape;
+    BitVector m_isListedFunctionThatDoesNotEscape;
     Vector<std::pair<BuiltinName, ValueSetID>, 4> m_instancesThatKeepName;
     Vector<BuiltinID> m_holdersWithClosedKeys;
     BitVector m_hasClosedKeys;

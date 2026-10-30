@@ -123,6 +123,34 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
     });
 }
 
+// n statements that hand over the same set ask about it once.
+using SetsOfOnlyDataFromOutside = UncheckedKeyHashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+static void noteWhetherOnlyDataFromOutsideComesOut(const ValueFlowResultInputs& inputs, FlowResultTables& tables, const StampedOperand& stamped, SetsOfOnlyDataFromOutside& answers)
+{
+    if (!stamped.statement.result)
+        return;
+    ValueSetID result = inputs.solver().possibleValuesOf(stamped.statement.result);
+    if (ValueSets::isComplement(result) || result == ValueSets::nothing)
+        return;
+    auto answer = answers.ensure(result.index(), [&] {
+        const ValueFlowUniverse& universe = inputs.universe();
+        const ValueSets& sets = inputs.sets();
+        if (sets.contains(result, ValueFlowUniverse::unknownObject()))
+            return false;
+        ValueSetID objects = stamped.maker.intersect(result, universe.knownObjects());
+        if (objects == ValueSets::nothing)
+            return false;
+        bool isOnlyDataFromOutside = true;
+        sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+            isOnlyDataFromOutside = isOnlyDataFromOutside && stamped.positions.isDataFromOutside(object);
+        });
+        return isOnlyDataFromOutside;
+    });
+    if (answer.iterator->value)
+        tables.sites.sitesThatHandOverOnlyDataFromOutside[tables.application->accessSites.siteOfValue(stamped.id, stamped.statement.site).index()] = true;
+}
+
 static Vector<uint64_t> findLayoutsWithFieldOfKey(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const Program& program = inputs.program;
@@ -421,6 +449,8 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
     }
     tables.sites.receiversSeenAtSites.fill(0, tables.application->accessSites.numberOfSites());
+    tables.sites.sitesThatHandOverOnlyDataFromOutside.fill(false, tables.application->accessSites.numberOfSites());
+    Vector<SetsOfOnlyDataFromOutside> answersOfWorker(inputs.loops().width());
     Vector<ProxyMadeAtSite> proxiesMade = findProxiesMadeAtSites(inputs);
     ValueSetID objectsOfProxiesMade = ValueSets::nothing;
     {
@@ -488,6 +518,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
         noteProxiesSeenAt(receiver);
+        noteWhetherOnlyDataFromOutsideComesOut(inputs, tables, receiver, answersOfWorker[receiver.worker]);
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
         // n accesses of a value that may be any of n objects name the same set: its layouts are listed, hashed and interned once for a worker.

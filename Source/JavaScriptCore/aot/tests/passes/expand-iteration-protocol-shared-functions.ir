@@ -1,4 +1,4 @@
-# Opening and closing an iterator nobody knows anything about is the same code everywhere: three functions of the program. The step stays in the loop
+# Opening and closing an iterator nobody knows anything about is the same code everywhere: four functions of the program, the step among them
 # FORM: Prepared optimizing
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
@@ -37,8 +37,7 @@ function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results
     Return v1
 # CHECK: LoopHint
 # CHECK: LoopHint
-# CHECK-NEXT: [[result1]]: anything = Call [[next1]], [[iterator1]]
-# CHECK-NEXT: = RequireObject [[result1]] runtimeError=IteratorResultNotObject
+# CHECK-NEXT: = CallDirect [[iterator1]], [[next1]] function={{*}} [isNeverInlined]
 # CHECK: = CallDirect [[iterator1]] function=f4 [isNeverInlined]
 # CHECK: role=CleanupHandler frequency=Unlikely:
 # CHECK-NEXT: = CatchException
@@ -117,8 +116,9 @@ function f2 name="layoutOfTheProgram" parameters=[{type=L0}] results=[{type=anyt
 # CHECK-NEXT: Jump
 # ABSENT-LABEL: function f5 name="closeIteratorAfterThrow"
 # ABSENT-NOT: RequireObject
+# ABSENT: function {{*}} name="stepIterator"
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
-# LEFT-NOT: function f6
+# LEFT-NOT: IteratorClose v
+# LEFT-NOT: function f7

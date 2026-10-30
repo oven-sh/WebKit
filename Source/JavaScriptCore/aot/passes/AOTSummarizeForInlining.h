@@ -107,6 +107,8 @@ struct InliningSummary {
     bool isWrapper { false };
     // Its rest parameter is only spread into its calls, and it is short.
     bool onlyForwardsRestParameter { false };
+    // Its rest parameter is only read: by key, for its length, or as the arguments of a call.
+    bool onlyReadsRestParameter { false };
     // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
     enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
     Difference difference { Difference::None };
@@ -119,6 +121,8 @@ struct InliningSummary {
     uint32_t headBytes { 0 };
     // The generic version of a function is entered where one of several tests of the parameters fails, so no single test owns its bytes. They go where every one of the tests is decided.
     uint32_t bytesOnlyIfSomeTestFails { 0 };
+    // The tests of a rest parameter that is only read. They are answered where the list is not made.
+    uint32_t bytesOfTestsOfRestParameter { 0 };
     BitVector headBlocks;
     BitVector noReturnBlocks;
     BitVector blocksBoundToFrame;

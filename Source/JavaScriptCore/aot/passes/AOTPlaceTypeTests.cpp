@@ -519,8 +519,16 @@ static bool handsBackObjectWithLayoutOfItsOwn(const Program& program, const Valu
     });
 }
 
+static bool handsOverNoLayoutOfProgram(FunctionPassContext& context, const Value& value)
+{
+    if (handsBackObjectWithLayoutOfItsOwn(context.program, value))
+        return true;
+    return PayloadWord::accessSite(value.opcode) && context.inputs.flow.handsOverOnlyDataFromOutside(value.accessSite());
+}
+
 // `encoder.encodeInto(text, bytes).written` beside a literal `{ read, written }`: a test for the layout of the literal would turn away what the built-in hands back in every turn.
-static bool comesOnlyFromBuiltinsWithLayoutsOfTheirOwn(FunctionPassContext& context, BlockID block, ValueID receiver)
+// So would a test in `size(parsed[i])`, for the literals that another caller of `size` hands over, of what JSON.parse has made.
+bool arrivesWithoutLayoutOfProgram(FunctionPassContext& context, BlockID block, ValueID receiver)
 {
     FunctionAnalyses& analyses = context.analyses;
     const Function& function = context.function;
@@ -537,7 +545,7 @@ static bool comesOnlyFromBuiltinsWithLayoutsOfTheirOwn(FunctionPassContext& cont
     for (size_t next = 0; next < sources.size(); ++next) {
         ValueID source = sources[next];
         if (function.at(source).opcode != Opcode::Parameter) {
-            if (!handsBackObjectWithLayoutOfItsOwn(context.program, function.at(source)))
+            if (!handsOverNoLayoutOfProgram(context, function.at(source)))
                 return false;
             hasMaker = true;
             continue;
@@ -652,7 +660,7 @@ static TestSites collectTestSites(FunctionPassContext& context)
     sites.sites.removeAllMatching([&](const TestSite& site) {
         if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
             return true;
-        if (ValueID receiver = findReceiverWithGuessedLayout(context, sites, site); receiver && comesOnlyFromBuiltinsWithLayoutsOfTheirOwn(context, site.point.block, receiver))
+        if (ValueID receiver = findReceiverWithGuessedLayout(context, sites, site); receiver && arrivesWithoutLayoutOfProgram(context, site.point.block, receiver))
             return true;
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
         const Value& use = context.function.at(site.use);
@@ -1333,12 +1341,12 @@ private:
         bool hasLink = std::ranges::any_of(values, [&](ValueID value) {
             if (!arrayMethodCallOpcodes.contains(function.at(value).opcode))
                 return false;
-            std::optional<ArrayMethodCall> call = arrayMethodCallOf(m_context.program, function, value);
+            std::optional<ArrayMethodCall> call = arrayMethodCallOf(m_context.program, function, value, ChainOperandProofs::MayStillCome);
             return call && call->method->role != ChainMethodRole::End;
         });
         if (!hasLink)
             return;
-        for (const ArrayChain& chain : findArrayChains(m_context, nullptr, block)) {
+        for (const ArrayChain& chain : findArrayChains(m_context, nullptr, block, ChainOperandProofs::MayStillCome)) {
             // The calls of a chain that stays as it is are inlined one by one, and each wants its tests in front of it.
             if (checkInterleaving(m_context, chain, ChainOperandProofs::MayStillCome) != ArrayChainDeclineReason::None)
                 continue;

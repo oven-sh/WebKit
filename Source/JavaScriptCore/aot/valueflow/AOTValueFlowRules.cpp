@@ -245,6 +245,8 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
             context.add(escapedNode, only(context, classOfEntries.prototype));
     }
     context.mark(arrived, ObjectMutation::ReachNativeCode);
+    // Beside the unknown object a hub lists no object that has escaped, so what it would find there is taken from here.
+    context.connect(context.masked(context.lookup(known(context, arrived), prototypeLinkName), universe.builtinObjects()), context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsAboveEscapedObjects));
 
     letNativeCodeStepIterators(context, arrived);
     ValueSetID describedByEntries = universe.builtinTables().closuresThatEntriesDescribe();

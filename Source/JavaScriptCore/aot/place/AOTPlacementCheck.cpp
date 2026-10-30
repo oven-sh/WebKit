@@ -46,7 +46,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
-static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
+static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::NewFormatterWithPattern, Opcode::FormatDateWithPattern, Opcode::FormatNumberWithPattern, Opcode::CopyDataProperties, Opcode::CopyObject });
 
 namespace {
 
@@ -1483,7 +1483,8 @@ struct SiteCheck : PlacementCheckContext {
             [&](const TemplateObjectRecord& record) { return opcode == Opcode::NewTemplateObject && std::ranges::equal(record.parts, value.templateStrings()); },
             [&](const DirectEvalRecord& record) { return opcode == Opcode::DirectEval && record.scope == value.evalScope() && record.module == program.sourceFunctionOf(function, value).module; },
             [&](const DataRecord& record) { return opcode == Opcode::Data && isDataRequestOf(record, value); },
-            [&](const CollectionDataRecord& record) { return (opcode == Opcode::NewSetFromData || opcode == Opcode::NewMapFromData) && record.data == value.data() && record.hasValues == (opcode == Opcode::NewMapFromData); });
+            [&](const CollectionDataRecord& record) { return (opcode == Opcode::NewSetFromData || opcode == Opcode::NewMapFromData) && record.data == value.data() && record.hasValues == (opcode == Opcode::NewMapFromData); },
+            [&](const FormatPatternRecord& record) { return Value::opcodesWithFormatPattern.contains(opcode) && std::ranges::equal(record.words, value.formatPattern()); });
     }
 
     void checkRequest(ValueID id, const Value& value)
@@ -1730,7 +1731,8 @@ static void checkSites(const PlacementCheckContext& context)
             [](const TemplateObjectRecord&) { return DataID(); },
             [](const DirectEvalRecord&) { return DataID(); },
             [](const DataRecord& record) { return record.data; },
-            [](const CollectionDataRecord& record) { return record.data; });
+            [](const CollectionDataRecord& record) { return record.data; },
+            [](const FormatPatternRecord&) { return DataID(); });
         if (data)
             checkDataTree(context, context.program.at(data).root);
     });

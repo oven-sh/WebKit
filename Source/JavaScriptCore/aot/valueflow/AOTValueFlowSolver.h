@@ -693,11 +693,12 @@ private:
     // There are hundreds of thousands of these lists, and most hold one or two elements.
     template<typename T>
     using ShortList = Vector<T, 0, CrashOnOverflow, 2>;
+    using ListOfNodesOfSets = CompactList<NodeOfSet>;
 
     struct NodesOfName {
-        ShortList<NodeOfSet> ofFewObjects;
-        ShortList<NodeOfSet> ofManyObjects;
-        ShortList<NodeOfSet> ofVeryManyObjects;
+        ListOfNodesOfSets ofFewObjects;
+        ListOfNodesOfSets ofManyObjects;
+        ListOfNodesOfSets ofVeryManyObjects;
         // From a member to the list of the nodes whose sets hold it. The maps and the lists lie with the shard of the name.
         uint32_t ofFewObjectsByMember { 0 };
         uint32_t ofManyObjectsByMember { 0 };
@@ -744,11 +745,6 @@ private:
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
-    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement& statement) const LIFETIME_BOUND
-    {
-        size_t number = statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatOneObjectHoldsUnderSameKey) ? 1 : statement.factsOfText.contains(ValueFlowFactOfText::StoresWhatTwoObjectsHoldUnderSameKey) ? 2 : 0;
-        return m_input.operands.subspan(statement.firstOperand + statement.operandCount, number);
-    }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
     bool isKnownWatcher(ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement) const
     {
@@ -760,8 +756,7 @@ private:
     }
     uint32_t numberOfName(ValueFlowName name) const
     {
-        auto number = m_numberOfName.find(static_cast<uint64_t>(name.kind) << 32 | name.payload);
-        return number != m_numberOfName.end() ? number->value : UINT32_MAX;
+        return findNumberOfName(name).value_or(UINT32_MAX);
     }
     ValueSetID holdersUnder(uint32_t numberOfName) const { return numberOfName != UINT32_MAX ? m_names[numberOfName].holders : ValueSetID(); }
     ValueSetID partOfNameWatchedBy(ValueFlowStatementID statement, uint32_t numberOfName) const
@@ -855,7 +850,7 @@ private:
     void numberNamesWatched();
     void noteNamesWatched(unsigned shard, ValueSetMaker&);
     void wakeWatchersOfNamesWrittenOnMoreObjects(unsigned shard, ValueSetMaker&);
-    void removeNodesAtRestFrom(ShortList<NodeOfSet>&);
+    void removeNodesAtRestFrom(ListOfNodesOfSets&);
     void linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask);
     void noteReaders(unsigned shard, ValueSetMaker&);
     size_t numberOfReaders() const;
@@ -1314,7 +1309,15 @@ private:
 
     Vector<Name> m_names;
     std::array<KindOfNames, mostKindsOfNames> m_kindsOfNames;
-    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberOfName;
+    static uint64_t hashOfName(ValueFlowName name) { return ValueFlowNumbersOfRecords::hashOf(static_cast<uint64_t>(name.kind) << 32 | name.payload); }
+    std::optional<uint32_t> findNumberOfName(ValueFlowName name) const
+    {
+        return m_numberOfName.find(hashOfName(name), [&](uint32_t number) {
+            return m_names[number].name.kind == name.kind && m_names[number].name.payload == name.payload;
+        });
+    }
+    uint32_t ensureNumberOfName(ValueFlowName);
+    ValueFlowNumbersOfRecords m_numberOfName;
     static constexpr unsigned numberOfLinkShardsOfNames = 64;
     static constexpr unsigned numberOfLinkShardsOfKinds = 8;
     static constexpr unsigned numberOfLinkShards = numberOfLinkShardsOfNames + numberOfLinkShardsOfKinds;
@@ -1337,12 +1340,12 @@ private:
         struct LongList {
             NodeOfSet node;
             bool isRead { false };
-            ShortList<NodeOfSet>* others { nullptr };
+            ListOfNodesOfSets* others { nullptr };
         };
 
         Vector<ValueFlowEdge> edges;
         uint64_t testsWhetherSetsMeet { 0 };
-        Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
+        Vector<ListOfNodesOfSets*> listsMostlyAtRest;
         Vector<LongList> longLists;
     };
     void connectAcrossLongLists(std::span<const Linked::LongList>);

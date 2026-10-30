@@ -977,9 +977,10 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         keys.set(fieldAt(program, field).key.index());
 
     // Where a test may be placed the form pays. Elsewhere it costs an access by name wherever the object is known to have the field.
-    enum class WhereNamed : uint8_t { InCodeThatMayGetTests, ByNameForItsForm };
-    using NamedField = std::pair<FieldReference, WhereNamed>;
-    Vector<NamedField> namedFields = collectInParallel<NamedField>(loops, program.functions.size(), [&](unsigned index, Vector<NamedField>& found) {
+    constexpr uint8_t inCodeThatMayGetTests = 1 << 0;
+    constexpr uint8_t byNameForItsForm = 1 << 1;
+    Vector<uint8_t> whereNamed(FillWith { }, fields.size(), uint8_t { 0 });
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
         FunctionID id(index);
         const Function& function = program.functions[index];
         if (!function.hasBody())
@@ -988,14 +989,19 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         std::optional<FunctionAnalyses> analyses;
         auto note = [&](BlockID block, FieldReference field, NOESCAPE const Invocable<bool()> auto& goesByNameWithoutTests) {
             FieldReference declaration = declarationOf(program, field);
-            if (!std::ranges::binary_search(fields, declaration))
+            auto position = std::ranges::lower_bound(fields, declaration);
+            if (position == fields.end() || *position != declaration)
+                return;
+            AtomicRef<uint8_t> where(whereNamed[position - fields.begin()]);
+            uint8_t known = where.load(std::memory_order_relaxed);
+            if (known & inCodeThatMayGetTests)
                 return;
             if (!analyses)
                 analyses.emplace(context, function);
             if (mayPlaceTestsOfAccessesByName(heat, *analyses, block))
-                found.append({ declaration, WhereNamed::InCodeThatMayGetTests });
-            else if (goesByNameWithoutTests())
-                found.append({ declaration, WhereNamed::ByNameForItsForm });
+                where.fetch_or(inCodeThatMayGetTests, std::memory_order_relaxed);
+            else if (!(known & byNameForItsForm) && goesByNameWithoutTests())
+                where.fetch_or(byNameForItsForm, std::memory_order_relaxed);
         };
         forEachListedValue(program, id, opcodesThatListInitialValues, [&](BlockID block, uint32_t, ValueID, const Value& allocation) {
             if (!writesInitialValues(program, allocation))
@@ -1027,10 +1033,12 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
             }
         });
     });
-    sortAndRemoveRepeated(namedFields);
-    fields.removeAllMatching([&](FieldReference field) {
-        return std::ranges::binary_search(namedFields, NamedField { field, WhereNamed::InCodeThatMayGetTests }) || !std::ranges::binary_search(namedFields, NamedField { field, WhereNamed::ByNameForItsForm });
-    });
+    size_t numberKept = 0;
+    for (size_t index = 0; index < fields.size(); ++index) {
+        if (whereNamed[index] == byNameForItsForm)
+            fields[numberKept++] = fields[index];
+    }
+    fields.shrink(numberKept);
     if (fields.isEmpty())
         return;
 

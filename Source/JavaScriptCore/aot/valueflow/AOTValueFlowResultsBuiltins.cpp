@@ -914,11 +914,15 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             return;
         for (const ValueFlowStatement& call : inputs.bodies().statementsOf(function)) {
             std::optional<BuiltinCallMode> mode = call.kind == ValueFlowStatementKind::Operation ? modeOfCallOperation(call.opcode) : std::nullopt;
+            // super() of a class below a built-in class: the object of the call is what the built-in class makes, and what code that nobody knows makes in its place.
+            bool isSuperCall = call.kind == ValueFlowStatementKind::Operation && (call.opcode == Opcode::SuperConstruct || call.opcode == Opcode::SuperConstructList);
+            if (isSuperCall)
+                mode = BuiltinCallMode::Construct;
             ValueFlowObjectID object = mode ? universe.siteObject(call) : ValueFlowObjectID();
-            if (!object || universe.layoutOf(object))
+            if (!object || (universe.layoutOf(object) && !isSuperCall))
                 continue;
             ValueSetID callees = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(call)[0]);
-            if (ValueSets::isComplement(callees) || inputs.sets().meet(callees, universe.otherCallables())) {
+            if (ValueSets::isComplement(callees) || inputs.sets().meet(callees, universe.otherCallables()) || (isSuperCall && inputs.sets().meet(callees, universe.placeholdersAlone()))) {
                 found.append({ object, { } });
                 continue;
             }

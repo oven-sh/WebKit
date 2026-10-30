@@ -436,10 +436,6 @@ static bool canLeaveFrame(BoundTo boundTo)
 RegionCloner::RegionCloner(IRBuilder& destination, const Function& source)
     : m_destination(destination)
     , m_source(source)
-    , m_valueMap(FillWith { }, source.values.size(), ValueID())
-    , m_blockMap(FillWith { }, source.blocks.size(), BlockID())
-    , m_isSeeded(source.values.size())
-    , m_isInRegion(source.blocks.size())
     , m_rematerializedClone(FillWith { }, isSameFunction() ? 0 : source.values.size(), ValueID())
     , m_rematerializedIn(FillWith { }, isSameFunction() ? 0 : source.values.size(), BlockID())
 {
@@ -571,9 +567,8 @@ bool RegionCloner::saysAsMuchAs(ValueID inDestination, ValueID inSource) const
 void RegionCloner::mapValue(ValueID inSource, ValueID inDestination)
 {
     RELEASE_ASSERT(m_clonedBlocks.isEmpty());
-    RELEASE_ASSERT(inDestination && !m_valueMap[inSource.index()]);
-    m_valueMap[inSource.index()] = inDestination;
-    m_isSeeded.set(inSource.index());
+    RELEASE_ASSERT(inDestination && !cloneOf(inSource));
+    m_valueMap.set(inSource, inDestination);
     const AnalysisContext& context = m_destination.context();
     if (context.build.options().verifiesProgram && !saysAsMuchAs(inDestination, inSource)) [[unlikely]]
         context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::CopyRunsBehindLess, .function = context.id, .pass = currentWork().pass.load(std::memory_order_relaxed), .detail = makeString('v', inDestination.index(), " stands for v"_s, inSource.index()) });
@@ -582,18 +577,18 @@ void RegionCloner::mapValue(ValueID inSource, ValueID inDestination)
 void RegionCloner::mapBlock(BlockID inSource, BlockID inDestination)
 {
     RELEASE_ASSERT(m_clonedBlocks.isEmpty());
-    RELEASE_ASSERT(inDestination && !m_blockMap[inSource.index()]);
-    m_blockMap[inSource.index()] = inDestination;
+    RELEASE_ASSERT(inDestination && !cloneOf(inSource));
+    m_blockMap.set(inSource, inDestination);
 }
 
 ValueID RegionCloner::cloneOf(ValueID inSource) const
 {
-    return inSource.index() < m_valueMap.size() ? m_valueMap[inSource.index()] : ValueID();
+    return m_valueMap.get(inSource);
 }
 
 BlockID RegionCloner::cloneOf(BlockID inSource) const
 {
-    return inSource.index() < m_blockMap.size() ? m_blockMap[inSource.index()] : BlockID();
+    return m_blockMap.get(inSource);
 }
 
 void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE const ScopedLambda<void(ValueID, Value&)>& didCloneValue)
@@ -602,14 +597,20 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
     Function& function = m_destination.function();
     m_region.append(region);
     m_clonedBlocks.reserveInitialCapacity(m_region.size());
+    size_t numberOfValuesInRegion = 0;
+    for (BlockID block : m_region)
+        numberOfValuesInRegion += m_source.at(block).parameters.size() + m_source.at(block).values.size();
+    m_valueMap.reserveFor(numberOfValuesInRegion, m_source.values.size());
+    m_blockMap.reserveFor(m_region.size(), m_source.blocks.size());
+    m_firstClonedValueIndex = function.values.size();
+    m_firstClonedBlockIndex = function.blocks.size();
     for (BlockID block : m_region) {
-        RELEASE_ASSERT(!m_blockMap[block.index()]);
+        RELEASE_ASSERT(!cloneOf(block));
         BlockID clone = m_destination.addBlock(m_source.at(block).frequency);
         Block& added = function.edit(clone, BlockEdit::Rest);
         added.role = m_source.at(block).role;
         added.shape = m_source.at(block).shape;
-        m_blockMap[block.index()] = clone;
-        m_isInRegion.set(block.index());
+        m_blockMap.set(block, clone);
         m_clonedBlocks.append(clone);
     }
 
@@ -620,16 +621,16 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
         RELEASE_ASSERT(function.blocks.size() == numberOfBlocks && function.values.size() == numberOfValues);
     };
     auto addClone = [&](ValueID id) {
-        RELEASE_ASSERT(!m_valueMap[id.index()]);
+        RELEASE_ASSERT(!cloneOf(id));
         ValueID added = m_destination.addValue(Value(m_source.at(id)));
-        m_valueMap[id.index()] = added;
+        m_valueMap.set(id, added);
         return added;
     };
     for (BlockID block : m_region) {
         const Block& source = m_source.at(block);
-        Block& clone = function.edit(m_blockMap[block.index()], BlockEdit::Parameters);
+        Block& clone = function.edit(cloneOf(block), BlockEdit::Parameters);
         for (ValueID id : source.parameters) {
-            if (m_isSeeded.get(id.index()))
+            if (isSeeded(id))
                 continue;
             ValueID parameter = addClone(id);
             didClone(id, parameter);
@@ -641,7 +642,7 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
 
     for (BlockID regionBlock : m_region) {
         const Block& source = m_source.at(regionBlock);
-        BlockID cloneBlock = m_blockMap[regionBlock.index()];
+        BlockID cloneBlock = cloneOf(regionBlock);
         auto remap = [&](ValueID inSource) {
             if (!inSource)
                 return inSource;
@@ -672,12 +673,12 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
                 RELEASE_ASSERT(isSameFunction());
                 return;
             }
-            RELEASE_ASSERT(!m_isInRegion.get(target.block.index()) || m_source.at(target.block).parameters.size() == function.at(mapped).parameters.size());
+            RELEASE_ASSERT(!isInRegion(target.block) || m_source.at(target.block).parameters.size() == function.at(mapped).parameters.size());
             target.block = mapped;
         };
         auto cloneValues = [&](std::span<const ValueID> values) {
             for (ValueID id : values) {
-                ValueID clone = m_valueMap[id.index()];
+                ValueID clone = cloneOf(id);
                 Value value = WTF::move(function.edit(clone, ValueEdit::Definition));
                 value.forEachChild(remapChild);
                 function.edit(clone, ValueEdit::Definition) = WTF::move(value);
@@ -725,12 +726,17 @@ void RegionCloner::repairSSA(FunctionAnalyses& analyses, std::span<const std::un
 {
     if (clonersOfOneRegion.empty())
         return;
-    Vector<const RegionCloner*, 4> cloners;
+    SSARepair repair(clonersOfOneRegion.front()->m_destination, analyses);
+    addVariablesTo(repair, analyses, clonersOfOneRegion);
+    repair.run();
+}
+
+void RegionCloner::addVariablesTo(SSARepair& repair, FunctionAnalyses& analyses, std::span<const std::unique_ptr<RegionCloner>> clonersOfOneRegion)
+{
+    Vector<const RegionCloner*, 8> cloners;
     for (const std::unique_ptr<RegionCloner>& cloner : clonersOfOneRegion)
         cloners.append(cloner.get());
-    SSARepair repair(cloners.first()->m_destination, analyses);
     addVariables(repair, analyses, cloners.span());
-    repair.run();
 }
 
 void RegionCloner::addVariablesTo(SSARepair& repair, FunctionAnalyses& analyses) const
@@ -763,7 +769,7 @@ void RegionCloner::addVariables(SSARepair& repair, FunctionAnalyses& analyses, s
             ValueID clone = cloner->cloneOf(definition);
             if (!clone)
                 return;
-            RELEASE_ASSERT(!cloner->m_isSeeded.get(definition.index()));
+            RELEASE_ASSERT(!cloner->isSeeded(definition));
             needsRepair |= isUsedOutsideBlock(clone);
         }
         if (needsRepair)

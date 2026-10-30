@@ -57,7 +57,7 @@ inline bool isOpenContainer(const TrackedObject& object)
 
 // A set of objects is a row of bits, one for each object of the function. This holds the words of the row that are not zero, in ascending order.
 // A function that makes thousands of objects has thousands of sets, and nearly every set holds an object or two: whole rows take sets times objects.
-class ObjectWords {
+class SparseObjectSet {
 public:
     using Word = uint64_t;
     static constexpr uint32_t objectsPerWord = 64;
@@ -80,16 +80,16 @@ public:
         return position < m_entries.size() && m_entries[position].index == wanted.index && (m_entries[position].word & wanted.word);
     }
 
-    bool overlaps(const ObjectWords&) const;
+    bool overlaps(const SparseObjectSet&) const;
 
     // What was not there yet is added to `added` as well, which is another set. The entries lie outside both.
-    void add(std::span<const Entry>, ObjectWords& added);
+    void add(std::span<const Entry>, SparseObjectSet& added);
     void add(const Entry&);
-    void remove(const ObjectWords&);
+    void remove(const SparseObjectSet&);
     // Keeps the room.
     void removeAll() { m_entries.shrink(0); }
 
-    friend bool operator==(const ObjectWords&, const ObjectWords&) = default;
+    friend bool operator==(const SparseObjectSet&, const SparseObjectSet&) = default;
 
 private:
     // Of the first entry from `from` on whose index is not below.
@@ -112,13 +112,13 @@ class ObjectSet {
 public:
     class Iterator {
     public:
-        explicit Iterator(std::span<const ObjectWords::Entry> entries)
+        explicit Iterator(std::span<const SparseObjectSet::Entry> entries)
             : m_entries(entries)
             , m_rest(entries.empty() ? 0 : entries.front().word)
         {
         }
 
-        ObjectID operator*() const { return ObjectID(m_entries.front().index * ObjectWords::objectsPerWord + std::countr_zero(m_rest)); }
+        ObjectID operator*() const { return ObjectID(m_entries.front().index * SparseObjectSet::objectsPerWord + std::countr_zero(m_rest)); }
 
         Iterator& operator++()
         {
@@ -133,17 +133,17 @@ public:
         friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_entries.size() == b.m_entries.size() && a.m_rest == b.m_rest; }
 
     private:
-        std::span<const ObjectWords::Entry> m_entries;
-        ObjectWords::Word m_rest;
+        std::span<const SparseObjectSet::Entry> m_entries;
+        SparseObjectSet::Word m_rest;
     };
 
-    explicit ObjectSet(const ObjectWords& words LIFETIME_BOUND)
+    explicit ObjectSet(const SparseObjectSet& words LIFETIME_BOUND)
         : m_words(words)
     {
     }
 
     Iterator begin() const { return Iterator(m_words.entries()); }
-    Iterator end() const { return Iterator(std::span<const ObjectWords::Entry> { }); }
+    Iterator end() const { return Iterator(std::span<const SparseObjectSet::Entry> { }); }
     bool isEmpty() const { return m_words.isEmpty(); }
     size_t size() const;
     bool contains(ObjectID object) const { return m_words.contains(object); }
@@ -158,7 +158,7 @@ public:
     friend bool operator==(const ObjectSet& a, const ObjectSet& b) { return a.m_words == b.m_words; }
 
 private:
-    const ObjectWords& m_words;
+    const SparseObjectSet& m_words;
 };
 
 struct PointsToSet {
@@ -328,9 +328,9 @@ public:
 
 private:
     struct StoredSet {
-        ObjectWords objects;
+        SparseObjectSet objects;
         // Where some member is an entry parameter: the members that are allocations. Else `objects` are those.
-        ObjectWords allocationsBesideEntryParameters;
+        SparseObjectSet allocationsBesideEntryParameters;
         bool mayBeUntracked { true };
         bool holdsEntryParameter { false };
         bool holdsSuperConstructResult { false };
@@ -339,7 +339,7 @@ private:
     };
     // What a value may be among the allocations of the function. An entry parameter is an object that nobody tracks.
     struct AllocationSet {
-        const ObjectWords& objects;
+        const SparseObjectSet& objects;
         bool mayBeUntracked { true };
         bool existedAtEntryIfUntracked { false };
         const Vector<uint32_t, 2>* groupsOfFrameWords { nullptr };
@@ -394,7 +394,7 @@ private:
     Vector<ValueSetID> m_setOfValue;
     Vector<StoredSet> m_sets;
     BitVector m_noObjects;
-    ObjectWords m_emptySet;
+    SparseObjectSet m_emptySet;
     mutable Vector<ValueID> m_aliases;
     mutable Vector<uint32_t> m_firstAlias;
     // Two entries per use that the solver recorded: not an escape, then an escape. That is all that differs between the objects of one use.

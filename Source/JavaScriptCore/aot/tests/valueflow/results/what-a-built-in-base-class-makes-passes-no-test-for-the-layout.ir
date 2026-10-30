@@ -1,13 +1,15 @@
 # class Registry extends Map {}  class Plain {}  function look(x: Registry | Plain) {}  function only(x: Plain) {}  look(new Registry()); look(new Plain()); only(new Plain())
 # What `super()` of a class that extends a built-in class makes is a cell of the built-in class. It is filed under the layout of the class, and the test for that layout, which looks at the shape, turns it away.
-# So a check against the layout stays a check, behind `super()` and at the head of a function that such an instance reaches.
+# So a check against the layout stays a check, behind `super()` and at the head of a function that such an instance reaches. What is proven of it is the built-in class.
 # Beside it: a check that only objects allocated with the layout reach tests nothing
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="Registry"
 # CHECK: = SuperConstruct
-# CHECK-NEXT: : L0 = Check v3 expectedType=L0
+# CHECK-NEXT: [[made]]: Map ~ L0 = AssumeType v3 provenType=Map
+# CHECK-NEXT: : L0 = Check [[made]] expectedType=L0
 # CHECK-LABEL: function f3 name="look"
-# CHECK: : L0|L1 = Check {{*}} expectedType=L0|L1
+# CHECK: [[given]]: L1|Map = AssumeType v0 provenType=L1|Map
+# CHECK-NEXT: : L0|L1 = Check [[given]] expectedType=L0|L1
 # CHECK-LABEL: function f4 name="only"
 # CHECK-NOT: = Check
 # CHECK: : L1 = AssumeType {{*}} provenType=L1

@@ -197,13 +197,39 @@ static bool isAnsweredByTestOfCell(const PropertyAccessContext& context, const P
     return !mayStoreIntoUnfinishedObject(context, query);
 }
 
+static bool asksRunTimeWhetherStoresPass(const Program& program, LayoutID layout, PropertyKeyID key, MemberAnswer& inherited)
+{
+    LayoutID storingClass = declaredLayoutOf(program, layout);
+    if (inherited.kind != MemberKind::Accessor || program.at(storingClass).classFlow.evaluations != ExecutionCount::AtMostOnce)
+        return false;
+    bool isDefinedAfterObjectsAreMade = std::ranges::any_of(program.at(inherited.holder).classFlow.members, [&](const ClassMember& member) {
+        return member.side == ClassSide::Prototype && member.key == key && member.isDefinedAfterObjectsAreMade;
+    });
+    MemberCondition memberUnchanged { MemberCondition::Kind::MemberUnchanged, storingClass, ClassSide::Prototype, key };
+    if (!isDefinedAfterObjectsAreMade || !inherited.conditions.removeAllMatching([&](const MemberCondition& condition) { return condition == memberUnchanged; }))
+        return false;
+    addCondition(inherited.conditions, { MemberCondition::Kind::MemberPassedByStores, storingClass, ClassSide::Prototype, key });
+    return true;
+}
+
+bool failsOnceAccessorIsDefined(const PropertyAccessContext& context, const MemberCondition& condition)
+{
+    if (condition.kind != MemberCondition::Kind::MemberPassedByStores)
+        return false;
+    MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, condition.layout, condition.key, Access::Store, false });
+    return asksRunTimeWhetherStoresPass(context.program, condition.layout, condition.key, inherited);
+}
+
 static std::optional<TestsOfEmptySlot> computeTestsThatNothingIsInherited(const PropertyAccessContext& context, std::span<const LayoutID> layouts, PropertyKeyID key, Access access)
 {
     TestsOfEmptySlot tests;
     for (LayoutID layout : layouts) {
         MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, access, false });
-        if (inherited.kind != MemberKind::Absent)
-            return std::nullopt;
+        if (inherited.kind != MemberKind::Absent) {
+            if (access != Access::Store || !asksRunTimeWhetherStoresPass(context.program, layout, key, inherited))
+                return std::nullopt;
+            tests.failOnceAccessorIsDefined = true;
+        }
         // A read can fall back on the slot test. A store that creates the field only has the guards. The guards of a function that is created once hold for all its objects;
         // those of a function that may be created again hold for the first closure's objects while it is the only closure, which does not justify a second copy of the store.
         bool failsForEver = std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
@@ -231,6 +257,7 @@ static bool addTestsThatNothingIsInherited(const PropertyAccessContext& context,
         computed = computeTestsThatNothingIsInherited(context, arm.layouts.span(), query.key, access);
     if (!*inherited)
         return false;
+    tests.failOnceAccessorIsDefined |= (*inherited)->failOnceAccessorIsDefined;
     tests.proofs |= (*inherited)->proofs;
     addConditions(tests.conditions, (*inherited)->conditions.span());
     return true;
@@ -403,7 +430,7 @@ std::optional<LazyFieldCreation> planFieldCreationBelowInheritedValue(const Prop
         return std::nullopt;
     // A store passes a value that may be written, and nothing else.
     std::optional<TestsOfEmptySlot> inherited = computeTestsThatNothingIsInherited(context, layoutsWithEmptySlots.span(), key, Access::Store);
-    if (!inherited)
+    if (!inherited || inherited->failOnceAccessorIsDefined)
         return std::nullopt;
     FieldArmState state = computeStateOfFieldArm(context.program, receivers, key, false);
     LazyFieldCreation creation { creatingStoreFor(state), inherited->proofs, WTF::move(inherited->conditions) };
@@ -596,6 +623,8 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
         planFieldStore(context, query, arm, state, plan);
         return;
     case Access::Define:
+        if (!query.isPrivate && std::ranges::any_of(arm.layouts, [&](LayoutID layout) { return isEmptyBelowAccessor(context, layout, query.key); }))
+            return;
         planFieldDefinition(context, query, state, plan);
         return;
     case Access::None:

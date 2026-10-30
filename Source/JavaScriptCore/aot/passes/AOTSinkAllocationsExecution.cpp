@@ -1677,7 +1677,7 @@ void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
-    if (executePresenceTestOnDenseList(id))
+    if (executePresenceTestOnDenseList(id) || executeBoundsTestOnArgumentList(id))
         return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);

@@ -75,7 +75,7 @@ static bool escapesThroughCall(const PointsToResults& results, const SolvedUse& 
     return use.uses.containsAny(callingUses) && results.objects[object.index()].reasons.containsAny(callReasons);
 }
 
-void ObjectWords::add(std::span<const Entry> others, ObjectWords& added)
+void SparseObjectSet::add(std::span<const Entry> others, SparseObjectSet& added)
 {
     size_t position = 0;
     for (const Entry& other : others) {
@@ -93,7 +93,7 @@ void ObjectWords::add(std::span<const Entry> others, ObjectWords& added)
     }
 }
 
-void ObjectWords::add(const Entry& entry)
+void SparseObjectSet::add(const Entry& entry)
 {
     size_t position = !m_entries.isEmpty() && m_entries.last().index < entry.index ? m_entries.size() : positionOf(entry.index, 0);
     if (position == m_entries.size() || m_entries[position].index != entry.index)
@@ -102,7 +102,7 @@ void ObjectWords::add(const Entry& entry)
         m_entries[position].word |= entry.word;
 }
 
-void ObjectWords::remove(const ObjectWords& others)
+void SparseObjectSet::remove(const SparseObjectSet& others)
 {
     size_t position = 0;
     m_entries.removeAllMatching([&](Entry& entry) {
@@ -116,12 +116,12 @@ void ObjectWords::remove(const ObjectWords& others)
 size_t ObjectSet::size() const
 {
     size_t size = 0;
-    for (const ObjectWords::Entry& entry : m_words.entries())
+    for (const SparseObjectSet::Entry& entry : m_words.entries())
         size += std::popcount(entry.word);
     return size;
 }
 
-bool ObjectWords::overlaps(const ObjectWords& other) const
+bool SparseObjectSet::overlaps(const SparseObjectSet& other) const
 {
     // One object is held against all that an array holds, once for each read and store.
     if (m_entries.size() > other.m_entries.size())
@@ -139,7 +139,7 @@ bool ObjectWords::overlaps(const ObjectWords& other) const
 
 std::optional<ObjectID> ObjectSet::onlyMember() const
 {
-    std::span<const ObjectWords::Entry> entries = m_words.entries();
+    std::span<const SparseObjectSet::Entry> entries = m_words.entries();
     if (entries.size() != 1 || !hasOneBitSet(entries.front().word))
         return std::nullopt;
     return *begin();
@@ -333,14 +333,14 @@ void EscapeAnalysis::takeSets(PointsToResults& results)
     m_setOfValue = WTF::move(results.setOfValue);
     m_sets.reserveInitialCapacity(results.sets.size());
     // A function that constructs thousands of derived classes has as many results of super().
-    ObjectWords entryParameters;
-    ObjectWords superConstructResults;
-    ObjectWords frameWords;
-    ObjectWords entryParametersBesideFrameWords;
+    SparseObjectSet entryParameters;
+    SparseObjectSet superConstructResults;
+    SparseObjectSet frameWords;
+    SparseObjectSet entryParametersBesideFrameWords;
     for (size_t index = 0; index < m_objects.size(); ++index) {
         if (m_objects[index].kind == ObjectKind::Allocation)
             continue;
-        ObjectWords::Entry entry = ObjectWords::entryOf(ObjectID(index));
+        SparseObjectSet::Entry entry = SparseObjectSet::entryOf(ObjectID(index));
         entryParameters.add(entry);
         const Value& definition = m_function.at(m_objects[index].definition);
         if (definition.opcode == Opcode::GetHeapFrameWord) {

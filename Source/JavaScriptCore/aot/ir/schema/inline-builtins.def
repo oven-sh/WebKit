@@ -12,7 +12,7 @@ enum SearchValueKind { | engine String RegExp }
 
 inline ArrayAt ; reads(ArrayStorage, Elements[Array]) ; family ArrayBuiltin
 inline ArrayIndexOf ArrayIncludes ; ResolvesRopes reads(ArrayStorage, Elements[Array]) ; family ArrayBuiltin
-inline ArrayJoin ArrayConcat ArrayShift ArrayPop ArraySlice ArraySplice ArrayUnshift ; asOverload ; family ArrayBuiltin
+inline ArrayJoin ArrayConcat ArrayShift ArrayPop ArraySlice ArraySplice ArrayUnshift ArrayWith ArrayToReversed ArrayToSpliced ; asOverload ; family ArrayBuiltin
 inline ArraySplicePrefix ; asOverload ; family ArrayBuiltin ; optionalSlowPath
 inline ArrayIterator(IterationKind) ; Allocates ; family ArrayBuiltin ; optionalSlowPath
 inline ArrayPush ; GrowsArray ; family ArrayStorageBuiltin

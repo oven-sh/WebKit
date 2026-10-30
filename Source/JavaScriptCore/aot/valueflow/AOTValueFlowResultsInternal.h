@@ -10,6 +10,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowApplication.h"
+#include "AOTFlowOrder.h"
 #include "AOTLayout.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreads.h"
@@ -210,7 +211,13 @@ struct ValueFlowResultInputs {
             return BuiltinClasses::Object;
         if (BuiltinClassID builtinClass = universe().classOf(object))
             return builtinClass;
-        return classesOfBuiltinResults ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
+        return classesOfBuiltinResults && !universe().layoutOf(object) ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
+    }
+
+    // `class Stamp extends Date {}`: what Date makes for super() has the layout of Stamp, the prototype of the new target, and is a Date.
+    BuiltinClassID classOfObjectMadeForSuperCall(ValueFlowObjectID object) const
+    {
+        return classesOfBuiltinResults && universe().layoutOf(object) ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
     }
 
     static constexpr bool isPlaceholder(ValueFlowObjectID object) { return object == ValueFlowUniverse::unknownObject() || object == ValueFlowUniverse::untrackedObject(); }
@@ -950,9 +957,10 @@ void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampe
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
 void reportOperationsWithoutValue(const ValueFlowResultInputs&);
 void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
-void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
+FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
+void noteAccessorsDefinedAfterObjectsAreMade(const ValueFlowResultInputs&, const FlowCallsOfProgram&, FlowResultTables&);
 // No answer: the program links the prototype objects of several classes above, or nobody knows through what.
 std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs&, LayoutID constructorFunction);
 inline LayoutID nearestLayoutAlwaysAbove(const FlowApplication& application, LayoutID id)

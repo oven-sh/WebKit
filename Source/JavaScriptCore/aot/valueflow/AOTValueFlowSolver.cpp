@@ -2835,7 +2835,7 @@ void ValueFlowSolver::connectAcrossLongLists(std::span<const Linked::LongList> l
         m_edgesOfRound.appendVector(linked.edges);
         m_counters.testsWhetherSetsMeet += linked.testsWhetherSetsMeet;
     }
-    Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
+    Vector<ListOfNodesOfSets*> listsMostlyAtRest;
     size_t numberAtRest = 0;
     for (const Piece& piece : pieces) {
         numberAtRest = piece.numberAtRest + (piece.first ? numberAtRest : 0);
@@ -2844,7 +2844,7 @@ void ValueFlowSolver::connectAcrossLongLists(std::span<const Linked::LongList> l
     }
     AOT::sort(listsMostlyAtRest);
     removeRepeatedElements(listsMostlyAtRest);
-    for (ShortList<NodeOfSet>* list : listsMostlyAtRest)
+    for (ListOfNodesOfSets* list : listsMostlyAtRest)
         removeNodesAtRestFrom(*list);
 }
 
@@ -2854,7 +2854,7 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
         if (!m_graph.isAtRest(other))
             linked.edges.append(isRead ? ValueFlowEdge { other, node.node } : ValueFlowEdge { node.node, other });
     };
-    auto connectWhereSetsMeet = [&](ShortList<NodeOfSet>& list) {
+    auto connectWhereSetsMeet = [&](ListOfNodesOfSets& list) {
         if (list.size() > mostNodesComparedAtOnce) {
             linked.longLists.append({ node, isRead, &list });
             return;
@@ -2887,7 +2887,20 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
         connectByMembers(true);
 }
 
-void ValueFlowSolver::removeNodesAtRestFrom(ShortList<NodeOfSet>& list)
+uint32_t ValueFlowSolver::ensureNumberOfName(ValueFlowName name)
+{
+    if (std::optional<uint32_t> number = findNumberOfName(name))
+        return *number;
+    makeRoomByDoubling(m_names);
+    m_names.append(Name { name, { }, { } });
+    uint32_t number = m_names.size() - 1;
+    m_numberOfName.add(hashOfName(name), number, [&](uint32_t other) {
+        return hashOfName(m_names[other].name);
+    });
+    return number;
+}
+
+void ValueFlowSolver::removeNodesAtRestFrom(ListOfNodesOfSets& list)
 {
     list.removeAllMatching([&](const NodeOfSet& other) {
         if (!m_graph.isAtRest(other.node))
@@ -2901,11 +2914,7 @@ void ValueFlowSolver::numberNamesWatched()
 {
     for (const std::unique_ptr<Thread>& thread : m_threads) {
         for (const Thread::NameWatched& watched : thread->namesWatched) {
-            uint32_t number = m_numberOfName.ensure(static_cast<uint64_t>(watched.name.kind) << 32 | watched.name.payload, [&] {
-                makeRoomByDoubling(m_names);
-                m_names.append(Name { watched.name, { }, { } });
-                return static_cast<uint32_t>(m_names.size() - 1);
-            }).iterator->value;
+            uint32_t number = ensureNumberOfName(watched.name);
             m_linkShards[linkShardOf(number)].namesWatchedInRound.append({ number, watched.within, watched.statement });
         }
         thread->namesWatched.shrink(0);
@@ -2932,7 +2941,7 @@ void ValueFlowSolver::noteNamesWatched(unsigned numberOfShard, ValueSetMaker& ma
             Vector<ValueSetID, 16> written { m_input.universe->placeholdersAlone() };
             if (name.name.kind == ValueFlowNameKind::Property)
                 written.append(m_input.universe->builtinTables().heap().objectsDeclaringField(PropertyKeyID(name.name.payload)));
-            for (const ShortList<NodeOfSet>* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
+            for (const ListOfNodesOfSets* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
                 for (const NodeOfSet& node : *list)
                     written.append(node.set);
             }
@@ -3008,7 +3017,7 @@ void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead, ValueS
         if (linkShardOf(toLink.numberOfName) != numberOfShard || m_graph.isAtRest(toLink.node.node))
             continue;
         linkNode(toLink, isRead, linked);
-        for (ShortList<NodeOfSet>* list : linked.listsMostlyAtRest)
+        for (ListOfNodesOfSets* list : linked.listsMostlyAtRest)
             removeNodesAtRestFrom(*list);
         linked.listsMostlyAtRest.shrink(0);
         insertNode(toLink, isRead);
@@ -3063,7 +3072,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
     for (const Linked& linked : linkedOfWorker)
         longLists.appendVector(linked.longLists);
     connectAcrossLongLists(longLists.span());
-    Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
+    Vector<ListOfNodesOfSets*> listsMostlyAtRest;
     for (const Linked& linked : linkedOfWorker) {
         m_edgesOfRound.appendVector(linked.edges);
         m_counters.testsWhetherSetsMeet += linked.testsWhetherSetsMeet;
@@ -3071,7 +3080,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
     }
     AOT::sort(listsMostlyAtRest);
     removeRepeatedElements(listsMostlyAtRest);
-    for (ShortList<NodeOfSet>* list : listsMostlyAtRest)
+    for (ListOfNodesOfSets* list : listsMostlyAtRest)
         removeNodesAtRestFrom(*list);
 
     for (size_t index = 0; index < toLink.size(); ++index) {
@@ -4112,8 +4121,7 @@ bool ValueFlowSolver::merge()
                     toLink.numberOfName = numberOfFirstKindAmongNames + static_cast<uint32_t>(toLink.name.kind);
                     continue;
                 }
-                auto found = m_numberOfName.find(static_cast<uint64_t>(toLink.name.kind) << 32 | toLink.name.payload);
-                toLink.numberOfName = found == m_numberOfName.end() ? noSolverIndex : found->value;
+                toLink.numberOfName = findNumberOfName(toLink.name).value_or(noSolverIndex);
                 if (toLink.numberOfName == noSolverIndex)
                     withNewNamesOfShare[share].append(static_cast<uint32_t>(&toLink - list->mutableSpan().data()));
             }
@@ -4121,11 +4129,7 @@ bool ValueFlowSolver::merge()
         for (const Vector<uint32_t>& withNewNames : withNewNamesOfShare) {
             for (uint32_t index : withNewNames) {
                 NodeToLink& toLink = (*list)[index];
-                toLink.numberOfName = m_numberOfName.ensure(static_cast<uint64_t>(toLink.name.kind) << 32 | toLink.name.payload, [&] {
-                    makeRoomByDoubling(m_names);
-                    m_names.append(Name { toLink.name, { }, { } });
-                    return static_cast<uint32_t>(m_names.size() - 1);
-                }).iterator->value;
+                toLink.numberOfName = ensureNumberOfName(toLink.name);
             }
         }
     }
@@ -4771,11 +4775,14 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 return !index || all[index - 1].field != all[index].field;
             });
             constexpr uint32_t fieldsPerShare = 1 << 7;
+            Vector<Vector<ValueSetID>> setsOfWorker(m_makers.size());
             forEachIndexInParallel(m_loops, (firstOfField.size() + fieldsPerShare - 1) / fieldsPerShare, [&](unsigned share, unsigned worker) {
+                Vector<ValueSetID>& sets = setsOfWorker[worker];
                 for (uint32_t field = share * fieldsPerShare; field < std::min<uint32_t>(firstOfField.size(), (share + 1) * fieldsPerShare); ++field) {
-                    WrittenIntoField& united = all[firstOfField[field]];
-                    for (uint32_t index = firstOfField[field] + 1; index < (field + 1 < firstOfField.size() ? firstOfField[field + 1] : all.size()); ++index)
-                        united.written = m_makers[worker]->unite(united.written, all[index].written);
+                    sets.shrink(0);
+                    for (uint32_t index = firstOfField[field]; index < (field + 1 < firstOfField.size() ? firstOfField[field + 1] : all.size()); ++index)
+                        sets.append(all[index].written);
+                    all[firstOfField[field]].written = m_makers[worker]->uniteAll(sets.span());
                 }
             });
             for (uint32_t first : firstOfField)
@@ -7662,7 +7669,7 @@ void ValueFlowSolver::dumpBytesByTable() const
     bytes.addBits("watches: sets watched for cover"_s, m_isWatched);
 
     bytes.addList("names: names"_s, m_names);
-    bytes.addMap("names: names"_s, m_numberOfName);
+    bytes.add("names: names"_s, m_numberOfName.bytesInUse(), m_numberOfName.memoryInBytes());
     auto addNodesOfName = [&](const NodesOfName& nodes) {
         bytes.addList("names: nodes of few objects"_s, nodes.ofFewObjects);
         bytes.addList("names: nodes of many objects"_s, nodes.ofManyObjects);

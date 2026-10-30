@@ -65,7 +65,6 @@ public:
     uint64_t mostMembersToldApart() const;
     // In a test run a spy that the build has not seen replaces an export. An executable refuses such a spy, and so does a run whose test files come from disk: an entry point names what they do.
     bool followsSpiesOutOfSight() const;
-    bool runnerChoosesMainModule() const;
 
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
@@ -79,7 +78,6 @@ public:
     const Value& operationOf(const ValueFlowStatement&) const;
     const Value& operationAt(FunctionID, ValueID) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
-    std::span<const ValueFlowOperand> objectsReadUnderKeyOfStore(const ValueFlowStatement&) const LIFETIME_BOUND;
     bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;

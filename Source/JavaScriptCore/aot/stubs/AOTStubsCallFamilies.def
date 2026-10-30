@@ -28,6 +28,7 @@ v(ReturnMisfit, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never,
 
 // AOTStubsCallEngine.cpp
 v(CallEngineCallee, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallEngineCallee)
+v(CallEngineFunction, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallEngineCallee)
 
 // AOTStubsCallLists.cpp
 v(CallWithArray, CalledByCode, (Ordinary, InTailPosition), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallWithArray)

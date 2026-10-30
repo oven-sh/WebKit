@@ -36,6 +36,8 @@ constexpr StubKey constructValue(ConstructSyntax syntax) { return StubKey(StubFa
 constexpr StubKey resolveCallValue(unsigned count) { return StubKey(StubFamily::ResolveCallValue).withCount(count); }
 constexpr StubKey callResolvedValue() { return StubKey(StubFamily::CallResolvedValue); }
 constexpr StubKey callEngineCallee() { return StubKey(StubFamily::CallEngineCallee); }
+// The callee is a JSFunction: nothing has to ask whether it can be called.
+constexpr StubKey callEngineFunction() { return StubKey(StubFamily::CallEngineFunction); }
 // Jumped to where a function would return, with a result that is not of the type that the function promises.
 constexpr StubKey returnMisfit() { return StubKey(StubFamily::ReturnMisfit); }
 

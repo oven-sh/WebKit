@@ -10,14 +10,8 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
-# RUN(LOOP): lower-to-b3 optimized loops f1
-# REQUIRES(LOOP): unsanitized-code
 # RUN(NONE): lower-to-b3 optimized loops f1
 # REQUIRES(NONE): unsanitized-code
-# RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 unsanitized-code
-# RUN(ARM64): lower-to-air loops f1
-# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -142,34 +136,14 @@ function f1 name="sum" module=m0 position=39 flags=[IsChecked, HasExplicitName] 
     Rethrow v32
 }
 
-# Object.entries of a proven layout is written out in front of the loop: each field is loaded from its slot and boxed, a pair is made of its name and its value, and a list is made of the two pairs. Three allocations; the built-in is not called.
+# Object.entries of a proven layout is written out as the list of names and values one behind the other. A short list leaves no loop, and a pair lives in the frame.
 # CHECK-LABEL: name="sum" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NOT: :CallBuiltin
 # CHECK: Double b@{{*}} = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: Int64 b@[[first]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Writes:{{*}}:NewArray)
 # CHECK: Double b@{{*}} = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: Int64 b@[[second]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Writes:{{*}}:NewArray)
-# CHECK: Int64 b@{{*}} = Patchpoint(b@[[first]]:Register({{*}}), b@[[second]]:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Writes:{{*}}:NewArray)
+# CHECK: SlotBase(stack{{*}}:NewArray)
+# CHECK: SlotBase(stack{{*}}:NewArray)
 # CHECK-NOT: :CallBuiltin
 # CHECK-LABEL: end of function
-# The loop walks the list without an iterator. Each turn loads a pair and takes it apart: its storage, its length, two tests of the length, the name and the value.
-# LOOP-LABEL: loop #
-# LOOP: Int64 b@[[pair]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
-# LOOP: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:IsInBounds)
-# LOOP-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:IsInBounds)
-# LOOP: Branch(b@[[length]], Terminal, {{*}}:IsInBounds)
-# LOOP: Int64 b@{{*}} = Load(b@[[storage]], ControlDependent|Reads:indexedContiguousProperties{{*}}:GetArrayElement)
-# LOOP: Int32 b@{{*}} = Above(b@[[length]], $1(b@{{*}}), {{*}}:IsInBounds)
-# LOOP: Int64 b@[[value]] = Load(b@[[storage]], offset = 8, ControlDependent|Reads:indexedContiguousProperties{{*}}:GetArrayElement)
-# The value is boxed: an integer and a double each take one test and one conversion.
-# LOOP: Int32 b@{{*}} = AboveEqual(b@[[value]], b@{{*}}, {{*}}:Expect)
-# LOOP-LABEL: end of loop
-# Nothing in the loop calls, allocates or can throw, and the kind of storage of a pair is not tested.
-# NONE-LABEL: loop #
-# NONE-NOT: ExitsSideways
-# NONE-NOT: Register(
-# NONE-NOT: Reads:JSCell_indexingTypeAndMisc
-# NONE-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 28, patchpoints: 4
-# ARM64: loop #{{*}}, instructions: 27, patchpoints: 5
+# NONE-NOT: loop #

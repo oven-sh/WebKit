@@ -634,6 +634,70 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
     }
 }
 
+// A rare way out asks about the counter and comes back in front of the loop, where the way from above has asked too: both ways know that the first turn runs, so a long turn takes no poll on each turn.
+static void testUnrollLoopsRunsCopyInStretchesWhereEveryWayInHasAskedAboutTheCounter()
+{
+    constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    constexpr int64_t numberOfSteps = 40;
+    for (bool wayBackAsks : { true, false }) {
+        Procedure proc(policyThatPollsBetweenStretches());
+        Graph graph { proc };
+        PollState state;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* front = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* stays = proc.addBlock();
+        BasicBlock* rare = proc.addBlock();
+        BasicBlock* backIn = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root).eager();
+        graph.set(root, index, arguments[0]);
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.branch(root, graph.make(root, LessThan, arguments[0], arguments[1]), front, exit);
+        graph.jump(front, body);
+        appendPollOfShortTurns(graph, body, state);
+        for (int64_t i = 0; i < numberOfSteps; ++i)
+            graph.set(body, sum, graph.make(body, BitXor, graph.make(body, Add, graph.get(body, sum), graph.get(body, index)), graph.int64(body, 3 * i + 1)));
+        graph.increase(body, index, 1);
+        graph.branch(body, graph.make(body, Equal, graph.get(body, index), arguments[2]), rarely(rare), FrequentedBlock(stays));
+        graph.branch(stays, graph.make(stays, LessThan, graph.get(stays, index), arguments[1]), body, exit);
+        graph.increase(rare, sum, 1000);
+        if (wayBackAsks)
+            graph.branch(rare, graph.make(rare, LessThan, graph.get(rare, index), arguments[1]), backIn, exit);
+        else
+            graph.jump(rare, backIn);
+        graph.jump(backIn, front);
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+
+        CHECK(unrollLoopsAndValidate(proc));
+        CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 1u);
+        auto code = compileProc(proc);
+        for (int64_t turns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1, 2 * stretch + 5 }) {
+            int64_t first = -7;
+            int64_t bound = first + turns;
+            bool takesWayBack = wayBackAsks && turns > 3;
+            int64_t rareAt = takesWayBack ? first + 3 : int64_t { -100 };
+            uint64_t expected = 0;
+            int64_t turnsDone = 0;
+            for (int64_t at = first; turnsDone < turns; ++turnsDone, ++at) {
+                for (int64_t i = 0; i < numberOfSteps; ++i)
+                    expected = (expected + static_cast<uint64_t>(at)) ^ static_cast<uint64_t>(3 * i + 1);
+                if (at + 1 == rareAt)
+                    expected += 1000;
+            }
+            state = { };
+            CHECK_EQ(invoke<int64_t>(*code, first, bound, rareAt), static_cast<int64_t>(expected));
+            int64_t turnsBehindWayBack = takesWayBack ? turns - 3 : turns;
+            int64_t pollsInStretches = (turnsBehindWayBack - 1) / stretch;
+            CHECK_EQ(state.numberOfPolls, turnsBehindWayBack <= stretch ? 0 : wayBackAsks ? pollsInStretches : turns);
+        }
+    }
+}
+
 static void testUnrollLoopsRunsCopyOfLongTurnInStretches()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
@@ -1295,6 +1359,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsPollsBetweenStretches());
     RUN(testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut());
     RUN(testUnrollLoopsRunsCopyOfLongTurnInStretches());
+    RUN(testUnrollLoopsRunsCopyInStretchesWhereEveryWayInHasAskedAboutTheCounter());
     RUN(testUnrollLoopsLeavesPollToCopyOfLoopWhoseComparisonCrossesBlocks());
     RUN(testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew());
     RUN(testUnrollLoopsKeepsPollThatMustRunOnEveryTurn());

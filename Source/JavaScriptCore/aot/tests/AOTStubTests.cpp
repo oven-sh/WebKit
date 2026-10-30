@@ -326,7 +326,7 @@ static void checkFrontEnds()
         AOT_TEST_CHECK(!rawOperations.testAndSet(indexOf(frontEnd.raw)));
         stubs.append(frontEnd.stub);
     }
-    AOT_TEST_CHECK(stubs.size() == 11);
+    AOT_TEST_CHECK(stubs.size() == 12);
     operations.filter(rawOperations);
     AOT_TEST_CHECK(operations.isEmpty());
     std::sort(stubs.begin(), stubs.end());

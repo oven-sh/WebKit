@@ -253,8 +253,10 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
     Objects objectsOfHolders;
     Objects holdersOfEvaluators;
     Objects membersOfEngineAndLibrary;
+    bool isMemberOfListedFunction = false;
     auto addHolder = [&](BuiltinID holder) {
         objectsOfHolders.append(objectsOf(holder));
+        isMemberOfListedFunction |= m_isListedFunctionThatDoesNotEscape.get(holder.index());
         BuiltinID member = membersUnderKey.findOwnMember(holder);
         if (member && builtins.at(member).origin != BuiltinOrigin::Host)
             membersOfEngineAndLibrary.append(objectOf(member));
@@ -306,8 +308,16 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
                 unescapedHoldersWithoutKey.append(objectsOf(holder));
         }
     }
+    ValueSetID unescapedFunctionsWithoutKey = ValueSets::nothing;
+    if (!isPrivateName) {
+        for (auto [inheritsFrom, functions] : m_listedFunctionsThatDoNotEscape) {
+            if (inheritsFrom && builtins.findMember(inheritsFrom, name).outcome != BuiltinMemberLookup::Outcome::Absent)
+                continue;
+            unescapedFunctionsWithoutKey = m_maker.unite(unescapedFunctionsWithoutKey, isMemberOfListedFunction ? m_maker.intersect(functions, ValueSets::complement(holders)) : functions);
+        }
+    }
     return { holders, m_maker.intersect(holders, m_prototypeObjects), undeclared, m_maker.unite(m_lockedObjects, findLockedHolders(membersUnderKey, name, isPrivateName)), m_maker.intersect(holders, m_maker.of(holdersOfEvaluators.span())),
-        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod, m_maker.of(unescapedHoldersWithoutKey.span()) };
+        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod, m_maker.of(unescapedHoldersWithoutKey.span()), unescapedFunctionsWithoutKey };
 }
 
 // Whatever makes an instance of a class is listed with the feature that guards the class. A class that no feature guards is there in every executable, and so is whatever makes its instances.
@@ -891,6 +901,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             StringID text = program.strings.stringOf(name);
             return mayBeElementKey(text ? program.strings.nameClass(text) : classifyName(builtins.textOf(name)));
         };
+        Vector<std::pair<BuiltinID, Objects>, 2> listedFunctionsBelow;
+        m_isListedFunctionThatDoesNotEscape.ensureSize(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             m_endOfObjectsOfHolder[index] = m_objectsOfHolders.size();
             BuiltinID holder(index);
@@ -905,9 +917,21 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             if (entry.flags.contains(BuiltinFlag::ListsAllMembers) || m_compiledModuleOfHolder[index])
                 holdersThatListAllMembers.appendVector(objects);
             // What exposeMembersOf() passes by. A name that no object of the table has is absent there exactly where the whole chain is listed.
-            if ((entry.kind == BuiltinKind::Namespace || entry.kind == BuiltinKind::Constructor) && entry.scope == BuiltinScope::Realm && (entry.origin == BuiltinOrigin::Host || builtins.letsInUnseenCode(holder))
-                && !entry.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) && builtins.findMember(holder, BuiltinName()).outcome == BuiltinMemberLookup::Outcome::Absent)
-                m_listedHoldersThatDoNotEscape.append(holder);
+            if (entry.kind != BuiltinKind::Prototype && entry.scope == BuiltinScope::Realm && (entry.origin == BuiltinOrigin::Host || builtins.letsInUnseenCode(holder))
+                && !entry.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) && builtins.findMember(holder, BuiltinName()).outcome == BuiltinMemberLookup::Outcome::Absent) {
+                if (entry.kind == BuiltinKind::Namespace || entry.kind == BuiltinKind::Constructor)
+                    m_listedHoldersThatDoNotEscape.append(holder);
+                else {
+                    BuiltinID inheritsFrom = entry.prototypeLink == BuiltinPrototypeLink::Builtin ? builtins.canonicalID(entry.inheritsFrom) : BuiltinID();
+                    auto found = std::ranges::find(listedFunctionsBelow, inheritsFrom, &std::pair<BuiltinID, Objects>::first);
+                    if (found == listedFunctionsBelow.end()) {
+                        listedFunctionsBelow.append({ inheritsFrom, Objects() });
+                        found = listedFunctionsBelow.end() - 1;
+                    }
+                    found->second.appendVector(objects);
+                    m_isListedFunctionThatDoesNotEscape.set(index);
+                }
+            }
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
                 lockedObjects.appendVector(objects);
             if (builtins.closesIndexKeys(holder))
@@ -1067,6 +1091,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         for (BuiltinID holder : m_listedHoldersThatDoNotEscape)
             unescapedHolders.append(objectsOf(holder));
         m_membersUnderKey[recordOfText].unescapedHoldersWithoutKey = maker.of(unescapedHolders.span());
+        for (auto& [inheritsFrom, functions] : listedFunctionsBelow) {
+            m_listedFunctionsThatDoNotEscape.append({ inheritsFrom, maker.of(functions.span()) });
+            ValueSetID& all = m_membersUnderKey[recordOfText].unescapedFunctionsWithoutKey;
+            all = maker.unite(all, m_listedFunctionsThatDoNotEscape.last().functions);
+        }
         m_closedHoldersNotListingKeyOfClass.grow(MembersUnderKey::numberOfClasses);
         m_holdersUnderKey = std::make_unique<HoldersUnderKey[]>(numberOfKeys);
         m_membersOfHolder = std::make_unique<std::atomic<const ValueFlowMembersOfHolder*>[]>(builtins.builtinCount());

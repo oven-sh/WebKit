@@ -268,6 +268,16 @@ static ALWAYS_INLINE bool isListOfNumbers(const JSCell& cell)
     return (cell.type() == ArrayType || cell.type() == DerivedArrayType) && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
 }
 
+static NEVER_INLINE bool isListOfBoxedNumbers(const JSCell& cell)
+{
+    if ((cell.type() != ArrayType && cell.type() != DerivedArrayType) || !cell.isPristine() || !hasContiguous(cell.indexingType()))
+        return false;
+    const JSArray& list = *uncheckedDowncast<JSArray>(&cell);
+    return std::ranges::all_of(std::span { list.butterfly()->contiguous().data(), list.length() }, [](const WriteBarrier<Unknown>& element) {
+        return !element || element.get().isNumber();
+    });
+}
+
 // A comma or the closing bracket follows each number.
 static constexpr size_t bytesOfNumberInList = jsonNumberBytes + 1;
 
@@ -287,6 +297,17 @@ static ALWAYS_INLINE Latin1Character* appendNumbersWithCommas(Latin1Character* c
     for (unsigned index = begin; index < end; ++index) {
         // A hole is a NaN, which is written as null.
         cursor = appendJSONNumber(cursor, numbers[index]);
+        *cursor++ = ',';
+    }
+    return cursor;
+}
+
+static Latin1Character* appendBoxedNumbersWithCommas(Latin1Character* cursor, const JSArray& list, unsigned begin, unsigned end)
+{
+    const WriteBarrier<Unknown>* numbers = list.butterfly()->contiguous().data();
+    for (unsigned index = begin; index < end; ++index) {
+        JSValue number = numbers[index].get();
+        cursor = number ? appendJSONNumber(cursor, number.asNumber()) : appendJSONLiteral(cursor, "null"_s);
         *cursor++ = ',';
     }
     return cursor;
@@ -341,7 +362,8 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
         return { end, JSONOutcome::Parsed };
     }
 
-    if (cell && isListOfNumbers(*cell)) {
+    bool holdsBoxedNumbers = cell && isListOfBoxedNumbers(*cell);
+    if (holdsBoxedNumbers || (cell && isListOfNumbers(*cell))) {
         // Most numbers are far shorter than the longest: room for all of a long list at once would be many times what it takes.
         constexpr unsigned numbersWrittenAtOnce = 1024;
         const JSArray& list = *uncheckedDowncast<JSArray>(cell);
@@ -355,7 +377,7 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
             builder.commit(cursor);
             cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = (end - begin) * bytesOfNumberInList + maxStringBuilderReservation });
             RETURN_IF_EXCEPTION(scope, { });
-            cursor = appendNumbersWithCommas(cursor, list, begin, end);
+            cursor = holdsBoxedNumbers ? appendBoxedNumbersWithCommas(cursor, list, begin, end) : appendNumbersWithCommas(cursor, list, begin, end);
         }
         return { closeListOfNumbers(cursor, length), JSONOutcome::Parsed };
     }

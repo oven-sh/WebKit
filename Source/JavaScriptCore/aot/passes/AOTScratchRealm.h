@@ -111,6 +111,13 @@ public:
         return std::nullopt;
     }
 
+    // For what asks the engine itself. What it hands back holds nothing of the realm.
+    auto run(NOESCAPE const Invocable<void(JSGlobalObject*)> auto& functor)
+    {
+        JSLockHolder locker(*m_vm);
+        return functor(m_realm.get());
+    }
+
 private:
     JSValue toJSValue(const Program& program, KnownValue value)
     {
