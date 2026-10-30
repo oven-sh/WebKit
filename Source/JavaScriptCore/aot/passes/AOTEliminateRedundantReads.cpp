@@ -1796,6 +1796,18 @@ static PassOutcome forwardStoresToMembersOfClosures(FunctionPassContext& context
     return PassOutcome::Changed;
 }
 
+namespace {
+
+// An operand's key may be any 32 bits (-1 is all ones) and the smaller key is the upper half, so only a larger upper half is free to mark a bucket.
+struct SumOperandsHashTraits : WTF::GenericHashTraits<uint64_t> {
+    static constexpr bool emptyValueIsZero = false;
+    static uint64_t emptyValue() { return 1ull << 32; }
+    static void constructDeletedValue(uint64_t& slot) { slot = 2ull << 32; }
+    static bool isDeletedValue(uint64_t value) { return value == 2ull << 32; }
+};
+
+} // anonymous namespace
+
 // `list[k + 1]` three times in one iteration. The sum of two integers is the same however often it is computed. Once the sums are one value, what was asked of the first is known of the others:
 // that the element is there, and what it holds.
 static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
@@ -1843,7 +1855,7 @@ static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
     const Dominators& dominators = context.analyses.dominators();
     Vector<Sum, 16> made;
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> innermost;
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, SumOperandsHashTraits> innermost;
     Vector<size_t, 16> numberMadeAtEntry;
     Vector<Repeated, 8> repeated;
     ValueSubstitution substitution(function);
