@@ -336,6 +336,7 @@ function readSpan(recursiveCallees: readonly string[], field: Field, source: str
   }
   const isRecursive = recursiveCallees.includes(nameOf(element));
   const readElements = [
+    `${target}.reserveInitialCapacity(elements.size());`,
     `${target}.grow(elements.size());`,
     "for (size_t i = 0; i < elements.size(); ++i)",
     `    read(checker, elements[i], ${target}[i]${isRecursive ? ", recursion" : ""});`,

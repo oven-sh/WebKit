@@ -13,6 +13,7 @@
 #include "AOTClassTable.h"
 #include "AOTClassToken.h"
 #include "AOTClosure.h"
+#include "AOTErrorMessages.h"
 #include "AOTHeapHooks.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -111,7 +112,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
     AOT_OPERATION_BEGIN(instance, entry);
     JSObject* target = objectArgument(newTarget, entry);
     validateFunctionIsNotInFrame(vm, target);
-    if (auto* closure = dynamicDowncast<Closure>(target); closure && Instance::of(closure->structure()->realm()) == instance && FunctionTables::hasPrototypePropertyAtCreation(closure->kind())) {
+    if (auto* closure = dynamicDowncast<Closure>(target); closure && Instance::owning(closure) == instance && FunctionTables::hasPrototypePropertyAtCreation(closure->kind())) {
         ClassTable& classes = instance->state->objects->classes;
         JSObject* prototype = classes.prototypeForInstancesOf(vm, closure);
         classes.rememberPlaceOfPrototypeProperty(vm, closure, prototype);
@@ -252,6 +253,25 @@ static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, S
     }
 }
 
+// The layout of the object has no field for the name. Compiled code does the same for the next object of the Structure `before`: that Structure says which layout it is, and its successor names the Structure that the extra properties come to.
+static void rememberDefinitionAmongExtraProperties(VM& vm, JSCellButterfly* token, uint32_t field, Object& object, const CompiledStructure& before, JSObject* extraBefore, Structure* extraStructureBefore, std::optional<PropertyOffset> brand)
+{
+    JSObject* extra = extraPropertiesIfMade(object);
+    if (!extra || (extraBefore && extra != extraBefore) || before.mayBePrototype() || object.isNotExtensible())
+        return;
+    if (extraBefore && before.extraPropertiesStructureID() != extraStructureBefore->id())
+        return;
+    object.ensureStructureForExtraProperties(vm);
+    const CompiledStructure& after = object.compiledStructure();
+    if (!after.extraPropertiesSlot() || after.extraPropertiesStructureID() != extra->structureID())
+        return;
+    // The first name lies in the first word of the cell that compiled code makes.
+    if (!extraBefore && (extra->structure()->transitionOffset() != 0 || brand))
+        return;
+    rememberDefinition(vm, token, field, extraStructureBefore, extra->structure(), brand);
+    const_cast<CompiledStructure&>(before).setSuccessorByPrivateName(vm, const_cast<CompiledStructure*>(&after));
+}
+
 static constexpr unsigned numberOfStructuresWithoutNames = 8;
 
 static unsigned placeOfStructureWithoutName(StructureID structure, uint32_t field)
@@ -287,6 +307,9 @@ static const LayoutData& declaringLayoutOf(State& state, JSCellButterfly* token)
 static const LayoutData& declaringLayoutOf(State& state, const Object& object, JSCellButterfly* token)
 {
     const LayoutData& layout = object.layout();
+    // Every image numbers its classes from nought: an object of another image is of no class of this one, whatever the number of its layout.
+    if (state.sharesRealm && !object.isDescribedBy(state)) [[unlikely]]
+        return declaringLayoutOf(state, token);
     return layout.index == token->get(ClassToken::classIndexSlot).asUInt32() ? layout : declaringLayoutOf(state, token);
 }
 
@@ -343,7 +366,7 @@ static Symbol* privateNameOf(VM& vm, State& state, JSCellButterfly* token, uint3
 {
     if (Symbol* name = privateNameIfCreated(token, field))
         return name;
-    const ImageText& text = Image::current()->text();
+    const ImageText& text = state.instance.program->text();
     String description = text.createString(text.identifier(declaringLayoutOf(state, token).fields()[field].name).text());
     Symbol* name = Symbol::create(vm, PrivateSymbolImpl::create(*description.impl()).get());
     token->setIndex(vm, nameSlotOf(token, field), name);
@@ -441,7 +464,7 @@ static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, u
 
 static JSObject* createAbsentNameError(JSGlobalObject* globalObject, const PrivateLocation& absent)
 {
-    return absent.declared->isBrand() ? createPrivateMethodAccessError(globalObject) : createInvalidPrivateNameError(globalObject);
+    return createAbsentPrivateNameError(globalObject, absent.declared->isBrand() ? createPrivateMethodAccessError : createInvalidPrivateNameError);
 }
 
 // The field of the object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
@@ -665,8 +688,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     if (Object* compiledObject = location.compiledObject) {
         const FieldData* own = canUseDeclaredName ? location.underDeclaredName.field : nullptr;
         if (!own || !tryCreateField(vm, compiledObject->state(), *compiledObject, *own, defined)) {
+            const CompiledStructure& before = compiledObject->compiledStructure();
+            bool hadExtraProperties = compiledObject->hasExtraProperties();
+            JSObject* extraBefore = extraPropertiesIfMade(*compiledObject);
+            Structure* extraStructureBefore = extraBefore ? extraBefore->structure() : instance->realm.emptyExtraPropertiesStructure;
             compiledObject->putDirectFromNativeCode(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None));
             ensureRecordsOfKnownStructures(vm, state, classToken);
+            bool needsBrand = !isBrand && location.hasBrand;
+            if (!own && canUseDeclaredName && hadExtraProperties == !!extraBefore && (!needsBrand || isValidOffset(location.brand.offset)))
+                rememberDefinitionAmongExtraProperties(vm, classToken, field, *compiledObject, before, extraBefore, extraStructureBefore, needsBrand ? std::optional(location.brand.offset) : std::nullopt);
         }
     } else {
         // A private name is no property, so a frozen array takes one. The structure of an array whose elements were frozen in place admits nothing more, that of the ordinary frozen form does.

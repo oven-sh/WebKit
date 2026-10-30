@@ -655,7 +655,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
-        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
+        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .hostEvaluatedText = build.options().excludesHostEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage(), .hostRunsFilesOutsideImage = build.options().admitsFilesRunByHost() },
         .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);

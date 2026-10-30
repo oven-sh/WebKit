@@ -11,6 +11,7 @@ OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function) | offsetof of incomplete
 OBJECT_OFFSETOF(CacheEntry, header) | unknown type name 'CacheEntry'
 OBJECT_OFFSETOF(CacheEntry, prototype) | unknown type name 'CacheEntry'
 OBJECT_OFFSETOF(ClassAccessorData, getter) | unknown type name 'ClassAccessorData'
+OBJECT_OFFSETOF(ClassPrototype, m_classIndex) | 'm_classIndex' is a private member of 'JSC::AOT::ClassPrototype'
 OBJECT_OFFSETOF(ClassPrototype, m_memberRow) | 'm_memberRow' is a private member of 'JSC::AOT::ClassPrototype'
 OBJECT_OFFSETOF(Closure, m_entry) | 'm_entry' is a private member of 'JSC::AOT::Closure'
 OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage) | 'm_environmentShapePage' is a private member of 'JSC::AOT::CompiledStructure'
@@ -21,6 +22,7 @@ OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | 'm_extraPropertiesSl
 OBJECT_OFFSETOF(CompiledStructure, m_flags) | 'm_flags' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_layout) | 'm_layout' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | 'm_namedStructureAndRareData' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName) | 'm_successorByPrivateName' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(Extension, m_granuleBits) | unknown type name 'Extension'; did you mean 'Exception'?
 OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | use of undeclared identifier 'Plan'
 OBJECT_OFFSETOF(Plan::FastField, offset) | use of undeclared identifier 'Plan'

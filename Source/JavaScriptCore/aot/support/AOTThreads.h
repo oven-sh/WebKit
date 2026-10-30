@@ -145,6 +145,16 @@ public:
         });
     }
 
+    // Room alone. The caller makes every element with makeAt() before anybody looks at it, so a page is touched when its elements are needed and not before.
+    static ParallelArray withRoomFor(unsigned size)
+    {
+        static_assert(alignof(T) <= 16);
+        ParallelArray result;
+        result.m_elements = MallocSpan<T>::malloc(size * sizeof(T));
+        return result;
+    }
+    void makeAt(size_t index) { new (NotNull, &m_elements[index]) T(); }
+
     static ParallelArray concatenationOf(const ParallelLoops& loops, Vector<Vector<T>>&& lists)
     {
         static_assert(alignof(T) <= 16);
@@ -231,10 +241,10 @@ Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned c
     return chunks;
 }
 
+// Compiled once for a type of element, not once for everyone who collects.
 template<typename T>
-Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+NEVER_INLINE Vector<T> joinChunks(const ParallelLoops& loops, Vector<Vector<T>>&& chunks)
 {
-    Vector<Vector<T>> chunks = collectChunksInParallel<T>(loops, count, longestFirst, collect);
     size_t size = 0;
     for (auto& chunk : chunks)
         size += chunk.size();
@@ -248,6 +258,12 @@ Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::spa
         });
     }
     return result;
+}
+
+template<typename T>
+Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
+{
+    return joinChunks<T>(loops, collectChunksInParallel<T>(loops, count, longestFirst, collect));
 }
 
 template<typename T>

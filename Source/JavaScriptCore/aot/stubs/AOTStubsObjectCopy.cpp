@@ -289,7 +289,7 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
     const GPRReg layout = structure;
-    callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(target, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType)));
+    callsOperation.append(branchIfNotCompiledObjectOfThisImage(jit, target));
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     jit.load32(Address(target, offsetOfShapeWord), word);
@@ -630,7 +630,7 @@ static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
     Jump isNotCell = jit.branchIfNotCell(source);
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
-    Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
 
     jit.load32(Address(source, offsetOfOrderWord), word);
     Jump hasOtherBits = jit.branchTest32(CCallHelpers::NonZero, word, TrustedImm32(~orderAndCountMask));

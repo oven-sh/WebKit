@@ -500,7 +500,7 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
                     functor(operand.node);
             }
         }
-        solver.forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID first) {
+        inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Read, ValueFlowMadeNodeKind::ReadUnderKind, ValueFlowMadeNodeKind::Lookup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID first) {
             bool reads = key.kind == ValueFlowMadeNodeKind::Read || key.kind == ValueFlowMadeNodeKind::ReadUnderKind || key.kind == ValueFlowMadeNodeKind::Lookup;
             if (reads && isTraced(first))
                 functor(first);

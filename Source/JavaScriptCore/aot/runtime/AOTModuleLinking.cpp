@@ -285,23 +285,86 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     return isSettled;
 }
 
-std::optional<BitVector> Modules::modulesNotBehindMocks(ModuleID root) const
+static void reach(const ModuleTable& table, const BitVector& mocked, Vector<ModuleID, 32>&& work, BitVector& reached)
 {
-    if (m_mockedModules.isEmpty()) [[likely]]
-        return std::nullopt;
-    BitVector reached(m_table.size());
-    Vector<ModuleID, 32> work { root };
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
-        if (reached.quickSet(module.index()) || isMocked(module))
+        if (reached.quickSet(module.index()) || mocked.quickGet(module.index()))
             continue;
-        for (const ModuleRequestData& request : m_table.requests(module)) {
+        for (const ModuleRequestData& request : table.requests(module)) {
             // The list of a root holds the files of its whole graph, and says nothing of who imports them.
             if (!request.isHoisted)
                 work.append(request.targetModule());
         }
     }
-    return reached;
+}
+
+void Modules::willMock(ModuleID mocked)
+{
+    if (isMocked(mocked))
+        return;
+    BitVector modules = m_mocks ? m_mocks->modules : BitVector(m_table.size());
+    modules.quickSet(mocked.index());
+
+    // The files of a test run mock the same modules in the same order, as far as their preloads do it.
+    Vector<Box<MockedModules>>& kept = m_instance.vm->aotState().parts[m_instance.program->position()].mockedModules;
+    unsigned position = m_numberOfMockedSets++;
+    if (position < kept.size() && kept[position]->modules == modules) {
+        m_mocks = kept[position];
+        return;
+    }
+    kept.shrink(std::min<size_t>(position, kept.size()));
+
+    Box<MockedModules> mocks = Box<MockedModules>::create();
+    mocks->modules = WTF::move(modules);
+    BitVector below(m_table.size());
+    Vector<ModuleID, 32> work;
+    for (size_t module : mocks->modules) {
+        for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
+            if (!request.isHoisted)
+                work.append(request.targetModule());
+        }
+    }
+    // Past other mocked modules too.
+    reach(m_table, BitVector(m_table.size()), WTF::move(work), below);
+    mocks->positionBelow.fill(MockedModules::notBelow, m_table.size());
+    for (size_t module : below)
+        mocks->positionBelow[module] = mocks->numberBelow++;
+
+    if (m_mocks)
+        mocks->namedByListsAlone = m_mocks->namedByListsAlone;
+    else {
+        BitVector isAskedFor(m_table.size());
+        for (const ModuleRequestData& request : m_table.allRequests()) {
+            if (!request.isHoisted)
+                isAskedFor.quickSet(request.targetModule().index());
+        }
+        mocks->namedByListsAlone = BitVector(m_table.size());
+        for (uint32_t module = 0; module < m_table.size(); ++module) {
+            if (!isAskedFor.quickGet(module))
+                mocks->namedByListsAlone.quickSet(module);
+        }
+    }
+    if (position == kept.size())
+        kept.append(mocks);
+    m_mocks = WTF::move(mocks);
+}
+
+const BitVector& Modules::MocksBelowRoot::reachedFromRoot() const
+{
+    if (!m_reached) {
+        m_reached = m_mocks->reachedFromRoots.ensure(m_root, [&] {
+            BitVector reached(m_table.size());
+            reach(m_table, m_mocks->modules, { m_root }, reached);
+            Box<BitVector> reachedBelow = Box<BitVector>::create(m_mocks->numberBelow);
+            for (size_t module : reached) {
+                if (uint32_t position = m_mocks->positionBelow[module]; position != MockedModules::notBelow)
+                    reachedBelow->quickSet(position);
+            }
+            return reachedBelow;
+        }).iterator->value;
+    }
+    return *m_reached;
 }
 
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
@@ -315,13 +378,13 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
     bool didRunModule = false;
-    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     walk.replay(scope, [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule)
             return;
-        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+        if (mocks.hides(module)) [[unlikely]]
             return;
         if (isNativeModule(module)) {
             if (nativeModuleLoading == NativeModuleLoading::Eager && !didCaptureExports(module)) {
@@ -389,7 +452,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
     });
 
     // What only a mocked module imports never runs.
-    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     // Only an uncompiled module asks which modules are on the path.
     bool needsPath = data(walk.root()).reachesUncompiledCode();
     Vector<ModuleID, 16> path;
@@ -405,7 +468,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             path.append(module);
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
-        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+        if (mocks.hides(module)) [[unlikely]]
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
@@ -455,9 +518,9 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     };
 
     Vector<ModuleID, 16> modulesThatResolveNames;
-    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
+    MocksBelowRoot mocks = mocksBelow(walk.root());
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
-        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+        if (mocks.hides(module)) [[unlikely]]
             return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
@@ -477,7 +540,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         setValue(module, namespaceObject);
     }, [&](ModuleID module, bool resolvesNames) {
         // The body of a mocked module reads no name of what it imports.
-        if (resolvesNames && !isMocked(module) && (!notBehindMocks || notBehindMocks->quickGet(module.index())))
+        if (resolvesNames && !isMocked(module) && !mocks.hides(module))
             modulesThatResolveNames.append(module);
     });
     RETURN_IF_EXCEPTION(scope, void());

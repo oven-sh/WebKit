@@ -113,6 +113,11 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
             return true;
         }
         unsigned vectorLength = length | 1;
+        // Ahead of the DeferGC: the transition may make a Structure, and where there is no room for one the collector has to run.
+        StructureID oldStructureID = target->structureID();
+        Structure* oldStructure = oldStructureID.decode();
+        DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+        Structure* newStructure = hasContiguous(targetType) ? oldStructure : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateContiguous, &deferred);
         DeferGC deferGC(vm);
         if (void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull)) {
             Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
@@ -120,13 +125,9 @@ static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, V
             butterfly->setPublicLength(length);
             for (unsigned i = 0; i < vectorLength; ++i)
                 butterfly->contiguous().atUnsafe(i).setWithoutWriteBarrier(i < length ? valueAt(i) : JSValue());
-            if (hasContiguous(targetType))
+            if (newStructure == oldStructure)
                 target->setButterfly(vm, butterfly);
             else {
-                StructureID oldStructureID = target->structureID();
-                Structure* oldStructure = oldStructureID.decode();
-                DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-                Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateContiguous, &deferred);
                 target->nukeStructureAndSetButterfly(vm, oldStructureID, butterfly);
                 target->setStructure(vm, newStructure);
             }
@@ -180,6 +181,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
         for (unsigned i = 0, length = source->length(); i < length; ++i) {
             elements.append(source->getIndex(globalObject, i));
             OPERATION_RETURN_IF_EXCEPTION(scope);
+        }
+        if (elements.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope);
         }
         callMethodInEngine(instance, Builtins::ArrayPrototypePush, target, elements);
         OPERATION_RETURN(scope);

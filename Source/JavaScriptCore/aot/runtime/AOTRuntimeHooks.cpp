@@ -80,11 +80,13 @@ void didCreateRealm(JSGlobalObject* realm)
     if (!instance)
         return;
 
-    makeBuiltinsImmutable(*instance);
-    Instance::create(realm);
-    // A host installs its globals after this and then calls hostDidCreateRealm().
-    if (!BuiltinBindings::hasHost())
-        didInstallBuiltins(*instance);
+    Instance::forEachOf(realm, [&](Instance& each) {
+        makeBuiltinsImmutable(each);
+        Instance::create(realm);
+        // A host installs its globals after this and then calls hostDidCreateRealm().
+        if (!BuiltinBindings::hasHost())
+            didInstallBuiltins(each);
+    });
 }
 
 void didChangeMicrotaskQueueing(VM& vm)

@@ -204,7 +204,7 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
     // A table that a literal with numbers for keys has made.
     isNotString.link(&jit);
-    Jump isNotCompiledObject = jit.branchIfNotType(base, CompiledObjectType);
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -450,7 +450,7 @@ void generateGetByVal(StubAssembler& jit)
     loadStringCharacterAndReturn(jit, registers, slow, isAbsent);
 
     notString.link(&jit);
-    Jump isNotCompiledObject = jit.branchIfNotType(base, CompiledObjectType);
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, base);
     loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow);
 
     isNotCompiledObject.link(&jit);
@@ -804,7 +804,7 @@ void generatePutByVal(StubAssembler& jit)
     Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     slow.append(jit.branchTest32(CCallHelpers::NonZero, shape));
     checkStubOperands(storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy), { base, key, value });
-    jit.linkToStub(jit.branchIfType(base, CompiledObjectType), storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy));
+    jit.linkToStub(branchIfCompiledObjectOfThisImage(jit, base), storeElementOfCompiledObject(mode.isStrict() ? PutMode::Strict : PutMode::Sloppy));
     storeTypedArrayElementAndReturn(jit, registers, value, doubleBits, slow);
 
     isDoubleShape.link(&jit);

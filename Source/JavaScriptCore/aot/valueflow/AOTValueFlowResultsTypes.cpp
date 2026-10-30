@@ -1804,7 +1804,7 @@ static void addFieldsOfObjectsThatInitializerMeets(const ValueFlowResultInputs& 
     ValueFlowNodeID receiver = inputs.bodies().nodes().entryParameter(definition.initializer, *program.at(definition.initializer).thisParameterIndex());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(receiver), [&](ValueFlowObjectID object) {
         LayoutID current = inputs.universe().layoutOf(object);
-        for (size_t steps = 0; current && steps < program.layouts.size(); ++steps, current = provenBaseOf(application, current)) {
+        for (size_t steps = 0; current && steps < program.layouts.size(); ++steps, current = nearestLayoutAlwaysAbove(application, current)) {
             if (std::optional<uint32_t> field = program.at(current).findField(definition.key)) {
                 fields.declared.appendIfNotContains(declarationOf(program, { current, *field }));
                 return;

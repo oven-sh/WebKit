@@ -497,7 +497,7 @@ void generatePrivateGet(StubAssembler& jit)
     };
 
     goesToRunTime.append(jit.branchIfNotCell(object));
-    Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, object);
     Jump isOfOtherClass;
     {
         const GPRReg layout = T12;
@@ -579,148 +579,304 @@ void generatePrivateGet(StubAssembler& jit)
     });
 }
 
-// The usual store under a private name that no field holds, found as generatePrivateGet() finds it.
-PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
+// Runs `emit`, which falls through where it has done the work of the operation and leaves by its list where it has not. A call that preserves registers may write that of its immediate alone, so there the scratch registers are saved around the work.
+static PreludeExit emitPreludeWithScratches(StubAssembler& jit, std::initializer_list<StubRegister> scratches, NOESCAPE const ScopedLambda<void(JumpList& callsOperation)>& emit, NOESCAPE const ScopedLambda<void()>& leave)
 {
-    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::None)
-        return PreludeExit::CallsOperation;
-
-    constexpr GPRReg object = operationArgumentGPR(1);
-    constexpr GPRReg token = operationArgumentGPR(2);
-    constexpr GPRReg field = operationArgumentGPR(3);
-    constexpr GPRReg value = operationArgumentGPR(4);
-    const GPRReg records = jit.allocateScratch(StubRegister::T13);
-    const GPRReg location = jit.allocateScratch(StubRegister::T11);
-    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
-    // The object itself, or the extra properties of a compiled object.
-    const GPRReg owner = jit.allocateScratch(firstStubOperandRegister);
-    RELEASE_ASSERT(noOverlap(object, token, field, value, records, location, storage, owner));
-    constexpr unsigned bytesOfRecord = ClassToken::slotsPerRecord * sizeof(EncodedJSValue);
-    static_assert(ClassToken::recordsProbedByCompiledCode == 2);
     JumpList callsOperation;
+    if (jit.key().family() == StubFamily::CallOperation) {
+        for (StubRegister scratch : scratches)
+            jit.allocateScratch(scratch);
+        emit(callsOperation);
+        leave();
+        callsOperation.link(&jit);
+        return PreludeExit::CallsOperation;
+    }
 
-    callsOperation.append(jit.branchIfNotCell(object));
-    jit.move(object, owner);
-    Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
-    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
-    loadStructure(jit, object, storage);
-    jit.load32(Address(storage, CompiledStructure::offsetOfExtraPropertiesSlot()), location);
-    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, location, TrustedImm32(SlotData::maxOffset)));
-    jit.and32(TrustedImm32(SlotData::maxOffset), location);
-    loadExtraProperties(jit, object, location, owner, callsOperation);
-    isNotCompiledObject.link(&jit);
-
-    jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), records);
-    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, records));
-    jit.zeroExtend32ToWord(field, location);
-    jit.lshift64(TrustedImm32(shiftOfRecordsOfField), location);
-    jit.addPtr(location, records);
-    jit.load32(Address(owner, JSCell::structureIDOffset()), storage);
-    Jump isFirst = jit.branch32(CCallHelpers::Equal, storage, slotOfButterfly(records, ClassToken::StructureNumber));
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, slotOfButterfly(records, ClassToken::slotsPerRecord + ClassToken::StructureNumber)));
-    jit.addPtr(TrustedImm32(bytesOfRecord), records);
-    isFirst.link(&jit);
-
-    jit.load32(slotOfButterfly(records, ClassToken::LocationOfBrand), location);
-    Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, location);
-    loadAtLocation(jit, owner, location, storage, location);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, location, token));
-    needsNoBrand.link(&jit);
-
-    jit.load32(slotOfButterfly(records, ClassToken::LocationOfValue), location);
-    jit.signExtend32ToPtr(location, location);
-    jit.move(owner, storage);
-    Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, location, CCallHelpers::TrustedImmPtr(nullptr));
-    jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
-    isInObject.link(&jit);
-    jit.store64(value, BaseIndex(storage, location, CCallHelpers::TimesOne));
-    jit.jumpToStub(writeBarrier());
-
-    callsOperation.link(&jit);
+    const GPRReg immediate = *jit.signature().immediate;
+    jit.recordClobbers(RegisterSet(immediate));
+    Vector<GPRReg, 8> saved;
+    for (StubRegister scratch : scratches) {
+        if (gprOf(scratch) != immediate)
+            saved.append(gprOf(scratch));
+    }
+    jit.preserving(saved.span(), [&] {
+        for (StubRegister scratch : scratches) {
+            if (gprOf(scratch) != immediate)
+                jit.allocateScratch(scratch);
+        }
+        emit(callsOperation);
+        jit.move(TrustedImm32(0), immediate);
+        Jump isDone = jit.jump();
+        callsOperation.link(&jit);
+        jit.move(TrustedImm32(1), immediate);
+        isDone.link(&jit);
+    });
+    Jump isNotDone = jit.branchTest32(CCallHelpers::NonZero, immediate);
+    jit.returnToCaller();
+    isNotDone.link(&jit);
     return PreludeExit::CallsOperation;
 }
 
-// The usual definition of a private name on an object that is no compiled object: an object of the same Structure has taken the name before. No record names the Structure of a compiled object.
-PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
+static bool canHavePreludeWithScratches(StubAssembler& jit)
 {
-    // A call that preserves registers has none to look with.
-    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::None)
+    StubFamily family = jit.key().family();
+    return (family == StubFamily::CallOperation || family == StubFamily::CallOperationPreservingRegisters) && jit.signature().result == StubResult::None;
+}
+
+// The extra properties of a compiled object, any other object itself.
+static void loadHolderOfNamesWithoutField(StubAssembler& jit, GPRReg object, GPRReg holder, GPRReg structure, GPRReg hiddenWordOffset, JumpList& hasNone)
+{
+    jit.move(object, holder);
+    Jump isNotCompiledObject = jit.branchIfNotType(object, CompiledObjectType);
+    hasNone.append(jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
+    loadStructure(jit, object, structure);
+    jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), hiddenWordOffset);
+    hasNone.append(jit.branchTest32(CCallHelpers::Zero, hiddenWordOffset, TrustedImm32(SlotData::maxOffset)));
+    jit.and32(TrustedImm32(SlotData::maxOffset), hiddenWordOffset);
+    loadExtraProperties(jit, object, hiddenWordOffset, holder, hasNone);
+    isNotCompiledObject.link(&jit);
+}
+
+// The usual store under a private name that no field holds, found as generatePrivateGet() finds it.
+PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
+{
+    if (!canHavePreludeWithScratches(jit))
         return PreludeExit::CallsOperation;
 
     constexpr GPRReg object = operationArgumentGPR(1);
     constexpr GPRReg token = operationArgumentGPR(2);
     constexpr GPRReg field = operationArgumentGPR(3);
     constexpr GPRReg value = operationArgumentGPR(4);
-    const GPRReg definition = jit.allocateScratch(StubRegister::T13);
-    const GPRReg place = jit.allocateScratch(StubRegister::T11);
-    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
-    const GPRReg structureAfter = jit.allocateScratch(StubRegister::T9);
-    const GPRReg owner = jit.allocateScratch(firstStubOperandRegister);
-    RELEASE_ASSERT(noOverlap(object, token, field, value, definition, place, storage, structureAfter, owner, instanceGPR));
+    constexpr GPRReg records = gprOf(StubRegister::T13);
+    constexpr GPRReg location = gprOf(StubRegister::T11);
+    constexpr GPRReg storage = gprOf(StubRegister::T12);
+    constexpr GPRReg owner = gprOf(firstStubOperandRegister);
+    static_assert(noOverlap(object, token, field, value, records, location, storage, owner, instanceGPR));
+    constexpr unsigned bytesOfRecord = ClassToken::slotsPerRecord * sizeof(EncodedJSValue);
+    static_assert(ClassToken::recordsProbedByCompiledCode == 2);
+    bool leavesThroughBarrier = jit.key().family() == StubFamily::CallOperation;
+
+    return emitPreludeWithScratches(jit, { StubRegister::T13, StubRegister::T11, StubRegister::T12, firstStubOperandRegister }, [&](JumpList& callsOperation) {
+        callsOperation.append(jit.branchIfNotCell(object));
+        loadHolderOfNamesWithoutField(jit, object, owner, storage, location, callsOperation);
+
+        jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), records);
+        callsOperation.append(jit.branchTest64(CCallHelpers::Zero, records));
+        jit.zeroExtend32ToWord(field, location);
+        jit.lshift64(TrustedImm32(shiftOfRecordsOfField), location);
+        jit.addPtr(location, records);
+        jit.load32(Address(owner, JSCell::structureIDOffset()), storage);
+        Jump isFirst = jit.branch32(CCallHelpers::Equal, storage, slotOfButterfly(records, ClassToken::StructureNumber));
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, slotOfButterfly(records, ClassToken::slotsPerRecord + ClassToken::StructureNumber)));
+        jit.addPtr(TrustedImm32(bytesOfRecord), records);
+        isFirst.link(&jit);
+
+        jit.load32(slotOfButterfly(records, ClassToken::LocationOfBrand), location);
+        Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, location);
+        loadAtLocation(jit, owner, location, storage, location);
+        callsOperation.append(jit.branch64(CCallHelpers::NotEqual, location, token));
+        needsNoBrand.link(&jit);
+        // The stub of the barrier writes registers.
+        if (!leavesThroughBarrier)
+            callsOperation.append(branchIfBarrierIsNeeded(jit, owner, storage));
+
+        jit.load32(slotOfButterfly(records, ClassToken::LocationOfValue), location);
+        jit.signExtend32ToPtr(location, location);
+        jit.move(owner, storage);
+        Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, location, CCallHelpers::TrustedImmPtr(nullptr));
+        jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
+        isInObject.link(&jit);
+        jit.store64(value, BaseIndex(storage, location, CCallHelpers::TimesOne));
+    }, [&] {
+        jit.jumpToStub(writeBarrier());
+    });
+}
+
+// The usual definition of a private name that no field holds: an object of the same Structure has taken the name before.
+PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
+{
+    if (!canHavePreludeWithScratches(jit))
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg object = operationArgumentGPR(1);
+    constexpr GPRReg token = operationArgumentGPR(2);
+    constexpr GPRReg field = operationArgumentGPR(3);
+    constexpr GPRReg value = operationArgumentGPR(4);
+    constexpr GPRReg definition = gprOf(StubRegister::T13);
+    constexpr GPRReg place = gprOf(StubRegister::T11);
+    constexpr GPRReg storage = gprOf(StubRegister::T12);
+    constexpr GPRReg structureAfter = gprOf(StubRegister::T9);
+    // What takes the name: the object itself, or the extra properties of a compiled object.
+    constexpr GPRReg owner = gprOf(firstStubOperandRegister);
+    static_assert(noOverlap(object, token, field, value, definition, place, storage, structureAfter, owner, instanceGPR));
     RELEASE_ASSERT(signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(owner));
     constexpr int32_t bytesOfDefinition = ClassToken::slotsPerDefinition * sizeof(EncodedJSValue);
     auto slotOfDefinition = [&](ClassToken::DefinitionSlot slot, unsigned half = 0) {
         return slotOfButterfly(definition, ClassToken::slotOfDefinition(0, 0) + slot).withOffset(static_cast<int32_t>(half * sizeof(uint16_t)));
     };
-    JumpList callsOperation;
-    JumpList isFound;
+    bool leavesThroughBarrier = jit.key().family() == StubFamily::CallOperation;
 
-    callsOperation.append(jit.branchIfNotCell(object));
-    jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), definition);
-    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, definition));
-    jit.zeroExtend32ToWord(field, place);
-    jit.lshift64(TrustedImm32(shiftOfRecordsOfField), place);
-    jit.addPtr(place, definition);
-    jit.load32(Address(object, JSCell::structureIDOffset()), place);
-    for (unsigned probed = 0; probed + 1 < ClassToken::definitionsPerField; ++probed) {
-        isFound.append(jit.branch32(CCallHelpers::Equal, place, slotOfDefinition(ClassToken::NumberOfStructureBefore)));
-        jit.addPtr(TrustedImm32(bytesOfDefinition), definition);
-    }
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, place, slotOfDefinition(ClassToken::NumberOfStructureBefore)));
-    isFound.link(&jit);
+    // `place` holds the number of the Structure that the owner has before.
+    auto findDefinition = [&](JumpList& isNotKnown) {
+        JumpList isFound;
+        jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), definition);
+        isNotKnown.append(jit.branchTest64(CCallHelpers::Zero, definition));
+        jit.zeroExtend32ToWord(field, storage);
+        jit.lshift64(TrustedImm32(shiftOfRecordsOfField), storage);
+        jit.addPtr(storage, definition);
+        for (unsigned probed = 0; probed + 1 < ClassToken::definitionsPerField; ++probed) {
+            isFound.append(jit.branch32(CCallHelpers::Equal, place, slotOfDefinition(ClassToken::NumberOfStructureBefore)));
+            jit.addPtr(TrustedImm32(bytesOfDefinition), definition);
+        }
+        isNotKnown.append(jit.branch32(CCallHelpers::NotEqual, place, slotOfDefinition(ClassToken::NumberOfStructureBefore)));
+        isFound.link(&jit);
+    };
+    auto checkBrand = [&](JumpList& isOfOtherEvaluation) {
+        jit.load16SignedExtendTo32(slotOfDefinition(ClassToken::Places, 1), place);
+        Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, place);
+        loadAtLocation(jit, owner, place, storage, place);
+        isOfOtherEvaluation.append(jit.branch64(CCallHelpers::NotEqual, place, token));
+        needsNoBrand.link(&jit);
+    };
+    // structureAfter holds the number of the next Structure of the owner. Nothing is written where it cannot.
+    auto defineInOwner = [&](GPRReg oldCapacity, JumpList& cannot) {
+        jit.load16SignedExtendTo32(slotOfDefinition(ClassToken::Places), place);
+        Jump growsStorage = jit.branchTest32(CCallHelpers::NonZero, place, TrustedImm32(1));
+        jit.signExtend32ToPtr(place, place);
+        jit.move(owner, storage);
+        Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, place, CCallHelpers::TrustedImmPtr(nullptr));
+        jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
+        isInObject.link(&jit);
+        jit.store64(value, BaseIndex(storage, place, CCallHelpers::TimesOne));
+        jit.store32(structureAfter, Address(owner, JSCell::structureIDOffset()));
+        Jump isDefined = jit.jump();
 
-    jit.load16SignedExtendTo32(slotOfDefinition(ClassToken::Places, 1), place);
-    Jump needsNoBrand = jit.branchTest32(CCallHelpers::Zero, place);
-    loadAtLocation(jit, object, place, storage, place);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, place, token));
-    needsNoBrand.link(&jit);
+        growsStorage.link(&jit);
+        const GPRReg newCapacity = place;
+        jit.urshift32(TrustedImm32(1), newCapacity);
+        jit.move(TrustedImm32(0), oldCapacity);
+        Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
+        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
+        isFirstStorage.link(&jit);
+        growOutOfLineStorage(jit, {
+            .object = owner,
+            .newStructureID = structureAfter,
+            .oldCapacity = oldCapacity,
+            .newCapacity = newCapacity,
+            .storage = storage,
+            .scratch = definition,
+            .addedValue = value,
+        }, cannot);
+        isDefined.link(&jit);
+    };
+    // Runs `emit` with two more registers to write. `place` says afterwards whether it left by its list.
+    auto withTokenAndField = [&](JumpList& callsOperation, const ScopedLambda<void(JumpList& cannot)>& emit) {
+        jit.preserving({ token, field }, [&] {
+            JumpList cannot;
+            emit(cannot);
+            jit.move(TrustedImm32(0), place);
+            Jump isDecided = jit.jump();
+            cannot.link(&jit);
+            jit.move(TrustedImm32(1), place);
+            isDecided.link(&jit);
+        });
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, place));
+    };
 
-    jit.load64(slotOfDefinition(ClassToken::StructureAfter), structureAfter);
-    jit.emitEncodeStructureID(structureAfter, structureAfter);
-    jit.load16SignedExtendTo32(slotOfDefinition(ClassToken::Places), place);
-    Jump growsStorage = jit.branchTest32(CCallHelpers::NonZero, place, TrustedImm32(1));
-    jit.signExtend32ToPtr(place, place);
-    jit.move(object, storage);
-    Jump isInObject = jit.branchPtr(CCallHelpers::GreaterThan, place, CCallHelpers::TrustedImmPtr(nullptr));
-    jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
-    isInObject.link(&jit);
-    jit.store64(value, BaseIndex(storage, place, CCallHelpers::TimesOne));
-    jit.store32(structureAfter, Address(object, JSCell::structureIDOffset()));
-    Label isDefined = jit.label();
-    jit.move(object, owner);
-    jit.jumpToStub(writeBarrier());
+    return emitPreludeWithScratches(jit, { StubRegister::T13, StubRegister::T11, StubRegister::T12, StubRegister::T9, firstStubOperandRegister }, [&](JumpList& callsOperation) {
+        JumpList isDefined;
+        callsOperation.append(jit.branchIfNotCell(object));
+        Jump isCompiledObject = jit.branchIfType(object, CompiledObjectType);
 
-    growsStorage.link(&jit);
-    const GPRReg newCapacity = place;
-    const GPRReg oldCapacity = owner;
-    jit.urshift32(TrustedImm32(1), newCapacity);
-    jit.move(TrustedImm32(0), oldCapacity);
-    Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
-    jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
-    isFirstStorage.link(&jit);
-    growOutOfLineStorage(jit, {
-        .object = object,
-        .newStructureID = structureAfter,
-        .oldCapacity = oldCapacity,
-        .newCapacity = newCapacity,
-        .storage = storage,
-        .scratch = definition,
-        .addedValue = value,
-    }, callsOperation);
-    jit.jump().linkTo(isDefined, &jit);
+        jit.move(object, owner);
+        jit.load32(Address(object, JSCell::structureIDOffset()), place);
+        findDefinition(callsOperation);
+        checkBrand(callsOperation);
+        // The stub of the barrier writes registers.
+        if (!leavesThroughBarrier)
+            callsOperation.append(branchIfBarrierIsNeeded(jit, owner, storage));
+        jit.load64(slotOfDefinition(ClassToken::StructureAfter), structureAfter);
+        jit.emitEncodeStructureID(structureAfter, structureAfter);
+        withTokenAndField(callsOperation, [&](JumpList& cannot) {
+            defineInOwner(token, cannot);
+        });
+        isDefined.append(jit.jump());
 
-    callsOperation.link(&jit);
-    return PreludeExit::CallsOperation;
+        // The name goes among the extra properties. The Structure of the instance names theirs, and what it leads on to names their next one.
+        isCompiledObject.link(&jit);
+        const GPRReg successor = structureAfter;
+        loadStructure(jit, object, storage);
+        jit.loadPtr(Address(storage, CompiledStructure::offsetOfSuccessorByPrivateName()), successor);
+        callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, successor));
+        callsOperation.append(branchIfBarrierIsNeeded(jit, object, place));
+        Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties));
+
+        jit.load32(Address(successor, CompiledStructure::offsetOfExtraPropertiesSlot()), place);
+        jit.and32(TrustedImm32(SlotData::maxOffset), place);
+        loadExtraProperties(jit, object, place, owner, callsOperation);
+        jit.load32(Address(owner, JSCell::structureIDOffset()), place);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, place, Address(storage, CompiledStructure::offsetOfExtraPropertiesStructureID())));
+        findDefinition(callsOperation);
+        checkBrand(callsOperation);
+        if (!leavesThroughBarrier)
+            callsOperation.append(branchIfBarrierIsNeeded(jit, owner, storage));
+        jit.load64(slotOfDefinition(ClassToken::StructureAfter), storage);
+        jit.emitEncodeStructureID(storage, storage);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, Address(successor, CompiledStructure::offsetOfExtraPropertiesStructureID())));
+        withTokenAndField(callsOperation, [&](JumpList& cannot) {
+            constexpr GPRReg structureOfInstance = field;
+            jit.emitEncodeStructureID(successor, structureOfInstance);
+            jit.move(storage, structureAfter);
+            defineInOwner(token, cannot);
+            jit.store32(structureOfInstance, Address(object, JSCell::structureIDOffset()));
+        });
+        isDefined.append(jit.jump());
+
+        // The first name outside the fields: the extra properties are made with it in their first word.
+        hasNoExtraProperties.link(&jit);
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordIsNotExtensible)));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.emptyExtraPropertiesStructure)), place);
+        jit.emitEncodeStructureID(place, place);
+        findDefinition(callsOperation);
+        jit.load64(slotOfDefinition(ClassToken::StructureAfter), storage);
+        jit.emitEncodeStructureID(storage, storage);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, Address(successor, CompiledStructure::offsetOfExtraPropertiesStructureID())));
+        withTokenAndField(callsOperation, [&](JumpList& cannot) {
+            constexpr GPRReg size = token;
+            constexpr GPRReg allocator = definition;
+            static_assert(MarkedSpace::sizeStep == 2 * sizeof(Allocator));
+            jit.load16(Address(successor, CompiledStructure::offsetOfExtraPropertiesCellSize()), size);
+            jit.urshift32(size, TrustedImm32(1), place);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+            jit.loadPtr(BaseIndex(allocator, place, CCallHelpers::TimesOne, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+            cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+            allocateCell(jit, owner, allocator, place, cannot);
+            jit.store32(storage, Address(owner, JSCell::structureIDOffset()));
+            jit.store32(TrustedImm32(JSFinalObject::defaultTypeInfoBlob()), Address(owner, JSCell::indexingTypeAndMiscOffset()));
+            jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(owner, JSObject::butterflyOffset()));
+            jit.store64(value, Address(owner, JSObject::offsetOfInlineStorage()));
+            Label clears = jit.label();
+            jit.sub32(TrustedImm32(sizeof(EncodedJSValue)), size);
+            jit.store64(TrustedImm32(0), BaseIndex(owner, size, CCallHelpers::TimesOne));
+            jit.branch32(CCallHelpers::Above, size, TrustedImm32(JSObject::offsetOfInlineStorage() + sizeof(EncodedJSValue))).linkTo(clears, &jit);
+            fenceAfterAllocation(jit);
+            jit.load32(Address(successor, CompiledStructure::offsetOfExtraPropertiesSlot()), place);
+            jit.and32(TrustedImm32(SlotData::maxOffset), place);
+            if (jit.options().useWideReferences)
+                jit.store64(owner, BaseIndex(object, place, CCallHelpers::TimesOne));
+            else {
+                encodeCell32(jit, owner, storage);
+                jit.store32(storage, BaseIndex(object, place, CCallHelpers::TimesOne));
+            }
+            jit.or32(TrustedImm32(orderWordHasExtraProperties), Address(object, offsetOfOrderWord));
+            jit.emitEncodeStructureID(successor, storage);
+            jit.store32(storage, Address(object, JSCell::structureIDOffset()));
+        });
+
+        isDefined.link(&jit);
+    }, [&] {
+        jit.jumpToStub(writeBarrier());
+    });
 }
 
 } } // namespace JSC::AOT

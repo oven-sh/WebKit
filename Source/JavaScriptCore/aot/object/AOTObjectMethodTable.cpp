@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
@@ -324,6 +325,7 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
 
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
@@ -706,6 +708,7 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
 
 bool Object::preventExtensions(JSObject* cell, JSGlobalObject* globalObject)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     uncheckedDowncast<Object>(cell)->setIntegrity(globalObject, Integrity::NotExtensible);
     return true;
 }
@@ -737,6 +740,7 @@ void Object::setPrototypeAtCreation(VM& vm, JSValue prototype)
 
 bool Object::setPrototype(JSObject* cell, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -761,6 +765,7 @@ static void finishSlotOfExtraProperty(Object* object, PropertySlot& slot, bool f
 
 bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -805,6 +810,7 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
 
 bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     JSObject* extra = uncheckedDowncast<Object>(cell)->extraProperties();
     if (!extra)
         return false;
@@ -815,6 +821,7 @@ bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObj
 
 void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     State& state = object->state();
@@ -995,6 +1002,7 @@ static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
 
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
@@ -1007,6 +1015,7 @@ bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, 
 
 bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field, bool chainLetsStoresPass)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     ASSERT(!field || !field->isPrivate());
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
@@ -1081,12 +1090,14 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
 
 bool Object::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     PutPropertySlot slot(cell, shouldThrow);
     return ordinarySet(globalObject, uncheckedDowncast<Object>(cell), Identifier::from(globalObject->vm(), index), value, slot);
 }
 
 bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1137,6 +1148,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
 
 bool Object::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     Object* object = uncheckedDowncast<Object>(cell);
     JSObject* extra = object->extraProperties();
     if (!extra)

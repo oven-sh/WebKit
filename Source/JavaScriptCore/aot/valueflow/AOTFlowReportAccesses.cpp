@@ -44,16 +44,16 @@ enum class CopyPlace : uint8_t { OwnBody, Caller };
 
 struct FlowSiteObservation {
     AccessSiteID site;
-    KnowledgeLevel level { KnowledgeLevel::Unknown };
-    AccessCost cost { AccessCost::ByName };
+    KnowledgeLevel level : 8 { KnowledgeLevel::Unknown };
+    AccessCost cost : 8 { AccessCost::ByName };
     Expected<BlockFrequency> frequency { BlockFrequency::Normal };
     CopyPlace place { CopyPlace::OwnBody };
     bool isInGenericVersion { false };
     LayoutID layout;
     PropertyKeyID key;
     uint32_t candidatesOfLeftOperation { 0 };
-    double heat { 0 };
 };
+static_assert(sizeof(FlowSiteObservation) == 24);
 
 struct GeneralOperation {
     Wire::SourceLocation location;
@@ -65,8 +65,15 @@ struct GeneralOperation {
 };
 
 struct ObservationsOfFunction {
+    struct WithHeat {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WithHeat);
+
+        Vector<double> heatOfSites;
+        Vector<GeneralOperation> generalOperations;
+    };
+
     Vector<FlowSiteObservation> sites;
-    Vector<GeneralOperation> generalOperations;
+    std::unique_ptr<WithHeat> withHeat;
 };
 
 struct PassedTest {
@@ -245,7 +252,7 @@ static void forEachDescribedSite(const Program&, const Terminator& terminator, c
 }
 
 template<typename InstructionType>
-static void collectObservations(const Program& program, const FlowResults& flow, const Function& function, const InstructionType& instruction, BlockID block, double heat, TestsMadeForAccesses& tests, Vector<FlowSiteObservation>& observations)
+static void collectObservations(const Program& program, const FlowResults& flow, const Function& function, const InstructionType& instruction, BlockID block, TestsMadeForAccesses& tests, Vector<FlowSiteObservation>& observations)
 {
     forEachDescribedSite(program, instruction, [&](AccessSiteID site, const AccessDescription& access) {
         FlowSiteObservation observation { .site = site, .key = access.key };
@@ -272,7 +279,6 @@ static void collectObservations(const Program& program, const FlowResults& flow,
         case AccessClass::None:
             RELEASE_ASSERT_NOT_REACHED();
         }
-        observation.heat = heat;
         observation.frequency = function.at(block).frequency;
         observation.place = instruction.inlineFrame ? CopyPlace::Caller : CopyPlace::OwnBody;
         observation.isInGenericVersion = program.sourceFunctionOf(function, instruction.origin()).role == FunctionRole::GenericVersion;
@@ -427,35 +433,47 @@ static ObservationsOfFunction observeAccessSites(const Program& program, const F
     if (heat) {
         analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
         weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id).predicted(), 100));
+        observations.withHeat = makeUnique<ObservationsOfFunction::WithHeat>();
     }
     for (BlockID blockID : cfg.reversePostOrder()) {
         const Block& block = function.at(blockID);
-        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID).predicted() : 0;
-        for (ValueID value : block.values) {
-            collectObservations(program, flow, function, function.at(value), blockID, heatOfBlock, tests, observations.sites);
-            if (heat)
-                collectGeneralOperation(program, function, id, function.at(value), heatOfBlock, observations.generalOperations);
-        }
-        collectObservations(program, flow, function, block.terminator, blockID, heatOfBlock, tests, observations.sites);
+        for (ValueID value : block.values)
+            collectObservations(program, flow, function, function.at(value), blockID, tests, observations.sites);
+        collectObservations(program, flow, function, block.terminator, blockID, tests, observations.sites);
+        if (!heat)
+            continue;
+        double heatOfBlock = weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID).predicted();
+        Vector<double>& heatOfSites = observations.withHeat->heatOfSites;
+        heatOfSites.insertFill(heatOfSites.size(), heatOfBlock, observations.sites.size() - heatOfSites.size());
+        for (ValueID value : block.values)
+            collectGeneralOperation(program, function, id, function.at(value), heatOfBlock, observations.withHeat->generalOperations);
     }
     gradeSlowHalvesOfUnstampedOperations(flow, function, cfg, observations.sites);
+    observations.sites.shrinkToFit();
+    if (heat) {
+        observations.withHeat->heatOfSites.shrinkToFit();
+        observations.withHeat->generalOperations.shrinkToFit();
+    }
     return observations;
 }
 
 static constexpr uint8_t numberOfDistances = 6;
 
-static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<const ObservationsOfFunction> observationsOfFunctions)
+static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<const ObservationsOfFunction> observationsOfFunctions, Vector<double>& heat)
 {
     Vector<FlowSiteLevel> levels(flow.numberOfAccessSites());
+    if (std::ranges::any_of(observationsOfFunctions, [](const ObservationsOfFunction& observations) { return !!observations.withHeat; }))
+        heat.fill(0, levels.size());
     Vector<uint8_t> nearestRarities(FillWith { }, levels.size(), uint8_t { UINT8_MAX });
     for (const ObservationsOfFunction& observations : observationsOfFunctions) {
-        for (const FlowSiteObservation& observation : observations.sites) {
+        for (size_t position = 0; position < observations.sites.size(); ++position) {
+            const FlowSiteObservation& observation = observations.sites[position];
             size_t index = observation.site.index();
             if (index >= levels.size())
                 continue;
             FlowSiteLevel& folded = levels[index];
-            if (!observation.isInGenericVersion)
-                folded.heat += observation.heat;
+            if (observations.withHeat && !observation.isInGenericVersion)
+                heat[index] += observations.withHeat->heatOfSites[position];
             uint8_t rarity = rarityOf(observation.frequency);
             if (rarity < nearestRarities[index]) {
                 nearestRarities[index] = rarity;
@@ -546,6 +564,7 @@ void AccessSiteObserver::observe(FunctionID id)
     forEachCalledFunction(m_state->program, m_state->program.at(id), [&](FunctionID target) {
         called.append(target);
     });
+    called.shrinkToFit();
 }
 
 AccessSiteObservations AccessSiteObserver::finish()
@@ -711,8 +730,10 @@ static FlowSiteLoss lossOfGeneralOperation(const Program& program, const FlowRes
 static Vector<Wire::AccessRecord> buildRecordsOfGeneralOperations(const Program& program, const FlowResults& flow, const BuildContext& build, std::span<const FlowSiteLevel> levels, std::span<const ObservationsOfFunction> observationsOfFunctions)
 {
     Vector<GeneralOperation> operations;
-    for (const ObservationsOfFunction& observations : observationsOfFunctions)
-        operations.appendVector(observations.generalOperations);
+    for (const ObservationsOfFunction& observations : observationsOfFunctions) {
+        if (observations.withHeat)
+            operations.appendVector(observations.withHeat->generalOperations);
+    }
     AOT::stableSort(operations, { }, [](const GeneralOperation& a) {
         return std::tuple { a.location.module, a.location.position, a.kind, !a.madeBy, a.madeBy.index(), !a.isParameter, a.function.index() };
     });
@@ -746,13 +767,20 @@ GradedSites gradeAccessSites(const Program& program, const FlowResults& flow, Ac
     if (!ofFunctions)
         return { };
     GradedSites sites;
-    sites.levels = foldSiteLevels(flow, ofFunctions->observations.span());
+    sites.levels = foldSiteLevels(flow, ofFunctions->observations.span(), sites.heat);
     sites.generalOperations = buildRecordsOfGeneralOperations(program, flow, build, sites.levels.span(), ofFunctions->observations.span());
     build.destroyLater(WTF::move(ofFunctions));
     return sites;
 }
 
-Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const FlowResults& flow, std::span<const FlowSiteLevel> levels, BuildContext& build)
+static bool isReported(const FlowResults& flow, const AccessSite& access, const FlowSiteLevel& level)
+{
+    if (!flow.mayBeReached(access.function) || access.kind == AccessKind::Unknown || !hasModule(access.location))
+        return false;
+    return access.kind == AccessKind::Call || access.kind == AccessKind::Construct || level.copies;
+}
+
+Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const FlowResults& flow, std::span<const FlowSiteLevel> levels, std::span<const double> heat, BuildContext& build)
 {
     struct SiteRecord {
         Wire::AccessRecord record;
@@ -764,11 +792,9 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
         AccessSiteID site(index);
         const AccessSite& access = flow.at(site);
         const FlowSiteLevel& level = levels[index];
-        if (!flow.mayBeReached(access.function) || access.kind == AccessKind::Unknown || !hasModule(access.location))
+        if (!isReported(flow, access, level))
             return;
         bool isCall = access.kind == AccessKind::Call || access.kind == AccessKind::Construct;
-        if (!isCall && !level.copies)
-            return;
         found.append(SiteRecord { {
             .location = flow.writtenLocationOf(site),
             .kind = access.kind,
@@ -778,7 +804,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
             .distance = isCall ? level.distance : level.distanceForCost,
             .function = findFunctionAsRead(&program, access.function).index(),
             .cost = level.cost,
-            .heat = level.heat,
+            .heat = heat.empty() ? 0 : heat[index],
         }, level.key, program.at(access.function).role == FunctionRole::GenericVersion });
         fillLoss(found.last().record, level.level != KnowledgeLevel::Proven || level.cost != AccessCost::Free ? lossBelowProven(program, flow, build, site, level) : FlowSiteLoss { });
     });
@@ -847,20 +873,20 @@ static std::array<uint32_t, numberOfEnumerators<KnowledgeLevel>>* countersOf(Wir
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Vector<Wire::AccessCountRecord> countAccesses(const Program& program, std::span<const Wire::AccessRecord> accesses, std::span<const Wire::TypeTestRecord> typeTests)
+static Vector<Wire::AccessCountRecord> countByModule(const Program& program, std::span<const Wire::TypeTestRecord> typeTests, const auto& forEachAccess)
 {
     Vector<Wire::AccessCountRecord> counts(FillWith { }, program.modules.size(), Wire::AccessCountRecord { });
     for (uint32_t module = 0; module < counts.size(); ++module)
         counts[module].module = module;
-    for (const Wire::AccessRecord& access : accesses) {
-        Wire::AccessCountRecord& record = counts[access.location.module];
-        auto* countsByLevel = countersOf(record, access.kind);
+    forEachAccess([&](uint32_t module, AccessKind kind, unsigned rankOfLevel, unsigned rankOfCost) {
+        Wire::AccessCountRecord& record = counts[module];
+        auto* countsByLevel = countersOf(record, kind);
         if (!countsByLevel)
-            continue;
-        ++(*countsByLevel)[rankOf(access.level)];
+            return;
+        ++(*countsByLevel)[rankOfLevel];
         if (countsByLevel == &record.accesses)
-            ++record.accessCosts[rankOf(access.cost)];
-    }
+            ++record.accessCosts[rankOfCost];
+    });
     for (const Wire::TypeTestRecord& typeTest : typeTests)
         ++counts[typeTest.location.module].typeTests;
 
@@ -868,6 +894,59 @@ Vector<Wire::AccessCountRecord> countAccesses(const Program& program, std::span<
         return record == Wire::AccessCountRecord { .module = record.module };
     });
     return counts;
+}
+
+Vector<Wire::AccessCountRecord> countAccesses(const Program& program, std::span<const Wire::AccessRecord> accesses, std::span<const Wire::TypeTestRecord> typeTests)
+{
+    return countByModule(program, typeTests, [&](const auto& count) {
+        for (const Wire::AccessRecord& access : accesses)
+            count(access.location.module, access.kind, rankOf(access.level), rankOf(access.cost));
+    });
+}
+
+Vector<Wire::AccessCountRecord> countAccessesWithoutRecords(const Program& program, const FlowResults& flow, std::span<const FlowSiteLevel> levels, std::span<const Wire::TypeTestRecord> typeTests, BuildContext& build)
+{
+    struct CountedSite {
+        uint32_t module { 0 };
+        uint32_t position { 0 };
+        PropertyKeyID key;
+        uint8_t kind { 0 };
+        uint8_t rankOfLevel { 0 };
+        uint8_t rankOfCost { 0 };
+        bool isInGenericVersion { false };
+    };
+    static_assert(sizeof(CountedSite) == 16);
+    const ParallelLoops& loops = build.parallelLoops();
+    Vector<CountedSite> sites = collectInParallel<CountedSite>(loops, levels.size(), [&](unsigned index, Vector<CountedSite>& found) {
+        AccessSiteID site(index);
+        const AccessSite& access = flow.at(site);
+        const FlowSiteLevel& level = levels[index];
+        if (!isReported(flow, access, level))
+            return;
+        Wire::SourceLocation location = flow.writtenLocationOf(site);
+        found.append(CountedSite {
+            location.module, location.position, level.key, static_cast<uint8_t>(access.kind), static_cast<uint8_t>(rankOf(level.level)), static_cast<uint8_t>(rankOf(level.cost)),
+            program.at(access.function).role == FunctionRole::GenericVersion,
+        });
+    });
+    // One record stands for the sites of one place, kind and name: with the least level, and with the least cost outside generic versions, or of all where there is none outside.
+    auto orderKey = [](const CountedSite& site) {
+        return std::tuple { site.module, site.position, site.kind, site.key.index(), site.isInGenericVersion, site.rankOfCost };
+    };
+    parallelSort(loops, sites.mutableSpan(), [&](const CountedSite& a, const CountedSite& b) {
+        return orderKey(a) < orderKey(b);
+    });
+    return countByModule(program, typeTests, [&](const auto& count) {
+        for (size_t first = 0; first < sites.size();) {
+            const CountedSite& site = sites[first];
+            uint8_t rankOfLevel = site.rankOfLevel;
+            size_t end = first + 1;
+            for (; end < sites.size() && sites[end].module == site.module && sites[end].position == site.position && sites[end].kind == site.kind && sites[end].key == site.key; ++end)
+                rankOfLevel = std::min(rankOfLevel, sites[end].rankOfLevel);
+            count(site.module, static_cast<AccessKind>(site.kind), rankOfLevel, site.rankOfCost);
+            first = end;
+        }
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

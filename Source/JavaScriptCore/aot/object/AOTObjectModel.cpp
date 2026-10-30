@@ -107,23 +107,21 @@ static FieldKeyKind keyKindOf(PropertyKeyKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const ImageText& text()
+static const ImageText& textOf(const State& state)
 {
-    return Image::current()->text();
+    return state.instance.program->text();
 }
 
-static bool matchesAnyLiteral(std::span<const uint32_t> literals, StringView characters)
+static bool matchesAnyLiteral(const ImageText& imageText, std::span<const uint32_t> literals, StringView characters)
 {
-    const ImageText& imageText = text();
     return std::ranges::any_of(literals, [&](uint32_t literal) {
         return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == characters.length() && imageText.equals(StringID(literal), characters);
     });
 }
 
-static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, std::span<const uint32_t> literals, JSString* rope)
+static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, const ImageText& imageText, std::span<const uint32_t> literals, JSString* rope)
 {
     unsigned length = rope->length();
-    const ImageText& imageText = text();
     bool hasLiteralWithLength = std::ranges::any_of(literals, [&](uint32_t literal) {
         return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == length;
     });
@@ -131,16 +129,16 @@ static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, std
         return false;
     if (rope->isSubstring()) {
         auto characters = rope->view(globalObject);
-        return matchesAnyLiteral(literals, characters.data);
+        return matchesAnyLiteral(imageText, literals, characters.data);
     }
     if (rope->is8Bit()) {
         Vector<Latin1Character, 64> characters(length);
         rope->resolveToBuffer(characters.mutableSpan());
-        return matchesAnyLiteral(literals, StringView(characters.span()));
+        return matchesAnyLiteral(imageText, literals, StringView(characters.span()));
     }
     Vector<char16_t, 64> characters(length);
     rope->resolveToBuffer(characters.mutableSpan());
-    return matchesAnyLiteral(literals, StringView(characters.span()));
+    return matchesAnyLiteral(imageText, literals, StringView(characters.span()));
 }
 
 static bool numberHasType(const RuntimeType& type, double number)
@@ -170,8 +168,8 @@ static bool stringHasType(const State& state, const RuntimeType& type, JSString*
             return false;
     }
     if (StringImpl* impl = value->tryGetValueImpl())
-        return matchesAnyLiteral(literals, StringView(*impl));
-    return ropeMatchesAnyLiteral(globalObject, literals, value);
+        return matchesAnyLiteral(textOf(state), literals, StringView(*impl));
+    return ropeMatchesAnyLiteral(globalObject, textOf(state), literals, value);
 }
 
 static bool inheritsBuiltinClass(JSCell* cell, BuiltinClassID builtinClass)
@@ -353,12 +351,12 @@ UniquedStringImpl* RuntimeLayoutTable::nameOf(VM& vm, const FieldData& field)
 
 bool RuntimeLayoutTable::hasSymbolKey(const FieldData& field) const
 {
-    return keyKindOf(text().identifier(field.name).kind()) == FieldKeyKind::Symbol;
+    return keyKindOf(textOf(m_state).identifier(field.name).kind()) == FieldKeyKind::Symbol;
 }
 
 bool RuntimeLayoutTable::hasStringKey(const FieldData& field) const
 {
-    return keyKindOf(text().identifier(field.name).kind()) == FieldKeyKind::String && !field.isPrivate();
+    return keyKindOf(textOf(m_state).identifier(field.name).kind()) == FieldKeyKind::String && !field.isPrivate();
 }
 
 bool RuntimeLayoutTable::mayBeAbsent(const FieldData& field) const
@@ -1419,6 +1417,7 @@ void CompiledStructure::visitAdditionalChildren(JSCell* cell, Visitor& visitor)
         visitor.appendUnbarriered(named);
     if (const RareData* rareData = structure->rareData())
         visitor.append(rareData->heldExtraProperties);
+    visitor.append(structure->m_successorByPrivateName);
 }
 
 template void CompiledStructure::visitAdditionalChildren(JSCell*, AbstractSlotVisitor&);

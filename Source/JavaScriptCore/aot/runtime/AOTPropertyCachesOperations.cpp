@@ -15,6 +15,7 @@
 #include "AOTClosureTable.h"
 #include "AOTErrorMessages.h"
 #include "AOTFrameArrays.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -58,8 +59,10 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     bool isFoundAbove = (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::Accessor) && answer.holder;
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
-    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr)
-        instance->state->objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr) {
+        ImageOfCellScope imageOfObject(*instance->vm, object);
+        object->state().objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
+    }
 }
 
 // The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
@@ -381,6 +384,17 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     VM& vm = *access.instance->vm;
     JSGlobalObject* globalObject = access.instance->globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The tables of the image that runs say nothing of a cell of another image, and its caches hold nothing about one.
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, cell)) [[unlikely]] {
+        ImageOfCellScope imageOfCell(vm, cell);
+        PutPropertySlot slot(cell, mode != PutMode::Sloppy, PutPropertySlot::PutById);
+        scope.release();
+        if (mode == PutMode::Define && cell->isObject())
+            defineDataProperty(Instance::owning(cell), asObject(cell), access.ident, value, slot);
+        else
+            JSValue(cell).putInline(globalObject, access.ident, value, slot);
+        return;
+    }
     if (cell->type() == SlimClosureType && mode != PutMode::Define)
         RELEASE_AND_RETURN(scope, putToSlimClosureAndCache(access, *uncheckedDowncast<SlimClosure>(cell), value, mode));
     const Identifier& ident = access.ident;

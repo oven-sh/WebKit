@@ -2025,11 +2025,6 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
 
 void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
 {
-    struct KeyReadFromLayout {
-        LayoutID layout;
-        PropertyKeyID key;
-    };
-
     m_receiversOfReads = WTF::move(receivers);
     UnionOfSets above;
     m_heap.forEachSeenValueWrittenUnder(prototypeLinkName, [&](ValueSetID seenValue) {
@@ -2040,7 +2035,7 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     const ValueSets& sets = m_inputs.sets();
     ValueSetMaker& maker = m_heap.maker();
     uint32_t numberOfLayouts = m_inputs.program.layouts.size();
-    m_keysReadFrom = Vector<Vector<PropertyKeyID>>(numberOfLayouts);
+    m_groupsOfKeysReadFrom = Vector<Vector<uint32_t>>(numberOfLayouts);
     BitVector asks(numberOfLayouts);
     Vector<ValueSetID> objectsOfLayoutsThatAsk;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -2059,25 +2054,55 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     for (const auto& receiversUnderKey : m_receiversOfReads)
         receiversUnderKeys.append(&receiversUnderKey);
     ValueSetMakers makers(m_inputs);
-    Vector<Vector<KeyReadFromLayout>> keysFoundBy(loops.width());
+    struct GroupsOfWorker {
+        HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+        Vector<Vector<PropertyKeyID>> keys;
+        Vector<uint32_t> layoutsOfKey;
+    };
+    Vector<GroupsOfWorker> groupsFoundBy(loops.width());
     forEachIndexInParallel(loops, receiversUnderKeys.size(), [&](unsigned index, unsigned worker) {
+        GroupsOfWorker& groups = groupsFoundBy[worker];
+        groups.layoutsOfKey.shrink(0);
         for (ValueSetID listed : receiversUnderKeys[index]->value) {
             if (!sets.meet(listed, objects))
                 continue;
             m_layoutsOfObjects.forEachLayoutOfMembers(makers.of(worker).intersect(listed, objects), [&](LayoutID layout) {
                 if (asks.quickGet(layout.index()))
-                    keysFoundBy[worker].append({ layout, PropertyKeyID(receiversUnderKeys[index]->key) });
+                    groups.layoutsOfKey.append(layout.index());
             });
         }
+        if (groups.layoutsOfKey.isEmpty())
+            return;
+        // A key is read from a layout at many places: most of what was found is a repeat.
+        AOT::sort(groups.layoutsOfKey);
+        removeRepeatedElements(groups.layoutsOfKey);
+        uint32_t group = groups.groupOfLayouts.ensure(groups.layoutsOfKey, [&] {
+            groups.keys.append(Vector<PropertyKeyID>());
+            return static_cast<uint32_t>(groups.keys.size() - 1);
+        }).iterator->value;
+        groups.keys[group].append(PropertyKeyID(receiversUnderKeys[index]->key));
     });
-    for (const Vector<KeyReadFromLayout>& keysFound : keysFoundBy) {
-        for (const KeyReadFromLayout& found : keysFound)
-            m_keysReadFrom[found.layout.index()].append(found.key);
+    HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+    for (GroupsOfWorker& groups : groupsFoundBy) {
+        for (auto& entry : groups.groupOfLayouts) {
+            uint32_t group = groupOfLayouts.ensure(entry.key, [&] {
+                m_groupsOfKeys.append(Vector<PropertyKeyID>());
+                for (uint32_t layout : entry.key)
+                    m_groupsOfKeysReadFrom[layout].append(static_cast<uint32_t>(m_groupsOfKeys.size() - 1));
+                return static_cast<uint32_t>(m_groupsOfKeys.size() - 1);
+            }).iterator->value;
+            m_groupsOfKeys[group].appendVector(groups.keys[entry.value]);
+        }
     }
-    for (Vector<PropertyKeyID>& keys : m_keysReadFrom) {
-        AOT::sort(keys);
-        removeRepeatedElements(keys);
-    }
+}
+
+Vector<PropertyKeyID> StoresByLayout::keysReadFrom(LayoutID layout) const
+{
+    Vector<PropertyKeyID> keys;
+    for (uint32_t group : m_groupsOfKeysReadFrom[layout.index()])
+        keys.appendVector(m_groupsOfKeys[group]);
+    AOT::sort(keys);
+    return keys;
 }
 
 bool StoresByLayout::getsAccessorsUnderKeysNobodyKnows(LayoutID layout) const

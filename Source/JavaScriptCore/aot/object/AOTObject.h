@@ -135,6 +135,8 @@ public:
     const LayoutData& layout() const { return compiledStructure().layout(); }
     Instance& instance() const;
     State& state() const;
+    // Whether the tables of the state speak of the object: it is of that realm and, where the realm runs several images, of that image.
+    bool isDescribedBy(const State&) const;
     // An object may lie in a frame, where its address leads to no block of the heap and says nothing about the cage.
     bool isInFrame() const { return static_cast<uint8_t>(cellState()) == frameCellState; }
     VM& vm() const;

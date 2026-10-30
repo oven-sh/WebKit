@@ -372,13 +372,29 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     std::optional<unsigned> index = vm.aotState().propertyCaches->isSharedByInstances() || moduleNamespace->isDeferred() ? std::nullopt : moduleNamespace->find(query.uid);
     if (!index)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
-    State& state = State::of(query.structureBefore->realm());
+    // The module may be of another image of the realm: code there reads what it imports from here through this object.
+    State& stateOfReader = State::of(query.structureBefore->realm());
+    State& state = vm.aotState().hasSeveralImages ? *Instance::owning(moduleNamespace)->state : stateOfReader;
+    bool isOfOtherImage = &state != &stateOfReader;
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
-    if (moduleExport.kind() != ModuleExportKind::Variable || moduleExport.variable.representation() == SlotRepresentation::DeferredClosure)
+    if (moduleExport.kind() != ModuleExportKind::Variable)
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    SlotValueKind valueKind = traitsOf(moduleExport.variable.representation()).valueKind;
+    if (valueKind == SlotValueKind::DeferredClosure) {
+        // The variable has no storage, because nothing is ever stored to it: it is the one closure of a function.
+        if (!isOfOtherImage)
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
+        JSValue closure = ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable);
+        if (!closure)
+            return uncacheableOnce(SlotAccess::Read);
+        return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = closure };
+    }
+    // The text of a literal string is found through the tables of its image.
+    if (isOfOtherImage && valueKind == SlotValueKind::LiteralString)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
         return uncacheableOnce(SlotAccess::Read);
-    return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable };
+    return { .kind = PropertyAnswerKind::Variable, .isOwn = true, .variable = moduleExport.variable, .imageOfVariable = static_cast<uint16_t>(isOfOtherImage ? (state.instance.program->position() + 1) << PackedSlot::hiddenWordOffsetShift : 0) };
 }
 
 enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
@@ -485,6 +501,23 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         return classifyReadAboveReceiver(query);
     }
     JSObject* receiver = asObject(query.base);
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, receiver)) [[unlikely]] {
+        if (isModuleNamespace(receiver) && access == SlotAccess::Read && receiver->structure() == structure)
+            return classifyNamespaceRead(query);
+        // Where a field lies and in what form says its slot alone, but for text and closures, which are found through the tables of their image. An empty slot goes to the lookup.
+        if (access == SlotAccess::Read && isCompiledObject(receiver) && receiver->structure() == structure) {
+            Object& object = *uncheckedDowncast<Object>(receiver);
+            const FieldData* field = object.fieldNamed(object.state(), uid);
+            SlotValueKind valueKind = field ? traitsOf(field->slot.representation()).valueKind : SlotValueKind::DeferredClosure;
+            if (field && !field->isAccessor() && valueKind != SlotValueKind::LiteralString && valueKind != SlotValueKind::DeferredClosure)
+                return { .kind = PropertyAnswerKind::Field, .isOwn = true, .field = field };
+            // What stands above the object is found as it is above any object, and is filed under the Structure.
+            bool isOwn = !slot.isUnset() && slot.slotBase() == receiver;
+            if (!field && !isOwn && !slot.isTaintedByOpaqueObject() && Object::structureGuaranteesAbsence(structure, uid))
+                return classifyReadAboveReceiver(query);
+        }
+        return PropertyAnswer::uncacheable(access);
+    }
     JSType type = structure->typeInfo().type();
     if (type == GlobalProxyType && structure->classInfoForCells() == JSGlobalProxy::info() && mayAllocate && receiver->structure() == structure
         && structure->realm() == query.globalObject && uncheckedDowncast<JSGlobalProxy>(receiver)->target() == query.globalObject)
@@ -942,6 +975,8 @@ PropertyAnswer classifyDeletion(const DeletionQuery& query)
     Structure* before = query.structureBefore;
     if (isNeverCachedName(vm, query.uid))
         return uncacheableOnce(access);
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, query.base)) [[unlikely]]
+        return PropertyAnswer::uncacheable(access);
     if (before->isCompiledStructure())
         return classifyCompiledObjectDeletion(query);
     MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
@@ -971,6 +1006,8 @@ PropertyAnswer classifyStore(const StoreQuery& query)
     VM& vm = query.globalObject->vm();
     SlotAccess access = accessFor(query.mode);
     Structure* structureBefore = query.structureBefore;
+    if (vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, query.base)) [[unlikely]]
+        return PropertyAnswer::uncacheable(access);
     bool isCompiled = structureBefore->isCompiledStructure();
     bool isNeverCached = isNeverCachedName(vm, query.uid) || isProxyType(structureBefore->typeInfo().type()) || structureBefore->needImpurePropertyWatchpoint()
         || (!isCompiled && (!structureBefore->propertyAccessesAreCacheable() || structureBefore->typeInfo().prohibitsPropertyCaching() || (access == SlotAccess::Store && isHostObjectOverridingPut(structureBefore))));
@@ -1130,7 +1167,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createInheritedField(id, flags, answer.holder, answer.wordOfInheritedField);
     case PropertyAnswerKind::Variable:
         RELEASE_ASSERT(isRead || answer.field);
-        return Slot::createField(id, Kind::Variable, flags, answer.variable, isRead ? 0 : answer.field->type, 0);
+        return Slot::createField(id, Kind::Variable, flags, answer.variable, isRead ? 0 : answer.field->type, answer.imageOfVariable);
     case PropertyAnswerKind::ExtraProperty:
         return slotForExtraProperty(answer, id, receiverStructure, Kind::ExtraProperty, flags);
     case PropertyAnswerKind::ExtraAccessor:

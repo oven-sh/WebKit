@@ -15,6 +15,7 @@
 #include "AOTCompiledStructure.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -384,6 +385,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     RELEASE_ASSERT(!(bits.hasValue || bits.hasWritable) || !(bits.hasGet || bits.hasSet));
     if (!descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
         return false;
+    ImageOfCellScope imageOfCell(vm, object);
     bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
     RETURN_IF_EXCEPTION(scope, false);
     if (isDefined)

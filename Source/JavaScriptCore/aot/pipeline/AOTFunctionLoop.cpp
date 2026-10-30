@@ -548,6 +548,8 @@ struct FinishedCopy {
 
     RemapSites remapSites;
     BodyIndex::Row row;
+    // Nobody reads a finished copy until all are finished.
+    ParkedBody body;
 };
 
 } // anonymous namespace
@@ -578,10 +580,11 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
     {
         DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases);
         FunctionQueue queue(loops, count);
+        // Of the functions that have changed.
         Vector<std::unique_ptr<Function>> optimized(count);
+        Vector<uint8_t> areValuesTypedAsDefined(FillWith { }, count, static_cast<uint8_t>(0));
         // Of a copy that has changed.
         Vector<std::unique_ptr<FinishedCopy>> finished(count);
-        Vector<uint8_t> didChange(FillWith { }, count, static_cast<uint8_t>(0));
         const Heat* heat = schedule.id == FunctionSchedule::Optimize ? &inputs.heat : nullptr;
         // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
         Vector<QueuedFunction> startedEarly;
@@ -676,10 +679,14 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                 if (isProvisional)
                     derived.setOptimizedBody(id, WTF::move(copy));
                 else {
-                    didChange[id.index()] = outcome == PassOutcome::Changed;
-                    if (outcome == PassOutcome::Changed)
+                    areValuesTypedAsDefined[id.index()] = copy->valuesAreTypedAsDefined();
+                    // A copy that no pass has changed dies here.
+                    if (outcome == PassOutcome::Changed) {
                         finished[id.index()] = makeUnique<FinishedCopy>(*copy);
-                    optimized[id.index()] = WTF::move(copy);
+                        if (schedule.id == FunctionSchedule::Optimize)
+                            finished[id.index()]->body = ParkedBody(copy->storageOfBlocks(), copy->storageOfValues());
+                        optimized[id.index()] = WTF::move(copy);
+                    }
                 }
             }, [&](FunctionID id) {
                 derived.confirmRequestsOf(id);
@@ -712,15 +719,19 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
             forEachIndexInParallel(loops, count, [&](unsigned index) {
                 FunctionID id(index);
                 if (queue.wasConfirmed(id)) {
-                    if (auto& copy = optimized[index]; copy && didChange[index]) {
+                    if (auto& copy = optimized[index]) {
                         FinishedCopy& finishedCopy = *finished[index];
+                        if (finishedCopy.body)
+                            finishedCopy.body.takeInto(copy->storageOfBlocks(), copy->storageOfValues());
                         if (!finishedCopy.remapSites.isEmpty()) {
                             applyRemaps(remaps, *copy, finishedCopy.remapSites);
                             finishedCopy.row.applyRemaps(remaps.types, remaps.functions, finishedCopy.remapSites.record ? copy.get() : nullptr);
                         }
                         std::swap(editor.at(id), *copy);
                         bodyIndex.write(id, WTF::move(finishedCopy.row));
-                    } else if (copy && copy->valuesAreTypedAsDefined())
+                        // The body from before the loop goes as the new one comes.
+                        copy = nullptr;
+                    } else if (areValuesTypedAsDefined[index])
                         programToEdit.functions[index].setValuesAreTypedAsDefined();
                     return;
                 }

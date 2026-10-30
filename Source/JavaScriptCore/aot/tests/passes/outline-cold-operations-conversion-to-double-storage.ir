@@ -1,0 +1,20 @@
+# Each place that gives an array storage for numbers counts the short-lived arrays it has done that for, and gives up when they are many. It gives up for itself: the operation stays at its place,
+# however rare its block and however many functions hold the like of it. In one body for all of them, the loops over long-lived arrays would run their general copy for ever
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK-NOT: role=OutlinedBody
+# CHECK-COUNT-8: ConvertToDoubleStorage v0
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..7
+
+function f%(i) name="reads%(i)" parameters=[{type=Array<number>}, {type=boolean}] results=[{type=undefined}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    ConvertToDoubleStorage v0
+    Jump -> next b2()
+  b2():
+    Return
+}
+# END REPEAT

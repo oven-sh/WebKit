@@ -1067,6 +1067,18 @@ static void forEachTypeVisitsEveryPosition()
     AOT_TEST_CHECK(hasElements(visited, { TypeID(100u), TypeID(101u), TypeID(102u), TypeID(103u), TypeID(104u), TypeID(106u) }));
 }
 
+static void parkedBodyThatEndsInWordsOfNoBytesComesBack()
+{
+    Function::Blocks::Storage blocks;
+    Function::Values::Storage values;
+    blocks.grow(3);
+    ParkedBody parked(blocks, values);
+    AOT_TEST_CHECK(parked && blocks.isEmpty());
+    parked.takeInto(blocks, values);
+    AOT_TEST_CHECK(!parked && blocks.size() == 3 && values.isEmpty());
+    AOT_TEST_CHECK(blocks[2].values.isEmpty() && blocks[2].parameters.isEmpty());
+}
+
 #define FOR_EACH_AOT_IR_TEST(v) \
     v(compactListAppendInsertRemove) v(compactListAppendOwnSpan) v(compactListCopyAndMove) v(compactListRemoveAtEnd) v(compactListEmptyOperationsLeaveSharedHeader) \
     v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
@@ -1083,7 +1095,8 @@ static void forEachTypeVisitsEveryPosition()
     v(recordFitsRoleForEveryRole) v(entryParameterPositions) v(declaredEntryTypeOfCalleeIsFunction) v(declaredEntryTypeOfEachPosition) \
     v(unsplitAsyncFunctionHasNoOrdinaryFrame) v(coroutineBodyHasNoCapability) v(hiddenByFlagOrCapability) \
     v(locationOfInlinedValue) v(locationWithoutFrameModuleIsCallSite) v(locationOfMalformedFrameListIsAbsent) \
-    v(compactDropsUnreachableCycle) v(compactDropsUnlistedValue) v(compactKeepsCompactFunction) v(compactRenumbersInBlockOrder) v(forEachTypeVisitsEveryPosition)
+    v(compactDropsUnreachableCycle) v(compactDropsUnlistedValue) v(compactKeepsCompactFunction) v(compactRenumbersInBlockOrder) v(forEachTypeVisitsEveryPosition) \
+    v(parkedBodyThatEndsInWordsOfNoBytesComesBack)
 
 std::span<const NativeTest> irTests()
 {

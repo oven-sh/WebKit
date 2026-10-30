@@ -45,7 +45,11 @@ public:
     ModuleID module() const { return m_module; }
     bool isDeferred() const { return m_isDeferred; }
     // A read of a deferred namespace object may evaluate the module, so that object does not have the module's namespace layout.
-    bool hasNamespaceLayoutOf(ModuleID module) const { return m_module == module && !m_isDeferred; }
+    // Image::position() of the image that has the module.
+    unsigned imagePosition() const { return m_imagePosition; }
+    bool hasNamespaceLayoutOf(ModuleID module) const { return (m_module == module || m_face == module) && !m_isDeferred; }
+    // The object of a file is also what code gets that asks for the namespace object of the file's face, where that face captures nothing.
+    void setFace(ModuleID face) { m_face = face; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return find(name) || isDynamicExport(name); }
     // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
@@ -84,6 +88,8 @@ private:
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;
     ModuleID m_module;
+    ModuleID m_face;
+    uint8_t m_imagePosition;
     bool m_isDeferred;
     bool m_mayNeedEvaluation;
     bool m_hasESModuleMarker { false };

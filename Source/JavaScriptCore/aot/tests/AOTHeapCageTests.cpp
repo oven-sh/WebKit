@@ -1292,7 +1292,7 @@ static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
     return hasThrown;
 }
 
-// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown.
+// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown. The next poll fills it.
 static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
 {
     TestVM test;
@@ -1303,9 +1303,16 @@ static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().describeExhaustedLimit().contains("Structures"_s));
 
     AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
-    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().describeExhaustedLimit().contains("Structures"_s));
+    AOT_TEST_CHECK(!throwErrorIfOwed(vm, realm) && !test.cage().describeExhaustedLimit().contains("Structures"_s));
     // Only an allocator that still waits for the error takes back what it gave out.
     AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
+
+    // No error is owed, and the polls are still on.
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm));
+    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().errorWaitsForPoll());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 }
 
 static void checkRangeIsReused()

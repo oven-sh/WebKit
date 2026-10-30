@@ -226,6 +226,17 @@ struct JSONTextWriter final : Emission {
         return std::tuple { isOfLibrary, layout.kind == LayoutKind::Instance, membersWithoutText, members, module, layout.position, id };
     }
 
+    // toJSON converts the date to a primitive and calls toISOString, each by name. A test run may replace any of them.
+    bool findsMembersOfDateAsBuilt() const
+    {
+        const BuiltinTable& builtins = program().builtins();
+        auto isAsBuilt = [&](BuiltinName name) {
+            MemberAnswer found = findBuiltinObjectMember({ program(), &inputs().flow }, builtins.at(BuiltinClasses::Date).prototype, program().keyOf(name), Access::Read);
+            return found.kind == MemberKind::Builtin && found.needsNoTest();
+        };
+        return isAsBuilt(BuiltinNames::toJSON) && isAsBuilt(BuiltinNames::toISOString) && std::ranges::all_of(builtins.keysReadBy(Protocol::ToPrimitive), isAsBuilt);
+    }
+
     BuiltinOverloadID findGetTimeOfDate() const
     {
         BuiltinMemberLookup lookup = program().builtins().findForInstance(BuiltinClasses::Date, BuiltinNames::getTime);
@@ -327,7 +338,7 @@ struct JSONTextWriter final : Emission {
         // The host reads toJSON, valueOf and toISOString by name, and each first read adds its member to Date.prototype. Where the program lists those keys, it sees that order.
         if (part->builtinClass == BuiltinClasses::Date && inputs().flow.listsKeysOf(builtins.canonicalID(builtins.at(BuiltinClasses::Date).prototype)))
             return { };
-        if (part->builtinClass == BuiltinClasses::Date && findGetTimeOfDate())
+        if (part->builtinClass == BuiltinClasses::Date && findsMembersOfDateAsBuilt() && findGetTimeOfDate())
             return { .kind = ValueKind::Scalar, .row = Opcode::JSONAppendDate, .tested = types.intern(instances.withoutClassProofs()) };
         if (part->builtinClass == BuiltinClasses::Array)
             return { .kind = ValueKind::Array, .tested = types.intern(instances.withoutClassProofs()), .element = part->expectedContentsAt(builtins, ContentsSlot::Element).predicted() };

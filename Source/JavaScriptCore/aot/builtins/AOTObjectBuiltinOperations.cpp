@@ -466,7 +466,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
     if (Object* record = compiledObjectOrNull(object))
-        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
+        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && (!instance->state->sharesRealm || record->isDescribedBy(*instance->state)) && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);
@@ -495,7 +495,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignToUnseenObject, size_t, (Instan
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignToUnseenObject);
     JSObject* from = asObject(source);
     if (Object* record = compiledObjectOrNull(object))
-        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssignToUnseenTarget(vm, object, from));
+        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && (!instance->state->sharesRealm || record->isDescribedBy(*instance->state)) && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssignToUnseenTarget(vm, object, from));
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);

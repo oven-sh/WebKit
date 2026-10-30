@@ -45,8 +45,17 @@ ALWAYS_INLINE const ProgramTables& programTables()
 JS_EXPORT_PRIVATE uint32_t closureNumberOf(FunctionID);
 JS_EXPORT_PRIVATE FunctionID closureFunctionWithNumber(uint32_t);
 inline FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionWithNumber(ClosureWord::closureNumberOf(word)); }
-ALWAYS_INLINE FunctionKindData kindOfClosureNumber(uint32_t number) { return programTables().closureFunctionKinds()[number]; }
-ALWAYS_INLINE CaptureCounts captureCountsOfClosureNumber(uint32_t number) { return programTables().captureCountsOfClosureNumber(number); }
+JS_EXPORT_PRIVATE const Image& imageWithClosureNumber(uint32_t number);
+// Of the image that gave the number out. Where a realm runs several images, a closure says by its number which of them it is of, and any thread may ask.
+// A process with one image pays nothing for that: it takes the road of Image::current().
+ALWAYS_INLINE const ProgramTables& programTablesWithClosureNumber(uint32_t number)
+{
+    if (const Image* image = Image::sharedByAllThreads()) [[likely]]
+        return image->programTables();
+    return imageWithClosureNumber(number).programTables();
+}
+ALWAYS_INLINE FunctionKindData kindOfClosureNumber(uint32_t number) { return programTablesWithClosureNumber(number).kindOfClosureNumber(number); }
+ALWAYS_INLINE CaptureCounts captureCountsOfClosureNumber(uint32_t number) { return programTablesWithClosureNumber(number).captureCountsOfClosureNumber(number); }
 
 ALWAYS_INLINE FunctionKindData functionKindData(FunctionID function)
 {
@@ -59,6 +68,28 @@ ALWAYS_INLINE CaptureCounts captureCountsOf(FunctionID function)
     ASSERT(function.index() >= tables.closureFunctions.first && function.index() < tables.closureFunctions.end);
     return tables.captureCountsOf(function.index());
 }
+
+// While it lives, the thread's image is the one that gave the closure number out. For whoever asks the tables and the stubs of the image alone: the VM goes on with the image that runs.
+class ImageOfClosureNumberScope {
+    WTF_MAKE_NONCOPYABLE(ImageOfClosureNumberScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE explicit ImageOfClosureNumberScope(uint32_t number)
+    {
+        if (!Image::sharedByAllThreads()) [[unlikely]] {
+            m_previous = Image::current();
+            Image::setCurrentOfThread(&imageWithClosureNumber(number));
+        }
+    }
+    ALWAYS_INLINE ~ImageOfClosureNumberScope()
+    {
+        if (m_previous) [[unlikely]]
+            Image::setCurrentOfThread(m_previous);
+    }
+
+private:
+    const Image* m_previous { nullptr };
+};
 
 unsigned functionLengthOf(FunctionID);
 FunctionID sourceFunctionOf(FunctionID);
@@ -165,6 +196,8 @@ struct FunctionTables {
     // Those of calls that may not have returned. The others leave the table.
     template<typename Visitor> void visitRecordedCallees(VM&, Visitor&, uint64_t phaseOfCollector);
     void finalizeRecordedCallees(VM&, uint64_t phaseOfCollector);
+    // While nobody has entered the program every call has returned. Otherwise an entry stays until the second collection behind it, and with it the realm of its function.
+    void forgetRecordedCalleesIfNotEntered(VM&);
 
     // Only the thread of the VM changes them: compiled code writes an entry, the run time moves the table.
     Lock recordedCalleesLock;

@@ -244,6 +244,55 @@ void loadShapeWord(StubAssembler& jit, GPRReg cell, GPRReg result)
     jit.load32(Address(cell, offsetOfShapeWord), result);
 }
 
+void branchUnlessShapeOfThisImage(StubAssembler& jit, GPRReg shapeWord, JumpList& otherwise)
+{
+    const StubOptions& options = jit.options();
+    if (!options.sharesRealms)
+        return;
+    // The word is zero less the shape.
+    otherwise.append(jit.branch32(CCallHelpers::Below, shapeWord, TrustedImm32(static_cast<int32_t>(0 - options.lastShape))));
+    if (options.shapesBelow)
+        otherwise.append(jit.branch32(CCallHelpers::AboveOrEqual, shapeWord, TrustedImm32(static_cast<int32_t>(0 - options.shapesBelow))));
+}
+
+void branchUnlessClosureNumberOfThisImage(StubAssembler& jit, GPRReg number, JumpList& otherwise)
+{
+    const StubOptions& options = jit.options();
+    if (!options.sharesRealms)
+        return;
+    otherwise.append(jit.branch32(CCallHelpers::AboveOrEqual, number, TrustedImm32(static_cast<int32_t>(options.endOfClosureNumbers))));
+    if (options.closureNumbersBelow)
+        otherwise.append(jit.branch32(CCallHelpers::Below, number, TrustedImm32(static_cast<int32_t>(options.closureNumbersBelow))));
+}
+
+void branchIfObjectOfOtherImage(StubAssembler& jit, GPRReg cell, JumpList& isOfOtherImage)
+{
+    const StubOptions& options = jit.options();
+    if (!options.sharesRealms)
+        return;
+    isOfOtherImage.append(jit.branch32(CCallHelpers::Below, Address(cell, offsetOfShapeWord), TrustedImm32(static_cast<int32_t>(0 - options.lastShape))));
+    if (options.shapesBelow)
+        isOfOtherImage.append(jit.branch32(CCallHelpers::AboveOrEqual, Address(cell, offsetOfShapeWord), TrustedImm32(static_cast<int32_t>(0 - options.shapesBelow))));
+}
+
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler& jit, GPRReg cell)
+{
+    JumpList isNot;
+    isNot.append(jit.branchIfNotType(cell, CompiledObjectType));
+    branchIfObjectOfOtherImage(jit, cell, isNot);
+    return isNot;
+}
+
+Jump branchIfCompiledObjectOfThisImage(StubAssembler& jit, GPRReg cell)
+{
+    if (!jit.options().sharesRealms)
+        return jit.branchIfType(cell, CompiledObjectType);
+    JumpList isNot = branchIfNotCompiledObjectOfThisImage(jit, cell);
+    Jump is = jit.jump();
+    isNot.link(&jit);
+    return is;
+}
+
 void loadCellVM(StubAssembler& jit, GPRReg cellAndResult)
 {
     Jump isPreciseAllocation = jit.branchTestPtr(CCallHelpers::NonZero, cellAndResult, TrustedImm32(PreciseAllocation::halfAlignment));

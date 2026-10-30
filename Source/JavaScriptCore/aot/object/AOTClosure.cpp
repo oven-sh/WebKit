@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClosureTable.h"
@@ -83,6 +84,7 @@ static CallData nativeCallData(TaggedNativeFunction function)
 
 static CallData constructDataOf(JSCell* cell, uint32_t closureNumber)
 {
+    ImageOfClosureNumberScope scope(closureNumber);
     FunctionKindData kind = kindOfClosureNumber(closureNumber);
     if (kind.isBound())
         return boundFunctionData(closureFunctionWithNumber(closureNumber)).constructs ? nativeCallData(constructBoundClosure) : CallData();
@@ -103,7 +105,7 @@ Closure* Closure::create(VM& vm, Structure* structure, FunctionID function, std:
     const ProgramTables& programTables = AOT::programTables();
     ClosureFunctionRangeData closureFunctions = programTables.closureFunctions;
     RELEASE_ASSERT(closureFunctions.first <= function.index() && function.index() < closureFunctions.end);
-    uint32_t closureNumber = function.index() - closureFunctions.first;
+    uint32_t closureNumber = programTables.closureNumberOf(function.index());
     uint64_t word = tables.words[closureNumber];
     CaptureCounts counts = programTables.captureCountsOfClosureNumber(closureNumber);
     RELEASE_ASSERT(word && counts.references == numberOfReferences && counts.captures == captures.size());
@@ -140,6 +142,7 @@ void Closure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    ImageOfCellScope imageOfCallee(globalObject->vm(), callFrame->jsCallee());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* classObject = uncheckedDowncast<Closure>(callFrame->jsCallee());
@@ -153,8 +156,10 @@ CallData Closure::getCallData(JSCell* cell)
 {
     // The word of the closure says it as well as the record of its function, and lies in the cell.
     ASSERT(uncheckedDowncast<Closure>(cell)->kind().isConstructor == !!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit));
-    if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit))
+    if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit)) {
+        ImageOfClosureNumberScope scope(uncheckedDowncast<Closure>(cell)->closureNumber());
         return CallData::forCompiledCode(closureEntrypoint().taggedPtr(), cell->structure()->realm());
+    }
     return nativeCallData(callClassConstructor);
 }
 
@@ -202,6 +207,7 @@ static JSC_DECLARE_CUSTOM_GETTER(closurePrototypeProperty);
 
 JSC_DEFINE_CUSTOM_GETTER(closurePrototypeProperty, (JSGlobalObject* globalObject, EncodedJSValue encodedClosure, PropertyName name))
 {
+    ImageOfCellScope imageOfClosure(globalObject->vm(), JSValue::decode(encodedClosure).asCell());
     JSCell* cell = JSValue::decode(encodedClosure).asCell();
     if (cell->type() == SlimClosureType) {
         auto* closure = uncheckedDowncast<SlimClosure>(cell);
@@ -223,11 +229,13 @@ GetValueFunc closurePrototypePropertyGetter()
 
 const LayoutData* Closure::classData() const
 {
+    ImageOfCellScope imageOfCell(this);
     return kind().isConstructor ? state().objects->classes.classConstructedByClosureWithNumber(closureNumber()) : nullptr;
 }
 
 bool Closure::isLazyClassObject() const
 {
+    ImageOfCellScope imageOfCell(this);
     if (!kind().isConstructor || getDirect(vm(), vm().propertyNames->prototype))
         return false;
     const LayoutData* classLayout = classData();
@@ -238,6 +246,7 @@ bool Closure::isLazyClassObject() const
 
 bool Closure::hasStructureOfNewClosure(VM& vm) const
 {
+    ImageOfCellScope imageOfCell(this);
     unsigned index = kind().closureStructure;
     return index != classObjectClosureStructure && structure() == state().objects->closures.closureStructure(vm, index);
 }
@@ -250,6 +259,7 @@ static NEVER_INLINE void createClassObject(Closure* classObject)
 
 void Closure::adoptBoundFunctionStructure(VM& vm)
 {
+    ImageOfCellScope imageOfCell(this);
     ClosureTable& closures = state().objects->closures;
     Structure* unbound = closures.closureStructureFor(vm, function());
     if (structure() != unbound)
@@ -259,6 +269,7 @@ void Closure::adoptBoundFunctionStructure(VM& vm)
 
 void Closure::ensureClassObject(VM&)
 {
+    ImageOfCellScope imageOfCell(this);
     if (isLazyClassObject())
         createClassObject(this);
 }
@@ -278,6 +289,7 @@ static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure
 
 void Closure::initializeClassObject(VM& vm, JSObject* parent, JSObject* prototype)
 {
+    ImageOfCellScope imageOfCell(this);
     ASSERT(kind().isConstructor && classData());
     Structure* shared = structureSharedWithClassesInheritingFrom(vm, *this, parent);
     if (!shared) {
@@ -300,6 +312,7 @@ void Closure::initializeClassObject(VM& vm, JSObject* parent, JSObject* prototyp
 
 void Closure::prepareForGenericAccess(VM& vm)
 {
+    ImageOfCellScope imageOfCell(this);
     if (kind().isBound()) [[unlikely]]
         adoptBoundFunctionStructure(vm);
     else
@@ -308,6 +321,7 @@ void Closure::prepareForGenericAccess(VM& vm)
 
 JSValue Closure::prototypeProperty(VM& vm)
 {
+    ImageOfCellScope imageOfCell(this);
     if (JSValue stored = getDirect(vm, vm.propertyNames->prototype))
         return stored;
     if (isLazyClassObject())
@@ -329,6 +343,7 @@ static JSObject* createPrototypeObjectOfFunction(VM& vm, JSGlobalObject* globalO
 
 bool Closure::ensurePrototypeProperty(VM& vm)
 {
+    ImageOfCellScope imageOfCell(this);
     if (getDirect(vm, vm.propertyNames->prototype))
         return true;
     prepareForGenericAccess(vm);
@@ -350,6 +365,7 @@ bool Closure::ensurePrototypeProperty(VM& vm)
 
 void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(this);
     RELEASE_ASSERT(!kind().isConstructor);
     validateIsNotInFrame(vm, this);
     prepareForGenericAccess(vm);
@@ -360,6 +376,7 @@ void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attribu
 
 void Closure::setNameProperty(VM& vm, JSString* name, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(this);
     validateIsNotInFrame(vm, this);
     prepareForGenericAccess(vm);
     putDirect(vm, vm.propertyNames->name, name, attributes);
@@ -446,6 +463,7 @@ static JSObject* boundFunctionTarget(VM& vm, State& state, FunctionID function, 
 
 JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    ImageOfCellScope imageOfCallee(globalObject->vm(), callFrame->jsCallee());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* callee = callFrame->jsCallee();
@@ -491,12 +509,14 @@ JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, C
 
 bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     Closure* closure = uncheckedDowncast<Closure>(object);
     return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     // The base class clears whatever its lookups throw.
     DeferTerminationForAWhile deferTermination(vm);
@@ -560,6 +580,7 @@ static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName nam
 
 bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
@@ -606,16 +627,19 @@ bool Closure::isNameThatBuiltinFunctionsRefuse(VM& vm, UniquedStringImpl* uid)
 
 bool Closure::refusesOwnProperty(VM& vm, PropertyName name) const
 {
+    ImageOfCellScope imageOfCell(this);
     return !name.isPrivateName() && isNameThatBuiltinFunctionsRefuse(vm, name.uid()) && isBuiltinFunction();
 }
 
 bool Closure::isBuiltinFunction() const
 {
+    ImageOfCellScope imageOfCell(this);
     return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
 }
 
 bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
     validateIsNotInFrame(vm, closure);
@@ -662,11 +686,13 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 
 bool Closure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name) const
 {
+    ImageOfCellScope imageOfCell(this);
     return !classData() && !kind().isBound() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
 }
 
 bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
@@ -712,6 +738,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
 
 bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
     validateIsNotInFrame(vm, closure);
@@ -741,6 +768,7 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
 
 bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
     validateIsNotInFrame(vm, closure);
@@ -750,6 +778,7 @@ bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned in
 
 bool Closure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
@@ -763,6 +792,7 @@ bool Closure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 
 bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
@@ -814,7 +844,7 @@ SlimClosure* SlimClosure::create(VM& vm, Structure* structure, FunctionID functi
     uint32_t closureNumber = programTables.closureNumberOf(function.index());
     uint64_t word = FunctionTables::of(vm).words[closureNumber];
     CaptureCounts counts = programTables.captureCountsOfClosureNumber(closureNumber);
-    RELEASE_ASSERT(word && programTables.closureFunctionKinds()[closureNumber].isSlim && counts.references == numberOfReferences && counts.captures == captures.size());
+    RELEASE_ASSERT(word && programTables.kindOfClosureNumber(closureNumber).isSlim && counts.references == numberOfReferences && counts.captures == captures.size());
     SlimClosure* closure = new (NotNull, allocateCell<SlimClosure>(vm, allocationSize(captures.size()))) SlimClosure(vm, structure, word);
     memcpySpan(std::span { reinterpret_cast<uint64_t*>(closure + 1), captures.size() }, captures);
     closure->finishCreation(vm);
@@ -829,14 +859,27 @@ SlimClosure* SlimClosure::createForCompiledCode(VM& vm, Structure* structure, si
     return closure;
 }
 
+static ALWAYS_INLINE State& stateOfClosure(const JSCell* closure, uint32_t closureNumber)
+{
+    Instance* first = closure->structure()->realm()->aotInstance();
+    if (!first->above) [[likely]]
+        return *first->state;
+    return *first->instanceWithClosureNumber(closureNumber).state;
+}
+
+State& Closure::state() const
+{
+    return stateOfClosure(this, closureNumber());
+}
+
 State& SlimClosure::state() const
 {
-    return State::of(structure()->realm());
+    return stateOfClosure(this, closureNumber());
 }
 
 State& ReifiedSlimClosure::state() const
 {
-    return State::of(structure()->realm());
+    return stateOfClosure(this, closureNumber());
 }
 
 template<typename Visitor>
@@ -884,11 +927,13 @@ size_t SlimClosure::estimatedSize(JSCell* cell, VM&)
 
 CallData SlimClosure::getCallData(JSCell* cell)
 {
+    ImageOfClosureNumberScope scope(uncheckedDowncast<SlimClosure>(cell)->closureNumber());
     return CallData::forCompiledCode(slimClosureEntrypoint().taggedPtr(), cell->structure()->realm());
 }
 
 CallData ReifiedSlimClosure::getCallData(JSCell* cell)
 {
+    ImageOfClosureNumberScope scope(uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber());
     return CallData::forCompiledCode(slimClosureEntrypoint().taggedPtr(), cell->structure()->realm());
 }
 
@@ -904,6 +949,7 @@ CallData ReifiedSlimClosure::getConstructData(JSCell* cell)
 
 Structure* SlimClosure::fillInitialProperties(VM& vm, std::span<JSValue, numberOfInitialProperties> values)
 {
+    ImageOfCellScope imageOfCell(this);
     validateIsNotInFrame(vm, this);
     State& state = this->state();
     FunctionID function = this->function();
@@ -917,6 +963,7 @@ Structure* SlimClosure::fillInitialProperties(VM& vm, std::span<JSValue, numberO
 
 ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std::span<const JSValue> values)
 {
+    ImageOfCellScope imageOfCell(this);
     static_assert(offsetOfWord() == butterflyOffset());
     RELEASE_ASSERT(structure->outOfLineCapacity() == values.size() && getPrototypeDirect() == structure->storedPrototype());
     bool takesName = nameWasLookedFor();
@@ -940,6 +987,7 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
 
 ReifiedSlimClosure* SlimClosure::reify(VM& vm, PrototypeObject prototypeObject)
 {
+    ImageOfCellScope imageOfCell(this);
     JSValue values[numberOfInitialProperties];
     static_assert(numberOfInitialProperties == initialOutOfLineCapacity);
     Structure* withProperties = fillInitialProperties(vm, values);
@@ -952,6 +1000,7 @@ ReifiedSlimClosure* SlimClosure::reify(VM& vm, PrototypeObject prototypeObject)
 
 ReifiedSlimClosure* SlimClosure::reifyWithAddedProperty(VM& vm, Structure* structureWithProperty, PropertyOffset offset, JSValue value)
 {
+    ImageOfCellScope imageOfCell(this);
     JSValue values[2 * numberOfInitialProperties];
     Structure* withoutProperty = fillInitialProperties(vm, std::span(values).first<numberOfInitialProperties>());
     unsigned index = offset - firstOutOfLineOffset;
@@ -963,6 +1012,7 @@ ReifiedSlimClosure* SlimClosure::reifyWithAddedProperty(VM& vm, Structure* struc
 
 JSC_DEFINE_CUSTOM_GETTER(createPrototypeProperty, (JSGlobalObject*, EncodedJSValue encodedClosure, PropertyName))
 {
+    ImageOfCellScope imageOfClosure(JSValue::decode(encodedClosure).asCell());
     JSObject* closure = asObject(JSValue::decode(encodedClosure));
     VM& vm = closure->vm();
     JSObject* prototype = createPrototypeObjectOfFunction(vm, closure->structure()->realm(), closure);
@@ -975,6 +1025,7 @@ JSC_DEFINE_CUSTOM_GETTER(createPrototypeProperty, (JSGlobalObject*, EncodedJSVal
 
 JSValue ReifiedSlimClosure::lookForNameProperty(VM& vm)
 {
+    ImageOfCellScope imageOfCell(this);
     didLookForNameProperty(vm, this);
     unsigned attributes = 0;
     JSValue name = getDirect(vm, vm.propertyNames->name, attributes);
@@ -987,24 +1038,28 @@ JSValue ReifiedSlimClosure::lookForNameProperty(VM& vm)
 
 JSC_DEFINE_CUSTOM_GETTER(takeNameProperty, (JSGlobalObject*, EncodedJSValue encodedClosure, PropertyName))
 {
+    ImageOfCellScope imageOfClosure(JSValue::decode(encodedClosure).asCell());
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(asObject(JSValue::decode(encodedClosure)));
     return JSValue::encode(closure->lookForNameProperty(closure->vm()));
 }
 
 bool SlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
     return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 bool ReifiedSlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(object);
     return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
     if (name == vm.propertyNames->length) {
@@ -1032,6 +1087,7 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
 
 bool ReifiedSlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     if (name == vm.propertyNames->name) [[unlikely]]
         uncheckedDowncast<ReifiedSlimClosure>(object)->lookForNameProperty(vm);
@@ -1040,17 +1096,20 @@ bool ReifiedSlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* gl
 
 void SlimClosure::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
     JSObject::getOwnPropertyNames(object, globalObject, names, mode);
 }
 
 void ReifiedSlimClosure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     uncheckedDowncast<ReifiedSlimClosure>(object)->lookForNameProperty(globalObject->vm());
 }
 
 bool SlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     ReifiedSlimClosure* closure = uncheckedDowncast<SlimClosure>(cell)->reify(globalObject->vm());
     bool result = ReifiedSlimClosure::put(closure, globalObject, name, value, slot);
     slot.disableCaching();
@@ -1059,6 +1118,7 @@ bool SlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName n
 
 bool ReifiedSlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     VM& vm = globalObject->vm();
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(cell);
     if (name == vm.propertyNames->name) [[unlikely]]
@@ -1075,6 +1135,7 @@ bool ReifiedSlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
 bool ReifiedSlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     VM& vm = globalObject->vm();
     bool isDeleted = Base::deleteProperty(cell, globalObject, name, slot);
     if (name == vm.propertyNames->displayName) [[unlikely]] {
@@ -1090,12 +1151,14 @@ bool ReifiedSlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
 
 bool SlimClosure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     uncheckedDowncast<SlimClosure>(cell)->reify(globalObject->vm());
     return JSObject::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
 
 bool SlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     uncheckedDowncast<SlimClosure>(cell)->reify(globalObject->vm());
     bool isDeleted = JSObject::deleteProperty(cell, globalObject, name, slot);
     slot.disableCaching();
@@ -1104,12 +1167,14 @@ bool SlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Pro
 
 bool SlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     ReifiedSlimClosure* closure = uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
     return ReifiedSlimClosure::defineOwnProperty(closure, globalObject, name, descriptor, shouldThrow);
 }
 
 bool ReifiedSlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(object);
@@ -1133,12 +1198,14 @@ bool ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name)
 
 bool SlimClosure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
     return JSObject::preventExtensions(object, globalObject);
 }
 
 bool SlimClosure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     if (object->getPrototypeDirect() == prototype)
         return true;
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());

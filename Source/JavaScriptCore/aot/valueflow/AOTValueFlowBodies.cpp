@@ -2404,9 +2404,17 @@ bool isUsedOnlyAsInstanceOfOwnFunction(const Program& program, FunctionID functi
 ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     const Function& function = program.at(id);
+    // A list takes room for sixteen elements with its first. Most functions are short, there are hundreds of thousands of them, and all bodies stand side by side until they are linked.
+    auto withoutSpareRoom = [](ValueFlowBody&& body) {
+        auto shrink = [](auto&... lists) {
+            (lists.shrinkToFit(), ...);
+        };
+        shrink(body.passedParameters, body.nodes, body.sites, body.constants, body.masks, body.edges, body.edgesOnceReached, body.seedsOnceReached, body.functionsEnteredOnceReached, body.statements, body.operands, body.observedValues, body.comparedValues, body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly);
+        return WTF::move(body);
+    };
     if (!function.hasBody())
-        return makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator));
-    return BodyReducer(program, tables, id, unobservedDefinitions).reduce();
+        return withoutSpareRoom(makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator)));
+    return withoutSpareRoom(BodyReducer(program, tables, id, unobservedDefinitions).reduce());
 }
 
 bool startsWithoutValueInSolve(const Program& program, const Variable& variable)

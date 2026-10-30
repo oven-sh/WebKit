@@ -51,6 +51,150 @@ void Function::releaseBody()
     writtenPositions.clear();
 }
 
+// A word is written as its difference from the word `stride` words in front of it, in 0, 1, 2 or 4 bytes: a record of a table differs little from the record before it.
+// In front of every four words stands a byte that says how many bytes each takes.
+static constexpr std::array<uint8_t, 4> bytesOfPackedWord { 0, 1, 2, 4 };
+static constexpr std::array<uint32_t, 4> maskOfPackedWord { 0, 0xff, 0xffff, 0xffffffff };
+static constexpr size_t spareBytesBehindPackedWords = sizeof(uint32_t);
+static_assert(std::endian::native == std::endian::little);
+
+static constexpr size_t mostBytesOfPackedWords(size_t numberOfWords) { return numberOfWords * sizeof(uint32_t) + (numberOfWords + 3) / 4; }
+
+static ALWAYS_INLINE unsigned packWord(uint8_t*& target, uint32_t word, uint32_t wordInFront)
+{
+    uint32_t difference = word - wordInFront;
+    uint32_t written = (difference << 1) ^ static_cast<uint32_t>(static_cast<int32_t>(difference) >> 31);
+    unsigned size = !!written + (written > 0xff) + (written > 0xffff);
+    memcpy(target, &written, sizeof(written));
+    target += bytesOfPackedWord[size];
+    return size;
+}
+
+static ALWAYS_INLINE uint32_t unpackWord(const uint8_t*& source, unsigned size, uint32_t wordInFront)
+{
+    uint32_t written;
+    memcpy(&written, source, sizeof(written));
+    written &= maskOfPackedWord[size];
+    source += bytesOfPackedWord[size];
+    return ((written >> 1) ^ (0 - (written & 1))) + wordInFront;
+}
+
+// The first `stride` words have zero in front of them. What is left over behind the last four takes a byte of sizes too.
+static uint8_t* packWords(uint8_t* target, std::span<const uint32_t> span, size_t stride)
+{
+    const uint32_t* words = span.data();
+    size_t count = span.size();
+    size_t index = 0;
+    auto packUpTo = [&](size_t end, auto wordInFrontOf) ALWAYS_INLINE_LAMBDA {
+        for (; index + 4 <= end; index += 4) {
+            uint8_t* sizes = target++;
+            unsigned first = packWord(target, words[index], wordInFrontOf(index));
+            unsigned second = packWord(target, words[index + 1], wordInFrontOf(index + 1));
+            unsigned third = packWord(target, words[index + 2], wordInFrontOf(index + 2));
+            unsigned fourth = packWord(target, words[index + 3], wordInFrontOf(index + 3));
+            *sizes = static_cast<uint8_t>(first | second << 2 | third << 4 | fourth << 6);
+        }
+    };
+    auto checked = [&](size_t at) ALWAYS_INLINE_LAMBDA { return at >= stride ? words[at - stride] : 0; };
+    packUpTo(std::min(count, (stride + 3) & ~static_cast<size_t>(3)), checked);
+    packUpTo(count, [&](size_t at) ALWAYS_INLINE_LAMBDA { return words[at - stride]; });
+    if (index < count) {
+        uint8_t* sizes = target++;
+        unsigned sizesOfRest = 0;
+        for (unsigned shift = 0; index < count; ++index, shift += 2)
+            sizesOfRest |= packWord(target, words[index], checked(index)) << shift;
+        *sizes = static_cast<uint8_t>(sizesOfRest);
+    }
+    return target;
+}
+
+static const uint8_t* unpackWords(const uint8_t* source, uint32_t* words, size_t count, size_t stride)
+{
+    size_t index = 0;
+    auto unpackUpTo = [&](size_t end, auto wordInFrontOf) ALWAYS_INLINE_LAMBDA {
+        for (; index + 4 <= end; index += 4) {
+            unsigned sizes = *source++;
+            words[index] = unpackWord(source, sizes & 3, wordInFrontOf(index));
+            words[index + 1] = unpackWord(source, sizes >> 2 & 3, wordInFrontOf(index + 1));
+            words[index + 2] = unpackWord(source, sizes >> 4 & 3, wordInFrontOf(index + 2));
+            words[index + 3] = unpackWord(source, sizes >> 6, wordInFrontOf(index + 3));
+        }
+    };
+    auto checked = [&](size_t at) ALWAYS_INLINE_LAMBDA { return at >= stride ? words[at - stride] : 0; };
+    unpackUpTo(std::min(count, (stride + 3) & ~static_cast<size_t>(3)), checked);
+    unpackUpTo(count, [&](size_t at) ALWAYS_INLINE_LAMBDA { return words[at - stride]; });
+    if (index < count) {
+        unsigned sizes = *source++;
+        for (; index < count; ++index, sizes >>= 2)
+            words[index] = unpackWord(source, sizes & 3, checked(index));
+    }
+    return source;
+}
+
+template<typename Table>
+static std::span<const uint32_t> wordsOf(const Table& table)
+{
+    using T = typename Table::ValueType;
+    static_assert(!(sizeof(T) % sizeof(uint32_t)) && VectorTraits<T>::canMoveWithMemcpy);
+    return { reinterpret_cast<const uint32_t*>(table.span().data()), table.size() * sizeof(T) / sizeof(uint32_t) };
+}
+
+// The elements point to what the elements that were written pointed to.
+template<typename Table>
+static const uint8_t* unpackTable(const uint8_t* source, Table& table, size_t size)
+{
+    using T = typename Table::ValueType;
+    static_assert(sizeof(Table) == sizeof(VectorWords));
+    RELEASE_ASSERT(table.isEmpty() && !table.capacity());
+    if (!size)
+        return source;
+    VectorWords& words = reinterpret_cast<VectorWords&>(table);
+    words.buffer = fastMalloc(size * sizeof(T));
+    words.capacity = static_cast<unsigned>(size);
+    words.size = static_cast<unsigned>(size);
+    return unpackWords(source, static_cast<uint32_t*>(words.buffer), size * sizeof(T) / sizeof(uint32_t), sizeof(T) / sizeof(uint32_t));
+}
+
+ParkedBody::ParkedBody(Function::Blocks::Storage& blocks, Function::Values::Storage& values)
+    : m_numberOfValues(values.size())
+    , m_numberOfBlocks(blocks.size())
+{
+    BodyWords parts;
+    for (const Value& value : values)
+        value.appendWordsTo(parts);
+    for (const Block& block : blocks)
+        block.appendPartsTo(parts);
+    RELEASE_ASSERT(parts.size() <= UINT32_MAX);
+    m_numberOfWordsOfParts = static_cast<uint32_t>(parts.size());
+
+    auto wordsOfValues = wordsOf(values);
+    auto wordsOfBlocks = wordsOf(blocks);
+    Vector<uint8_t, 8192> bytes(mostBytesOfPackedWords(wordsOfValues.size()) + mostBytesOfPackedWords(wordsOfBlocks.size()) + mostBytesOfPackedWords(parts.size()) + spareBytesBehindPackedWords);
+    uint8_t* end = packWords(bytes.mutableSpan().data(), wordsOfValues, sizeof(Value) / sizeof(uint32_t));
+    end = packWords(end, wordsOfBlocks, sizeof(Block) / sizeof(uint32_t));
+    end = packWords(end, parts.span(), 1);
+    m_bytes = Vector<uint8_t>(bytes.span().first(end - bytes.span().data() + spareBytesBehindPackedWords));
+    values.clear();
+    blocks.clear();
+}
+
+void ParkedBody::takeInto(Function::Blocks::Storage& blocks, Function::Values::Storage& values)
+{
+    const uint8_t* source = unpackTable(m_bytes.span().data(), values, m_numberOfValues);
+    source = unpackTable(source, blocks, m_numberOfBlocks);
+    BodyWords parts;
+    parts.grow(m_numberOfWordsOfParts);
+    source = unpackWords(source, parts.mutableSpan().data(), parts.size(), 1);
+    RELEASE_ASSERT(source + spareBytesBehindPackedWords == m_bytes.span().data() + m_bytes.size());
+    BodyWordsReader reader(parts.span());
+    for (Value& value : values)
+        value.takeWordsFrom(reader);
+    for (Block& block : blocks)
+        block.takePartsFrom(reader);
+    RELEASE_ASSERT(reader.isAtEnd());
+    m_bytes = { };
+}
+
 bool Function::isModuleBody() const
 {
     switch (kind) {

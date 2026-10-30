@@ -921,12 +921,26 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     const NaturalLoops& loops = analyses.naturalLoops();
+    // `b(x: i32, y: number)` where every edge passes one value for both: y is x, and only x is typed as an int32. The types of the copy go by what the edges pass.
+    struct SameValueOfNarrowerType {
+        Edge edge;
+        uint32_t index;
+        ValueID value;
+    };
+    Vector<SameValueOfNarrowerType, 2> sameValuesOfNarrowerType;
     // What an inner loop hands on is its own first value or an int32, and its first value is that of the outer loop.
-    auto isInt32OrComesFrom = [&](ValueID parameter, ValueID start) {
+    auto isInt32OrComesFrom = [&](ValueID parameter, Edge firstEdge, uint32_t firstIndex) {
         BitVector seen(function.values.size());
-        Vector<ValueID, 8> worklist { start };
+        Vector<std::pair<Edge, uint32_t>, 8> worklist { { firstEdge, firstIndex } };
         while (!worklist.isEmpty()) {
-            ValueID value = analyses.identityOf(worklist.takeLast());
+            auto [passingEdge, passedIndex] = worklist.takeLast();
+            ValueID passed = targetOf(function, passingEdge).arguments[passedIndex];
+            ValueID value = analyses.identityOf(passed);
+            if (value != parameter && value != passed && program.typeOf(function, value).isInt32() && !program.typeOf(function, passed).isInt32()) {
+                if (!analyses.dominates(value, pointBeforeTerminatorOf(function, passingEdge.from)))
+                    return false;
+                sameValuesOfNarrowerType.append({ passingEdge, passedIndex, value });
+            }
             if (value == parameter || program.typeOf(function, value).isInt32() || seen.quickSet(value.index()))
                 continue;
             ValueLocation location = analyses.useLists().locationOf(value);
@@ -940,7 +954,7 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
             for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
                 if (edge.isHandlerEdge() || hasEdgeResults(function, edge))
                     return false;
-                worklist.append(targetOf(function, edge).arguments[indexInBlock]);
+                worklist.append({ edge, indexInBlock });
             }
         }
         return true;
@@ -964,8 +978,9 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
             const Type& type = program.typeOf(function, parameters[index]);
             if (!type.isNumberWithoutFraction() || type.isInteger())
                 continue;
+            sameValuesOfNarrowerType.clear();
             bool handsOnInt32 = std::ranges::all_of(analyses.cfg().incomingEdges(header), [&](Edge edge) {
-                return !loops.belongsTo(edge.from, loop) || isInt32OrComesFrom(parameters[index], targetOf(function, edge).arguments[index]);
+                return !loops.belongsTo(edge.from, loop) || isInt32OrComesFrom(parameters[index], edge, index);
             });
             ValueID first = targetOf(function, *entry).arguments[index];
             if (!handsOnInt32 || !program.typeOf(function, first).isNumberWithoutFraction())
@@ -1021,6 +1036,10 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         if (context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes) || RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
             continue;
 
+        for (const SameValueOfNarrowerType& same : sameValuesOfNarrowerType)
+            editTarget(function, same.edge).arguments[same.index] = same.value;
+        if (!sameValuesOfNarrowerType.isEmpty())
+            analyses.didChangeValues();
         IRBuilder builder(analyses.context(), function, context.types, &analyses);
         builder.setOrigin(function.at(entry->from).terminator.origin());
         BlockID front = builder.splitEdge(*entry);
@@ -1048,6 +1067,24 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
         return true;
     }
     return false;
+}
+
+// The numbers that are no integers among what the loops that are not rare carry from turn to turn.
+static size_t countNumbersCarriedByLoops(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    size_t count = 0;
+    for (unsigned index = 0; index < loops.numLoops(); ++index) {
+        const Block& header = function.at(loops.loop(index).header());
+        if (header.frequency.predicted() != BlockFrequency::Normal)
+            continue;
+        for (ValueID parameter : header.parameters) {
+            const Type& type = context.program.typeOf(function, parameter);
+            count += type.isNumberWithoutFraction() && !type.isInteger();
+        }
+    }
+    return count;
 }
 
 static bool comparesNoVariableInCycle(FunctionPassContext& context)
@@ -1140,9 +1177,16 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
-    while (!convertsOnlyWhatComparesNoVariable && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
+    // The loop that is copied becomes rare, and its copy carries one number fewer. Where the types do not bear that out, a copy of the copy would fare no better, and so on without end.
+    // Typing the copy may cut blocks and renumber the rest, so this asks the function as it stands and keeps no id.
+    size_t numbersCarried = convertsOnlyWhatComparesNoVariable ? 0 : countNumbersCarriedByLoops(context);
+    while (numbersCarried && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
+        size_t numbersLeft = countNumbersCarriedByLoops(context);
+        if (numbersLeft >= numbersCarried)
+            break;
+        numbersCarried = numbersLeft;
     }
     // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
     if (outcome == PassOutcome::Changed)

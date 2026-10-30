@@ -1206,7 +1206,7 @@ PassOutcome Pipeline::outlineColdOperations(OutliningSiteFinder* finder, const R
 
 PassOutcome Pipeline::inlineHeads(const ReaderOfScheduledFunction* readEditedFunction)
 {
-    auto findDirectCallees = [&](FunctionID id) -> const Vector<FunctionID>* {
+    auto findDirectCallees = [&](FunctionID id) -> const CompactList<FunctionID>* {
         const ReferencesOfBody* references = m_factsOfSelectedBodies ? m_factsOfSelectedBodies->referencesOf(id) : nullptr;
         return references ? &references->directCallees : nullptr;
     };
@@ -1311,6 +1311,10 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         });
         return m_runner.lastProgramPassOutcome();
     case PassID::AnalyzeFlow:
+        // Flow asks the index nothing, and ApplyFlowResults forgets every row.
+        m_analyses.bodyIndex().letGoOfRows(m_build);
+        // What typing has found out about pairs of types is a memo: whoever asks again behind flow finds it out again.
+        m_build.destroyLater(m_program.types.takeSavedSharedMemo());
         *output.flow = read(id, [&] {
             return analyzeValueFlow(m_program, m_program.types, m_build, nullptr, std::exchange(m_goesOnBehindFlowAnalysis, nullptr));
         });
@@ -1915,6 +1919,7 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     auto readPlacedFunction = [&](FunctionID id, Function& function) {
         steps.resolveFieldAccessesOf(placement, id, function);
         collectSiteCacheRequests(m_program, placement, flow(), heat, m_build, id, needsWeightsOfSiteCaches, siteCacheRequests[id.index()]);
+        siteCacheRequests[id.index()].shrinkToFit();
     };
     auto numberRest = [&] {
         steps.numberRest(placement);
@@ -1926,6 +1931,7 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
         forEachCalledFunction(m_program, m_program.functions[id.index()], [&](FunctionID target) {
             called.append(target);
         });
+        called.shrinkToFit();
     };
     ScopedLambda<void(FunctionID, Function&)> inFront(readPlacedFunction);
     ScopedLambda<void()> beside(numberRest);
@@ -1980,6 +1986,9 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
         runRepresentationStage();
     }
     checkNumberOfClosureFunctions();
+    // No body changes any more, and what reads the bodies from here on reads each of them once.
+    m_analyses.bodyIndex().letGoOfRows(m_build);
+    m_build.giveFreedMemoryBack();
     {
         // A run that was stopped after a pass hands out what its passes used. What it never computed stays the default result.
         PhaseTimes times(m_build, Stage::GenerateCode);

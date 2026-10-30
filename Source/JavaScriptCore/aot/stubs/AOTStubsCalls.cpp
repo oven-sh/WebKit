@@ -134,7 +134,7 @@ void loadClosureWordOfThisRealm(StubAssembler& jit, GPRReg closure, const CallRe
     // In an image with one instance every slim closure is a closure of this instance.
     if (!jit.options().hasOneInstance)
         appendUnlessOfThisRealm();
-    loadSlimClosureWord(jit, closure, registers.word, renamedClosures == RenamedClosures::AreEnteredThroughAdapter ? &isNotClosureOfThisRealm : nullptr);
+    loadSlimClosureWord(jit, closure, registers.word, renamedClosures == RenamedClosures::AreEnteredThroughAdapter ? &isNotClosureOfThisRealm : nullptr, &isNotClosureOfThisRealm);
     Jump hasWord = jit.jump();
 
     isFull.link(&jit);
@@ -144,6 +144,10 @@ void loadClosureWordOfThisRealm(StubAssembler& jit, GPRReg closure, const CallRe
         isNotClosureOfThisRealm.append(jit.branch32(CCallHelpers::LessThan, Address(closure, offsetOfClosureEntry), TrustedImm32(0)));
     jit.load64(Address(closure, offsetOfClosureEntry), registers.word);
     hasWord.link(&jit);
+    if (jit.options().sharesRealms) {
+        extractBits(jit, registers.word, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, registers.scratch);
+        branchUnlessClosureNumberOfThisImage(jit, registers.scratch, isNotClosureOfThisRealm);
+    }
 }
 
 void emitFillMissingArgumentRegisters(StubAssembler& jit, unsigned count)
@@ -448,7 +452,7 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     jit.and32(TrustedImm32(ClosureWord::functionMask), function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     loadProgramTable(jit, tables, ProgramTableIndex::closureCaptureCounts, scratch);
-    jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne), function);
+    jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne, -static_cast<int32_t>(jit.options().closureNumbersBelow)), function);
     slow.append(jit.branch32(CCallHelpers::Equal, function, TrustedImm32(countsAreListed)));
     // Allocator i serves cells of 16 * (i + 1) bytes. The captures stand above the four bits of the references: (captures + 1) / 2.
     jit.add32(TrustedImm32(1 << 4), function);

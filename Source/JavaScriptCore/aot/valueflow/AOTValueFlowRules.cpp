@@ -489,6 +489,10 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (ClimbingSet holdersOfExports = context.restrict(carriedOut, universe.holdersOfLibraryExports()); holdsSomething(context, holdersOfExports))
             context.connect(context.readWhatWasWritten(holdersOfExports, { ValueFlowNameKind::EveryGetter, 0 }), escapedNode);
     }
+    // As a receiver, an object that shows only what the library exports is handed to nobody new. Where the program has written to it, the member may be a function of the program's.
+    ValueFlowNodeID receiversOfMembersNobodyKnows = context.nodes().ofHost(ValueFlowHostNode::ReceiversOfMembersNobodyKnows);
+    context.connect(context.masked(receiversOfMembersNobodyKnows, ValueSets::complement(universe.builtinTables().heap().objectsShowingLibraryExports())), escapedNode);
+    context.add(escapedNode, context.valueWithin(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites)), receiversOfMembersNobodyKnows));
     context.add(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesHandedOut), context.valueWithin(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesRequestedByProgram)), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)));
     if (ClimbingSet modules = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesHandedOut)); holdsSomething(context, modules))
         handOutMembersOfModules(context, modules);

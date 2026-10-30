@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
@@ -300,6 +301,8 @@ public:
     void growTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::Unknown); }
     void didAddFunctionsUpTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::GivenOut); }
     void forgetAll() { m_states.fill(static_cast<uint8_t>(State::Unknown)); }
+    // forgetAll(), and the tables go too, for where nobody asks for a long time. growTo() brings them back.
+    void letGoOfRows(BuildContext&);
     void didGiveOutAll() { m_states.fill(static_cast<uint8_t>(State::GivenOut)); }
     void didEndAllEdits();
 
@@ -316,23 +319,23 @@ public:
     {
         if (!ensureRow(program, id))
             return nullptr;
-        const HotRow& row = m_hotRows[id.index()];
+        const HotRow& row = hotRowOfKnown(id);
         return row.isComplete ? &row : nullptr;
     }
 
     std::optional<BodyContents> contentsOf(FunctionID id)
     {
-        if (!isKnown(id) || !m_hotRows[id.index()].isComplete)
+        if (!isKnown(id) || !hotRowOfKnown(id).isComplete)
             return std::nullopt;
-        const HotRow& row = m_hotRows[id.index()];
+        const HotRow& row = hotRowOfKnown(id);
         BodyContents contents { row.opcodes, row.terminators(), row.traits };
         if (row.listsParameters)
             contents.opcodes.add(Opcode::Parameter);
         return contents;
     }
 
-    std::span<const IndexedValue> listedValuesOf(FunctionID id) const { return m_coldRows[id.index()].listedValues.span(); }
-    std::span<const TerminatorKind> terminatorKindsOf(FunctionID id) const { return m_coldRows[id.index()].terminatorKinds.span(); }
+    std::span<const IndexedValue> listedValuesOf(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->cold.listedValues.span() : std::span<const IndexedValue>(); }
+    std::span<const TerminatorKind> terminatorKindsOf(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->cold.terminatorKinds.span() : std::span<const TerminatorKind>(); }
 
     std::optional<RowOfBody> rowOf(const Program& program, FunctionID id)
     {
@@ -372,9 +375,9 @@ public:
 
     std::optional<NamesInBody> namesIn(const Program& program, FunctionID id)
     {
-        if (!hotRowOf(program, id))
+        if (!hotRowOf(program, id) || !m_storedRows[id.index()])
             return std::nullopt;
-        ColdRow& row = m_coldRows[id.index()];
+        ColdRow& row = m_storedRows[id.index()]->cold;
         AtomicRef<uint8_t> state(row.stateOfNames);
         uint8_t seen = state.load(std::memory_order_acquire);
         if (seen != static_cast<uint8_t>(State::Known)) {
@@ -390,7 +393,7 @@ public:
     {
         if (!namesIn(program, id))
             return std::nullopt;
-        return m_coldRows[id.index()].listedNames.span();
+        return m_storedRows[id.index()]->cold.listedNames.span();
     }
 
     void check(const Program&, const ParallelLoops&) const;
@@ -416,14 +419,23 @@ private:
         return true;
     }
 
+    struct StoredRow {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StoredRow);
+
+        HotRow hot;
+        ColdRow cold;
+    };
+
+    static const HotRow& hotRowWithoutBody(RecordFacts);
+    const HotRow& hotRowOfKnown(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->hot : hotRowWithoutBody(m_denseRows[id.index()].facts); }
+
     static RecordStamps computeRecordStamps(const Function& function) { return { stampOfRecord(function), stampOfEntry(function) }; }
     void store(FunctionID, Row&&);
     void growTo(size_t numberOfFunctions, State);
     AtomicRef<uint8_t> stateOf(FunctionID id) { return AtomicRef(m_states[id.index()]); }
 
     const ParallelLoops* m_loops { nullptr };
-    Vector<HotRow> m_hotRows;
-    Vector<ColdRow> m_coldRows;
+    Vector<std::unique_ptr<StoredRow>> m_storedRows;
     Vector<DenseRow> m_denseRows;
     Vector<RecordStamps> m_recordStamps;
     Vector<uint8_t> m_hasRecordStamps;

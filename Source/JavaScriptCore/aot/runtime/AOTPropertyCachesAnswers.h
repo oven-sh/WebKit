@@ -83,6 +83,8 @@ struct PropertyAnswer {
     bool storageHasIndexingHeader { false };
     const FieldData* field { nullptr };
     SlotData variable { };
+    // Of a variable of another image of the realm: the position of that image and one, in the place of the offset of a hidden word and in its unit. Zero: the variable is of the image that asks.
+    uint16_t imageOfVariable { 0 };
     uint32_t customAccessor { 0 };
     JSValue constant { };
     // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.

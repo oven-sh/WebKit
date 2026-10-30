@@ -1066,6 +1066,7 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
+                AOT::RunningImageScope imageOfFrame(vm.aotState(), frame.instance->program);
                 if (visitor->isOfConstructedFunctionThatLeft())
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())

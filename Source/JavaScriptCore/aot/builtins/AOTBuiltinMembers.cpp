@@ -160,8 +160,12 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
 {
     if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
         return;
+    // A test run opens hundreds of names, and this is asked for every access by name.
+    StringID text = program.at(key).text;
+    if (!program.isOpenedSomewhere(text)) [[likely]]
+        return;
     for (const OpenedName& opened : program.openedNames) {
-        if (opened.name == program.at(key).text)
+        if (opened.name == text)
             m_holdersOpenedForKey.append(opened.holder);
     }
 }

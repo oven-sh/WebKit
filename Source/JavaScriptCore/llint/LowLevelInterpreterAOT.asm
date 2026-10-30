@@ -44,6 +44,8 @@ const InstanceRopeStringAllocator = constexpr (AOT_INSTANCE_PREFIX_OFFSET(ropeSt
 const InstanceStringHeader = constexpr (AOT_INSTANCE_PREFIX_OFFSET(stringHeader))
 const InstanceClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.closureEntrypoint))
 const InstanceSlimClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.slimClosureEntrypoint))
+const InstanceAbove = constexpr (AOT_INSTANCE_OFFSET(above))
+const InstanceEndOfClosureNumbers = constexpr (AOT_INSTANCE_OFFSET(endOfClosureNumbers))
 
 const ObjectLiteralPlanTag = constexpr AOT::Interpreter::ObjectLiteralPlan::allocatorTag
 const ObjectLiteralPlanSlowPathTag = constexpr AOT::Interpreter::ObjectLiteralPlan::slowPathTag
@@ -139,6 +141,8 @@ macro loadInstanceOfRealm(instance, hasNone)
     loadp CodeBlock::m_globalObject[instance], instance
     loadp JSGlobalObject::m_aotInstance[instance], instance
     btpz instance, hasNone
+    # The tables of one image say nothing about the cells of another.
+    btpnz InstanceAbove[instance], hasNone
 end
 
 macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
@@ -2064,6 +2068,21 @@ op(llint_aot_virtual_call_trampoline, macro ()
     subi constexpr SlimClosureType, t3
     bia t3, constexpr (SlimClosureWithPropertiesType - SlimClosureType), .ordinary
     loadInstanceOfCompiledCallee(t0, t5, t3)
+    btpz InstanceAbove[t5], .slimClosureOfInstance
+    # The realm runs several images. The number of the closure says which of them it is of, and the adapter sees to it that its image runs.
+    bbeq JSCell::m_type[t0], constexpr SlimClosureType, .hasWord
+    loadp (constexpr AOT::offsetOfSlimClosureWord)[t0], t3
+    loadi (constexpr (AOT::ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()))[t3], t3
+    jmp .findInstanceOfSlimClosure
+.hasWord:
+    loadi (constexpr (AOT::offsetOfSlimClosureWord + 4))[t0], t3
+    andi (constexpr AOT::ClosureWord::functionMask), t3
+.findInstanceOfSlimClosure:
+    bpb t3, InstanceEndOfClosureNumbers[t5], .slimClosureOfInstance
+    loadp InstanceAbove[t5], t5
+    btpnz t5, .findInstanceOfSlimClosure
+    jmp .ordinary
+.slimClosureOfInstance:
     loadp InstanceSlimClosureEntrypoint[t5], t5
     jmp t5, JSEntryPtrTag
 
@@ -2071,6 +2090,15 @@ op(llint_aot_virtual_call_trampoline, macro ()
     loadq (constexpr AOT::offsetOfClosureEntry)[t0], t3
     bqlt t3, 0, .ordinary
     loadInstanceOfCompiledCallee(t0, t5, t3)
+    btpz InstanceAbove[t5], .closureOfInstance
+    loadi (constexpr (AOT::offsetOfClosureEntry + 4))[t0], t3
+    andi (constexpr AOT::ClosureWord::functionMask), t3
+.findInstanceOfClosure:
+    bpb t3, InstanceEndOfClosureNumbers[t5], .closureOfInstance
+    loadp InstanceAbove[t5], t5
+    btpnz t5, .findInstanceOfClosure
+    jmp .ordinary
+.closureOfInstance:
     loadp InstanceClosureEntrypoint[t5], t5
     jmp t5, JSEntryPtrTag
 
@@ -2197,6 +2225,7 @@ _llint_aot_bound_function_call_thunk:
     subi constexpr SlimClosureType, t1
     bia t1, constexpr (SlimClosureWithPropertiesType - SlimClosureType), .boundHostFunction
     loadInstanceOfCompiledCallee(t0, t5, t1)
+    btpnz InstanceAbove[t5], .boundHostFunction
     loadp InstanceSlimClosureEntrypoint[t5], t5
 .enterBoundTarget:
     loadq (constexpr (JSBoundFunction::offsetOfBoundThis()))[t3], t1
@@ -2209,6 +2238,7 @@ _llint_aot_bound_function_call_thunk:
     loadq (constexpr AOT::offsetOfClosureEntry)[t0], t1
     bqlt t1, 0, .boundHostFunction
     loadInstanceOfCompiledCallee(t0, t5, t1)
+    btpnz InstanceAbove[t5], .boundHostFunction
     loadp InstanceClosureEntrypoint[t5], t5
     jmp .enterBoundTarget
 

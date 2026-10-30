@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompactList.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTID.h"
 #include "AOTVector.h"
@@ -117,13 +118,14 @@ private:
 
 struct BorrowingBody {
     uint64_t word { 0 };
-    Vector<HandedOnReferences> handedOn;
-    Vector<HandedOnToManyCallees> handedOnToManyCallees;
-    Vector<FunctionID> calleesWhoseRecordsWereRead;
-    Vector<uint32_t> targetListsRead;
+    CompactList<HandedOnReferences> handedOn;
+    CompactList<HandedOnToManyCallees> handedOnToManyCallees;
+    CompactList<FunctionID> calleesWhoseRecordsWereRead;
+    CompactList<uint32_t> targetListsRead;
 
     friend bool operator==(const BorrowingBody&, const BorrowingBody&) = default;
 };
+static_assert(sizeof(BorrowingBody) <= 40);
 
 class BorrowingBodies {
     WTF_MAKE_NONCOPYABLE(BorrowingBodies);

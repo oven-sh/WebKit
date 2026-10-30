@@ -133,7 +133,26 @@ enum class ImageFlag : uint32_t {
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
     FindsDataFilesByName = 1 << 6,
+    // A realm that runs the image may run others: CompileOptions::sharesRealms().
+    SharesRealms = 1 << 7,
 };
+
+// The numbers of an image that cells, or code of another image, may hold. The images of a realm were built one after the other, and none takes a number of those before it.
+// An image that shares no realm begins each range at zero.
+struct ImageNumberRanges {
+    // The shapes are the numbers above the first up to the second.
+    uint32_t shapesBelow;
+    uint32_t lastShape;
+    uint32_t firstClosureNumber;
+    uint32_t endOfClosureNumbers;
+    // ImageSection::StringHeaders begins with this number. A smaller number names what an image before this one holds under it.
+    uint32_t firstStringHeader;
+    uint32_t endOfIdentifiers;
+    uint32_t endOfStringHeaders;
+    // Of the first image of a realm: its section has room for the headers of the others, which the run time copies there, so that one address and a number find every header.
+    uint32_t capacityOfStringHeaders;
+};
+static_assert(sizeof(ImageNumberRanges) == 32);
 
 // codeOffset and sections[].offset count from the header.
 struct ImageHeader {
@@ -160,6 +179,7 @@ struct ImageHeader {
     // The offset into the shared code of the return site of each kind that has only one. 0 for every other kind, and for a kind whose stub is not in the image.
     uint32_t singleReturnSites[numberOfStubFrameKinds];
     uint32_t numberOfStubsFoundByKey;
+    ImageNumberRanges numbers;
 };
 static_assert(std::is_trivially_copyable_v<ImageHeader> && std::is_standard_layout_v<ImageHeader>);
 static_assert(!(offsetof(ImageHeader, sections) % 4));

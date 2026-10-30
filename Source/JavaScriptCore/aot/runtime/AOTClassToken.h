@@ -38,7 +38,7 @@ public:
     static constexpr unsigned recordsPerField = 4;
     static constexpr unsigned recordsProbedByCompiledCode = 2;
 
-    // How such an object takes a private name of this evaluation of the class: its Structure leads on to another by adding the name.
+    // How such an object takes a private name of this evaluation of the class: its Structure leads on to another by adding the name. For extra properties the Structure of the instance has to lead on as well: CompiledStructure::successorByPrivateName().
     enum DefinitionSlot : unsigned {
         // The number is written last. Compiled code compares it with the number in the header of the object.
         NumberOfStructureBefore,

@@ -758,15 +758,12 @@ static void handLibraryModulesTo(ValueFlowRuleContext& context, ValueFlowNodeID 
     context.connect(context.nodes().ofHost(ValueFlowHostNode::LibraryValuesLoadedByName), hands);
 }
 
+// Whoever asks for this runs again each time something escapes. The walk over all modules is left to runModulesLoadedByName(), which runs again only when a module changes.
 static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 {
     for (ValueFlowHostNode answers : { ValueFlowHostNode::RequiredValuesLoadedByName, ValueFlowHostNode::NamespacesLoadedByName })
         letModulesBeLoadedByName(context, answers);
-    forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
-        ValueFlowNodeID hands = isOfProgram ? ValueFlowProgramNodes::escaped() : context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode);
-        connect(context, requiredValueOf(context, module), hands);
-        connect(context, namespaceOf(context, module), hands);
-    });
+    raiseHostFlag(context, ValueFlowHostNode::LoadedModulesAreHandedToNativeCode);
 }
 
 // Text has import() and process.getBuiltinModule() and no require of a file. The loader answers it with an entry point under any name,
@@ -776,6 +773,9 @@ static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesO
     handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
     forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
         if (!isOfProgram || (answersOnlyToLoadsOfProgram(context.program(), module) && !filesOfProgramAreLoadedByName))
+            return;
+        // The files that the host runs name what they use, and a file of the build hands them that.
+        if (context.refusedCode().hostRunsFilesOutsideImage && context.program().at(module).kind != ModuleKind::Data)
             return;
         connect(context, requiredValueOf(context, module), ValueFlowProgramNodes::escaped());
         connect(context, namespaceOf(context, module), ValueFlowProgramNodes::escaped());
@@ -1070,11 +1070,18 @@ void applyEventsOfStore(const ValueFlowStatement& statement, ValueFlowRuleContex
         context.add(context.nodes().ofHost(ValueFlowHostNode::RequiredValuesLoadedByName), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
 
+void applyEventsOfRead(ValueFlowRuleContext& context, ClimbingSet receivers)
+{
+    if (context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
+        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+}
+
 // In a test run a file taken out of require.cache loads again, through the loader of the host.
 void applyEventsOfDelete(ValueFlowRuleContext& context, ClimbingSet receivers)
 {
     if (!context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
         return;
+    raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
     bool mayEvict = std::ranges::any_of(context.program().modules, [](const Module& module) {
         return module.flags.contains(ModuleFlags::MayBeEvicted);
     });
@@ -1215,6 +1222,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         callBuiltinsThatReadSpecies(context, context.restrict(escaped, universe.builtinFunctionsThatReadSpecies()));
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
+    if (ValueFlowObjectID moduleCache = universe.objectOf(Builtins::ModuleCache); context.contains(used, moduleCache) || context.contains(handedOut, moduleCache))
+        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
     run = context.unite(run, callsWhateverHasEscaped ? escapedOfLanguage : context.valueWithin(escapedOfLanguage, context.nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName)));
     run = context.unite(run, ClimbingSet(context.maker().of(calledFunctionsOfHost.span())));
     for (ValueFlowObjectID function : calledFunctionsOfHost) {
@@ -1268,6 +1277,11 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
 void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
+    if (context.refusedCode().hostRunsFilesOutsideImage) {
+        raiseHostFlag(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
+        letUnseenCodeRun(context, UnseenCodeReach::Loader);
+        context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+    }
     if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns))
         return;
 
@@ -1288,7 +1302,7 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
     if (filesOfProgramAreLoadedByName && isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeHasLoader))
         handLoadedModulesToNativeCode(context);
     else
-        handLoadableModulesToText(context, filesOfProgramAreLoadedByName);
+        handLoadableModulesToText(context, filesOfProgramAreLoadedByName || context.refusedCode().hostRunsFilesOutsideImage);
 
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::EvaluatesText))
@@ -1308,29 +1322,63 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
     bool areRequired = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
     bool areImported = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
     bool libraryIsRequired = isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
-    if (!areRequired && !areImported && !libraryIsRequired) {
+    bool areLoaded = areRequired || areImported || libraryIsRequired;
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    // Native code gets the modules also where a source of unknown values is left out and no flag counts as raised.
+    bool areHandedToNativeCode = context.holdsAnything(nodes.ofHost(ValueFlowHostNode::LoadedModulesAreHandedToNativeCode));
+    // In a test run require.cache lists the files that have run, each with what require() answers for it. A file that is taken out of it, or loaded under a query,
+    // runs again as code that nobody has seen, and imports what its text names.
+    if (context.holdsAnything(nodes.ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun))) {
+        const Program& program = context.program();
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            if (program.modules[index].flags.contains(ModuleFlags::MayBeEvicted))
+                connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+        }
+    }
+    auto enterLoaderForSpelledNames = [&] {
         if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames))
             enterLoaderOfHost(context);
+    };
+    if (!areLoaded && !areHandedToNativeCode) {
+        enterLoaderForSpelledNames();
         return;
     }
 
-    const ValueFlowProgramNodes& nodes = context.nodes();
     forEachModuleLoadableByName(context, [&](ModuleID id, bool isOfProgram) {
-        if (isOfProgram && !areRequired && !areImported)
-            return;
-        context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
-        if (isOfProgram || isAskedOfHostByName(context.program().at(id)))
-            evaluateModule(context, id);
-        if (areRequired) {
-            connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName));
-            if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, id))
-                context.add(nodes.ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, moduleObject));
+        bool isLoaded = areLoaded && (!isOfProgram || areRequired || areImported);
+        if (isLoaded) {
+            context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
+            if (isOfProgram || isAskedOfHostByName(context.program().at(id)))
+                evaluateModule(context, id);
         }
-        if (areImported)
-            connect(context, namespaceOf(context, id), nodes.ofHost(ValueFlowHostNode::NamespacesLoadedByName));
-        if (libraryIsRequired && !isOfProgram)
-            connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::LibraryValuesLoadedByName));
+        ValueFlowNodeID hands = isOfProgram ? ValueFlowProgramNodes::escaped() : nodes.ofHost(ValueFlowHostNode::HeldByNativeCode);
+        bool isRequired = isLoaded && areRequired;
+        bool isRequiredFromLibrary = isLoaded && libraryIsRequired && !isOfProgram;
+        if (areHandedToNativeCode || isRequired || isRequiredFromLibrary) {
+            ValueFlowSources required = requiredValueOf(context, id);
+            if (areHandedToNativeCode)
+                connect(context, required, hands);
+            if (isRequired) {
+                connect(context, required, nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName));
+                if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, id))
+                    context.add(nodes.ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, moduleObject));
+            }
+            if (isRequiredFromLibrary)
+                connect(context, required, nodes.ofHost(ValueFlowHostNode::LibraryValuesLoadedByName));
+        }
+        bool isImported = isLoaded && areImported;
+        if (areHandedToNativeCode || isImported) {
+            ValueFlowSources namespaceObject = namespaceOf(context, id);
+            if (areHandedToNativeCode)
+                connect(context, namespaceObject, hands);
+            if (isImported)
+                connect(context, namespaceObject, nodes.ofHost(ValueFlowHostNode::NamespacesLoadedByName));
+        }
     });
+    if (!areLoaded) {
+        enterLoaderForSpelledNames();
+        return;
+    }
 
     ClimbingSet nativeModules = publicNativeModules(context);
     if (areRequired)

@@ -274,6 +274,8 @@ static void answerByClassMembersAndReturn(StubAssembler& jit, ObjectLookupQuesti
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.index);
     isUnknown.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.structure, Structure::realmOffset()), r.index));
     isUnknown.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(r.object, JSObject::butterflyOffset())));
+    if (jit.options().sharesRealms)
+        isUnknown.append(jit.branch8(CCallHelpers::NotEqual, Address(r.object, ClassPrototype::offsetOfClassIndex() + ClassPrototype::bitsOfClassIndex / 8), TrustedImm32(static_cast<int32_t>(jit.options().imagesBelow))));
     // `constructor` is a member of every class, whether or not the image names it.
     loadNumberOfName(jit, r, name, isUnknown, isUnknown);
     jit.load32(Address(r.object, ClassPrototype::offsetOfMemberRow()), r.index);
@@ -348,6 +350,7 @@ static void branchOnFunctionObject(StubAssembler& jit, const ObjectLookupRegiste
     // What a class declares as static lies in variables, and the class object may be yet to be made.
     jit.load64(Address(r.object, offsetOfClosureEntry), function);
     extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
+    branchUnlessClosureNumberOfThisImage(jit, function, isUnknown);
     loadKindOfClosureFunction(jit, function, kind);
     hasWhatPropertyTableLists.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(std::bit_cast<uint16_t>(constructor))));
     isUnknown.append(jit.jump());
@@ -501,7 +504,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     hasOwnLookup.link(&jit);
     // The tables of the image go by the number of a name, which a symbol does not have.
     isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
-    Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(r.object, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
+    JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, r.object);
     answerByFieldRecordAndReturn(jit, question, r, name, isUnknown);
     jit.branchTest32(CCallHelpers::Zero, Address(r.object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)).linkTo(askObjectAbove, &jit);
     loadStructure(jit, r.object, r.structure);
@@ -761,7 +764,7 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
 
     // Object::tryStoreExtraProperty(): what a compiled object has beside its fields lies in an ordinary object of its own.
     JumpList hasNoField;
-    cannot.append(jit.branch8(CCallHelpers::NotEqual, Address(owner, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType)));
+    cannot.append(branchIfNotCompiledObjectOfThisImage(jit, owner));
     cannot.append(jit.branchTest32(CCallHelpers::Zero, Address(owner, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     locateFieldOfObject(jit, r, name, hasNoField, cannot);
     cannot.append(jit.jump());

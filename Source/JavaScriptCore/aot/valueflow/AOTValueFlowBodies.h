@@ -420,10 +420,13 @@ enum class ValueFlowHostNode : uint8_t {
     HoldersOfClassesThatAppliedRowsName,
     MembersStoredByNameThroughPlaceholders,
     LibraryModulesAreLoadedUnderSpelledNames,
+    ReceiversOfMembersNobodyKnows,
+    LoadedModulesAreHandedToNativeCode,
+    UnseenCopiesOfFilesMayRun,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 78;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 81;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::UnseenCopiesOfFilesMayRun) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -835,6 +838,7 @@ public:
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 
     bool isEmpty() const { return m_functions.isEmpty(); }
+    std::span<const ValueFlowInstancedFunction> functions() const LIFETIME_BOUND { return m_functions.span(); }
     const ValueFlowInstancedFunction* find(FunctionID function) const { return function && function.index() < m_indexOfFunction.size() && m_indexOfFunction[function.index()] ? &m_functions[m_indexOfFunction[function.index()] - 1] : nullptr; }
     bool holdsNode(ValueFlowNodeID node) const { return node.index() < m_isNodeOfFunction.size() && m_isNodeOfFunction.quickGet(node.index()); }
     ValueSetID closures() const { return m_closures; }

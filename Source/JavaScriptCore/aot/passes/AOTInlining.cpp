@@ -23,6 +23,7 @@
 #include "AOTEffectsCache.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTExactBuffer.h"
 #include "AOTFlowResults.h"
 #include "AOTFreshResults.h"
 #include "AOTFunctionAnalyses.h"
@@ -1182,26 +1183,68 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     return summary;
 }
 
+void InliningSummary::shrinkToFit()
+{
+    forwards.shrinkToFit();
+    conditions.shrinkToFit();
+    moveToExactBuffer(switches);
+    partsOfBytesOnlyIfSomeTestFails.shrinkToFit();
+    spreadsOfParameters.shrinkToFit();
+    receiverParameters.shrinkToFit();
+    keyParameters.shrinkToFit();
+    differenceCalls.shrinkToFit();
+}
+
 InliningSummaries summarizeForInlining(const Program& program, const CallGraph& callGraph, const Heat& heat, const FlowResults& flow, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
-    Vector<uint32_t> largestFirst = largeFunctions(program, loops);
     InliningSummaries result;
-    result.m_summaries = ParallelArray<InliningSummary>(loops, program.functions.size(), largestFirst.span(), [&](unsigned index) {
-        FunctionID id(index);
-        if (!build.isEnabled(PassID::SummarizeForInlining, id))
-            return InliningSummary { };
+    Vector<uint32_t> summarized = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
+        return program.functions[index].hasBody() && build.isEnabled(PassID::SummarizeForInlining, FunctionID(index));
+    });
+    Vector<uint32_t>& positions = result.m_positions;
+    positions = Vector<uint32_t>(program.functions.size());
+    forEachIndexInParallel(loops, positions.size(), [&](unsigned index) {
+        positions[index] = build.isEnabled(PassID::SummarizeForInlining, FunctionID(index)) ? InliningSummaries::positionWithoutBody : InliningSummaries::positionOfUnknown;
+    });
+    forEachIndexInParallel(loops, summarized.size(), [&](unsigned index) {
+        positions[summarized[index]] = InliningSummaries::firstOwnPosition + index;
+    });
+    Vector<uint32_t> largestFirst = largeFunctions(program, loops);
+    largestFirst.removeAllMatching([&](uint32_t index) {
+        return positions[index] < InliningSummaries::firstOwnPosition;
+    });
+    for (uint32_t& index : largestFirst)
+        index = positions[index];
+    result.m_summaries = ParallelArray<InliningSummary>(loops, InliningSummaries::firstOwnPosition + summarized.size(), largestFirst.span(), [&](unsigned position) {
+        if (position < InliningSummaries::firstOwnPosition) {
+            InliningSummary shared;
+            if (position == InliningSummaries::positionWithoutBody)
+                shared.barrier = InlineBarrier::NoBody;
+            return shared;
+        }
+        FunctionID id(summarized[position - InliningSummaries::firstOwnPosition]);
         AnalysisContext context { build, program, &flow, nullptr, id };
-        return summarizeFunctionForInlining(context, program.at(id), heat.of(program, id));
+        InliningSummary summary = summarizeFunctionForInlining(context, program.at(id), heat.of(program, id));
+        summary.shrinkToFit();
+        return summary;
     });
 
-    ParallelArray<InliningSummary>& summaries = result.m_summaries;
-    Vector<FunctionID> worklist = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
-        return summaries[index].neverReturns;
-    }).map([](uint32_t index) {
-        return FunctionID(index);
+    auto summaryOf = [&](FunctionID id) -> InliningSummary& {
+        return result.m_summaries[positions[id.index()]];
+    };
+    auto summarizedFunctionsWhere = [&](const Invocable<bool(const InliningSummary&)> auto& matches) {
+        return findIndicesInParallel(loops, summarized.size(), [&](unsigned index) {
+            return matches(result.m_summaries[InliningSummaries::firstOwnPosition + index]);
+        }).map([&](uint32_t index) {
+            return FunctionID(summarized[index]);
+        });
+    };
+
+    Vector<FunctionID> worklist = summarizedFunctionsWhere([](const InliningSummary& summary) {
+        return summary.neverReturns;
     });
-    BitVector noReturnFunctions(summaries.size());
+    BitVector noReturnFunctions(positions.size());
     for (FunctionID function : worklist)
         noReturnFunctions.quickSet(function.index());
     auto neverReturns = [&](FunctionID callee) {
@@ -1211,7 +1254,7 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
         Vector<FunctionID> callers;
         for (FunctionID callee : worklist) {
             for (FunctionID caller : callGraph.callersOf(callee)) {
-                const InliningSummary& summary = summaries[caller.index()];
+                const InliningSummary& summary = summaryOf(caller);
                 if (!summary.neverReturns && summary.barrier != InlineBarrier::Unknown && summary.barrier != InlineBarrier::NoBody)
                     callers.append(caller);
             }
@@ -1219,12 +1262,12 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
         sortAndRemoveDuplicates(loops, callers);
         forEachIndexInParallel(loops, callers.size(), [&](unsigned index) {
             const Function& function = program.at(callers[index]);
-            summaries[callers[index].index()].noReturnBlocks = computeNoReturnBlocks(program, function, CFG(function), neverReturns);
+            summaryOf(callers[index]).noReturnBlocks = computeNoReturnBlocks(program, function, CFG(function), neverReturns);
         });
 
         worklist.shrink(0);
         for (FunctionID caller : callers) {
-            InliningSummary& summary = summaries[caller.index()];
+            InliningSummary& summary = summaryOf(caller);
             if (!summary.noReturnBlocks.get(entryBlock.index()))
                 continue;
             summary.neverReturns = true;
@@ -1233,14 +1276,14 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
         }
     }
 
-    Vector<uint32_t> forwarding = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
-        return !summaries[index].forwards.isEmpty();
+    Vector<FunctionID> forwarding = summarizedFunctionsWhere([](const InliningSummary& summary) {
+        return !summary.forwards.isEmpty();
     });
     for (bool hasChanged = true; std::exchange(hasChanged, false);) {
-        for (uint32_t index : forwarding) {
-            InliningSummary& summary = summaries[index];
+        for (FunctionID function : forwarding) {
+            InliningSummary& summary = summaryOf(function);
             for (const InliningSummary::ForwardedParameter& forward : summary.forwards) {
-                const InliningSummary& callee = summaries[forward.callee.index()];
+                const InliningSummary& callee = summaryOf(forward.callee);
                 if (!callee.calledParameters.get(forward.calleeParameter) && !callee.forwardedParameters.get(forward.calleeParameter))
                     continue;
                 hasChanged |= !summary.forwardedParameters.set(forward.entryParameter);
@@ -1251,17 +1294,17 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
     }
 
     // A function that hands its parameters on is what its callees are. The callees are few and lie one or two calls deep.
-    Vector<uint32_t> handingOn = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
-        return !summaries[index].differenceCalls.isEmpty();
+    Vector<FunctionID> handingOn = summarizedFunctionsWhere([](const InliningSummary& summary) {
+        return !summary.differenceCalls.isEmpty();
     });
     AOT_THRESHOLD(unsigned, mostCallsDeep, 3);
     for (unsigned depth = 0; depth < mostCallsDeep && !handingOn.isEmpty(); ++depth) {
-        handingOn.removeAllMatching([&](uint32_t index) {
-            InliningSummary& summary = summaries[index];
-            if (std::ranges::any_of(summary.differenceCalls, [&](const auto& call) { return !summaries[call.callee.index()].differenceCalls.isEmpty(); }))
+        handingOn.removeAllMatching([&](FunctionID function) {
+            InliningSummary& summary = summaryOf(function);
+            if (std::ranges::any_of(summary.differenceCalls, [&](const auto& call) { return !summaryOf(call.callee).differenceCalls.isEmpty(); }))
                 return false;
             for (const InliningSummary::DifferenceCall& call : std::exchange(summary.differenceCalls, { })) {
-                InliningSummary::Difference ofCallee = summaries[call.callee.index()].difference;
+                InliningSummary::Difference ofCallee = summaryOf(call.callee).difference;
                 if (call.swapsParameters)
                     ofCallee = reversed(ofCallee);
                 bool agrees = ofCallee != InliningSummary::Difference::None && (summary.difference == InliningSummary::Difference::None || summary.difference == ofCallee);
@@ -1274,9 +1317,9 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
             return true;
         });
     }
-    for (uint32_t index : handingOn) {
-        summaries[index].difference = InliningSummary::Difference::None;
-        summaries[index].differenceCalls.clear();
+    for (FunctionID function : handingOn) {
+        summaryOf(function).difference = InliningSummary::Difference::None;
+        summaryOf(function).differenceCalls.clear();
     }
 
     result.m_build = &build;
@@ -1302,7 +1345,7 @@ bool InliningSummaries::returnsFreshAggregate(const Program& program, FunctionID
 {
     using Answer = InliningSummary::Answer;
     RELEASE_ASSERT(contains(id));
-    const InliningSummary& summary = m_summaries[id.index()];
+    const InliningSummary& summary = of(program, id);
     if (summary.barrier != InlineBarrier::None)
         return false;
 
@@ -3422,7 +3465,7 @@ void inlineHeads(ProgramEditor& editor, const OptimizationInputs& inputs, BuildC
             headOf[head.function.index()] = &head;
 
         callerSites = collectInParallel<CallerSites>(build.parallelLoops(), numberOfFunctions, large.span(), [&](unsigned index, Vector<CallerSites>& found) {
-            const Vector<FunctionID>* directCallees = directCalleesOf ? (*directCalleesOf)(FunctionID(index)) : nullptr;
+            const CompactList<FunctionID>* directCallees = directCalleesOf ? (*directCalleesOf)(FunctionID(index)) : nullptr;
             if (directCallees && std::ranges::none_of(*directCallees, [&](FunctionID callee) { return !!headOf[callee.index()]; }))
                 return;
             Vector<ValueSite> sites = findCallsOfHeads(contextOf(FunctionID(index)), inputs.heat, headOf.span());

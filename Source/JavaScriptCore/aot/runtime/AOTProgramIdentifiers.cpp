@@ -67,7 +67,7 @@ Identifier enginePrivateName(VM& vm, const String& text)
 ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
     : m_vm(vm)
     , m_image(image)
-    , m_count(image.text().numberOfIdentifiers())
+    , m_count(image.last().text().numberOfIdentifiers())
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     , m_text(image.text())
 #else
@@ -75,7 +75,7 @@ ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image)
 #endif
     , m_symbols(createSymbols(std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
 {
-    RELEASE_ASSERT(&image == Image::current());
+    RELEASE_ASSERT(&image == Image::current() && &image == &image.first());
     AtomStringTable::setReadOnlyAtomLookup(findAtom);
 }
 
@@ -93,8 +93,10 @@ void ProgramIdentifiers::createEngineSymbols()
     if (m_hasCreatedEngineSymbols)
         return;
     m_hasCreatedEngineSymbols = true;
-    for (uint32_t number : m_image.programTables().identifiersOfEngineSymbols())
-        uid(number);
+    for (const Image* image = &m_image; image; image = image->above()) {
+        for (uint32_t number : image->programTables().identifiersOfEngineSymbols())
+            uid(number);
+    }
 }
 
 NEVER_INLINE UniquedStringImpl* ProgramIdentifiers::uidSlowCase(uint32_t number)
@@ -133,7 +135,7 @@ void ProgramIdentifiers::addSymbol(uint32_t number, UniquedStringImpl* uid)
 
 Identifier ProgramIdentifiers::create(uint32_t number) const
 {
-    const ImageText& text = m_image.text();
+    const ImageText& text = m_image.holderOfStringHeader(number).text();
     const ImageIdentifierWord& record = text.identifier(number);
     StringID string = record.text();
     switch (record.kind()) {
@@ -199,8 +201,14 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
             return std::nullopt;
         return found->value;
     }
-    if (!uid->length())
-        return numberOfText(m_image, StringView(*uid), uid->existingHash());
+    // The empty name is no atom of an image. Whichever image is the first to have it has numbered it.
+    if (!uid->length()) {
+        for (const Image* image = &m_image; image; image = image->above()) {
+            if (std::optional<uint32_t> number = numberOfText(*image, StringView(*uid), uid->existingHash()))
+                return number;
+        }
+        return std::nullopt;
+    }
     ASSERT(!numberOfText(m_image, StringView(*uid), uid->existingHash()));
     return std::nullopt;
 }
@@ -281,10 +289,13 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
     const Image* imageOfThread = Image::current();
     if (characters.isEmpty() || !imageOfThread)
         return nullptr;
-    const Image& image = *imageOfThread;
-    std::optional<uint32_t> number = numberOfText(image, characters, hash);
+    const Image* holder = &imageOfThread->first();
+    std::optional<uint32_t> number = numberOfText(*holder, characters, hash);
+    while (!number && (holder = holder->above()))
+        number = numberOfText(*holder, characters, hash);
     if (!number)
         return nullptr;
+    const Image& image = *holder;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     return static_cast<AtomStringImpl*>(&image.text().ensureLazyHeader(*number));
 #else
@@ -294,7 +305,7 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
 
 String ProgramIdentifiers::textOf(const Image& image, uint32_t number)
 {
-    const ImageText& text = image.text();
+    const ImageText& text = image.holderOfStringHeader(number).text();
     const ImageIdentifierWord& record = text.identifier(number);
     if (record.kind() != PropertyKeyKind::Text || !record.text())
         return String();

@@ -273,13 +273,33 @@ private:
         }
         if (Value* repeated = version.plan.hoisted.repeatedValues.get(value)) {
             // A slow path may have changed what was computed before the loop.
-            bool mayBeStale = version.returnsFromSlowPaths && value->opcode() != Identity && !m_cloner.contains(definitionOf(repeated)->owner);
-            if (!mayBeStale) {
+            bool mayBeStale = version.returnsFromSlowPaths && !m_cloner.contains(definitionOf(repeated)->owner);
+            // A phi has no value in front of the loop. What it repeats is named by the first computation of its kind, which may be a load in front of the loop
+            // where the phi is given a load of the same word in the loop: that one has just been made again here.
+            if (Value* given = mayBeStale && value->opcode() == Identity ? valueGivenInFastVersion(version, value) : nullptr) {
+                m_cloner.substitute(version.hoistedMap, value, given);
+                return;
+            }
+            if (!mayBeStale || value->opcode() == Identity) {
                 m_cloner.substitute(version.hoistedMap, value, hoistedValueOrSelf(version, repeated));
                 return;
             }
         }
         cloneIntoPreHeader(version, value, IsPeeled::No);
+    }
+
+    // For a phi outside the header that the fast version gives one value: that value as the pre-header has it. Null where the pre-header has none of its own.
+    Value* valueGivenInFastVersion(const Version& version, Value* phi) const
+    {
+        Value* read = phi->foldIdentity();
+        if (read == phi || read->opcode() != Get)
+            return nullptr;
+        Value* result = nullptr;
+        forEachValueOfNextIteration(version.plan, read->as<VariableValue>()->variable(), [&](Value* given) {
+            if (!result)
+                result = valueInPreHeader(version, given, IsPeeled::No);
+        });
+        return result;
     }
 
     // In the fast loop such a phi stands for what each iteration computes again. After a slow path it may still hold what the last iteration computed earlier.

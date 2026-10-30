@@ -53,7 +53,7 @@ static bool checkFunctionLimits(const FunctionTableInputs& inputs, BuildContext&
         context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = limit, .count = clampTo<uint32_t>(count) });
         return false;
     };
-    return fits(LimitID::ImageFunctions, std::max<uint64_t>(inputs.functions.size(), endOfFunctionIDs)) && fits(LimitID::ImageClosureFunctions, inputs.programTables.closureFunctions.end - inputs.programTables.closureFunctions.first);
+    return fits(LimitID::ImageFunctions, std::max<uint64_t>(inputs.functions.size(), endOfFunctionIDs)) && fits(LimitID::ImageClosureFunctions, static_cast<uint64_t>(inputs.programTables.closureFunctions.numbersBelow) + inputs.programTables.closureFunctions.end - inputs.programTables.closureFunctions.first);
 }
 
 static uint64_t unwindableRegisterMask()
@@ -224,7 +224,7 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, co
         ClosureWord::Flags flags = closureWordFlags(inputs.programTables.kindOfFunction(index));
         flags.borrowedArguments = entry.borrowedArguments;
         flags.endsItsTailCalls = entry.endsItsTailCalls;
-        words[index - range.omittedWordCount] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index - range.first, flags);
+        words[index - range.omittedWordCount] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, index - range.first + range.numbersBelow, flags);
     });
     return words;
 }

@@ -120,14 +120,16 @@ static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
     return pagesOfTablesCanGrow ? std::min(RowDisplacementTable::initialNumberOfBases, limitOfBases) : limitOfBases;
 }
 
-StructureRows& StructureRows::singleton()
+StructureRows& StructureRows::ofImageAt(unsigned position)
 {
-    static AlignedStorage<StructureRows> rows;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        new (NotNull, rows.get()) StructureRows;
+    static constexpr unsigned maxImagesInRealm = 8;
+    static std::array<AlignedStorage<StructureRows>, maxImagesInRealm> rows;
+    static std::array<std::once_flag, maxImagesInRealm> onceFlags;
+    RELEASE_ASSERT(position < maxImagesInRealm);
+    std::call_once(onceFlags[position], [&] {
+        new (NotNull, rows[position].get()) StructureRows;
     });
-    return *rows;
+    return *rows[position];
 }
 
 StructureRows::StructureRows()
@@ -153,7 +155,7 @@ size_t RowDisplacementTable::sizeOfPagesAtStart(uint64_t valueOfLimitOfBases)
 RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, const CustomAccessorTable& customAccessors)
     : m_vm(vm)
     , m_customAccessors(customAccessors)
-    , m_structureRows(StructureRows::singleton())
+    , m_structureRows(StructureRows::ofImageAt(vm.aotState().image ? vm.aotState().image->position() : 0))
     , m_cageBase(vm.heap.cage().base())
 {
     m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
@@ -869,6 +871,7 @@ static void setBitOfName(auto& bits, uint32_t identifierNumber)
 
 VMPropertyCaches::VMPropertyCaches(VM& vm)
     : m_vm(vm)
+    , m_image(vm.aotState().image)
     , m_customAccessors(vm, *vm.aotState().caches)
     , m_front(vm, *vm.aotState().caches, m_customAccessors)
     , m_hashedTable(vm, *vm.aotState().caches, m_customAccessors)
@@ -930,14 +933,24 @@ static bool listsEveryNameInItsTable(Structure* structure)
         && !structure->typeInfo().overridesGetOwnPropertySlot() && !structure->hasNonReifiedStaticProperties();
 }
 
+bool VMPropertyCaches::serves(const Instance& instance) const
+{
+    return instance.program == m_image;
+}
+
 void VMPropertyCaches::didCreateInstance(Instance& instance)
 {
     if (m_hasInstance && !m_isSharedByInstances) {
-        m_isSharedByInstances = numberOfRunningInstances(m_vm.aotState()) > 1;
+        // The instances that a realm has for other images have tables of their own.
+        m_isSharedByInstances = std::ranges::count_if(m_vm.aotState().instances, [&](const Instance* each) {
+            return serves(*each) && (!each->globalObject || each->globalObject->microtaskRunnability() != QueuedTaskResult::Discard);
+        }) > 1;
         m_front.clear();
         m_hashedTable.clear();
-        for (Instance* earlier : m_vm.aotState().instances)
-            zeroSpan(earlier->keyedValuePlaces());
+        for (Instance* earlier : m_vm.aotState().instances) {
+            if (serves(*earlier))
+                zeroSpan(earlier->keyedValuePlaces());
+        }
     }
     m_hasInstance = true;
     if (instance.globalObject) {
@@ -981,7 +994,7 @@ size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
 void VMPropertyCaches::publishWords(Instance& instance) const
 {
     PropertyCacheWords& words = instance.propertyCaches;
-    const uint32_t* rowsForStructureIDZero = StructureRows::singleton().rowsForStructureIDZero();
+    const uint32_t* rowsForStructureIDZero = StructureRows::ofImageAt(instance.program ? instance.program->position() : 0).rowsForStructureIDZero();
     for (SlotAccess access : allSlotAccesses)
         words.front[static_cast<unsigned>(access)] = { rowsForStructureIDZero, m_front.plane(access) };
     words.hashedSlots = m_hashedTable.entries();
@@ -1025,7 +1038,8 @@ static bool addOwnNamesThatStopStores(VM& vm, const ProgramIdentifiers& identifi
         return !compiled->hasExtraProperties() || addNamesInTable(compiled->extraPropertiesStructure());
     }
     if (object->classInfo() == ClassPrototype::info()) {
-        Instance* instance = Instance::of(structure->realm());
+        // A class may extend a class of another image.
+        Instance* instance = Instance::owning(object);
         State* state = instance ? instance->state : nullptr;
         if (!state || object->butterfly())
             return false;
@@ -1137,6 +1151,8 @@ void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringI
         m_absenceFilterGenerationForStores = 1;
     }
     for (Instance* instance : m_vm.aotState().instances) {
+        if (!serves(*instance))
+            continue;
         instance->propertyCaches.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
         instance->propertyCaches.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     }
@@ -1148,6 +1164,8 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
     if (!changed || m_filteredObjects.mayContain(changed))
         didChangeFilteredObject(changed, uidOrNull);
     for (Instance* instance : m_vm.aotState().instances) {
+        if (!serves(*instance))
+            continue;
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
@@ -1156,6 +1174,8 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
 void VMPropertyCaches::didStartWatchingReplacements()
 {
     for (Instance* instance : m_vm.aotState().instances) {
+        if (!serves(*instance))
+            continue;
         if (std::exchange(instance->propertyCaches.placesTakeReplacementsAsUnwatched, 0))
             zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
     }
@@ -1168,8 +1188,10 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
     if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
         bool isSet = m_front.trySet(structure, *column, access, slot);
         if (m_front.takeDidMovePlanes()) {
-            for (Instance* instance : m_vm.aotState().instances)
-                publishWords(*instance);
+            for (Instance* instance : m_vm.aotState().instances) {
+                if (serves(*instance))
+                    publishWords(*instance);
+            }
         }
         if (isSet) {
             if (slot.has(Slot::dependsOnChain)) {
@@ -1188,8 +1210,10 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
         return;
-    for (Instance* instance : m_vm.aotState().instances)
-        publishWords(*instance);
+    for (Instance* instance : m_vm.aotState().instances) {
+        if (serves(*instance))
+            publishWords(*instance);
+    }
 }
 
 std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& name, SlotAccess access) const
@@ -1279,13 +1303,22 @@ NEVER_INLINE T& CreatedAtFirstUse<T>::create()
     return m_value.make(m_state);
 }
 
+// The first use may come while another image of the realm runs.
+static VMPropertyCaches& tablesOfImageOf(const State& state)
+{
+    VMState& vmState = state.instance.vm->aotState();
+    if (!vmState.hasSeveralImages) [[likely]]
+        return *vmState.propertyCaches;
+    return *vmState.parts[state.instance.program->position()].propertyCaches;
+}
+
 template class CreatedAtFirstUse<PropertyCaches>;
 template class CreatedAtFirstUse<StringKeyCache>;
 
 PropertyCaches::PropertyCaches(State& state)
     : m_state(state)
     , m_vm(*state.instance.vm)
-    , m_tables(*m_vm.aotState().propertyCaches)
+    , m_tables(tablesOfImageOf(state))
     , m_tablesOwnerID(state.chainDependents->addOwner(m_tables))
     , m_siteCaches(*state.siteCaches)
     , m_watchedValues(state)
@@ -2261,7 +2294,7 @@ static std::span<uint8_t> allocateCards(State& state, size_t sizeOfSlots)
 
 SiteCaches::SiteCaches(State& state)
     : m_state(state)
-    , m_customAccessors(state.instance.vm->aotState().propertyCaches->customAccessors())
+    , m_customAccessors(tablesOfImageOf(state).customAccessors())
     , m_slots(state.instance.siteCaches())
     , m_states(state.tableArena.allocate<SiteCacheState>(SiteCacheState::numberOfStates))
     , m_refillCounts(state.tableArena.allocate<uint8_t>(SiteCacheState::numberOfStates))

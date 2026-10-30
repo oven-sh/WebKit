@@ -27,6 +27,9 @@ namespace JSC { namespace AOT {
 class ModuleTable {
 public:
     explicit ModuleTable(const ProgramTables&);
+    // Of an image that does not run, where no image is the current one: the caller finds the text of a string. Only for the paths, and for as long as the lambda lives.
+    using TextOfString = ScopedLambda<StringView(StringID)>;
+    ModuleTable(const ProgramTables&, const TextOfString&);
 
     const ProgramTables& programTables() const { return *m_tables; }
     unsigned size() const { return static_cast<unsigned>(m_modules.size() - 1); }
@@ -88,9 +91,8 @@ public:
     bool hasFileWithExtension(StringView) const;
     // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
-    // A bit for the hash of each text that ends with a slash and starts the path of a module. Empty: nothing is known.
-    Vector<uint64_t> hashedDirectories() const;
-    static bool mayHoldPathStartingWith(std::span<const uint64_t> hashedDirectories, StringView start);
+    // False: no module that is listed by path has a path that starts so.
+    bool mayHoldPathStartingWith(StringView start) const;
 
 private:
     using PiecesOfPath = Vector<StringView, 16>;
@@ -102,7 +104,10 @@ private:
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 
+    StringView viewOfPathPiece(StringID) const;
+
     const ProgramTables* m_tables;
+    const TextOfString* m_textWhereNoImageRuns { nullptr };
     std::span<const ModuleData> m_modules;
 };
 

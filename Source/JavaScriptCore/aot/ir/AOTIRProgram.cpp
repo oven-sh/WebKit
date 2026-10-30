@@ -196,9 +196,8 @@ bool Program::prototypeMaySelectOtherClass(LayoutID id) const
 
 void Program::indexClasses()
 {
-    auto provenBaseOf = [&](LayoutID id) {
-        const LayoutFlow& flow = at(id).flow;
-        return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    auto layoutAbove = [&](LayoutID id) {
+        return nearestLayoutAlwaysAbove(at(id).flow);
     };
 
     Vector<Vector<LayoutID>>& layoutsBelow = m_derivedTables.layoutsBelow;
@@ -214,7 +213,7 @@ void Program::indexClasses()
         m_derivedTables.numberOfClasses += isDefinedByClass(layout);
         if (layout.flow.allocation == AllocationState::NeverAllocated)
             continue;
-        for (LayoutID base = provenBaseOf(id); base && base != id; base = provenBaseOf(base)) {
+        for (LayoutID base = layoutAbove(id); base && base != id; base = layoutAbove(base)) {
             Vector<LayoutID>& below = layoutsBelow[base.index()];
             bool isOnCycle = !below.isEmpty() && below.last() == id;
             if (isOnCycle)
@@ -652,13 +651,13 @@ bool isBundlerHelperModule(const Program&, const Module& module)
     return module.flags.contains(ModuleFlags::IsBundlerHelper);
 }
 
-BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName)
+BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName, bool beginsModulesOfData)
 {
     BitVector modules(program.modules.size());
     for (const Entry& entry : program.entries)
         modules.quickSet(entry.module.index());
     for (size_t index = 0; findsFilesByName && index < program.modules.size(); ++index) {
-        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName))
+        if (program.modules[index].flags.contains(ModuleFlags::IsFoundByName) || (beginsModulesOfData && program.modules[index].kind == ModuleKind::Data))
             modules.quickSet(index);
     }
     return modules;

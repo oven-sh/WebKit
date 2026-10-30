@@ -296,7 +296,11 @@ private:
         std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
     };
 
+    // The VM has tables like these for each image that it runs, and an instance reads those of its own image.
+    bool serves(const Instance&) const;
+
     VM& m_vm;
+    const Image* m_image;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;

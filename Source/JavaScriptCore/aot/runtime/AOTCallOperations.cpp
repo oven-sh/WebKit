@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTShownFrameFilter.h"
 
 #if ENABLE(AOT)
 
@@ -586,16 +587,25 @@ bool readOnTopTestsObjectOfUpdate(VM& vm)
 std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM& vm)
 {
     auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
-    if (!frames || frames->isAtEnd())
+    if (!frames)
         return std::nullopt;
-    const CallSiteCache::Entry& callSite = frames->callSite();
-    FunctionDescription description(frames->frame().function);
-    std::optional<SourcePosition> place = Image::current()->positionOf(callSite.code.index(), callSite.site.callSite);
-    std::optional<SourcePosition> definition = description.definition();
+    // The frame that a stack trace lists first. Code that several functions share runs in a frame that is hidden: it returns to one address whoever called it, and the place is that of the call.
+    ShownFrameFilter filter;
+    while (!frames->isAtEnd() && !filter.shows(frames->frame().visibility, frames->frame().isTailDeleted))
+        frames->advance();
+    if (frames->isAtEnd())
+        return std::nullopt;
+    const CompiledFrame& frame = frames->frame();
+    FunctionDescription description(frame.function);
+    const Image* image = Image::current();
+    std::optional<SourcePosition> place = image->positionOf(frame.code.index(), frame.callSite);
+    // The code that runs is the function's own unless it is a copy in the code of another, and then the line is not known.
+    // FunctionDescription::definition() looks for the code of a function by its number, which sorts every function of the image the first time: a program that catches one error as it starts would pay for that.
+    std::optional<SourcePosition> definition = frame.inlineFrame ? std::nullopt : image->positionOf(frame.code.index(), CallSiteIndex(0));
     std::optional<unsigned> line;
     if (place && definition && place->source == definition->source && place->lineColumn.line >= definition->lineColumn.line)
         line = place->lineColumn.line - definition->lineColumn.line;
-    return PlaceInFunctionText { callSite.address, description.sourceFunction(), line, place ? place->source : ModuleID(), place ? place->lineColumn : LineColumn() };
+    return PlaceInFunctionText { frame.returnAddress, description.sourceFunction(), line, place ? place->source : ModuleID(), place ? place->lineColumn : LineColumn() };
 }
 
 StringView nameOfConstructorThatRunsOnTop(VM& vm)

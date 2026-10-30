@@ -237,6 +237,14 @@ static uintptr_t endOfMappingThatHolds(const void* address)
     return result;
 }
 
+static uintptr_t* countOfArgumentsAboveEveryFrame(char** environment)
+{
+    auto* word = reinterpret_cast<uintptr_t*>(environment) - 2;
+    for (uintptr_t count = 0; *word != count; ++count)
+        --word;
+    return word;
+}
+
 // The collector scans the main thread's stack up to this address: too low and it misses the first frames, too high and it reads what is not mapped.
 static void testMainThreadStackEndsAboveItsFirstFrame()
 {
@@ -249,11 +257,11 @@ static void testMainThreadStackEndsAboveItsFirstFrame()
     uintptr_t endOfMapping = endOfMappingThatHolds(planted);
     AOT_TEST_CHECK(endOfMapping && endOfMapping == endOfMappingThatHolds(environment));
 
-    auto isRight = [&](StackBounds bounds) {
+    auto endsBetween = [&](StackBounds bounds, const void* lowest) {
         uintptr_t origin = reinterpret_cast<uintptr_t>(bounds.origin());
-        return origin >= reinterpret_cast<uintptr_t>(environment) && origin <= endOfMapping;
+        return origin >= reinterpret_cast<uintptr_t>(lowest) && origin <= endOfMapping;
     };
-    AOT_TEST_CHECK(isRight(StackBounds::currentThreadStackBoundsForEmbedder()));
+    AOT_TEST_CHECK(endsBetween(StackBounds::currentThreadStackBoundsForEmbedder(), environment));
 
     char** end = environment;
     while (*end)
@@ -268,7 +276,7 @@ static void testMainThreadStackEndsAboveItsFirstFrame()
     bool isPlanted = getauxval(AT_EXECFN) == reinterpret_cast<uintptr_t>(planted);
     StackBounds boundsUnderTracer = StackBounds::currentThreadStackBoundsForEmbedder();
     entry->a_un.a_val = original;
-    AOT_TEST_CHECK(!isPlanted || isRight(boundsUnderTracer));
+    AOT_TEST_CHECK(!isPlanted || endsBetween(boundsUnderTracer, countOfArgumentsAboveEveryFrame(environment)));
 }
 
 static ProgramHeader segmentOfKind(unsigned kind, uintptr_t address, size_t sizeInFile, size_t sizeInMemory, unsigned flags)

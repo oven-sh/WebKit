@@ -55,6 +55,13 @@ void giveBackMostRoomOf(auto& list)
     list.shrinkCapacity(std::max<size_t>(list.size(), list.capacity() / 4));
 }
 
+// The lists of one step of a round are long in the same rounds. One that has been read gives its room to the lists of the next step.
+void giveBackRoomIfEmpty(auto& list)
+{
+    if (list.isEmpty() && list.capacity() * sizeof(list[0]) >= 64 * KB)
+        list.shrinkCapacity(0);
+}
+
 class ValueSets {
     WTF_MAKE_NONCOPYABLE(ValueSets);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueSets);

@@ -138,6 +138,8 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         inputs.effectsByOperandTypes = &effectsByOperandTypes;
     }
     CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
+    context.giveFreedMemoryBack();
+    times.didFinish("put bodies away"_s);
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
     runTasksInParallel(context.parallelLoops(), {
         [&] {
@@ -460,6 +462,9 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
                     report.builtinsUsed.span().data(), report.builtinsUsed.size(),
                     report.libraryFunctionsLacked.span().data(), report.libraryFunctionsLacked.size(),
                     report.exportsThatSpiesReplace.span().data(), report.exportsThatSpiesReplace.size(),
+                    report.builtinsThatTestsReplace.span().data(), report.builtinsThatTestsReplace.size(),
+                    report.namesThatTestsAdd.span().data(), report.namesThatTestsAdd.size(),
+                    report.textOfNamesThatTestsAdd.span().data(), report.textOfNamesThatTestsAdd.size(),
                 };
                 return owner.goesOnBehindFlowAnalysis(owner.owner, &findings);
             });

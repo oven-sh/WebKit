@@ -178,10 +178,13 @@ bool isTriedAtFirstPlaceAlone(const PatternAlternative& alternative)
     return alternative.m_onceThrough || beginsAtInputStartAlone(alternative);
 }
 
+enum class Covers : bool { AlternativesTriedAtEveryPlace, EveryAlternative };
+
 class Finder {
 public:
-    explicit Finder(const YarrPattern& pattern)
+    explicit Finder(const YarrPattern& pattern, Covers covers)
         : m_pattern(pattern)
+        , m_covers(covers)
     {
     }
 
@@ -192,7 +195,7 @@ public:
     {
         Vector<const PatternAlternative*, 8> alternatives;
         for (auto& alternative : disjunction.m_alternatives) {
-            if (depth || !isTriedAtFirstPlaceAlone(*alternative))
+            if (depth || m_covers == Covers::EveryAlternative || !isTriedAtFirstPlaceAlone(*alternative))
                 alternatives.append(alternative.get());
         }
         if (depth > maxNestingDepth || alternatives.isEmpty())
@@ -412,6 +415,7 @@ private:
     }
 
     const YarrPattern& m_pattern;
+    const Covers m_covers;
     // What the match can hold between its start and the term that is walked. Without a value: anything.
     std::optional<Place> m_inFront;
     bool m_hasFailed { false };
@@ -597,12 +601,12 @@ ALWAYS_INLINE unsigned nextStart(const RequiredTexts& texts, std::span<const Cha
     return start;
 }
 
-RequiredTexts find(const YarrPattern& pattern)
+RequiredTexts find(const YarrPattern& pattern, Covers covers)
 {
 
-    Finder finder(pattern);
+    Finder finder(pattern, covers);
     Place unitsAtEnd;
-    if (!pattern.hasEndAnchoredFixedSize() && finder.collectUnitsOfMatchesAtEnd(*pattern.m_body, unitsAtEnd)
+    if (covers == Covers::AlternativesTriedAtEveryPlace && !pattern.hasEndAnchoredFixedSize() && finder.collectUnitsOfMatchesAtEnd(*pattern.m_body, unitsAtEnd)
         && commonnessOf(Place { { ~unitsAtEnd.asciiMembers[0], ~unitsAtEnd.asciiMembers[1] }, false }) >= leastCommonnessOfWhatEndsWalk) {
         RequiredText result;
         result.asciiMembers = unitsAtEnd.asciiMembers;
@@ -649,7 +653,50 @@ RequiredTexts find(const YarrPattern& pattern)
     return result;
 }
 
+void fillTables(RequiredText& required, const YarrPattern& pattern)
+{
+    for (unsigned i = 0; i < std::min<size_t>(required.text.size(), sizeof(uint64_t)); ++i) {
+        required.firstUnitsOfText |= static_cast<uint64_t>(required.text[i]) << (i * 8);
+        required.firstUnitsOfCaseMask |= static_cast<uint64_t>(required.caseMask[i]) << (i * 8);
+    }
+    for (unsigned word = 0; word < 2; ++word) {
+        for (uint64_t rest = required.asciiMembers[word]; rest; rest &= rest - 1) {
+            unsigned unit = word * 64 + std::countr_zero(rest);
+            required.rowsOfLowBits[unit & 15] |= 1 << (unit >> 4);
+        }
+    }
+    required.decodesSurrogatePairs = pattern.eitherUnicode();
+}
+
+template<typename CharType>
+ALWAYS_INLINE bool holds(const RequiredText& required, std::span<const CharType> subject, unsigned start)
+{
+    size_t earliest = static_cast<size_t>(start) + required.leastDistance;
+    return earliest < subject.size() && findText(required, subject, earliest) < subject.size();
+}
+
 } // namespace
+
+std::optional<RequiredText> findTextOfEveryMatch(const YarrPattern& pattern)
+{
+    if (pattern.m_analysis != PatternAnalysis::Performed || pattern.sticky())
+        return std::nullopt;
+    RequiredTexts result = find(pattern, Covers::EveryAlternative);
+    if (result.isEmpty())
+        return std::nullopt;
+    fillTables(result[0], pattern);
+    return WTF::move(result[0]);
+}
+
+bool holdsRequiredText(const RequiredText& required, std::span<const Latin1Character> subject, unsigned start)
+{
+    return holds(required, subject, start);
+}
+
+bool holdsRequiredText(const RequiredText& required, std::span<const char16_t> subject, unsigned start)
+{
+    return holds(required, subject, start);
+}
 
 RequiredTexts findRequiredTexts(const YarrPattern& pattern)
 {
@@ -662,19 +709,9 @@ RequiredTexts findRequiredTexts(const YarrPattern& pattern)
     };
     if (std::ranges::all_of(alternatives, isTriedOnce))
         return { };
-    RequiredTexts result = find(pattern);
+    RequiredTexts result = find(pattern, Covers::AlternativesTriedAtEveryPlace);
     for (auto& required : result) {
-        for (unsigned i = 0; i < std::min<size_t>(required.text.size(), sizeof(uint64_t)); ++i) {
-            required.firstUnitsOfText |= static_cast<uint64_t>(required.text[i]) << (i * 8);
-            required.firstUnitsOfCaseMask |= static_cast<uint64_t>(required.caseMask[i]) << (i * 8);
-        }
-        for (unsigned word = 0; word < 2; ++word) {
-            for (uint64_t rest = required.asciiMembers[word]; rest; rest &= rest - 1) {
-                unsigned unit = word * 64 + std::countr_zero(rest);
-                required.rowsOfLowBits[unit & 15] |= 1 << (unit >> 4);
-            }
-        }
-        required.decodesSurrogatePairs = pattern.eitherUnicode();
+        fillTables(required, pattern);
         required.isFirstAttemptAlwaysMade = std::ranges::any_of(alternatives, isTriedOnce);
         required.isSilentOnSomeRepeatedAlternative = std::ranges::any_of(alternatives, [](auto& alternative) {
             return !alternative->m_onceThrough && beginsAtInputStartAlone(*alternative);

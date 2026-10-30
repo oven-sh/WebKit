@@ -1390,7 +1390,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         }
         if (!followsNames) {
         } else if (referencesOfBody)
-            functionsMadeBy[index] = referencesOfBody->otherReferences;
+            functionsMadeBy[index] = Vector<FunctionID>(referencesOfBody->otherReferences.span());
         else {
             forEachFunctionReference(program, id, [&](FunctionID made, FunctionReferenceKind kind) {
                 if (kind == FunctionReferenceKind::Closure || kind == FunctionReferenceKind::Constructor)
@@ -1531,30 +1531,6 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     functor(index, call);
             }
         };
-        groupByIndex(numberOfNodes, filled.m_firstLongSetOf, filled.m_longSetsOf, [&](const auto& add) {
-            forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
-                add(index, HeatCallOfLongSet { call.node - numberOfNodes, call.weight });
-            });
-        });
-        groupByIndex(numberOfNodes, filled.m_firstOtherCallOfMember, filled.m_otherCallsOfMembers, [&](const auto& add) {
-            for (unsigned index = 0; index < count; ++index) {
-                std::span<const WeightedCall> callsOfLongSets = calls[index].span().subspan(numberOfCallsOfNodes(index));
-                if (callsOfLongSets.empty())
-                    continue;
-                for (const WeightedCall& call : callsOfNodes(index)) {
-                    if (!call.isAlsoInLongSet)
-                        continue;
-                    auto callOfSet = std::ranges::find_if(callsOfLongSets, [&](const WeightedCall& candidate) { return isInLongSet(candidate.node - numberOfNodes, call.node); });
-                    RELEASE_ASSERT(callOfSet != callsOfLongSets.end());
-                    add(index, HeatCallOfMember { HeatNodeID(call.node), call.weight, callOfSet->weight });
-                }
-            }
-        });
-        groupByIndex(numberOfLongSets, filled.m_firstUserOfLongSet, filled.m_usersOfLongSets, [&](const auto& add) {
-            forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
-                add(call.node - numberOfNodes, HeatNodeID(index));
-            });
-        });
         // A set that nobody calls says nothing about its members.
         auto forEachMember = [&](const auto& functor) {
             for (unsigned set = 0; set < numberOfLongSets; ++set) {
@@ -1564,15 +1540,54 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                     functor(set, member.node);
             }
         };
-        groupByIndex(numberOfLongSets, filled.m_firstMemberOfLongSet, filled.m_membersOfLongSets, [&](const auto& add) {
-            forEachMember([&](unsigned set, uint32_t member) {
-                add(set, HeatNodeID(member));
-            });
-        });
-        groupByIndex(numberOfNodes, filled.m_firstLongSetWith, filled.m_longSetsWith, [&](const auto& add) {
-            forEachMember([&](unsigned set, uint32_t member) {
-                add(member, set);
-            });
+        // Each table is one walk on one thread, and only the tables of members wait for another: the one of users.
+        runTasksInParallel(loops, {
+            [&] {
+                groupByIndex(numberOfNodes, filled.m_firstLongSetOf, filled.m_longSetsOf, [&](const auto& add) {
+                    forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
+                        add(index, HeatCallOfLongSet { call.node - numberOfNodes, call.weight });
+                    });
+                });
+            },
+            [&] {
+                groupByIndex(numberOfNodes, filled.m_firstOtherCallOfMember, filled.m_otherCallsOfMembers, [&](const auto& add) {
+                    for (unsigned index = 0; index < count; ++index) {
+                        std::span<const WeightedCall> callsOfLongSets = calls[index].span().subspan(numberOfCallsOfNodes(index));
+                        if (callsOfLongSets.empty())
+                            continue;
+                        for (const WeightedCall& call : callsOfNodes(index)) {
+                            if (!call.isAlsoInLongSet)
+                                continue;
+                            auto callOfSet = std::ranges::find_if(callsOfLongSets, [&](const WeightedCall& candidate) { return isInLongSet(candidate.node - numberOfNodes, call.node); });
+                            RELEASE_ASSERT(callOfSet != callsOfLongSets.end());
+                            add(index, HeatCallOfMember { HeatNodeID(call.node), call.weight, callOfSet->weight });
+                        }
+                    }
+                });
+            },
+            [&] {
+                groupByIndex(numberOfLongSets, filled.m_firstUserOfLongSet, filled.m_usersOfLongSets, [&](const auto& add) {
+                    forEachCallOfLongSet([&](unsigned index, const WeightedCall& call) {
+                        add(call.node - numberOfNodes, HeatNodeID(index));
+                    });
+                });
+                runTasksInParallel(loops, {
+                    [&] {
+                        groupByIndex(numberOfLongSets, filled.m_firstMemberOfLongSet, filled.m_membersOfLongSets, [&](const auto& add) {
+                            forEachMember([&](unsigned set, uint32_t member) {
+                                add(set, HeatNodeID(member));
+                            });
+                        });
+                    },
+                    [&] {
+                        groupByIndex(numberOfNodes, filled.m_firstLongSetWith, filled.m_longSetsWith, [&](const auto& add) {
+                            forEachMember([&](unsigned set, uint32_t member) {
+                                add(member, set);
+                            });
+                        });
+                    },
+                });
+            },
         });
     };
     auto fillEdges = [&](HeatGraph& filled) {
@@ -1581,16 +1596,18 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         filled.m_numberOfSuccessors.fill(0u, numberOfNodes);
         filled.m_firstPredecessor.fill(0u, numberOfNodes + 1);
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
+            uint32_t numberOfSuccessors = 0;
             forEachEdgeOf(index, [&](const WeightedCall& call) {
                 AtomicRef(filled.m_firstPredecessor[call.node + 1]).fetch_add(1, std::memory_order_relaxed);
+                ++numberOfSuccessors;
             });
+            filled.m_numberOfSuccessors[index] = numberOfSuccessors;
         });
         uint32_t numberOfStoredSuccessors = 0;
         BitVector storesSuccessors(numberOfNodes);
         UncheckedKeyHashMap<const SharedCallList*, uint32_t> firstSuccessorOfSharedList;
         for (unsigned index = 0; index < numberOfNodes; ++index) {
             filled.m_firstPredecessor[index + 1] += filled.m_firstPredecessor[index];
-            filled.m_numberOfSuccessors[index] = std::ranges::count_if(callsOfNodes(index), [](const WeightedCall& call) { return !call.isAlsoInLongSet; });
             filled.m_firstSuccessor[index] = numberOfStoredSuccessors;
             if (const SharedCallList* shared = calls[index].sharedList()) {
                 auto added = firstSuccessorOfSharedList.add(shared, numberOfStoredSuccessors);

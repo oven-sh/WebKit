@@ -715,12 +715,128 @@ static void forEachSuspensionWithLastCrossings(const Function& function, Functio
     }, functor);
 }
 
+static void eraseEverywhere(IRBuilder&, const BitVector& marked);
+
+// `x = null` lets go of what x held. Where the function was suspended since it last read that value there is nothing left to let go of: it runs in a new frame.
+// Left in place, the hint would be the one reader for whose sake the suspended function holds the value.
+static PassOutcome dropReleaseHintsBehindSuspensions(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::ReleaseHint))
+        return PassOutcome::Unchanged;
+    // A function that is never suspended holds nothing for a hint's sake, and the pass is not started in its body.
+    constexpr OpcodeSet suspensions { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose };
+    if (!analyses.opcodesOfValues().intersects(suspensions))
+        return PassOutcome::Unchanged;
+
+    const CFG& cfg = analyses.cfg();
+    auto isReadAtEndOf = [&](const Block& block, ValueID released) {
+        bool isRead = block.subject == released;
+        block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead |= operand == released; });
+        block.forEachTarget([&](const Target& target) { isRead |= target.arguments.contains(released); });
+        return isRead;
+    };
+    auto isSuspendedSinceLastRead = [&](BlockID blockOfHint, uint32_t indexOfHint) {
+        ValueID released = function.at(function.at(blockOfHint).values[indexOfHint]).valueOperand();
+        BitVector isVisited(function.blocks.size());
+        Vector<BlockID, 8> worklist;
+        bool isSuspended = false;
+        auto scan = [&](BlockID id, uint32_t end) {
+            const Block& block = function.at(id);
+            for (uint32_t index = end; index--;) {
+                const Value& value = function.at(block.values[index]);
+                if (block.values[index] == released)
+                    return;
+                bool isRead = false;
+                value.forEachOperand([&](ValueID operand, uint32_t) { isRead |= operand == released; });
+                if (isRead && value.opcode != Opcode::ReleaseHint)
+                    return;
+                if (canHoldOperands(value.opcode) && analyses.maySuspend(block.values[index])) {
+                    isSuspended = true;
+                    return;
+                }
+            }
+            if (block.parameters.contains(released))
+                return;
+            for (BlockID predecessor : cfg.predecessors(id)) {
+                if (!isVisited.set(predecessor.index()) && !isReadAtEndOf(function.at(predecessor), released))
+                    worklist.append(predecessor);
+            }
+        };
+        scan(blockOfHint, indexOfHint);
+        while (!isSuspended && !worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            scan(block, function.at(block).values.size());
+        }
+        return isSuspended;
+    };
+
+    // A join that only hints read, itself or through other such joins, reads what flows into it for nobody's sake.
+    BitVector isRead(function.values.size());
+    for (BlockID id : cfg.reversePostOrder()) {
+        const Block& block = function.at(id);
+        for (ValueID value : block.values) {
+            if (function.at(value).opcode != Opcode::ReleaseHint)
+                function.at(value).forEachOperand([&](ValueID operand, uint32_t) { isRead.set(operand.index()); });
+        }
+        block.terminator.Instruction::forEachChild([&](ValueID operand) { isRead.set(operand.index()); });
+        if (block.subject)
+            isRead.set(block.subject.index());
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (BlockID id : cfg.reversePostOrder()) {
+            function.at(id).forEachTarget([&](const Target& target) {
+                std::span<const ValueID> parameters = function.at(target.block).parameters.span();
+                std::span<const ValueID> arguments = target.arguments.span();
+                for (size_t index = 0; index < std::min(parameters.size(), arguments.size()); ++index) {
+                    if (isRead.get(parameters[index].index()))
+                        changed |= !isRead.set(arguments[index].index());
+                }
+            });
+        }
+    }
+
+    BitVector dropped;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode == Opcode::ReleaseHint && (!isRead.get(value.valueOperand().index()) || isSuspendedSinceLastRead(block, index)))
+                dropped.set(values[index].index());
+        }
+    }
+    if (dropped.isEmpty())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    eraseEverywhere(builder, dropped);
+    for (BlockID id : cfg.reversePostOrder()) {
+        if (id == entryBlock)
+            continue;
+        // What an edge itself answers stands behind the arguments.
+        size_t numberOfArguments = std::numeric_limits<size_t>::max();
+        for (const Edge& edge : cfg.incomingEdges(id))
+            numberOfArguments = std::min<size_t>(numberOfArguments, targetOf(function, edge).arguments.size());
+        const CompactList<ValueID>& parameters = function.at(id).parameters;
+        BitVector unread;
+        for (uint32_t index = 0; index < parameters.size() && index < numberOfArguments; ++index) {
+            if (!isRead.get(parameters[index].index()))
+                unread.set(index);
+        }
+        if (!unread.isEmpty())
+            builder.removeParameters(id, unread);
+    }
+    return PassOutcome::Changed;
+}
+
 static PassOutcome listLiveValues(FunctionPassContext& context)
 {
     Function& function = context.function;
     PassOutcome outcome = PassOutcome::Unchanged;
     if (!function.isUnsplitCoroutine())
         return outcome;
+    outcome = dropReleaseHintsBehindSuspensions(context);
     // What the function still captures when it is split it holds until it ends.
     BitVector isHeldUntilTheEnd;
     const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
@@ -963,7 +1079,7 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const FlowResul
         }
     }
     // A name computed at run time finds an entry point or a file marked IsFoundByName. Where it finds one entry point and nothing else, that one has begun before any require() runs.
-    if (BitVector found = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName()); found.bitCount() > 1 && loadsModulesByName(flow)) {
+    if (BitVector found = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName(), flow.hostRunsFilesOutsideImage()); found.bitCount() > 1 && loadsModulesByName(flow)) {
         for (size_t index : found)
             work.append(index);
     }
@@ -2783,9 +2899,22 @@ static bool isHeldAtSuspension(const Function& function, const Use& use)
 }
 
 // A guard speaks of the value that its test looked at. The test and whoever names the guard read one and the same value only within a stretch.
-static bool namesOnlyGuardsOfStretch(const Function& function, const Stretches& stretches, const PlaceOfKeptUse& place)
+static bool namesOnlyGuardsOfStretch(const Program& program, const Function& function, FunctionAnalyses& analyses, const Stretches& stretches, const PlaceOfKeptUse& place)
 {
-    auto isOfStretch = [&](ValueID guard) { return stretches.behind(guard) == place.stretch; };
+    auto locate = [&](ValueID parameter) {
+        return analyses.useLists().locationOf(parameter);
+    };
+    // A block may be handed the guard of a test that stands in another stretch.
+    auto isOfStretch = [&](ValueID guard) {
+        bool isOfStretch = stretches.behind(guard) == place.stretch;
+        if (!isOfStretch)
+            return false;
+        forEachGuardOrigin(program, function, analyses.cfg(), locate, guard, [&](Proof, const GuardOrigin& origin) {
+            isOfStretch = (origin.source == GuardSource::SwitchCase ? stretches.atTail[origin.switchBlock.index()] : stretches.behind(origin.test)) == place.stretch;
+            return isOfStretch ? IterationStatus::Continue : IterationStatus::Done;
+        });
+        return isOfStretch;
+    };
     switch (place.use.kind) {
     case Use::Kind::Operand: {
         const Value& user = function.at(place.use.user);
@@ -2832,7 +2961,7 @@ static bool canBeKeptInHeapWord(const Program& program, const Function& function
         // What a block passes to its handler is there at its head.
         if (use.kind == Use::Kind::HandlerArgument)
             return false;
-        return acceptsCastOfValue(function, use) && namesOnlyGuardsOfStretch(function, stretches, place);
+        return acceptsCastOfValue(function, use) && namesOnlyGuardsOfStretch(program, function, analyses, stretches, place);
     });
 }
 

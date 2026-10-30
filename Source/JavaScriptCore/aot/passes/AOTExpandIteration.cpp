@@ -93,6 +93,9 @@ struct IterationArm {
     bool alsoWalksLists { false };
     // A class arm of an async iteration: it stands for the wrapper around the synchronous iterator.
     bool awaitsEachValue { false };
+    // What the prototype holds under @@iterator where a test run may replace it: the arm serves while nothing has. Its names do not count as proven, whatever is proven of the instance.
+    BuiltinID methodToWatch;
+    bool namesOfInstanceAreProven { false };
 
     bool needsNoTest() const { return classIsProven && namesAreProven; }
     bool hasMethodsToCall() const { return form == IterationForm::Protocol || form == IterationForm::Generator || form == IterationForm::AsyncGenerator; }
@@ -681,6 +684,16 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
     return findMethod(WellKnownSymbol::Iterator).isConstant();
 }
 
+// The language reads the method once, where the walk opens.
+static BuiltinID findIteratorMethodToWatch(FunctionPassContext& pass, const IterationArm& arm)
+{
+    const Program& program = pass.program;
+    if ((arm.form != IterationForm::Map && arm.form != IterationForm::Set) || arm.awaitsEachValue)
+        return { };
+    BuiltinMemberAnswer method = findMemberOfInstances({ program, pass.inputs.flow }, arm.builtinClass, program.keyOf(program.builtins().nameOf(WellKnownSymbol::Iterator)));
+    return method.isFound() && !method.isConstant() && program.isUnlocked(method.location) ? method.location : BuiltinID();
+}
+
 // An object whose layout has nothing under @@iterator is not iterated: whoever expects only such objects has looked at what else is done with the value.
 static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Type& expected, IteratorKind kind)
 {
@@ -754,7 +767,7 @@ static bool canServe(FunctionPassContext& pass, const PlannedValue& planned, con
 {
     const Program& program = pass.program;
     auto hasFailedEarlier = [&](const Value& test) { return pass.analyses.findEarlierTest(test, planned.block) == EarlierTest::Failed; };
-    if (!program.typeOf(pass.function, planned.value).overlaps(pass.types.at(arm.testedType), program) || !hasConstantIteratorMethod(pass, arm))
+    if (!program.typeOf(pass.function, planned.value).overlaps(pass.types.at(arm.testedType), program) || (!arm.methodToWatch && !hasConstantIteratorMethod(pass, arm)))
         return false;
     if (!arm.namesAreProven) {
         RELEASE_ASSERT(arm.builtinClass);
@@ -770,9 +783,11 @@ static Arms findClassArms(FunctionPassContext& pass, const PlannedValue& planned
 {
     Arms arms;
     for (IterationArm& arm : collectCandidates(pass, planned)) {
-        arm.namesAreProven = arm.form == IterationForm::String
+        arm.methodToWatch = findIteratorMethodToWatch(pass, arm);
+        arm.namesOfInstanceAreProven = arm.form == IterationForm::String
             || (arm.form == IterationForm::Arguments && findMakerOfUnchangedArguments(pass, planned.value))
             || pristineAspectsProvenBy(pass.program.typeOf(pass.function, planned.value).intersectWith(pass.types.at(arm.testedType), pass.types), arm.builtinClass).containsAll(planned.aspects);
+        arm.namesAreProven = arm.namesOfInstanceAreProven && !arm.methodToWatch;
         if (canServe(pass, planned, arm))
             arms.append(arm);
     }
@@ -2804,11 +2819,19 @@ struct ArmDispatcher {
 
         if (!arm.namesAreProven) {
             RELEASE_ASSERT(protocolEntry);
+            builder.emitFailureOfPredictions(Target { protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) }, { } });
+        }
+        if (!arm.namesOfInstanceAreProven && !arm.namesAreProven) {
             OptionSet<PristineAspects> aspects { PristineAspects::Names };
             if (patternReads[states.size()] == PatternRead::ByIndex)
                 aspects.add(PristineAspects::Storage);
-            builder.emitFailureOfPredictions(Target { protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) }, { } });
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(makeNamesTest(arm, subject, aspects)), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
+            builder.moveToEndOf(branch.notTaken);
+            builder.emitJump(protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) });
+            builder.moveToEndOf(branch.taken);
+        }
+        if (arm.methodToWatch) {
+            IRBuilder::BranchBlocks branch = builder.emitBranch(builder.append(makeWith(Opcode::IsBuiltinLocationUnchanged, { }, &Value::setMember, arm.methodToWatch)), BlockFrequency::Normal, BlockFrequency::Unlikely);
             builder.moveToEndOf(branch.notTaken);
             builder.emitJump(protocolEntry, { chooseArgumentOfProtocolEntry(pass, protocolEntry, subject, value) });
             builder.moveToEndOf(branch.taken);

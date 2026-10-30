@@ -361,7 +361,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
     ValueFlowUsesOfLibraryCode usesOfLibraryCode = findUsesOfLibraryCode(inputs);
-    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span(), usesOfLibraryCode.exportsThatSpiesReplace.span()))) {
+    if (goesOn && !(*goesOn)(reportUsesOfLibraryCode(usesOfLibraryCode.unseenCode.span(), usesOfLibraryCode.loadsOfMachineCode.span(), usesOfLibraryCode.builtinUses.span(), usesOfLibraryCode.libraryFunctionsLacked.span(), usesOfLibraryCode.exportsThatSpiesReplace.span(), usesOfLibraryCode.builtinsThatTestsReplace.span(), usesOfLibraryCode.namesThatTestsAdd.span()))) {
         build.destroyLater(WTF::move(solution));
         return FlowResults(createUnknownResultTables(program, build));
     }
@@ -427,6 +427,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto firstResults = steps->add({ indexOfHeap, askedFor, unknownResults, classesOfResults, layoutsPicked }, [&] {
         inputs.heapIndex = heapIndex.get();
         inputs.nodesAskedFor = nodesAskedFor.get();
+        solution->letGoOfRecordsAskedFor();
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
         inputs.layoutsOfSites = &layoutsOfSites;
     });

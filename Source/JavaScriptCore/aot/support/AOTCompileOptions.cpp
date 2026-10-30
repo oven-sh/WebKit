@@ -320,6 +320,15 @@ public:
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
         options.output = m_wire.output;
+        if (m_wire.target.imagesBelow.size) {
+            if (options.sharesRealms()) {
+                // The address of a list of as many records of the same form, one for each image.
+                std::span list { std::bit_cast<const Wire::ImagesBelowWords*>(static_cast<uintptr_t>(m_wire.target.imagesBelow.address)), static_cast<size_t>(m_wire.target.imagesBelow.size) };
+                for (const Wire::ImagesBelowWords& image : list)
+                    options.imagesBelow.append(std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(image.address)), static_cast<size_t>(image.size) });
+            } else
+                reportInvalid(m_wire.target.imagesBelow.size);
+        }
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;

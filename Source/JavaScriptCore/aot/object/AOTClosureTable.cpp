@@ -394,6 +394,7 @@ JSValue Object::materializeDeferredClosure(VM& vm, const FieldData& field)
         return JSValue::decode(word);
     }
 
+    RunningImageScope imageOfObject(vm.aotState(), state.instance.program);
     JSObject* closure = state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(layout().deferredClosureNumberOf(field))), valueCapturedByClosureOf(*this, field, cageBase));
     JSCell* held = closure;
     if (field.isAccessor()) [[unlikely]]

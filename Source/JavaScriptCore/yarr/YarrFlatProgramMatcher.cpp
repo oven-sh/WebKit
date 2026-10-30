@@ -435,12 +435,31 @@ static NEVER_INLINE unsigned findStartBehindFailedRun(const FlatProgram& program
     return next;
 }
 
+template<typename CharType> static unsigned findStartOfMatch(const FlatProgram&, const CharType* input, unsigned length, unsigned from, StartSearch&);
+
+// See FlatProgram::asksRequiredTextsLate.
+template<typename CharType>
+static NEVER_INLINE unsigned findStartBehindLateSearchForTexts(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+{
+    // Not 0: the first attempt, of which the texts may say nothing, has been made, and this search is not made again.
+    search.requiredTextPlaces = { 1, 0 };
+    if (nextStartWithRequiredTexts(program.requiredTexts, std::span { input, length }, from, search.requiredTextPlaces) > length)
+        return length + 1;
+    return findStartOfMatch(program, input, length, from, search);
+}
+
 // The first place from `from` on where a match can begin. Past the end: none. Out of line so that its loops do not take registers from Machine::run().
 template<typename CharType>
 static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
 {
-    if (program.requiredTexts.isEmpty())
+    constexpr unsigned enough = FlatProgram::unitsWalkedBeforeTextsAreAsked;
+    auto isTimeToAskTexts = [&] ALWAYS_INLINE_LAMBDA {
+        return !search.requiredTextPlaces[0] && from - search.startOffset >= enough && from <= length && length - from >= enough && search.usesRequiredTexts;
+    };
+    if (program.requiredTexts.isEmpty() || (program.asksRequiredTextsLate && !isTimeToAskTexts()))
         return findStartByTables<CharType, SkipsStarts::BehindFailedRun>(program, input, length, from, search);
+    if (program.asksRequiredTextsLate)
+        return findStartBehindLateSearchForTexts(program, input, length, from, search);
     if (!search.usesRequiredTexts) [[unlikely]]
         return program.startScan == FlatStartScan::RequiredTextsAlone ? from : findStartByTables<CharType, SkipsStarts::No>(program, input, length, from, search);
     for (;;) {
@@ -2500,9 +2519,20 @@ static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, 
     return enclosure.resultUnlessGivenUp(program, result);
 }
 
+template<typename CharType>
+static JSRegExpResult matchIfSubjectHoldsText(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output)
+{
+    if (!holdsRequiredText(*program.textOfEveryMatch, input, start))
+        return JSRegExpResult::NoMatch;
+    uint64_t steps = program.stepsPerCharacterBehindLookForText ? program.stepsPerCharacterBehindLookForText * (static_cast<uint64_t>(input.size()) + 32) : matchLimit;
+    return matchForgetting(program, input.data(), input.size(), start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, steps)));
+}
+
 template<typename CharType, bool isFull>
 static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, const CharType* input, const Enclosure<CharType>& enclosure, unsigned* output)
 {
+    if (enclosure.steps == FlatProgram::stepsBeforeLookingForText)
+        return matchIfSubjectHoldsText(program, std::span { input, enclosure.length }, enclosure.startOffset(), output);
     if (enclosure.steps == matchLimit || program.jitCountsTurns)
         return JSRegExpResult::ErrorHitLimit;
     if (program.programThatFindsEndsOfRuns)
@@ -2568,6 +2598,11 @@ static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, st
     }
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
+    if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly) {
+        if (input.size() >= start + FlatProgram::leastLengthLookedThroughFirst)
+            return matchIfSubjectHoldsText(program, input, start, output);
+        return matchForgetting(program, input.data(), input.size(), start, output, FlatProgram::stepsBeforeLookingForText);
+    }
     return matchByPolicy<CharType, false>(program, input, start, output, policy);
 }
 
@@ -2589,11 +2624,36 @@ JSRegExpResult matchFlatProgram(const FlatProgram& program, std::span<const Lati
     return match(program, input, start, output, policy);
 }
 
+// A match that meets a surrogate is made twice: see FlatProgram::decodesSurrogatePairs. `"<\u{1d236}/env>".replace(pattern, ..)`: in a short text the first match is all for nothing,
+// so a short text with a surrogate in it goes to the full machine at once. In a long one the search for a place to begin at may pass every surrogate by, and the full machine searches more slowly.
+static ALWAYS_INLINE bool isShortAndHoldsSurrogate(std::span<const char16_t> input, unsigned start)
+{
+    constexpr size_t stride = SIMD::stride<uint16_t>;
+    if (start >= input.size() || input.size() - start > 2 * stride)
+        return false;
+    size_t available = input.size() - start;
+    const uint16_t* units = std::bit_cast<const uint16_t*>(input.data() + start);
+    if (available < stride) {
+        for (size_t index = 0; index < available; ++index) {
+            if (U16_IS_SURROGATE(units[index]))
+                return true;
+        }
+        return false;
+    }
+    auto surrogatesIn = [](const uint16_t* eight) ALWAYS_INLINE_LAMBDA {
+        return SIMD::equal(SIMD::bitAnd(SIMD::load(eight), SIMD::splat<uint16_t>(0xf800)), SIMD::splat<uint16_t>(0xd800));
+    };
+    // The last eight overlap the first.
+    return SIMD::isNonZero(SIMD::bitOr(surrogatesIn(units), surrogatesIn(units + available - stride)));
+}
+
 JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy)
 {
     SuperSamplerScope superSamplerScope(false);
     if (input.is8Bit())
         return match(program, input.span8(), start, output, policy);
+    if (program.decodesSurrogatePairs && isShortAndHoldsSurrogate(input.span16(), start))
+        return matchByPolicy<char16_t, true>(program, input.span16(), start, output, policy);
     return match(program, input.span16(), start, output, policy);
 }
 

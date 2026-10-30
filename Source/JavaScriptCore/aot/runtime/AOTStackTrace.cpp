@@ -19,8 +19,10 @@
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
+#include "AOTModules.h"
 #include "AOTProgramTables.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrame.h"
@@ -120,6 +122,27 @@ static String nameOfBuiltin(VM& vm, BuiltinID builtin)
     if (!table.isSymbolName(key))
         return StringImpl::createWithoutCopying(text);
     return makeString(table.isRegisteredSymbolName(key) ? "["_s : "[Symbol."_s, text, ']');
+}
+
+unsigned positionOfRunningImage()
+{
+    const Image* image = Image::current();
+    return image ? image->position() : 0;
+}
+
+ImageOfTraceFrameScope::ImageOfTraceFrameScope(const TraceFrame& frame)
+{
+    const Image* running = Image::current();
+    if (running->position() == frame.imagePosition) [[likely]]
+        return;
+    m_previous = running;
+    runImageOnThisThread(*running->atPosition(frame.imagePosition));
+}
+
+ImageOfTraceFrameScope::~ImageOfTraceFrameScope()
+{
+    if (m_previous) [[unlikely]]
+        runImageOnThisThread(*m_previous);
 }
 
 FunctionDescription::FunctionDescription(FunctionID function)
@@ -910,6 +933,7 @@ private:
 
 void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(const TraceFrame&)>& functor)
 {
+    RunningImageScope imageOfTrace(trace.instance->vm->aotState(), trace.instance->program);
     const Image& image = *Image::current();
     CallSiteCache& cache = *trace.instance->vm->aotState().callSiteCache;
     uintptr_t codeStart = imageCodeStart();
@@ -1194,6 +1218,7 @@ std::optional<SourcePosition> definitionOf(const TraceFrame& frame)
 
 std::optional<SourcePosition> positionOf(const TraceFrame& frame)
 {
+    ImageOfTraceFrameScope imageOfFrame(frame);
     const Image& image = *Image::current();
     if (image.isObfuscated())
         return SourcePosition { obfuscatedPositionOf(frame), ModuleID() };
@@ -1206,6 +1231,8 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
         position->constructionStart = { 0, 0 };
         position->startIsForCallers = false;
     }
+    if (position && position->source)
+        position->source = moduleIDForHost(image, position->source);
     return position;
 }
 
@@ -1303,10 +1330,23 @@ static NEVER_INLINE void appendInlinedFrames(const CallSiteCache::Entry& entry, 
     });
 }
 
+static ALWAYS_INLINE void appendFramesOfRunningImage(CallSiteCache&, const SuspendedAsyncFunction&, WTF::Vector<StackFrame>& results);
+
 static ALWAYS_INLINE void appendFrames(CallSiteCache& cache, const SuspendedAsyncFunction& suspended, WTF::Vector<StackFrame>& results)
 {
     if (!suspended.coroutine)
         return;
+    if (VMState& state = suspended.coroutine->vm().aotState(); state.hasSeveralImages) [[unlikely]] {
+        // A function that waits may be of any image of the realm.
+        RunningImageScope imageOfCoroutine(state, Instance::owning(suspended.coroutine)->program);
+        appendFramesOfRunningImage(*state.callSiteCache, suspended, results);
+        return;
+    }
+    appendFramesOfRunningImage(cache, suspended, results);
+}
+
+static ALWAYS_INLINE void appendFramesOfRunningImage(CallSiteCache& cache, const SuspendedAsyncFunction& suspended, WTF::Vector<StackFrame>& results)
+{
     // The function goes on behind the call that suspended it, so its resume address lies in it.
     const CallSiteCache::Entry* entry = cache.find(suspended.coroutine->resumeAddress());
     if (!entry) [[unlikely]]
@@ -1323,6 +1363,7 @@ static ALWAYS_INLINE void appendFrames(CallSiteCache& cache, const SuspendedAsyn
 
 static ALWAYS_INLINE bool isModuleBody(VM& vm, const SavedFrame& saved)
 {
+    ImageOfCellScope imageOfCoroutine(vm, &saved);
     const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(*Image::current(), saved.resumeAddress());
     return entry && entry->isInModuleBody;
 }

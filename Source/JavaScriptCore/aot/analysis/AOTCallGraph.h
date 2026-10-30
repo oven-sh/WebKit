@@ -271,20 +271,21 @@ struct ReferencesOfBody {
     }
 
     // Without the functions of the long sets among calleeSets and enteredSets, unless something else names them.
-    Vector<FunctionID> callees;
-    Vector<FunctionID> directCallees;
-    Vector<CalleeSetID> calleeSets;
+    CompactList<FunctionID> callees;
+    CompactList<FunctionID> directCallees;
+    CompactList<CalleeSetID> calleeSets;
     // The long sets of entrypoints of calls through the method table, one entry for each call. The entrypoints of a short set are among directCallees.
-    Vector<CalleeSetID> enteredSets;
-    Vector<FunctionID> otherReferences;
-    Vector<TypeID> expectedFunctionTypes;
-    Vector<SiteThatRunsCode> sitesThatRunCode;
-    Vector<FunctionID> functionsOfSites;
+    CompactList<CalleeSetID> enteredSets;
+    CompactList<FunctionID> otherReferences;
+    CompactList<TypeID> expectedFunctionTypes;
+    CompactList<SiteThatRunsCode> sitesThatRunCode;
+    CompactList<FunctionID> functionsOfSites;
     bool callsUnknownCode { false };
     bool followsFieldsOfOperands { false };
 
     friend bool operator==(const ReferencesOfBody&, const ReferencesOfBody&) = default;
 };
+static_assert(sizeof(ReferencesOfBody) <= 68);
 
 class BodyReferenceCollector {
     WTF_MAKE_NONCOPYABLE(BodyReferenceCollector);
@@ -313,8 +314,21 @@ private:
     void addReference(FunctionID target, FunctionReferenceKind);
     bool markSeen(FunctionID callee) { return !std::exchange(m_seen[callee.index()], static_cast<uint8_t>(1)); }
 
+    struct Collected {
+        Vector<FunctionID> callees;
+        Vector<FunctionID> directCallees;
+        Vector<CalleeSetID> calleeSets;
+        Vector<CalleeSetID> enteredSets;
+        Vector<FunctionID> otherReferences;
+        Vector<TypeID> expectedFunctionTypes;
+        Vector<SiteThatRunsCode> sitesThatRunCode;
+        Vector<FunctionID> functionsOfSites;
+        bool callsUnknownCode { false };
+        bool followsFieldsOfOperands { false };
+    };
+
     const Program& m_program;
-    ReferencesOfBody m_references;
+    Collected m_references;
     Vector<uint8_t> m_seen;
     uint32_t m_block { 0 };
     uint32_t m_indexInBlock { 0 };

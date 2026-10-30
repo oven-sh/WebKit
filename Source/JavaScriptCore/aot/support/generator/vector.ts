@@ -52,7 +52,9 @@ const growthDeclarations = `    template<FailureAction> bool reserveCapacitySlow
     {
         return movesAsBytes<T> && sizeof(T) <= std::numeric_limits<uint16_t>::max() && minCapacity <= std::numeric_limits<uint8_t>::max() && Base::inlineBufferOffset() <= std::numeric_limits<uint8_t>::max();
     }
-    static constexpr VectorLayout layout() { return { static_cast<uint16_t>(sizeof(T)), static_cast<uint8_t>(minCapacity), static_cast<uint8_t>(Base::inlineBufferOffset()) }; }
+    // The first buffer of a list has room for minCapacity elements or 32 bytes, whichever is less: most lists stay short, and a build keeps millions of them.
+    static constexpr size_t smallestCapacity() { return std::min<size_t>(minCapacity, std::max<size_t>(32 / sizeof(T), 1)); }
+    static constexpr VectorLayout layout() { return { static_cast<uint16_t>(sizeof(T)), static_cast<uint8_t>(smallestCapacity()), static_cast<uint8_t>(Base::inlineBufferOffset()) }; }
 `;
 
 const conversions = `
@@ -164,10 +166,17 @@ NEVER_INLINE void reserveVectorCapacity(VectorWords& vector, size_t newCapacity,
         Malloc::free(oldBuffer);
 }
 
+// A short list doubles.
+template<typename Malloc>
+constexpr size_t nextVectorCapacity(size_t capacity)
+{
+    return capacity < 16 ? 2 * capacity : Malloc::nextCapacity(capacity);
+}
+
 template<typename Malloc>
 NEVER_INLINE void expandVectorCapacity(VectorWords& vector, size_t newMinCapacity, VectorLayout layout)
 {
-    reserveVectorCapacity<Malloc>(vector, std::max(newMinCapacity, std::max(static_cast<size_t>(layout.minCapacity), Malloc::nextCapacity(vector.capacity))), layout);
+    reserveVectorCapacity<Malloc>(vector, std::max(newMinCapacity, std::max(static_cast<size_t>(layout.minCapacity), nextVectorCapacity<Malloc>(vector.capacity))), layout);
 }
 
 template<typename Malloc>
@@ -327,6 +336,11 @@ ${specifiers}Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::${
     member("bool ", "expandCapacity(size_t newMinCapacity)"),
     member("NEVER_INLINE bool ", "expandCapacity(size_t newMinCapacity)") +
       asBytes("expandVectorCapacity<Malloc>(Base::words(), newMinCapacity, layout())", "true"),
+  );
+  text = replaceExactly(
+    text,
+    "std::max(static_cast<size_t>(minCapacity), Malloc::nextCapacity(capacity()))",
+    "std::max(smallestCapacity(), nextVectorCapacity<Malloc>(capacity()))",
   );
   const expandCapacityAroundPointer = member("NEVER_INLINE T* ", "expandCapacity(size_t newMinCapacity, T* ptr)") + checkedAction;
   text = replaceExactly(

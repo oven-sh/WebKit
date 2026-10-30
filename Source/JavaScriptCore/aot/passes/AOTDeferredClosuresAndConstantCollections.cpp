@@ -183,8 +183,8 @@ static DeferrableLayouts findDeferrableLayouts(const Program& program)
     BitVector isFilledByOthers(size);
     for (size_t index = 0; index < size; ++index) {
         const Layout& layout = program.layouts[index];
-        if (layout.flow.baseState == BaseState::Layout)
-            isBase.quickSet(layout.flow.base.index());
+        if (LayoutID above = nearestLayoutAlwaysAbove(layout.flow))
+            isBase.quickSet(above.index());
         bool isObject = layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance;
         if (!isObject || layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse) || layout.flow.baseState == BaseState::BuiltinClass)
             isFilledByOthers.quickSet(index);
@@ -194,8 +194,8 @@ static DeferrableLayouts findDeferrableLayouts(const Program& program)
         didChange = false;
         for (size_t index : isFilledByOthers) {
             const Layout& layout = program.layouts[index];
-            if (layout.flow.baseState == BaseState::Layout)
-                didChange |= !isFilledByOthers.quickSet(layout.flow.base.index());
+            if (LayoutID above = nearestLayoutAlwaysAbove(layout.flow))
+                didChange |= !isFilledByOthers.quickSet(above.index());
         }
     }
 

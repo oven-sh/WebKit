@@ -1226,7 +1226,8 @@ static NEVER_INLINE void collectOverFilledStack(VM& vm)
 // A local of theirs that only a path for waiting writes would show the collection whatever an earlier call left at that depth.
 static void checkCollectorWritesTheFramesItScans(LoadedProgram& program)
 {
-#if !ASAN_ENABLED && !ASSERT_ENABLED && !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    // C++ frames on Windows x86-64 keep no chain of frame records to walk.
+#if !ASAN_ENABLED && !ASSERT_ENABLED && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !(OS(WINDOWS) && CPU(X86_64))
     VM& vm = program.vm();
     vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
         "Frm"_s, "Frames That The Collection Scans"_s,

@@ -740,13 +740,16 @@ const ImageRegExp* findRegExpRecord(VM& vm, const String& pattern, OptionSet<Yar
     if (!vm.hasCompiledCode())
         return nullptr;
 
-    const Image& image = *vm.aotState().image;
-    RegExpRecords records(image);
     uint16_t rawFlags = ImageRegExp::significantFlags(flags).toRaw();
-    for (const ImageRegExpHash& entry : std::ranges::equal_range(image.section<ImageRegExpHash>(ImageSection::RegExpHashes), ImageRegExp::hashOf(pattern.hash(), flags), { }, &ImageRegExpHash::hash)) {
-        const ImageRegExp& record = records.at(RegExpRecordID(entry.record));
-        if (record.rawFlags == rawFlags && image.text().equals(StringID(record.pattern), pattern))
-            return &record;
+    // The records of two images for one pattern say the same.
+    for (const Image* each = &vm.aotState().image->first(); each; each = each->above()) {
+        const Image& image = *each;
+        RegExpRecords records(image);
+        for (const ImageRegExpHash& entry : std::ranges::equal_range(image.section<ImageRegExpHash>(ImageSection::RegExpHashes), ImageRegExp::hashOf(pattern.hash(), flags), { }, &ImageRegExpHash::hash)) {
+            const ImageRegExp& record = records.at(RegExpRecordID(entry.record));
+            if (record.rawFlags == rawFlags && image.text().equals(StringID(record.pattern), pattern))
+                return &record;
+        }
     }
     count(vm, RuntimeCounterID::RegExpsCreatedWithoutRecord);
     return nullptr;
@@ -755,13 +758,13 @@ const ImageRegExp* findRegExpRecord(VM& vm, const String& pattern, OptionSet<Yar
 RegExpEntrypoints regExpEntrypointsOf(VM& vm, const ImageRegExp& record)
 {
     RELEASE_ASSERT(record.form() == RegExpRecordForm::Code);
-    std::span<const uint8_t> code = vm.aotState().image->regExpCode();
+    std::span<const uint8_t> code = vm.aotState().image->holderOf(&record).regExpCode();
     return { code.subspan(record.codeFor8Bit).data(), code.subspan(record.codeFor16Bit).data() };
 }
 
 static std::span<const uint8_t> detailsOf(VM& vm, const ImageRegExp& record)
 {
-    return vm.aotState().image->section<uint8_t>(ImageSection::RegExpDetails).subspan(record.details);
+    return vm.aotState().image->holderOf(&record).section<uint8_t>(ImageSection::RegExpDetails).subspan(record.details);
 }
 
 Yarr::CharacterSetView regExpCharacterSetOf(VM& vm, const ImageRegExp& record)
@@ -774,19 +777,19 @@ Yarr::CharacterSetView regExpCharacterSetOf(VM& vm, const ImageRegExp& record)
 
 String regExpPatternOf(VM& vm, const ImageRegExp& record)
 {
-    return vm.aotState().image->text().createString(StringID(record.pattern));
+    return vm.aotState().image->holderOf(&record).text().createString(StringID(record.pattern));
 }
 
 String regExpAtomOf(VM& vm, const ImageRegExp& record)
 {
     RELEASE_ASSERT(record.form() == RegExpRecordForm::Atom);
-    return vm.aotState().image->text().createString(StringID(record.atom));
+    return vm.aotState().image->holderOf(&record).text().createString(StringID(record.atom));
 }
 
 RegExpNamedGroups decodeRegExpNamedGroups(VM& vm, const ImageRegExp& record)
 {
     RELEASE_ASSERT(record.hasNamedGroups);
-    const ImageText& text = vm.aotState().image->text();
+    const ImageText& text = vm.aotState().image->holderOf(&record).text();
     std::span<const uint8_t> rest = detailsOf(vm, record);
     const auto& header = consumeAndReinterpretCastTo<ImageRegExpNamedGroups>(rest);
     auto words = spanReinterpretCast<const uint32_t>(rest.first(header.numberOfWords * sizeof(uint32_t)));

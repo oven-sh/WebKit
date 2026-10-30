@@ -78,6 +78,7 @@ public:
     const ValueSets& sets() const { return m_bodies.sets(); }
     const ValueFlowBodies& bodies() const { return m_bodies; }
     const ValueFlowSolver& solver() const { return *m_solver; }
+    void letGoOfRecordsAskedFor() { m_solver->letGoOfRecordsAskedFor(); }
     // Where the build widens flow, solver() was given more to begin with, and this one solved the program as it is.
     const ValueFlowSolver* solverOfProgramAsItIs() const { return m_solverOfProgramAsItIs.get(); }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }

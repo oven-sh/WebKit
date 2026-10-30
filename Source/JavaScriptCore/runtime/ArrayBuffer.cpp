@@ -342,7 +342,17 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(std::span<const uint8_t> span)
     contents.tryAllocate(span.size(), 1, ArrayBufferContents::InitializationPolicy::DontInitialize);
     if (!contents.m_data)
         return nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    void* memory = nullptr;
+    if (!tryFastMalloc(sizeof(ArrayBuffer)).getValue(memory)) [[unlikely]]
+        return nullptr;
+    auto buffer = adoptRef(*new (NotNull, memory) ArrayBuffer(WTF::move(contents)));
+    if (!span.empty())
+        memcpy(buffer->data(), span.data(), span.size());
+    return buffer;
+#else
     return createInternal(WTF::move(contents), span.data(), span.size());
+#endif
 }
 
 Ref<ArrayBuffer> ArrayBuffer::createUninitialized(size_t numElements, unsigned elementByteSize)
@@ -380,7 +390,15 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementB
         contents.tryAllocate(numElements, elementByteSize, policy);
         if (!contents.m_data)
             return nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        // operator new crashes when there is no memory. A function that reports failure must not do that for the object after it has found room for the contents.
+        void* memory = nullptr;
+        if (!tryFastMalloc(sizeof(ArrayBuffer)).getValue(memory)) [[unlikely]]
+            return nullptr;
+        return adoptRef(*new (NotNull, memory) ArrayBuffer(WTF::move(contents)));
+#else
         return adoptRef(*new ArrayBuffer(WTF::move(contents)));
+#endif
     }
 
     CheckedSize sizeInBytes = numElements;

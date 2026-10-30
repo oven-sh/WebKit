@@ -11,6 +11,7 @@
 #include "AOTHeaps.h"
 #include "AOTIR.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTImagesBelow.h"
 #include "AOTRegExpSummary.h"
 #include "AOTScratchRealm.h"
 #include "AOTVector.h"
@@ -108,6 +109,11 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
 {
     if (!m_diagnostics.hasErrors() && wire.threadCount > m_options.threadCount)
         gaveUp(LimitID::MaxWorkers);
+    if (!m_options.imagesBelow.isEmpty()) {
+        m_imagesBelow = ImagesBelow::tryCreate(m_options.imagesBelow.span());
+        if (!m_imagesBelow)
+            m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offsetof(Wire::CompileOptions, target)) });
+    }
 }
 
 BuildContext::~BuildContext()

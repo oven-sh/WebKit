@@ -214,8 +214,10 @@ struct ClosureFunctionRangeData {
     uint32_t first;
     uint32_t end;
     uint32_t omittedWordCount;
+    // The closure number of `first`. Not zero in an image that was built above others for the same realms: a closure says by its number which of them it is of.
+    uint32_t numbersBelow;
 };
-static_assert(sizeof(ClosureFunctionRangeData) == 12 && isImageRecord<ClosureFunctionRangeData>);
+static_assert(sizeof(ClosureFunctionRangeData) == 16 && isImageRecord<ClosureFunctionRangeData>);
 
 struct FunctionTexts {
     uint32_t numberOfEntries;

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTCFG.h"
 #include "AOTLargeVectors.h"
 #include "AOTProvisionalFunctions.h"
@@ -30,13 +31,18 @@ static OptionSet<BodyTrait> bodyTraitsOf(const Block& block, BlockID id)
     return traits;
 }
 
+static constexpr bool hasUnfinishedThis(FunctionRole role, FunctionKind kind)
+{
+    return role == FunctionRole::AllocatedThisVersion || kind == FunctionKind::Initializer;
+}
+
 static OptionSet<BodyTrait> traitsBesideBlocks(const Function& function, bool listsParameters, bool hasNeverValue)
 {
     OptionSet<BodyTrait> traits;
     traits.set(BodyTrait::SeveralBlocks, function.blocks.size() > 1);
     traits.set(BodyTrait::NeverValues, hasNeverValue);
     traits.set(BodyTrait::ParametersOfRuntimeFunction, function.enclosingRuntimeFunction && listsParameters);
-    traits.set(BodyTrait::UnfinishedThis, function.role == FunctionRole::AllocatedThisVersion || function.kind == FunctionKind::Initializer);
+    traits.set(BodyTrait::UnfinishedThis, hasUnfinishedThis(function.role, function.kind));
     return traits;
 }
 
@@ -260,10 +266,23 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     }
 }
 
+const BodyIndex::HotRow& BodyIndex::hotRowWithoutBody(RecordFacts facts)
+{
+    static constexpr HotRow finished { .isComplete = true, .listsAllValues = true };
+    static constexpr HotRow unfinished { .isComplete = true, .listsAllValues = true, .traits = BodyTrait::UnfinishedThis };
+    return hasUnfinishedThis(facts.role, facts.kind) ? unfinished : finished;
+}
+
 void BodyIndex::store(FunctionID id, Row&& row)
 {
-    m_hotRows[id.index()] = row.hot;
-    m_coldRows[id.index()] = WTF::move(row.cold);
+    std::unique_ptr<StoredRow>& storedRow = m_storedRows[id.index()];
+    if (row.hot.isComplete && !row.dense.numberOfValues && row.cold.terminatorKinds.span().empty())
+        storedRow = nullptr;
+    else if (storedRow) {
+        storedRow->hot = row.hot;
+        storedRow->cold = WTF::move(row.cold);
+    } else
+        storedRow = makeUnique<StoredRow>(row.hot, WTF::move(row.cold));
     m_denseRows[id.index()] = row.dense;
     m_recordStamps[id.index()] = row.recordStamps.value_or(RecordStamps { });
     m_hasRecordStamps[id.index()] = row.recordStamps.has_value();
@@ -373,21 +392,27 @@ void BodyIndex::growTo(size_t numberOfFunctions, State state)
 {
     if (numberOfFunctions <= m_states.size())
         return;
-    if (m_loops && numberOfFunctions > m_hotRows.capacity()) {
-        size_t capacity = numberOfFunctions + numberOfFunctions / 2;
-        reserveCapacityInParallel(*m_loops, m_hotRows, capacity);
-        reserveCapacityInParallel(*m_loops, m_coldRows, capacity);
-        reserveCapacityInParallel(*m_loops, m_denseRows, capacity);
-        reserveCapacityInParallel(*m_loops, m_recordStamps, capacity);
-        reserveCapacityInParallel(*m_loops, m_hasRecordStamps, capacity);
-        reserveCapacityInParallel(*m_loops, m_states, capacity);
+    if (m_loops) {
+        reserveRoomToSpareInParallel(*m_loops, m_storedRows, numberOfFunctions);
+        reserveRoomToSpareInParallel(*m_loops, m_denseRows, numberOfFunctions);
+        reserveRoomToSpareInParallel(*m_loops, m_recordStamps, numberOfFunctions);
+        reserveRoomToSpareInParallel(*m_loops, m_hasRecordStamps, numberOfFunctions);
+        reserveRoomToSpareInParallel(*m_loops, m_states, numberOfFunctions);
     }
-    m_hotRows.grow(numberOfFunctions);
-    m_coldRows.grow(numberOfFunctions);
+    m_storedRows.grow(numberOfFunctions);
     m_denseRows.grow(numberOfFunctions);
     m_recordStamps.grow(numberOfFunctions);
     m_hasRecordStamps.grow(numberOfFunctions);
     m_states.insertFill(m_states.size(), static_cast<uint8_t>(state), numberOfFunctions - m_states.size());
+}
+
+void BodyIndex::letGoOfRows(BuildContext& build)
+{
+    build.destroyLater(WTF::move(m_storedRows));
+    build.destroyLater(WTF::move(m_denseRows));
+    build.destroyLater(WTF::move(m_recordStamps));
+    build.destroyLater(WTF::move(m_hasRecordStamps));
+    build.destroyLater(WTF::move(m_states));
 }
 
 void BodyIndex::didEndAllEdits()
@@ -432,8 +457,9 @@ void BodyIndex::check(const Program& program, const ParallelLoops& loops) const
     forEachIndexInParallel(loops, static_cast<unsigned>(std::min(m_states.size(), program.functions.size())), [&](unsigned index) {
         if (m_states[index] != static_cast<uint8_t>(State::Known))
             return;
-        const HotRow& hot = m_hotRows[index];
-        const ColdRow& cold = m_coldRows[index];
+        ColdRow coldRowWithoutBody;
+        const HotRow& hot = hotRowOfKnown(FunctionID(index));
+        const ColdRow& cold = m_storedRows[index] ? m_storedRows[index]->cold : coldRowWithoutBody;
         Row made(program.functions[index]);
         RELEASE_ASSERT(hot.isComplete == made.hot.isComplete && hot.listsAllValues == made.hot.listsAllValues && (hot.holdsExpectedTypes || !made.hot.holdsExpectedTypes) && hot.opcodes == made.hot.opcodes && hot.terminatorBits == made.hot.terminatorBits);
         RELEASE_ASSERT(hot.listsParameters == made.hot.listsParameters && hot.traits == made.hot.traits);

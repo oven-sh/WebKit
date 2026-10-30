@@ -25,6 +25,7 @@
 #include "MatchResult.h"
 #include "RegExpKey.h"
 #include "Structure.h"
+#include "Weak.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
 #include <wtf/Atomics.h>
@@ -316,7 +317,12 @@ private:
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+#if USE(BUN_JSC_ADDITIONS)
+        // Weak: the VM's cache hands one RegExp to every realm that writes the same pattern, and a Structure keeps its whole realm alive.
+        Weak<Structure> m_cachedGroupsStructure;
+#else
         WriteBarrierStructureID m_cachedGroupsStructureID;
+#endif
         std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 

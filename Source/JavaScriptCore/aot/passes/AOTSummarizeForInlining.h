@@ -95,9 +95,24 @@ struct KeyParameter {
 struct InliningSummary {
     bool canInlineWholeBody() const { return barrier == InlineBarrier::None && blocksBoundToFrame.isEmpty(); }
     bool canInlineHead() const { return barrier == InlineBarrier::None && !headBlocks.isEmpty(); }
+    void shrinkToFit();
 
     bool testsParentOfClass { false };
     InlineBarrier barrier { InlineBarrier::Unknown };
+    bool neverReturns { false };
+    // Nothing in it loops: it does not spin, it ends by throwing.
+    bool onlyThrows { false };
+    bool hasCycle { false };
+    bool hasBareReturn { false };
+    bool isWrapper { false };
+    // Its rest parameter is only spread into its calls, and it is short.
+    bool onlyForwardsRestParameter { false };
+    // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
+    enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
+    Difference difference { Difference::None };
+    enum class Answer : uint8_t { NotAsked, No, Yes };
+    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
+    mutable Answer returnsFreshAggregate { Answer::NotAsked };
     uint32_t codeBytes { 0 };
     // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
     uint32_t likelyCodeBytes { 0 };
@@ -119,43 +134,30 @@ struct InliningSummary {
         uint32_t calleeParameter { 0 };
     };
     BitVector forwardedParameters;
-    Vector<ForwardedParameter, 0> forwards;
     BitVector iteratedParameters;
-    Vector<ParameterCondition, 2> conditions;
+    CompactList<ForwardedParameter> forwards;
+    CompactList<ParameterCondition> conditions;
     Vector<ParameterSwitch, 0> switches;
-    Vector<BytesInRange, 0> partsOfBytesOnlyIfSomeTestFails;
-    Vector<SpreadOfParameter, 0> spreadsOfParameters;
-    Vector<ReceiverParameter, 1> receiverParameters;
-    Vector<KeyParameter, 1> keyParameters;
-    bool neverReturns { false };
-    // Nothing in it loops: it does not spin, it ends by throwing.
-    bool onlyThrows { false };
-    bool hasCycle { false };
-    bool hasBareReturn { false };
-    bool isWrapper { false };
-    // Its rest parameter is only spread into its calls, and it is short.
-    bool onlyForwardsRestParameter { false };
-    // `(a, b) => a - b`: handed two numbers, the function answers with their difference and does nothing else.
-    enum class Difference : uint8_t { None, FirstMinusSecond, SecondMinusFirst };
-    Difference difference { Difference::None };
+    CompactList<BytesInRange> partsOfBytesOnlyIfSomeTestFails;
+    CompactList<SpreadOfParameter> spreadsOfParameters;
+    CompactList<ReceiverParameter> receiverParameters;
+    CompactList<KeyParameter> keyParameters;
     // It returns what these answer when handed its two parameters: the versions behind the tests of the declared types.
     struct DifferenceCall {
         FunctionID callee;
         bool swapsParameters { false };
     };
-    Vector<DifferenceCall, 0> differenceCalls;
-    enum class Answer : uint8_t { NotAsked, No, Yes };
-    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
-    mutable Answer returnsFreshAggregate { Answer::NotAsked };
+    CompactList<DifferenceCall> differenceCalls;
 };
+static_assert(sizeof(InliningSummary) <= 168);
 
 class InliningSummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(InliningSummaries);
 public:
     InliningSummaries() = default;
 
-    bool contains(FunctionID id) const { return id.index() < m_summaries.size(); }
-    const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[id.index()] : m_unknown; }
+    bool contains(FunctionID id) const { return id.index() < m_positions.size(); }
+    const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[m_positions[id.index()]] : m_unknown; }
     bool neverReturns(const Program& program, FunctionID id) const { return of(program, id).neverReturns; }
     bool onlyThrows(const Program& program, FunctionID id) const { return of(program, id).onlyThrows; }
     // What returnsFreshAggregate() says of a function that can be inlined.
@@ -167,7 +169,11 @@ private:
     friend InliningSummaries summarizeForInlining(const Program&, const CallGraph&, const Heat&, const FlowResults&, BuildContext&);
 
     static constexpr unsigned numberOfLocks = 256;
+    static constexpr uint32_t positionWithoutBody = 0;
+    static constexpr uint32_t positionOfUnknown = 1;
+    static constexpr uint32_t firstOwnPosition = 2;
 
+    Vector<uint32_t> m_positions;
     ParallelArray<InliningSummary> m_summaries;
     InliningSummary m_unknown;
     BuildContext* m_build { nullptr };

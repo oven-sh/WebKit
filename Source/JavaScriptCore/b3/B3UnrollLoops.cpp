@@ -726,22 +726,16 @@ private:
         return findBlocksThatCanRun(loops, loop, RareEdges::EndTheWalk);
     }
 
-    // A loop that seldom ends by the test of its counter and often by another test ends after who knows how few turns: asking in front of it would cost more than its polls.
-    static bool endsMostlyElsewhere(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan, BasicBlock* test)
+    static IndexSet<BasicBlock*> findBlocksThatOftenEndLoop(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan)
     {
-        bool testEndsLoopOften = false;
-        bool anotherTestEndsLoopOften = false;
+        IndexSet<BasicBlock*> result;
         for (BasicBlock* block : plan.blocks) {
             for (const FrequentedBlock& successor : block->successors()) {
-                if (loops.belongsTo(successor.block(), loop) || successor.frequency() != FrequencyClass::Normal)
-                    continue;
-                if (block == test)
-                    testEndsLoopOften = true;
-                else
-                    anotherTestEndsLoopOften = true;
+                if (!loops.belongsTo(successor.block(), loop) && successor.frequency() == FrequencyClass::Normal)
+                    result.add(block);
             }
         }
-        return !testEndsLoopOften && anotherTestEndsLoopOften;
+        return result;
     }
 
     // A loop that goes on where the counter of a loop around it stands is that loop without some of its paths. Where such a path is not rare, the loop may be left and entered
@@ -805,11 +799,17 @@ private:
         if (runsRarely && numberOfValues > Limits::maxValuesPerTurnCopiedWhereLoopRunsRarely)
             return;
         Dominators& dominators = m_proc.dominators();
+        IndexSet<BasicBlock*> blocksThatOftenEndLoop = findBlocksThatOftenEndLoop(loops, loop, plan);
+        // A loop that seldom ends by the test of its counter and often by another test ends after who knows how few turns: asking in front of it would cost more than its polls.
+        bool endsOftenSomewhere = !blocksThatOftenEndLoop.isEmpty();
+        auto endsMostlyElsewhere = [&](BasicBlock* test) {
+            return endsOftenSomewhere && !blocksThatOftenEndLoop.contains(test);
+        };
         for (BasicBlock* block : plan.blocks) {
             bool runsEveryTurn = true;
             for (BasicBlock* predecessor : plan.header->predecessors())
                 runsEveryTurn &= !blocksThatCanRun.contains(predecessor) || dominators.dominates(block, predecessor);
-            if (!runsEveryTurn || endsMostlyElsewhere(loops, loop, plan, block) || (!readTest(loops, loop, blocksThatCanRun, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, blocksThatCanRun, block, phiChildren, plan)))
+            if (!runsEveryTurn || endsMostlyElsewhere(block) || (!readTest(loops, loop, blocksThatCanRun, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, blocksThatCanRun, block, phiChildren, plan)))
                 continue;
             if (mayBeEnteredOnAnyTurnOfLoopAround(loops, loop, plan))
                 return;

@@ -31,6 +31,7 @@
 #include "TypedArrayType.h"
 #include <span>
 #include <type_traits>
+#include <wtf/ScopedLambda.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 #define AOT_INSTANCE_OFFSET(path) OBJECT_OFFSETOF(JSC::AOT::Instance, path)
@@ -48,6 +49,7 @@ class VM;
 
 namespace AOT {
 
+class Image;
 struct ImageFunction;
 struct ImageStringRecord;
 struct ProgramSymbols;
@@ -348,7 +350,10 @@ struct Instance : InstanceHeader {
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_DECLARE_INSTANCE_PART, AOT_SKIP_INSTANCE_PART)
     State* state;
     uintptr_t pollIsDue;
-    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    Instance* above;
+    const Image* program;
+    uintptr_t endOfClosureNumbers;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) + sizeof(uintptr_t) + sizeof(Instance*) + sizeof(const Image*) + sizeof(uintptr_t) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
     void** runtimeTable;
     SlotHandlers handlers;
     FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
@@ -359,14 +364,35 @@ struct Instance : InstanceHeader {
     State* state;
     // Not zero while the polls of the VM are switched on. A stub reads it after an operation that allocates.
     uintptr_t pollIsDue;
+    // A realm has an instance for each image that its VM runs, in the order of the images. The realm points at the first.
+    Instance* above;
+    const Image* program;
+    // The closure numbers of the images ascend with the instances: the first instance whose end lies above the number of a closure is its own.
+    uintptr_t endOfClosureNumbers;
 #endif
 #undef AOT_DECLARE_INSTANCE_PART
 
-    static Instance* of(JSGlobalObject* realm) { return realm->aotInstance(); }
+    // Of the image that runs.
+    static Instance* of(JSGlobalObject* realm)
+    {
+        Instance* first = realm->aotInstance();
+        if (!first || !first->above) [[likely]]
+            return first;
+        return first->findInstanceOfRunningImage();
+    }
+    // Calls the functor with each instance of the realm, while the image of that instance is the one that runs.
+    JS_EXPORT_PRIVATE static void forEachOf(JSGlobalObject* realm, const ScopedLambda<void(Instance&)>&);
+    // Of the image that gave the number out. The cell that has the number is of this realm.
+    Instance& instanceWithShape(uint32_t shape);
+    Instance& instanceWithClosureNumber(uint32_t);
+    // Of the image that the cell is of: a compiled object, a closure. Of any other cell: of the image that runs.
+    JS_EXPORT_PRIVATE static Instance* owning(const JSCell*);
     static Instance* create(JSGlobalObject* realm);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
     JS_EXPORT_PRIVATE static void destroyDeadInstances(VM&);
     JS_EXPORT_PRIVATE static void destroyAll(VM&);
+
+    JS_EXPORT_PRIVATE Instance* findInstanceOfRunningImage();
 
     InstancePrefix& prefix() { return reinterpret_cast<InstancePrefix*>(this)[-1]; }
     const InstancePrefix& prefix() const { return reinterpret_cast<const InstancePrefix*>(this)[-1]; }
@@ -443,6 +469,10 @@ struct Instance : InstanceHeader {
         }
     }
 };
+
+// The cell is a compiled object or a closure of an image that shares the realm with the one that runs. What the caches of the running image hold says things in its own numbers,
+// so they hold nothing about such a cell.
+JS_EXPORT_PRIVATE bool belongsToOtherImageSlow(VM&, const JSCell*);
 
 constexpr ptrdiff_t Instance::offsetOfNewCopyOnWriteArrayHeader(IndexingType indexingType)
 {

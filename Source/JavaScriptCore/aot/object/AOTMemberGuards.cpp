@@ -556,7 +556,7 @@ static bool lacksMember(VM& vm, State& state, JSObject* object, MemberName& name
         return false;
     // The stand-in for a prototype object reports the creation of its members to its own Instance.
     if (object->classInfo() == ClassPrototype::info())
-        return Instance::of(structure->realm()) == &state.instance && !object->butterfly() && !ClassPrototype::hasMember(object, name.uid());
+        return Instance::owning(object) == &state.instance && !object->butterfly() && !ClassPrototype::hasMember(object, name.uid());
     if (isCompiledObject(object))
         return !uncheckedDowncast<Object>(object)->isInFrame() && !hasPropertyOrSlot(vm, object, name);
     if (object->type() != FinalObjectType || !flattenOnce(vm, object) || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
@@ -917,7 +917,7 @@ void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
 const LayoutData* ClassTable::classLeftToRecordHeldBy(JSObject* holder, ClassSide& side) const
 {
     if (auto* prototype = dynamicDowncast<ClassPrototype>(holder)) {
-        const LayoutData* layout = classWithIndex(prototype->classIndex());
+        const LayoutData* layout = hasClassOf(*prototype) ? classWithIndex(prototype->classIndex()) : nullptr;
         if (!layout || !leavesDefinitionToRecord(*layout) || classPrototypeIfExists(*layout) != holder)
             return nullptr;
         side = ClassSide::Prototype;
@@ -1655,7 +1655,7 @@ void MemberGuardWatchpoints::updateMethodTable()
 {
     if (m_changedBits.isEmpty())
         return;
-    const Image& image = *m_state.instance.vm->aotState().image;
+    const Image& image = *m_state.instance.program;
     std::span<const uint32_t> compiled = image.methodTable();
     std::span<const uint32_t> lookups = image.methodLookups();
     std::span<uint32_t> table = m_state.instance.methodTable();

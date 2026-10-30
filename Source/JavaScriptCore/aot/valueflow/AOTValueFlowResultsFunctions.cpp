@@ -1013,7 +1013,7 @@ static Vector<FlowClosureStoredUnderKey> findClosuresStoredUnderKeys(const Value
     const ValueFlowUniverse& universe = inputs.universe();
     BitVector isSpelled(inputs.program.types.numberOfPropertyKeys());
     for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
-        std::optional<ValueFlowNodeID> markers = instanced->find(FunctionID(index)) && inputs.isReached(FunctionID(index)) ? solver.findMadeNode(ValueFlowNodeKey::markersOf(FunctionID(index))) : std::nullopt;
+        std::optional<ValueFlowNodeID> markers = instanced->find(FunctionID(index)) && inputs.isReached(FunctionID(index)) ? solver.markersOf(FunctionID(index)) : std::nullopt;
         if (!markers)
             continue;
         inputs.sets().forEachMember(solver.possibleValuesOf(*markers), [&](ValueFlowObjectID marker) {

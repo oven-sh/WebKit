@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTBuiltinCells.h"
 #include "AOTChainDependents.h"
 #include "AOTClassMemberTable.h"
@@ -92,6 +93,12 @@ ClassTable::ClassTable(State& state)
 }
 
 ClassTable::~ClassTable() = default;
+
+bool ClassTable::hasClassOf(const ClassPrototype& prototype) const
+{
+    const Image* image = m_state.instance.program;
+    return prototype.imagePosition() == (image ? image->position() : 0);
+}
 
 const LayoutData* ClassTable::classWithIndex(uint32_t index) const
 {
@@ -603,7 +610,12 @@ std::optional<ClassTable::LazyPrototypeLookupResult> ClassTable::findThroughLazy
         : base->type() == FinalObjectType && !structure->isDictionary() && structure->propertyAccessesAreCacheable() && structure->propertyAccessesAreCacheableForAbsence() && !structure->typeInfo().overridesGetOwnPropertySlot() && !isValidOffset(structure->get(vm, name));
     if (!structureGuaranteesAbsent)
         return std::nullopt;
-    for (; prototype && prototype->classInfo() == ClassPrototype::info() && Instance::of(prototype->structure()->realm()) == &m_state.instance && !prototype->butterfly(); prototype = prototype->getPrototypeDirect().getObject()) {
+    for (JSObject* below = base; prototype && prototype->classInfo() == ClassPrototype::info() && !prototype->butterfly(); below = prototype, prototype = prototype->getPrototypeDirect().getObject()) {
+        // A class of another image of the realm is in the tables of that image, and its members are closures of that image.
+        if (Instance* owner = Instance::owning(prototype); owner != &m_state.instance) [[unlikely]] {
+            ImageOfCellScope imageOfPrototype(vm, prototype);
+            return owner->state->objects->classes.findThroughLazyPrototypes(vm, below, name, true, creation);
+        }
         const LayoutData& classLayout = *classWithIndex(uncheckedDowncast<ClassPrototype>(prototype)->classIndex());
         auto member = findOwnDeclaredMember(classLayout, keyOf(vm, name));
         if (!member)
@@ -1294,7 +1306,7 @@ static_assert(sizeof(ClassPrototype) == sizeof(JSObjectWithButterfly) + ClassPro
 
 static State& stateOf(const JSObject* classPrototype)
 {
-    return *Instance::of(classPrototype->structure()->realm())->state;
+    return *Instance::owning(classPrototype)->state;
 }
 
 Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -1307,13 +1319,14 @@ Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject,
 
 ClassPrototype* ClassPrototype::create(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow)
 {
-    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow);
+    ClassPrototype* object = new (NotNull, allocateCell<ClassPrototype>(vm)) ClassPrototype(vm, structure, classIndex, memberRow, vm.aotState().image->position());
     object->finishCreation(vm);
     return object;
 }
 
 void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
 {
+    ImageOfCellScope imageOfCell(this);
     RELEASE_ASSERT(ordinary->classInfoForCells() == JSFinalObject::info() && ordinary->inlineCapacity() == inlineCapacity && ordinary->storedPrototype() == structure()->storedPrototype());
     m_classIndex = 0;
     m_numberOfLookups = 0;
@@ -1329,25 +1342,32 @@ void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
 
 JSObject* ClassPrototype::classObject() const
 {
+    ImageOfCellScope imageOfCell(this);
     State& state = stateOf(this);
-    const LayoutData& classLayout = *state.objects->classes.classWithIndex(m_classIndex);
+    const LayoutData& classLayout = *state.objects->classes.classWithIndex(classIndex());
     return asObject(state.objects->closures.closure(vm(), FunctionID(classLayout.classData().classConstructor)));
 }
 
 void ClassPrototype::createMembers(JSObject* object)
 {
     VM& vm = object->vm();
+    ImageOfCellScope imageOfCell(vm, object);
     State& state = stateOf(object);
     ClassTable& classes = state.objects->classes;
     Closure* classObject = uncheckedDowncast<Closure>(uncheckedDowncast<ClassPrototype>(object)->classObject());
     VMPropertyCaches::UnreportedChange change(*vm.aotState().propertyCaches, object);
     classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::PrototypeMembers);
     RELEASE_ASSERT(object->type() == FinalObjectType);
-    state.chainDependents->didChange(object, nullptr);
+    // Every image of the realm may have filed what it found above an instance of the class.
+    for (Instance* instance = state.instance.globalObject->aotInstance(); instance; instance = instance->above) {
+        if (instance->state && instance->state->chainDependents)
+            instance->state->chainDependents->didChange(object, nullptr);
+    }
 }
 
 bool ClassPrototype::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     if (object->vm().heap.currentThreadIsDoingGCWork()) [[unlikely]] {
         slot.setIsTaintedByOpaqueObject();
         return false;
@@ -1362,11 +1382,12 @@ bool ClassPrototype::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
 
 std::optional<bool> ClassPrototype::tryGetDeclaredMember(VM& vm, PropertyName name, PropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(this);
     auto methodType = slot.internalMethodType();
     if ((methodType != PropertySlot::InternalMethodType::Get && methodType != PropertySlot::InternalMethodType::HasProperty) || butterfly() || !name.uid())
         return std::nullopt;
     ClassTable& classes = stateOf(this).objects->classes;
-    const LayoutData& classLayout = *classes.classWithIndex(m_classIndex);
+    const LayoutData& classLayout = *classes.classWithIndex(classIndex());
     if (name.uid()->isSymbol() && std::ranges::none_of(classLayout.methods(), [](auto& method) { return method.flags & methodHasComputedName; }) && !classes.declaresOwnMember(classLayout, name.uid())) {
         slot.setIsTaintedByOpaqueObject();
         return false;
@@ -1414,6 +1435,7 @@ bool ClassPrototype::hasMember(JSObject* object, PropertyName name)
 
 void ClassPrototype::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     if (mode == DontEnumPropertiesMode::Exclude && !object->butterfly())
         return;
     createMembers(object);
@@ -1422,42 +1444,49 @@ void ClassPrototype::getOwnPropertyNames(JSObject* object, JSGlobalObject* globa
 
 bool ClassPrototype::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     createMembers(asObject(cell));
     return JSObject::put(cell, globalObject, name, value, slot);
 }
 
 bool ClassPrototype::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     createMembers(asObject(cell));
     return JSObject::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
 
 bool ClassPrototype::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     createMembers(asObject(cell));
     return JSObject::deleteProperty(cell, globalObject, name, slot);
 }
 
 bool ClassPrototype::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), cell);
     createMembers(asObject(cell));
     return JSObject::deletePropertyByIndex(cell, globalObject, index);
 }
 
 bool ClassPrototype::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     createMembers(object);
     return JSObject::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
 }
 
 bool ClassPrototype::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     createMembers(object);
     return JSObject::preventExtensions(object, globalObject);
 }
 
 bool ClassPrototype::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     createMembers(object);
     return JSObject::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
 }
@@ -1469,7 +1498,11 @@ static JSC_DECLARE_CUSTOM_SETTER(staticFieldSetter);
 
 bool ownsVariables(const Closure& classObject)
 {
-    return classObject.kind().isConstructor && classObject.state().objects->closures.closureIfCreated(classObject.function()) == &classObject;
+    if (!classObject.kind().isConstructor)
+        return false;
+    State& state = classObject.state();
+    RunningImageScope imageOfClass(state.instance.vm->aotState(), state.instance.program);
+    return state.objects->closures.closureIfCreated(classObject.function()) == &classObject;
 }
 
 const FieldData* findOwnField(const Closure& classObject, UniquedStringImpl* uid)
@@ -1621,6 +1654,7 @@ const FieldData* findFieldForCache(VM& vm, JSCell* cell, UniquedStringImpl* uid)
 
 JSC_DEFINE_CUSTOM_GETTER(staticFieldGetter, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
+    ImageOfCellScope imageOfClass(JSValue::decode(thisValue).asCell());
     Closure& classObject = *uncheckedDowncast<Closure>(JSValue::decode(thisValue).asCell());
     const FieldData* field = findOwnField(classObject, name.uid());
     JSValue value = field ? classObject.state().objects->classes.readStaticField(*field) : JSValue();
@@ -1629,6 +1663,7 @@ JSC_DEFINE_CUSTOM_GETTER(staticFieldGetter, (JSGlobalObject*, EncodedJSValue thi
 
 JSC_DEFINE_CUSTOM_SETTER(staticFieldSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName name))
 {
+    ImageOfCellScope imageOfClass(globalObject->vm(), JSValue::decode(thisValue).asCell());
     VM& vm = globalObject->vm();
     Closure& classObject = *uncheckedDowncast<Closure>(JSValue::decode(thisValue).asCell());
     JSValue value = JSValue::decode(encodedValue);

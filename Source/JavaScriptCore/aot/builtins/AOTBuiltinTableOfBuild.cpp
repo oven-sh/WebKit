@@ -19,12 +19,21 @@
 
 namespace JSC { namespace AOT {
 
+enum class NameIs : bool { OfMember, New };
+
 // What the language, an iterator's user or a call reads without a lookup that compiled code could test.
-static bool isReadWithoutLookup(const BuiltinTable& table, BuiltinName name)
+// A conversion to a primitive or to JSON looks `toString`, `valueOf` and `toJSON` up like any call that names them, where the object has such a member.
+// So does what resolves a promise with a promise look `then` up. `await` of a promise of the language reads no `then`, replaced or not.
+static bool isReadWithoutLookup(const BuiltinTable& table, BuiltinName name, NameIs nameIs)
 {
-    if (table.isSymbolName(name) || table.isClosedOnHostFunctions(name) || name == BuiltinNames::next || name == BuiltinNames::returnKeyword || name == BuiltinNames::throwKeyword)
+    // No function of the engine gets a `call`, `apply` or `bind` of its own. The members that have these names are read by whoever names them, and by nobody else: a spread call reads no `apply`.
+    bool isLookedUpByCalls = nameIs == NameIs::OfMember && (name == BuiltinNames::call || name == BuiltinNames::apply || name == BuiltinNames::bind);
+    if (table.isSymbolName(name) || (table.isClosedOnHostFunctions(name) && !isLookedUpByCalls) || name == BuiltinNames::next || name == BuiltinNames::returnKeyword || name == BuiltinNames::throwKeyword)
         return true;
     for (Protocol protocol : allMembersOf<Protocol>) {
+        // A `toJSON` that a test adds, to Object.prototype say, is looked up too: what converts to JSON is left to the host where the name is opened.
+        if (protocol == Protocol::ToJSON || (nameIs == NameIs::OfMember && (protocol == Protocol::ToPrimitive || protocol == Protocol::Thenable)))
+            continue;
         if (std::ranges::contains(table.keysReadBy(protocol), name))
             return true;
     }
@@ -55,7 +64,13 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::NativeBinding:
         return false;
     }
-    return !isReadWithoutLookup(*this, member.name);
+    // Whoever walks a map or a set asks what its prototype holds under @@iterator, and an object of the host is walked by the protocol alone.
+    if (member.name == nameOf(WellKnownSymbol::Iterator)) {
+        BuiltinID holder = canonicalID(member.holder);
+        if (holder == canonicalID(Builtins::MapPrototype) || holder == canonicalID(Builtins::SetPrototype) || at(holder).origin == BuiltinOrigin::Host)
+            return true;
+    }
+    return !isReadWithoutLookup(*this, member.name, NameIs::OfMember);
 }
 
 bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) const
@@ -70,7 +85,7 @@ bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) con
         if (equalSpans(textOf(name), byteCast<uint8_t>(text.span())))
             return false;
     }
-    return !isReadWithoutLookup(*this, name) && !findOwnMember(holder, name);
+    return !isReadWithoutLookup(*this, name, NameIs::New) && !findOwnMember(holder, name);
 }
 
 BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
@@ -147,19 +162,30 @@ void Program::unlockReplaceableBuiltins()
         return !m_builtins.canTakeNameInTestRuns(opened.holder, m_builtins.nameOf(strings[opened.name]));
     });
     Vector<BuiltinID> holdersOfNewNames;
-    for (const OpenedName& opened : openedNames)
+    for (const OpenedName& opened : openedNames) {
         holdersOfNewNames.append(opened.holder);
+        m_namesOpenedSomewhere.set(opened.name.index());
+    }
     m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span());
-    if (unlockedBuiltins().empty())
+    if (unlockedBuiltins().empty() && openedNames.isEmpty())
         return;
 
     BitVector unlockedNames(m_builtins.nameCount());
     for (BuiltinID member : unlockedBuiltins())
         unlockedNames.quickSet(m_builtins.at(member).name.index());
+    // `Object.prototype.toJSON = f`: every object has the member from then on.
+    for (const OpenedName& opened : openedNames) {
+        if (BuiltinName name = m_builtins.nameOf(strings[opened.name]))
+            unlockedNames.quickSet(name.index());
+    }
     auto looksUpUnlockedName = [&](const BuiltinParameter& parameter) {
         auto isUnlocked = [&](BuiltinName name) {
             return unlockedNames.quickGet(name.index());
         };
+        for (Protocol protocol : parameter.protocols) {
+            if (std::ranges::any_of(m_builtins.keysReadBy(protocol), isUnlocked))
+                return true;
+        }
         return std::ranges::any_of(parameter.namedMembers, isUnlocked) || std::ranges::any_of(parameter.calledMembers, isUnlocked) || std::ranges::any_of(parameter.convertedMembers, isUnlocked);
     };
     const std::pair<BuiltinID, BuiltinID> constructorsAndWhatAddsTheirEntries[] = {

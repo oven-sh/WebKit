@@ -923,8 +923,8 @@ static std::optional<uint32_t> findCharactersInImage(const Image& image, const T
 
 std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, JSString* key) const
 {
-    const Image& image = *Image::current();
     const TableInImage& entries = tableInImage();
+    const Image& image = Image::current()->holderOf(&entries);
     if (const StringImpl* impl = key->tryGetValueImpl()) [[likely]]
         return entries.find(image, StringView { *impl }, impl->hash());
     if (key->isSubstring()) {
@@ -995,7 +995,7 @@ std::optional<uint32_t> CompactTable::findOtherKey(JSGlobalObject*, JSValue norm
 ALWAYS_INLINE std::optional<uint32_t> CompactTable::findInline(std::span<const Latin1Character> characters) const
 {
     if (isInImage())
-        return findCharactersInImage(*Image::current(), tableInImage(), characters);
+        return findCharactersInImage(Image::current()->holderOf(&tableInImage()), tableInImage(), characters);
     return findCharacters(characters);
 }
 

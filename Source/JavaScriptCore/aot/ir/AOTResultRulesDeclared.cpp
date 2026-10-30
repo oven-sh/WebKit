@@ -106,6 +106,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     BaseChain chain = isProof ? BaseChain::Proven : BaseChain::Predicted;
     Type result = Type::never();
     bool isMissingInEveryReceiver = true;
+    bool isMissingInSomeReceiver = false;
     bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         if (context.program.at(receiver).flow.allocation == AllocationState::NeverAllocated)
@@ -114,7 +115,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
         if (!field) {
             if (isProof)
                 return std::nullopt;
-            result = result.withPrimitives(Primitive::Undefined);
+            isMissingInSomeReceiver = true;
             continue;
         }
         isMissingInEveryReceiver = false;
@@ -129,6 +130,8 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     }
     if (isMissingInEveryReceiver)
         return std::nullopt;
+    if (isMissingInSomeReceiver)
+        result = result.withPrimitives(Primitive::Undefined);
     if (hasUninformativeField && !holdsOnlyArrays(result))
         return Type::anything();
     return result;

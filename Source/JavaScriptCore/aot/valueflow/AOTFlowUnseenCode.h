@@ -16,6 +16,8 @@ struct RefusedCode {
     bool evaluatedText { false };
     bool hostEvaluatedText { false };
     bool codeOutsideImage { false };
+    // Not a refusal: CompileOptions::admitsFilesRunByHost().
+    bool hostRunsFilesOutsideImage { false };
 };
 
 constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)

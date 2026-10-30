@@ -112,7 +112,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
     if (base.isCell() && base.asCell()->type() == SlimClosureType)
         RELEASE_AND_RETURN(scope, putAndCache({ instance, identifier, name, nullptr }, base.asCell(), value, mode));
     PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
-    if (Object* object = compiledObjectOrNull(base)) {
+    // An object of another image stores through its own method table, as it does for code that no build has seen.
+    if (Object* object = compiledObjectOrNull(base); object && (!instance->state->sharesRealm || object->isDescribedBy(*instance->state))) {
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
@@ -153,6 +154,8 @@ static NEVER_INLINE bool deleteAndFile(Instance* instance, JSObject* object, Pro
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structureBefore = object->structure();
     Object* compiled = compiledObjectOrNull(object);
+    if (instance->state->sharesRealm && compiled && !compiled->isDescribedBy(*instance->state)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
     JSObject* extra = compiled ? compiled->extraProperties() : nullptr;
     bool belongsToOneObject = extra && !compiled->compiledStructure().extraPropertiesSlot();
     if (belongsToOneObject || !caches.shouldFile(structureBefore->id(), property.uid(), access))

@@ -30,6 +30,7 @@ struct EntryFrame;
 namespace AOT {
 
 struct Instance;
+struct VMState;
 
 // A frame of compiled code is named by the place of its frame record, the word below its return address, whether it has a record or not. stackPointer and framePointer are what the two registers hold in the frame at the return site.
 ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* stackPointer, CallFrame* framePointer)
@@ -229,6 +230,39 @@ struct CompiledFrame {
     BuiltinID calledBuiltin { };
 };
 
+// While a walk stands in a run of frames, their image is the one that runs: whoever describes a frame asks the tables of that image.
+class ImageOfRun {
+public:
+    ImageOfRun() = default;
+    ImageOfRun(const ImageOfRun&) { }
+    ImageOfRun(ImageOfRun&& other)
+        : m_state(std::exchange(other.m_state, nullptr))
+        , m_previous(other.m_previous)
+    {
+    }
+    ImageOfRun& operator=(const ImageOfRun&) { return *this; }
+    ImageOfRun& operator=(ImageOfRun&& other)
+    {
+        if (m_state) [[unlikely]]
+            restore();
+        m_state = std::exchange(other.m_state, nullptr);
+        m_previous = other.m_previous;
+        return *this;
+    }
+    ~ImageOfRun()
+    {
+        if (m_state) [[unlikely]]
+            restore();
+    }
+    void run(VMState&, const Image&);
+
+private:
+    JS_EXPORT_PRIVATE void restore();
+
+    VMState* m_state { nullptr };
+    const Image* m_previous { nullptr };
+};
+
 class CompiledFrameIterator {
 public:
     using Exit = CompiledFrameExit;
@@ -386,6 +420,7 @@ private:
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;
+    ImageOfRun m_imageOfRun;
 };
 static_assert(sizeof(CompiledFrameIterator) <= 1024);
 

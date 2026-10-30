@@ -175,6 +175,7 @@ public:
     auto begin() const LIFETIME_BOUND { return span().begin(); }
     auto end() const LIFETIME_BOUND { return span().end(); }
     size_t capacity() const { return m_numberWithMemory.load(std::memory_order_relaxed); }
+    void release();
 
     size_t makeRoomToFill(size_t more)
     {
@@ -413,7 +414,9 @@ public:
     ValueFlowStatementID firstRequesterOf(ValueFlowStatementID) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
+    // Behind the rounds this makes the index of all keys again: it is for tools.
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
+    std::optional<ValueFlowNodeID> markersOf(FunctionID function) const { return m_markersOfFunctions.getOptional(function.index()); }
     Subject subjectOf(ValueFlowNodeID) const;
     const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID node) const LIFETIME_BOUND { return node.index() < m_input.numberOfNodes ? nullptr : &m_madeNodes[m_madeNodesOfNode[node.index() - m_input.numberOfNodes]].key; }
 
@@ -439,8 +442,11 @@ public:
     bool mayBeComputedKey(ValueFlowName) const;
     bool isFoundUnderComputedKey(ValueFlowName) const;
     bool isAtRest(ValueFlowStatementID) const;
+    // For whoever has copied them.
+    void letGoOfRecordsAskedFor();
     void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const auto& functor) const
     {
+        RELEASE_ASSERT(m_knowsRecordsAskedFor);
         forEachRecordAskedForBy(statement.index(), [&](uint32_t index) {
             const MadeNodes& madeNodes = m_madeNodes[index];
             if constexpr (Invocable<decltype(functor), void(const ValueFlowNodeKey&, ValueFlowStatementID, ValueFlowNodeID)>)
@@ -452,6 +458,7 @@ public:
 
     void forEachMadeNodeAskedForByStatements(uint32_t first, uint32_t end, NOESCAPE const Invocable<void(uint32_t statement)> auto& beginStatement, NOESCAPE const Invocable<void(uint32_t indexOfMadeNodes, const ValueFlowNodeKey&, ValueFlowStatementID)> auto& functor) const
     {
+        RELEASE_ASSERT(m_knowsRecordsAskedFor);
         constexpr uint32_t listsSideBySide = 16;
         std::array<Vector<uint32_t, 32>, listsSideBySide> found;
         for (uint32_t base = first; base < end; base += listsSideBySide) {
@@ -845,6 +852,8 @@ private:
     static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
     // The lists that each round fills anew keep the room that the largest round took. The rounds are largest in the middle of a solve, and the tables at its end.
     void giveBackRoomOfLargerRounds(uint64_t sizeOfRound);
+    enum class ListsOfLinks : bool { AreInUse, AreLookedAtToo };
+    void giveBackRoomOfEmptyLists(ListsOfLinks);
     // Between two rounds. Every member that holds a set is listed there, and so is whatever else the rules write sets to.
     void freeSetsThatNobodyHolds();
     size_t m_bytesOfSetsBehindLastFreeing { 0 };
@@ -868,7 +877,12 @@ private:
     alignas(64) uint32_t m_numberOfNodesMade { 0 };
     ListWithRoomToFill<uint32_t> m_numberOfUsers;
     struct alignas(64) IndexOfMadeNodes {
-        using Slot = std::atomic<uint64_t>;
+        // One more than the number of the record, below five bits of the hash that neither the choice of the index nor the place in the table has used.
+        // The results name a record in as many bits (ValueFlowNodesAskedFor).
+        using Slot = std::atomic<uint32_t>;
+        static constexpr unsigned bitsOfNumber = 27;
+        static constexpr uint32_t maskOfNumber = (1u << bitsOfNumber) - 1;
+        static constexpr uint32_t bitsOfHashIn(uint32_t hash) { return hash >> 17 << bitsOfNumber; }
 
         class Table {
         public:
@@ -892,7 +906,7 @@ private:
 
         ~IndexOfMadeNodes();
 
-        void add(std::atomic<Table>& current, uint32_t hash, uint32_t number, size_t fewestSlots);
+        void add(std::atomic<Table>& current, uint32_t hash, uint32_t number, size_t fewestSlots, const ListThatStaysInPlace<MadeNodes>&);
         void freeOutgrownTables();
 
         Lock lock;
@@ -911,17 +925,22 @@ private:
         size_t mask = table.numberOfSlots() - 1;
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         for (size_t index = hash & mask;; index = (index + 1) & mask) {
-            uint64_t slot = slots[index].load(std::memory_order_acquire);
+            uint32_t slot = slots[index].load(std::memory_order_acquire);
             if (!slot)
                 return std::nullopt;
-            if (slot >> 32 == hash && isEqual(static_cast<uint32_t>(slot) - 1))
-                return static_cast<uint32_t>(slot) - 1;
+            if (!((slot ^ IndexOfMadeNodes::bitsOfHashIn(hash)) & ~IndexOfMadeNodes::maskOfNumber) && isEqual((slot & IndexOfMadeNodes::maskOfNumber) - 1))
+                return (slot & IndexOfMadeNodes::maskOfNumber) - 1;
         }
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
     alignas(64) mutable std::array<std::atomic<IndexOfMadeNodes::Table>, numberOfIndicesOfMadeNodes> m_tablesOfMadeNodes { };
     mutable std::array<IndexOfMadeNodes, numberOfIndicesOfMadeNodes> m_madeNodesByKey;
     size_t m_fewestSlotsOfIndexOfMadeNodes { 64 };
+    void releaseIndexOfMadeNodes();
+    void makeIndexOfMadeNodesAgain() const;
+    mutable std::atomic<bool> m_hasIndexOfMadeNodes { true };
+    mutable Lock m_lockOfIndexMadeAgain;
+    HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_markersOfFunctions;
     ListWithRoomToFill<uint32_t> m_madeNodesOfNode;
     Vector<uint32_t> m_partsOfMadeNodes;
     using LatestNodes = std::array<uint32_t, 4>;
@@ -938,6 +957,7 @@ private:
     Vector<uint32_t> m_madeNodesOfStatement;
     ListWithRoomToFill<uint32_t> m_usesOfStatement;
     ListThatStaysInPlace<uint32_t> m_uses;
+    bool m_knowsRecordsAskedFor { true };
     uint32_t m_numberOfNodesBeforeRound { 0 };
     uint32_t m_turnsOfRound { 0 };
 

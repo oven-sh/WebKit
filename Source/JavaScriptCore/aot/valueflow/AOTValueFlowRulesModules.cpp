@@ -560,6 +560,9 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
 
     ValueFlowNodeID underAnyName = context.written(namespaceObject, unknownKeyName);
     ValueFlowNodeID holdersOfNames = context.written(namespaceObject, copiedFromName);
+    // A mock puts what its factory answers under the names that nobody lists too: `mock.module("node:dns", () => ({ lookup }))`, then `(await import("node:dns")).lookup()`.
+    if (module.flags.contains(ModuleFlags::MayBeMocked))
+        context.add(underAnyName, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         ValueFlowSources value = moduleExportsValueOf(context, id);
@@ -681,6 +684,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     }
     if (module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode) {
         letUnseenCodeRun(context, UnseenCodeReach::Loader);
+        raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
         context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
     }
     if (module.kind == ModuleKind::External)

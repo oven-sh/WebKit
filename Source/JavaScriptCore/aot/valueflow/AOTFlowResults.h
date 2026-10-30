@@ -234,6 +234,12 @@ struct FlowSiteTables {
     Vector<FlowDataNode> dataNodes;
 };
 
+// A name that a test may add to a built-in object which takes no new names.
+struct FlowAddedName {
+    BuiltinID holder;
+    Vector<uint8_t> name;
+};
+
 struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
     // One record for each place in the source that writes a location, by holder, key and place.
@@ -242,6 +248,8 @@ struct FlowBuiltinTables {
     BitVector intactHolders;
     // The image locks these when the program starts. What is said of them rests on that.
     BitVector membersLockedAtStartUp;
+    // Of an image that shares its realm: a write of this program may reach them, so it locks none of them. An image built over this one sees no such write and reads them here.
+    BitVector membersWrittenInSharedRealm;
     // An operation that lists own keys is handed one of these, by canonical ID.
     BitVector holdersWithListedKeys;
     Vector<BuiltinUseRecord> uses;
@@ -256,6 +264,8 @@ struct FlowBuiltinTables {
     std::optional<Witness> workerStartWithoutName;
     // The exports that a reached call of a spy may replace and that the front end has not made replaceable. Sorted.
     Vector<VariableID> exportsThatSpiesReplace;
+    Vector<BuiltinID> builtinsThatTestsReplace;
+    Vector<FlowAddedName> namesThatTestsAdd;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
     bool areFilled { false };
 };
@@ -276,6 +286,8 @@ struct FlowProgramTables {
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     bool findsFilesOfProgramByName { true };
+    // CompileOptions::admitsFilesRunByHost()
+    bool hostRunsFilesOutsideImage { false };
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
     Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
@@ -373,6 +385,7 @@ public:
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtins.membersLockedAtStartUp; }
+    const BitVector& builtinMembersWrittenInSharedRealm() const LIFETIME_BOUND { return m_tables.builtins.membersWrittenInSharedRealm; }
     std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }
@@ -435,6 +448,7 @@ public:
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
     bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
+    bool hostRunsFilesOutsideImage() const { return hasResults() && m_tables.wholeProgram.hostRunsFilesOutsideImage; }
     // The body of the first has run to its end when the body of the second begins.
     bool completesBefore(ModuleID first, ModuleID second) const { return m_tables.wholeProgram.moduleOrder.completesBefore(first, second); }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
@@ -444,6 +458,8 @@ public:
     std::span<const FlowWorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.builtins.workerEntries.span(); }
     std::optional<Witness> workerStartWithoutName() const { return m_tables.builtins.workerStartWithoutName; }
     std::span<const VariableID> exportsThatSpiesReplace() const LIFETIME_BOUND { return m_tables.builtins.exportsThatSpiesReplace.span(); }
+    std::span<const BuiltinID> builtinsThatTestsReplace() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatTestsReplace.span(); }
+    std::span<const FlowAddedName> namesThatTestsAdd() const LIFETIME_BOUND { return m_tables.builtins.namesThatTestsAdd.span(); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     const BitVector& builtinsThatMayBeTrimmed() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatMayBeTrimmed; }
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }

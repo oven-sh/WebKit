@@ -103,7 +103,7 @@ enum class SlotKindFlag : uint8_t {
     v(FieldOrInheritedSetter, FieldAndHolder, WordIndex, Unknown, None) \
     v(InheritedField, Holder, None, Unknown, None) \
     v(FieldOrInheritedField, FieldAndHolder, HiddenWordOffset, Unknown, None) \
-    v(Variable, Field, None, Present, None) \
+    v(Variable, Field, HiddenWordOffset, Present, None) \
     v(ExtraProperty, ExtraProperty, HiddenWordOffset, Present, None) \
     v(ExtraGetter, ExtraProperty, HiddenWordOffset, Present, None) \
     v(ExtraSetter, ExtraProperty, HiddenWordOffset, Unknown, None) \

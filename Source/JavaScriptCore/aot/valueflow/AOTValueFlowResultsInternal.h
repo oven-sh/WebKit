@@ -930,6 +930,8 @@ struct ValueFlowUsesOfLibraryCode {
     Vector<BuiltinUseRecord> builtinUses;
     Vector<RuntimeFunctionID> libraryFunctionsLacked;
     Vector<VariableID> exportsThatSpiesReplace;
+    Vector<BuiltinID> builtinsThatTestsReplace;
+    Vector<FlowAddedName> namesThatTestsAdd;
 };
 ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs&);
 
@@ -947,10 +949,9 @@ void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
 void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
-inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
+inline LayoutID nearestLayoutAlwaysAbove(const FlowApplication& application, LayoutID id)
 {
-    const LayoutFlow& flow = application.layouts[id.index()].flow;
-    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    return nearestLayoutAlwaysAbove(application.layouts[id.index()].flow);
 }
 
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);

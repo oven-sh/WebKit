@@ -16,6 +16,10 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTProgramTables.h"
+#include "AOTIdentifierTable.h"
+#include "AOTImagesBelow.h"
+#include "AOTModuleTable.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTPipeline.h"
@@ -26,6 +30,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
+#include "AOTTextEncoder.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "SmallStrings.h"
@@ -38,6 +43,7 @@
 #include <wtf/Atomics.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/HashSet.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -450,9 +456,172 @@ static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandida
     });
 }
 
+static String keyOfEngineSymbol(PropertyKeyKind kind, uint32_t wellKnownSymbol, const String& text)
+{
+    return makeString(static_cast<unsigned>(kind), ':', wellKnownSymbol, ':', text);
+}
+
+static bool isSameSymbolInEveryImage(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+        return true;
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::CreatedSymbol:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::unique_ptr<ImagesBelow> ImagesBelow::tryCreate(std::span<const std::span<const uint8_t>> images)
+{
+    std::unique_ptr<ImagesBelow> result(new ImagesBelow);
+    for (std::span<const uint8_t> bytes : images) {
+        std::optional<OptionSet<ImageFlag>> flags = Image::flags(bytes);
+        if (!flags || !flags->contains(ImageFlag::SharesRealms))
+            return nullptr;
+        auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
+        if (header.formatVersion != imageFormatVersion || header.size > bytes.size() || header.codeOffset > header.size)
+            return nullptr;
+        std::span<const uint8_t> image = bytes.first(header.size);
+        result->m_images.append(Image::create(image, image.data() + header.codeOffset));
+    }
+    if (result->m_images.isEmpty())
+        return nullptr;
+    for (size_t position = 0; position < result->m_images.size(); ++position) {
+        const std::unique_ptr<Image>& image = result->m_images[position];
+        const ImageText& text = image->text();
+        const ImageNumberRanges& numbers = image->header().numbers;
+        for (uint32_t number : image->programTables().identifiersOfEngineSymbols()) {
+            if (number < numbers.firstStringHeader)
+                continue;
+            const ImageIdentifierWord& identifier = text.identifier(number);
+            if (!isSameSymbolInEveryImage(identifier.kind()))
+                continue;
+            bool isWellKnown = identifier.kind() == PropertyKeyKind::WellKnownSymbol;
+            String name = !isWellKnown && identifier.text() ? result->viewOf(position, identifier.text()).toString() : String();
+            result->m_engineSymbols.add(keyOfEngineSymbol(identifier.kind(), isWellKnown ? static_cast<uint32_t>(identifier.wellKnownSymbol()) : 0, name), number);
+        }
+    }
+    return result;
+}
+
+// These images are bytes that nothing has loaded: each has the headers of its own numbers alone. A text that is a name of an image before it lies there.
+bool ImagesBelow::holdsFile(StringView path) const
+{
+    for (size_t position = 0; position < m_images.size(); ++position) {
+        auto viewInImage = [&](StringID string) {
+            return viewOf(position, string);
+        };
+        ModuleTable::TextOfString text(viewInImage);
+        ModuleTable table(m_images[position]->programTables(), text);
+        if (!table.mayHoldPathStartingWith(path))
+            continue;
+        bool holds = false;
+        // The paths come in their order, so the path itself comes in front of all that it begins. A file that only an attribute asks for stands under its path, a question mark and the name of the form.
+        table.forEachFilePathStartingWith(path, [&](const String& first) {
+            holds = first.length() == path.length() || first[path.length()] == '?';
+            return IterationStatus::Done;
+        });
+        if (holds)
+            return true;
+    }
+    return false;
+}
+
+StringView ImagesBelow::viewOf(size_t position, StringID string) const
+{
+    const ImageText& text = m_images[position]->text();
+    std::optional<uint32_t> number = text.identifierNumber(string);
+    if (!number || *number >= m_images[position]->header().numbers.firstStringHeader)
+        return text.view(string);
+    for (size_t before = 0; before < position; ++before) {
+        const ImageNumberRanges& numbers = m_images[before]->header().numbers;
+        if (*number >= numbers.firstStringHeader && *number < numbers.endOfStringHeaders) {
+            const ImageText& holder = m_images[before]->text();
+            return holder.view(holder.identifier(*number).text());
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<uint32_t> ImagesBelow::numberOfName(const DecodedString& name) const
+{
+    StringView characters = name.is16Bit() ? StringView(name.units16.span()) : StringView(byteCast<Latin1Character>(name.units8.span()));
+    for (size_t position = 0; position < m_images.size(); ++position) {
+        const std::unique_ptr<Image>& image = m_images[position];
+        const ImageText& text = image->text();
+        std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).find(name.hash, [&](uint32_t candidate) {
+            StringID string = text.identifier(candidate).text();
+            return string ? viewOf(position, string) == characters : characters.isEmpty();
+        });
+        if (number)
+            return number;
+    }
+    return std::nullopt;
+}
+
+std::optional<uint32_t> ImagesBelow::numberOfEngineSymbol(PropertyKeyKind kind, uint32_t wellKnownSymbol, const String& text) const
+{
+    if (!isSameSymbolInEveryImage(kind))
+        return std::nullopt;
+    auto found = m_engineSymbols.find(keyOfEngineSymbol(kind, wellKnownSymbol, text));
+    if (found == m_engineSymbols.end())
+        return std::nullopt;
+    return found->value;
+}
+
+std::optional<uint32_t> numberInImagesBelow(const Typed::Program& program, PropertyKeyID key, StringID text, const ImagesBelow& below)
+{
+    PropertyKeyKind kind = key ? program.at(key).kind : PropertyKeyKind::Text;
+    if (kind == PropertyKeyKind::Text)
+        return text ? below.numberOfName(decodeForImage(program.strings[text])) : std::nullopt;
+    if (kind == PropertyKeyKind::WellKnownSymbol)
+        return below.numberOfEngineSymbol(kind, static_cast<uint32_t>(*program.at(key).symbol), String());
+    if (!text)
+        return std::nullopt;
+    DecodedString decoded = decodeForImage(program.strings[text]);
+    return below.numberOfEngineSymbol(kind, 0, decoded.is16Bit() ? String(decoded.units16.span()) : String(byteCast<Latin1Character>(decoded.units8.span())));
+}
+
 IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn, BuildContext& context)
 {
     Vector<NameCandidate> names = collectNumberedNames(program, uses, keysWithColumn);
+    // A name that an image below has keeps its number there, and with it its column or its lack of one. The others go on where the headers of those images end.
+    if (const ImagesBelow* below = context.imagesBelow()) {
+        sortByFirstMention(context.parallelLoops(), names.mutableSpan());
+        Vector<std::optional<uint32_t>> numbersBelow(names.size());
+        forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(names.size()), [&](unsigned index) {
+            numbersBelow[index] = numberInImagesBelow(program, names[index].identifier.key, names[index].identifier.text, *below);
+        });
+        // The first number stands for nothing, as 0 does in the first image: its header says how many headers the image has.
+        uint32_t next = below->numbersOfLast().endOfStringHeaders;
+
+        IdentifierNumbering numbering;
+        numbering.m_first = next++;
+        numbering.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());
+        numbering.m_numbersByText.fill(0, program.strings.size());
+        numbering.m_identifiers.grow(next + static_cast<size_t>(std::ranges::count_if(numbersBelow, [](const std::optional<uint32_t>& number) { return !number; })));
+        for (uint32_t index = 0; index < names.size(); ++index) {
+            const NumberedIdentifier& identifier = names[index].identifier;
+            uint32_t number = numbersBelow[index] ? *numbersBelow[index] : next++;
+            numbering.m_identifiers[number] = identifier;
+            if (identifier.key)
+                numbering.m_numbersByKey[identifier.key.index()] = number;
+            if (isFoundByText(program, identifier))
+                numbering.m_numbersByText[identifier.text.index()] = number;
+        }
+        numbering.m_countWithLookupTableColumn = std::min(numbering.count(), RowDisplacementTable::maxColumn + 1);
+        numbering.m_countWithFieldTableColumn = std::min(numbering.count(), FieldTableEntry::maxName + 1);
+        context.statistics().count(StatisticID::IdentifiersNumbered, names.size());
+        if (context.exceeds(LimitID::MaxIdentifiers, numbering.count()))
+            context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyIdentifiers, .limit = LimitID::MaxIdentifiers, .count = numbering.count() });
+        return numbering;
+    }
     sortByUse(context.parallelLoops(), names.mutableSpan());
     auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), context.limit(LimitID::LookupTableNames)));
     groupColumnsByFunction(names.mutableSpan().first(columnCount));

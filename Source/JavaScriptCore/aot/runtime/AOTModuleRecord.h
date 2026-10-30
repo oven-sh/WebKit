@@ -49,6 +49,8 @@ public:
 
     ModuleID module() const { return m_module; }
     JSGlobalObject* instanceRealm() const;
+    // A realm may run several images. To the modules of one, a record of another is a record of code that its build has not seen.
+    bool isOf(const Instance& instance) const { return &m_instance == &instance; }
 
     bool isOnStack(const ModuleEvaluationStack& stack) const { return m_evaluationStack == &stack; }
     void setEvaluationStack(const ModuleEvaluationStack* stack) { m_evaluationStack = stack; }

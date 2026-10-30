@@ -36,6 +36,7 @@ class VM;
 
 namespace AOT {
 
+class ClassPrototype;
 class Closure;
 class CompiledStructure;
 class Object;
@@ -224,6 +225,8 @@ private:
     Object* createClassInstance(VM&, const LayoutData&, JSObject* prototype);
     static JSFinalObject* createOrdinaryInstance(JSGlobalObject*, unsigned numberOfProperties, JSObject* prototype);
     const LayoutData* classWithPrototype(JSObject* prototype) const;
+    // Not of a class of another image of the realm.
+    bool hasClassOf(const ClassPrototype&) const;
     enum class UseOfFunction : bool { MakesObjects, IsBase };
     JSObject* defineClassOfConstructorFunction(VM&, const LayoutData&, UseOfFunction);
     void armGuardsOfConstructorFunction(VM&, const LayoutData&, JSObject* prototype, Closure* classObject);

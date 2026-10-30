@@ -303,6 +303,27 @@ struct Renumbering {
 };
 
 bool compactFunction(Function&, Renumbering* = nullptr);
+
+// The tables of a body that nobody reads for a while, and what they point to, in a third of the room.
+class ParkedBody {
+    WTF_MAKE_NONCOPYABLE(ParkedBody);
+public:
+    ParkedBody() = default;
+    ParkedBody(ParkedBody&&) = default;
+    ParkedBody& operator=(ParkedBody&&) = default;
+    // Leaves the tables empty.
+    ParkedBody(Function::Blocks::Storage&, Function::Values::Storage&);
+
+    explicit operator bool() const { return !m_bytes.isEmpty(); }
+    // Into empty tables. Leaves nothing here.
+    void takeInto(Function::Blocks::Storage&, Function::Values::Storage&);
+
+private:
+    Vector<uint8_t> m_bytes;
+    uint32_t m_numberOfValues { 0 };
+    uint32_t m_numberOfBlocks { 0 };
+    uint32_t m_numberOfWordsOfParts { 0 };
+};
 bool needsCompaction(const Function&);
 void remapIDs(Function&, const TypeRemap&, const StringRemap&, const FunctionRemap&);
 void adoptIDs(Function& fromOtherArena, TypeArena&);

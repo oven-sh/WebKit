@@ -229,12 +229,15 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
 
 void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    if (vm.aotState().propertyCaches)
-        vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
     JSGlobalObject* realm = changed->structure()->realm();
-    // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
-    if (realm && changed == realm->objectPrototype() && Instance::of(realm))
-        vm.aotState().propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
+    for (auto& parts : vm.aotState().parts) {
+        if (!parts.propertyCaches)
+            continue;
+        parts.propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
+        // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
+        if (realm && changed == realm->objectPrototype() && realm->aotInstance())
+            parts.propertyCaches->didChangeObjectPrototype(changed, uidOrNull);
+    }
     for (Instance* instance : vm.aotState().instances) {
         State* state = instance->state;
         if (!state)
@@ -264,22 +267,25 @@ void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
 
 void RuntimeHooks::didStartWatchingReplacements(VM& vm)
 {
-    if (vm.aotState().propertyCaches)
-        vm.aotState().propertyCaches->didStartWatchingReplacements();
+    for (auto& parts : vm.aotState().parts) {
+        if (parts.propertyCaches)
+            parts.propertyCaches->didStartWatchingReplacements();
+    }
 }
 
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);
 
-    Instance* instance = Instance::of(realm);
-    State* state = instance ? instance->state : nullptr;
-    if (!state || !state->globalBindings)
-        return;
-    state->globalBindings->dropConstants();
-    // The caller counts the epoch up next, and at this number it starts over.
-    if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
-        state->globalBindings->dropLocations();
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        State* state = instance->state;
+        if (!state || !state->globalBindings)
+            continue;
+        state->globalBindings->dropConstants();
+        // The caller counts the epoch up next, and at this number it starts over.
+        if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
+            state->globalBindings->dropLocations();
+    }
 }
 
 static State* stateOrNull(Structure* structure)
@@ -392,14 +398,13 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
     bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
     if (mayBeDeclared && parseIndex(PropertyName(uid)))
         return false;
-    Instance* instance = Instance::of(globalObject);
     for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
         JSObject* object = below->prototypeForLookup(globalObject).getObject();
         if (!object)
             return true;
         Structure* structure = object->structure();
         if (object->classInfo() == ClassPrototype::info()) {
-            if (Instance::of(structure->realm()) != instance || object->butterfly() || (mayBeDeclared && ClassPrototype::hasMember(object, uid)))
+            if (object->butterfly() || (mayBeDeclared && ClassPrototype::hasMember(object, uid)))
                 return false;
         } else {
             TypeInfo typeInfo = structure->typeInfo();
@@ -453,11 +458,9 @@ static void findDeclaredMember(const ChainWalkStart& start, UniquedStringImpl* u
 
 static StepResult passLazyClassPrototypes(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject* objectBelow, JSObject*& object, ChainWalk& walk)
 {
-    Instance* instance = Instance::of(start.globalObject);
     for (; object && object->classInfo() == ClassPrototype::info(); objectBelow = object, object = object->getPrototypeDirect().getObject()) {
         walk.changeableObjects.append(object);
-        // ClassPrototype::createMembers() reports to the ChainDependents of its own Instance only.
-        if (Instance::of(object->structure()->realm()) != instance || object->butterfly())
+        if (object->butterfly())
             return StepResult::Stop;
         if (ClassPrototype::hasMember(object, uid)) {
             findDeclaredMember(start, uid, objectBelow, object, walk);
@@ -634,6 +637,9 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
     while (!below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto())) {
         JSObject* object = below->prototypeForLookup(start.globalObject).getObject();
         if (passLazyClassPrototypes(start, uid, objectBelow, object, walk) == StepResult::Stop)
+            break;
+        // A class prototype without members answers by the tables of its own image, whichever runs.
+        if (VM& vm = start.globalObject->vm(); object && vm.aotState().hasSeveralImages && belongsToOtherImageSlow(vm, object)) [[unlikely]]
             break;
         if (!object) {
             walk.result = ChainWalkResult::Absent;

@@ -176,6 +176,10 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
     }
 
     size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(size);
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_space.tryMakeRoomForPreciseAllocation()) [[unlikely]]
+        return nullptr;
+#endif
     PreciseAllocation* allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
     if (!allocation) [[unlikely]] {
         if (MarkedBlockCage::isRequired() && !vm.heap.isOutsideCage(alignedMemoryAllocator()))

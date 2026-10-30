@@ -24,8 +24,7 @@ static ValueSetID maskOf(const ValueFlowOperand& operand) { return operand.mask 
 
 static ValueSetID valueHeldInGraph(const ValueFlowGraph& graph, ValueFlowNodeID node)
 {
-    std::span<const ValueSetID> values = graph.values();
-    return node.index() < values.size() ? values[node.index()] : ValueSets::nothing;
+    return node.index() < graph.numberOfNodes() ? graph.valueOf(node) : ValueSets::nothing;
 }
 
 ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueFlowRoundLog& log, ValueSetMaker& maker)

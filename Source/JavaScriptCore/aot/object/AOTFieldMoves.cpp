@@ -314,6 +314,8 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         return nullptr;
     State& state = *instance->state;
     Object* compiled = compiledObjectOrNull(source);
+    if (state.sharesRealm && compiled && !compiled->isDescribedBy(state)) [[unlikely]]
+        return nullptr;
     FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
         if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)

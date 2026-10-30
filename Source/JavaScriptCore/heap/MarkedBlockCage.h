@@ -86,12 +86,16 @@ public:
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
     void didFindNoRoomWithoutCollecting() { m_owesCollection = true; }
     bool owesCollection() const { return m_owesCollection; }
+    // An error thrown for Structures leaves their reserve short, and most Structures are allocated where no collection may run: with no reserve, a full heap ends the process there.
+    // Only a collection that frees whole blocks can fill it again. The next poll that may collect runs one. If the program had dropped nothing by then, one more is owed when it next needs room for a Structure.
+    void willAllocateStructureInSlowPath() { m_owesCollection |= m_owesStructureReserve; }
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
     // At a poll the frames of the loop's callees are gone. One more full collection runs. If it makes room, no error is owed any more.
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryErrorAtPoll(VM&);
     // An error that barren collections owe is offered to a poll first.
     bool errorWaitsForPoll() const { return m_errorWaitsForPoll; }
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
+    JS_EXPORT_PRIVATE void didThrowOutOfMemoryError(VM&);
     size_t reserveSize() const;
 
     // Makes fallible allocations use the reserve. For callers that can neither collect nor throw.
@@ -146,6 +150,7 @@ private:
     void didAllocate(const void*, size_t);
     bool hasHeapThatReleasedReserve() const;
     bool tryRestoreReleasedReserves(VM&);
+    void didCollectForStructureReserve();
     bool tryRestoreOwnReserve();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
@@ -161,6 +166,8 @@ private:
     bool m_hasReleasedReserve { false };
     bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };
+    bool m_pollFillsStructureReserve { false };
+    bool m_owesStructureReserve { false };
     bool m_errorWaitsForPoll { false };
     bool m_hasCollectedAtPoll { false };
     bool m_allocationsAreInfallible { false };

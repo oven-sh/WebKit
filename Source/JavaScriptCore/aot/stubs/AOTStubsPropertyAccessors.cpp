@@ -254,6 +254,7 @@ static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg functio
     jit.load64(Address(value, offsetOfSlimClosureWord), function);
     hasWord.link(&jit);
     extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
+    branchUnlessClosureNumberOfThisImage(jit, function, isNotClosure);
 }
 
 void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss)
@@ -264,6 +265,8 @@ void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& mi
     RELEASE_ASSERT(noOverlap(closure, index, tables, scratch));
 
     loadClosureFunction(jit, closure, index, miss);
+    if (jit.options().closureNumbersBelow)
+        jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().closureNumbersBelow)), index);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, programTableCount(tables, ProgramTableIndex::functionLengths)));
     loadProgramTable(jit, tables, ProgramTableIndex::functionLengths, scratch);
@@ -307,6 +310,8 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
     };
     // A function that closures are made of is a form of another.
     jit.add32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), function);
+    if (jit.options().closureNumbersBelow)
+        jit.sub32(TrustedImm32(static_cast<int32_t>(jit.options().closureNumbersBelow)), function);
     loadNumberOfFunctionsInFrontOfForms();
     jit.sub32(scratch, function);
     loadProgramTable(jit, tables, ProgramTableIndex::functionSources, scratch);

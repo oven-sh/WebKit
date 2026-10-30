@@ -573,7 +573,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         throwException(globalObject, scope, createNotAnObjectError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::NullishIterate:
-        throwException(globalObject, scope, createNotAnObjectError(globalObject, value()));
+        throwException(globalObject, scope, createIterationOfNullishError(globalObject, value()));
         break;
     case ThrowKind::NullishSpread:
         throwException(globalObject, scope, createSpreadOfNullishError(globalObject));

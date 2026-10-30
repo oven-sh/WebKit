@@ -100,6 +100,15 @@ void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+// In an image that shares its realms, a compiled object may be of another image. Its shape is no index into the tables of this one, so it goes the way of an object that is not compiled.
+// The register holds the shape word of a compiled object.
+void branchUnlessShapeOfThisImage(StubAssembler&, GPRReg shapeWord, JumpList& otherwise);
+// The register holds the closure number of a closure.
+void branchUnlessClosureNumberOfThisImage(StubAssembler&, GPRReg number, JumpList& otherwise);
+// The cell is a compiled object.
+void branchIfObjectOfOtherImage(StubAssembler&, GPRReg cell, JumpList& isOfOtherImage);
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
+Jump branchIfCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
 // Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);

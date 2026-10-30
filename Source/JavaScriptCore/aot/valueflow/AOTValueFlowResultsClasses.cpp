@@ -18,6 +18,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTValueIdentity.h"
@@ -54,6 +55,9 @@ struct BaseOfClass {
     BaseState state { BaseState::Unknown };
     LayoutID base;
     BuiltinClassID baseClass;
+    Vector<LayoutID> possibleBases;
+    LayoutID commonAncestor;
+    Vector<LayoutID> intermediateClasses;
 
     friend bool operator==(const BaseOfClass&, const BaseOfClass&) = default;
 };
@@ -244,31 +248,41 @@ static BaseOfClass computeBase(const ValueFlowResultInputs& inputs, LayoutID id,
     const ValueSets& sets = inputs.sets();
     ValueSetID heritage = definition.heritage;
     if (layout.isDerived())
-        return { BaseState::Layout, layout.flow.base, { } };
+        return { .state = BaseState::Layout, .base = layout.flow.base };
     if (!layout.has(LayoutFlags::HasHeritage))
-        return { BaseState::None, { }, { } };
+        return { .state = BaseState::None };
     if (!definition.isFollowed || !inputs.build.isEnabled(FlowResultKind::ClassBases, id.index()) || ValueSets::isComplement(heritage) || sets.isEmpty(heritage))
         return { };
 
     std::optional<BaseOfClass> joined;
+    Vector<LayoutID> compiledClasses;
+    bool isAlwaysCompiledClass = true;
     sets.forEachMember(heritage, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
         BaseOfClass base;
         if (FunctionID function = universe.closureFunction(member)) {
             if (LayoutID constructed = inputs.program.at(function).constructedClass)
-                base = { BaseState::Layout, constructed, { } };
+                base = { .state = BaseState::Layout, .base = constructed };
         } else if (universe.kindOf(member) == ValueFlowObjectKind::Builtin) {
             BuiltinID constructor = builtins.canonicalID(universe.builtinOf(member));
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
             BuiltinID classConstructor = instanceClass ? builtins.at(instanceClass).constructor : BuiltinID();
             if (classConstructor && builtins.canonicalID(classConstructor) == constructor)
-                base = { BaseState::BuiltinClass, { }, instanceClass };
+                base = { .state = BaseState::BuiltinClass, .baseClass = instanceClass };
         }
         joined = !joined || *joined == base ? base : BaseOfClass { };
+        isAlwaysCompiledClass &= base.state == BaseState::Layout;
+        if (base.state == BaseState::Layout)
+            compiledClasses.append(base.base);
     });
     if (sets.contains(heritage, ValueFlowUniverse::primitive(PrimitiveSet::Null)))
-        return joined ? BaseOfClass { } : BaseOfClass { BaseState::None, { }, { } };
+        return joined ? BaseOfClass { } : BaseOfClass { .state = BaseState::None };
+    if (joined && joined->state == BaseState::Unknown && isAlwaysCompiledClass) {
+        AOT::sort(compiledClasses);
+        removeRepeatedElements(compiledClasses);
+        joined->possibleBases = WTF::move(compiledClasses);
+    }
     return joined.value_or(BaseOfClass { });
 }
 
@@ -277,11 +291,16 @@ static LayoutID provenBaseOf(const BaseOfClass& base)
     return base.state == BaseState::Layout ? base.base : LayoutID();
 }
 
+static LayoutID nearestLayoutAlwaysAbove(const BaseOfClass& base)
+{
+    return base.state == BaseState::Layout ? base.base : base.commonAncestor;
+}
+
 static uint64_t countFieldsWithInheritedOnes(const Program& program, std::span<const BaseOfClass> bases, LayoutID id)
 {
     uint64_t numberOfUnnamedFields = 0;
     Vector<PropertyKeyID> keys;
-    for (LayoutID current = id; current; current = provenBaseOf(bases[current.index()])) {
+    for (LayoutID current = id; current; current = nearestLayoutAlwaysAbove(bases[current.index()])) {
         for (const Field& field : program.at(current).fields) {
             if (field.key)
                 keys.append(field.key);
@@ -302,13 +321,13 @@ static void invalidateBasesWhoseFieldsHaveNoRoom(const ValueFlowResultInputs& in
     BitVector isCounted(bases.size());
     Vector<LayoutID, 16> path;
     for (size_t index = 0; index < bases.size(); ++index) {
-        for (LayoutID current(static_cast<uint32_t>(index)); current && !isCounted.quickSet(current.index()); current = provenBaseOf(bases[current.index()]))
+        for (LayoutID current(static_cast<uint32_t>(index)); current && !isCounted.quickSet(current.index()); current = nearestLayoutAlwaysAbove(bases[current.index()]))
             path.append(current);
         while (!path.isEmpty()) {
             LayoutID id = path.takeLast();
             uint64_t& count = fieldCounts[id.index()];
             count = program.at(id).fields.size();
-            LayoutID base = provenBaseOf(bases[id.index()]);
+            LayoutID base = nearestLayoutAlwaysAbove(bases[id.index()]);
             if (!base)
                 continue;
             count += fieldCounts[base.index()];
@@ -320,6 +339,76 @@ static void invalidateBasesWhoseFieldsHaveNoRoom(const ValueFlowResultInputs& in
             bases[id.index()] = BaseOfClass { };
             count = program.at(id).fields.size();
         }
+    }
+}
+
+static void computeCommonAncestors(Vector<BaseOfClass>& bases)
+{
+    bool hasSeveralBasesSomewhere = std::ranges::any_of(bases, [](const BaseOfClass& base) {
+        return !base.possibleBases.isEmpty();
+    });
+    if (!hasSeveralBasesSomewhere)
+        return;
+
+    Vector<Vector<LayoutID, 1>> classesDirectlyAbove(bases.size(), [&](size_t index) {
+        const BaseOfClass& base = bases[index];
+        return base.state == BaseState::Layout ? Vector<LayoutID, 1> { base.base } : Vector<LayoutID, 1>(base.possibleBases.span());
+    });
+    StronglyConnectedComponents components = computeStronglyConnectedComponents(bases.size(), [&](unsigned index) -> const Vector<LayoutID, 1>& {
+        return classesDirectlyAbove[index];
+    });
+
+    // A component is numbered behind all that it leads to, so the components that every way up from it passes are known when it is reached.
+    constexpr uint32_t end = std::numeric_limits<uint32_t>::max();
+    Vector<uint32_t> nextPassed(FillWith { }, components.numberOfComponents, end);
+    Vector<uint32_t> numberPassed(FillWith { }, components.numberOfComponents, 0u);
+    auto numberPassedFrom = [&](uint32_t component) {
+        return component == end ? 0 : numberPassed[component] + 1;
+    };
+    auto firstPassedByBoth = [&](uint32_t a, uint32_t b) {
+        while (a != b) {
+            uint32_t& farther = numberPassedFrom(a) >= numberPassedFrom(b) ? a : b;
+            farther = nextPassed[farther];
+        }
+        return a;
+    };
+    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+        std::optional<uint32_t> passed;
+        auto leadsTo = [&](uint32_t other) {
+            passed = passed ? firstPassedByBoth(*passed, other) : other;
+        };
+        for (uint32_t member : components.membersOf(component)) {
+            if (classesDirectlyAbove[member].isEmpty())
+                leadsTo(end);
+            for (LayoutID above : classesDirectlyAbove[member]) {
+                if (components.componentOf[above.index()] != component)
+                    leadsTo(components.componentOf[above.index()]);
+            }
+        }
+        nextPassed[component] = passed.value_or(end);
+        numberPassed[component] = numberPassedFrom(nextPassed[component]);
+    }
+
+    for (size_t index = 0; index < bases.size(); ++index) {
+        if (bases[index].possibleBases.isEmpty())
+            continue;
+        // A class that may stand above itself may stand twice above another, whose objects then hold its private names twice.
+        uint32_t passed = nextPassed[components.componentOf[index]];
+        while (passed != end && components.isInCycle.get(components.membersOf(passed)[0]))
+            passed = nextPassed[passed];
+        if (passed == end)
+            continue;
+        LayoutID ancestor(components.membersOf(passed)[0]);
+        BitVector isBetween(bases.size());
+        Vector<LayoutID, 16> worklist(bases[index].possibleBases.span());
+        while (!worklist.isEmpty()) {
+            LayoutID current = worklist.takeLast();
+            if (current != ancestor && !isBetween.quickSet(current.index()))
+                worklist.appendVector(classesDirectlyAbove[current.index()]);
+        }
+        bases[index].commonAncestor = ancestor;
+        for (size_t between : isBetween)
+            bases[index].intermediateClasses.append(LayoutID(static_cast<uint32_t>(between)));
     }
 }
 
@@ -337,12 +426,15 @@ static void computeBaseResults(const ValueFlowResultInputs& inputs, std::span<co
     }
     for (size_t index : liesOnCycle)
         bases[index] = BaseOfClass { };
+    computeCommonAncestors(bases);
     invalidateBasesWhoseFieldsHaveNoRoom(inputs, bases);
     for (size_t index = 0; index < bases.size(); ++index) {
         LayoutFlow& flow = application.layouts[index].flow;
         flow.baseState = bases[index].state;
         flow.base = bases[index].base;
         flow.baseClass = bases[index].baseClass;
+        flow.commonAncestor = bases[index].commonAncestor;
+        flow.intermediateClasses = WTF::move(bases[index].intermediateClasses);
     }
 }
 

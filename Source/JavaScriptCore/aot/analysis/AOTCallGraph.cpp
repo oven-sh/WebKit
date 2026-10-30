@@ -205,20 +205,23 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
         }
         AOT::sort(types);
         removeRepeatedElements(types);
-        moveToExactBuffer(types);
     }
     AOT::sort(m_references.callees);
     removeRepeatedElements(m_references.callees);
     AOT::sort(m_references.otherReferences);
     removeRepeatedElements(m_references.otherReferences);
-    moveToExactBuffer(m_references.callees);
-    moveToExactBuffer(m_references.directCallees);
-    moveToExactBuffer(m_references.calleeSets);
-    moveToExactBuffer(m_references.enteredSets);
-    moveToExactBuffer(m_references.otherReferences);
-    moveToExactBuffer(m_references.sitesThatRunCode);
-    moveToExactBuffer(m_references.functionsOfSites);
-    return WTF::move(m_references);
+    return {
+        m_references.callees,
+        m_references.directCallees,
+        m_references.calleeSets,
+        m_references.enteredSets,
+        m_references.otherReferences,
+        m_references.expectedFunctionTypes,
+        m_references.sitesThatRunCode,
+        m_references.functionsOfSites,
+        m_references.callsUnknownCode,
+        m_references.followsFieldsOfOperands,
+    };
 }
 
 EntriesThatRunNoCode findEntriesThatRunNoCode()
@@ -1083,7 +1086,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         groupByIndex(count, lists.firstSetOfUser, lists.setsOfUsers, [&](const auto& add) {
             for (unsigned index = 0; index < count; ++index) {
                 Vector<uint32_t, 8> setsOfUser;
-                for (const Vector<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
+                for (const CompactList<CalleeSetID>* sets : { &bodies.m_bodies[index].calleeSets, &bodies.m_bodies[index].enteredSets }) {
                     CalleeSetID previous;
                     for (CalleeSetID set : *sets) {
                         if (set != std::exchange(previous, set) && program.at(set).isLong())

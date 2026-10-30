@@ -550,7 +550,9 @@ public:
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
-    std::span<const PropertyKeyID> keysReadFrom(LayoutID layout) const LIFETIME_BOUND { return m_keysReadFrom[layout.index()].span(); }
+    bool isAnyKeyReadFrom(LayoutID layout) const { return !m_groupsOfKeysReadFrom[layout.index()].isEmpty(); }
+    // Sorted. Made where it is asked for: see m_groupsOfKeysReadFrom.
+    Vector<PropertyKeyID> keysReadFrom(LayoutID) const;
 
     bool hasEscapedObject(LayoutID layout) const { return m_hasEscapedObject.quickGet(layout.index()); }
     bool hasLostObject(LayoutID layout) const { return m_hasLostObject.quickGet(layout.index()); }
@@ -704,7 +706,10 @@ private:
     const ValueFlowResultInputs& m_inputs;
     ValueFlowHeapView& m_heap;
     ListsOfSetsByNumber m_receiversOfReads;
-    Vector<Vector<PropertyKeyID>> m_keysReadFrom;
+    // Objects of many layouts travel in one set, and then every key read off that set is read from each of the layouts: layouts times keys.
+    // So the keys that are read from the same layouts are one group, each key in one group, and a layout lists its groups.
+    Vector<Vector<PropertyKeyID>> m_groupsOfKeys;
+    Vector<Vector<uint32_t>> m_groupsOfKeysReadFrom;
     ValueSetID m_objectsPutAboveOthers { ValueSets::nothing };
     const LayoutsOfObjects& m_layoutsOfObjects;
     Vector<uint32_t> m_setsLookedAt;

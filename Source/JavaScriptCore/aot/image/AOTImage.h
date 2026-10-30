@@ -109,6 +109,28 @@ public:
     JS_EXPORT_PRIVATE static std::optional<OptionSet<ImageFlag>> flags(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::unique_ptr<Image> create(std::span<const uint8_t> bytes, const uint8_t* code);
     JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&, std::span<const uint8_t> allImages);
+    // The image was built above the last of the images that share their realms with `first`. Every VM that is created from here on for `first` runs it too.
+    static void publishAbove(const Image& first, std::unique_ptr<Image>&&);
+
+    // Images that share their realms stand in a list, in the order in which they were built. An image that shares none is a list of one.
+    bool sharesRealms() const { return header().has(ImageFlag::SharesRealms); }
+    const Image& first() const { return *m_first; }
+    const Image* above() const { return m_above.load(std::memory_order_acquire); }
+    const Image& last() const;
+    // How many stand in front of it.
+    unsigned position() const { return m_position; }
+    const Image* atPosition(unsigned) const;
+    // In the list of this image.
+    const Image* findInListByCodeAddress(const void*) const;
+    const Image& holderOfStringHeader(uint32_t number) const;
+    // The image of the list that the address lies in: a table, or something a table points at.
+    ALWAYS_INLINE const Image& holderOf(const void* address) const
+    {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(m_bytes.data()) < m_bytes.size()) [[likely]]
+            return *this;
+        return holderInListOf(address);
+    }
+    JS_EXPORT_PRIVATE const Image& holderInListOf(const void* address) const;
 
     struct PositionInFile {
         int descriptor { -1 };
@@ -119,6 +141,7 @@ public:
     unsigned number() const { return m_number; }
 
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_bytes.data()); }
+    std::span<const uint8_t> bytes() const { return m_bytes; }
     template<typename T> std::span<const T> section(ImageSection) const;
     std::span<const uint8_t> code() const { return { m_code, static_cast<size_t>(header().codeSize) }; }
     std::span<const uint8_t> regExpCode() const { return code().subspan(header().code.regExpCodeOffset, header().code.constantsOffset - header().code.regExpCodeOffset); }
@@ -127,6 +150,7 @@ public:
     std::span<const uint8_t> ffiDirectory() const;
     const ProgramTables& programTables() const { return *reinterpret_cast<const ProgramTables*>(section<uint8_t>(ImageSection::ProgramTables).data()); }
     const ImageText& text() const { return m_text; }
+    ImageText& text() { return m_text; }
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
@@ -200,6 +224,9 @@ private:
     std::optional<PositionInFile> m_positionInFile;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
+    const Image* m_first { this };
+    mutable std::atomic<const Image*> m_above { nullptr };
+    unsigned m_position { 0 };
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;
@@ -208,8 +235,6 @@ private:
     ImageText m_text;
     mutable std::once_flag m_didSortFunctionsByID;
     mutable Vector<uint32_t> m_functionsByID;
-    mutable std::once_flag m_didFindModuleDirectories;
-    mutable Vector<uint64_t> m_moduleDirectories;
 };
 
 template<typename T>

@@ -49,6 +49,10 @@ StringView nameOfCalleeForwardedOnTop(VM&);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
+// `[a] = v` and `for (x of v)`, where `v` is undefined or null.
+JSObject* createIterationOfNullishError(JSGlobalObject*, JSValue iterated);
+// `o.#x`, where `o` is an object without that name. `create` is the engine's function for the kind of name.
+JSObject* createAbsentPrivateNameError(JSGlobalObject*, JSObject* (*create)(JSGlobalObject*));
 // Without a member: the key is a value.
 JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier* member);
 // `o[k]++`, `o[k] += v`, `o[k] ??= v`: bytecode tests `o` by an operation of its own, ahead of the conversion of `k` and of the read.
@@ -83,7 +87,8 @@ JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& f
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path);
 // `code`: what Node.js gives the error of a load that finds nothing: MODULE_NOT_FOUND for require(), ERR_MODULE_NOT_FOUND for import(). Programs that try an optional package go by it.
-JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
+JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code, StringView asker = { });
+JSObject* createExportClosedToOutsideError(JSGlobalObject*, StringView exportName, StringView module, StringView asker);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
@@ -98,9 +103,13 @@ String functionNotCompiledMessage();
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
+// A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
+enum class LockedIn : bool { Executable, TestRun };
+String assignmentToLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
+String deletionFromLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl* key, LockedIn);
 // call, apply, bind, Symbol.hasInstance: BuiltinTable::isFunctionOfEngine().
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
-String prototypeChangeOfLockedBuiltinMessage(const String& holder);
+String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);
 
 } } // namespace JSC::AOT
 

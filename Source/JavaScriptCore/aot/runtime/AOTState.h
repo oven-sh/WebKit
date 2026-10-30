@@ -201,6 +201,8 @@ struct State {
 
     Instance& instance;
     const ProgramTables& tables;
+    // The realm runs other images beside the one that these tables are of: a compiled object or a closure of the realm need not be theirs.
+    const bool sharesRealm;
     ZeroedPages pages;
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;

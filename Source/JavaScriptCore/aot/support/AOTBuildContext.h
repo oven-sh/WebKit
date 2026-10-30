@@ -37,6 +37,7 @@ class CompilationScratch;
 namespace AOT {
 
 class IdentifierNumbering;
+class ImagesBelow;
 class RegExpSummaries;
 
 namespace Typed {
@@ -92,6 +93,8 @@ public:
     void addAllocationRemark(const AllocationRemark& remark) { m_losses.addAllocationRemark(remark); }
 
     const IdentifierNumbering& identifierNumbering() const;
+    // Null for the first image of its realms, and for an image that shares none.
+    const ImagesBelow* imagesBelow() const { return m_imagesBelow.get(); }
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
     B3::CompilationScratch& backEndScratch(unsigned worker);
@@ -156,6 +159,7 @@ private:
     std::unique_ptr<Typed::ScratchRealms> m_scratchRealms;
     std::optional<BitVector> m_functionsToDump;
     std::unique_ptr<const IdentifierNumbering> m_identifierNumbering;
+    std::unique_ptr<const ImagesBelow> m_imagesBelow;
     std::unique_ptr<DeferredDestroyer> m_deferredDestroyer;
 };
 

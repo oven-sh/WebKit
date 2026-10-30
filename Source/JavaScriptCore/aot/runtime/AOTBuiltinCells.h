@@ -68,6 +68,7 @@ public:
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
     // What compiled code was handed before the program read the member. The holder adds this very object. Null if there is none.
     JSObject* takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key);
+    JSObject* memberMadeAhead(JSObject* holder, UniquedStringImpl* key) const;
     void fillCellsOfEngine();
 
     // The program may replace a step of the path to a locked object, such as the global `Response`, so a cell is looked for in the object that was locked when the realm created it.
@@ -82,6 +83,9 @@ public:
     const BitVector& builtinsToLock() const { return m_builtinsToLock; }
     // Among them, the holders of members that the program may replace.
     const BitVector& holdersThatTellOfWrites() const { return m_holdersThatTellOfWrites; }
+    // ProgramTables::unlockedBuiltinMembers() of this program with those of the first program of the realm. Empty in the first.
+    std::span<const uint32_t> membersUnlockedInRealm() const { return m_membersUnlockedInRealm.span(); }
+    void setMembersUnlockedInRealm(Vector<uint32_t>&& members) { m_membersUnlockedInRealm = WTF::move(members); }
     void setBuiltinsToLock(BitVector&& builtins, BitVector&& holdersThatTellOfWrites)
     {
         m_builtinsToLock = WTF::move(builtins);
@@ -137,6 +141,7 @@ private:
     UncheckedKeyHashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
     BitVector m_builtinsToLock;
     BitVector m_holdersThatTellOfWrites;
+    Vector<uint32_t> m_membersUnlockedInRealm;
     BitVector m_writtenMembers;
     ObjectsByBuiltin m_membersMadeBehindAnnouncedWrite;
     Vector<JSObject*> m_objectsWithEveryPropertyLocked;

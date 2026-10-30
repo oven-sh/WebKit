@@ -237,7 +237,7 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     ASSERT(noOverlap(function, number, scratch));
     const GPRReg tables = scratch;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo), number);
+    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo, -static_cast<int32_t>(jit.options().closureNumbersBelow * sizeof(Number24))), number);
     jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
     jit.addPtr(tables, number);
     const GPRReg lowBytes = scratch;
@@ -425,7 +425,7 @@ void generateMaterializeEnvironment(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed)
+void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed, JumpList* isOfOtherImage)
 {
     ASSERT(noOverlap(closure, word, instanceGPR));
     jit.load64(Address(closure, offsetOfSlimClosureWord), word);
@@ -433,6 +433,8 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpLi
     if (isRenamed)
         isRenamed->append(jit.branchTest8(CCallHelpers::NonZero, Address(closure, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     jit.load32(Address(word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), word);
+    if (isOfOtherImage)
+        branchUnlessClosureNumberOfThisImage(jit, word, *isOfOtherImage);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(Address(word), word);

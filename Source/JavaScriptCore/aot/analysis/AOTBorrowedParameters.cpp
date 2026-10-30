@@ -236,7 +236,13 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
     uint64_t uncountedCalls = 0;
     uint64_t lost = 0;
     ValueID currentUser;
-    BorrowingBody body;
+    struct {
+        uint64_t word { 0 };
+        Vector<HandedOnReferences> handedOn;
+        Vector<HandedOnToManyCallees> handedOnToManyCallees;
+        Vector<FunctionID> calleesWhoseRecordsWereRead;
+        Vector<uint32_t> targetListsRead;
+    } body;
 
     auto referencesIn = [&](ValueID id) -> uint64_t { return id ? mayBe[id.index()] : 0; };
     auto heldReferencesIn = [&](ValueID id) -> uint64_t { return id && !mayHold.isEmpty() ? mayHold[id.index()] : 0; };
@@ -549,7 +555,6 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             entries[numberOfMergedEntries++] = entry;
     }
     entries.shrink(numberOfMergedEntries);
-    moveToExactBuffer(entries);
     Vector<HandedOnToManyCallees>& entriesOfLists = body.handedOnToManyCallees;
     AOT::sort(entriesOfLists, { }, &HandedOnToManyCallees::targetList);
     numberOfMergedEntries = 0;
@@ -562,14 +567,11 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             entriesOfLists[numberOfMergedEntries++] = entry;
     }
     entriesOfLists.shrink(numberOfMergedEntries);
-    moveToExactBuffer(entriesOfLists);
     AOT::sort(body.targetListsRead);
     removeRepeatedElements(body.targetListsRead);
-    moveToExactBuffer(body.targetListsRead);
     AOT::sort(body.calleesWhoseRecordsWereRead);
     removeRepeatedElements(body.calleesWhoseRecordsWereRead);
-    moveToExactBuffer(body.calleesWhoseRecordsWereRead);
-    return body;
+    return { body.word, body.handedOn, body.handedOnToManyCallees, body.calleesWhoseRecordsWereRead, body.targetListsRead };
 }
 
 static uint64_t bitsLostThrough(uint64_t wordOfCallee, const HandedOnReferences& entry)

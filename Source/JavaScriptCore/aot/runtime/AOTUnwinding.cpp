@@ -156,7 +156,7 @@ static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& s
 }
 
 // The frame is the outermost of the run, if the walk has left any.
-static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, CallFrame* leftFrame, ImageFrame leftImageFrame, VMEntryRecord& record, const int8_t* bufferSlots, bool isTermination)
+static void finishAtEndOfRun(VM& vm, CompiledUnwindResult& result, Instance* instance, CallFrame* leftFrame, ImageFrame leftImageFrame, VMEntryRecord& record, const int8_t* bufferSlots, bool isTermination)
 {
     if (result.runEnd.resumesSavedFrame && leftFrame && !isTermination) {
         finishInRejectingStub(result, *instance, leftFrame, leftImageFrame);
@@ -164,6 +164,8 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
     }
 
     if (result.runEnd.adapterFrame) {
+        if (VMState& state = vm.aotState(); state.adapterFrameThatRestoresImage == result.runEnd.adapterFrame) [[unlikely]]
+            state.restoreImageBelowAdapter();
         copyStubSavedRegisters(record, bufferSlots, result.runEnd.adapterFrame, AdapterFrame::savedRegisters);
         // The return label of the adapter, which clears the word, is not run.
         if (leftFrame)
@@ -260,7 +262,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::SavedFrameAdapter:
                 result.runEnd = { callFrame, site->stubFrameKind == StubFrameKind::ConstructAdapter, site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
                 result.exit = leaveRunAt(callFrame, entryFrame);
-                finishAtEndOfRun(result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
+                finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
                 return result;
             }
         }
@@ -276,7 +278,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
         place.rawPC = callFrame->rawReturnPC();
         place.callee = callFrame;
     }
-    finishAtEndOfRun(result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
+    finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
     return result;
 }
 
@@ -292,7 +294,7 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& f
         CompiledUnwindResult result;
         result.runEnd = frames.runEnd();
         result.exit = frames.exit();
-        finishAtEndOfRun(result, nullptr, nullptr, { }, record, bufferSlots, isTermination);
+        finishAtEndOfRun(vm, result, nullptr, nullptr, { }, record, bufferSlots, isTermination);
         return result;
     }
     CallFrame* asyncGeneratorBodyFrameLeft = frames.asyncGeneratorStubFrameLeft() ? frames.asyncGeneratorBodyFrameLeft() : nullptr;
@@ -469,6 +471,9 @@ const void* returnAddressOfInnermostCompiledCall(VM& vm)
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {
+    // Code of another image may have called the run, with no native code between. The answer only saves a walk.
+    if (vm.aotState().hasSeveralImages) [[unlikely]]
+        return false;
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;

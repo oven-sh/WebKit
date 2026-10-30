@@ -63,7 +63,7 @@ bool Object::structureGuaranteesAbsence(Structure* structure, UniquedStringImpl*
         return false;
     if (parseIndex(*name) || PropertyName(name).isPrivateName())
         return false;
-    State& state = *Instance::of(structure->realm())->state;
+    State& state = *structure->realm()->aotInstance()->instanceWithShape(compiled->layout().shape).state;
     if (state.objects->layouts.field(structure->vm(), compiled->layout(), name))
         return false;
     if (!compiled->hasExtraProperties())

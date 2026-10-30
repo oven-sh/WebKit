@@ -1156,6 +1156,9 @@ static void expandWalk(FunctionPassContext& context, Emission& emission, const P
 
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
 {
+    // The serializer writes a date, a list and a record on the word of their kinds, and asks none of them for `toJSON`.
+    if (context.program.looksUpUnlockedName(Builtins::JSONStringify))
+        return PassOutcome::Unchanged;
     IRBuilder& builder = emission.builder();
     JSONSerializerBuilder planner(builder, emission.inputs(), ValueID());
     if (!planner.hasPlanFor(site.source))

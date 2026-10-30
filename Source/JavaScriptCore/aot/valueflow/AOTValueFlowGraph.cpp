@@ -276,7 +276,7 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
         m_rows.grow(m_numberOfNodes, capacity);
         m_successors.grow(m_numberOfNodes, capacity);
         m_predecessors.grow(m_numberOfNodes, capacity);
-        m_value.grow(m_numberOfNodes, capacity);
+        RELEASE_ASSERT(!m_hasReleasedRows);
         m_capacity = capacity;
         Vector<std::atomic<uint64_t>> arePagesWritable((capacity >> m_shiftFromNodeToPage) / 64 + 1);
         for (uint32_t page = 0; page < m_numberOfNodes >> m_shiftFromNodeToPage; ++page)
@@ -314,7 +314,7 @@ NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
 
 void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlowMaskKind kind, ValueSetID familyObjects)
 {
-    ASSERT(m_value[node.index()] == ValueSets::nothing);
+    ASSERT(valueOf(node) == ValueSets::nothing);
     if (admitted == ValueSets::anything) {
         m_gates[node.index()].mask = 0;
         return;
@@ -390,11 +390,15 @@ void ValueFlowGraph::takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlacehold
     });
 }
 
-ALWAYS_INLINE void ValueFlowGraph::hold(uint32_t node, uint64_t low, ValueSetID value, Worker& worker)
+ALWAYS_INLINE uint32_t ValueFlowGraph::setIn(const Row& row, Worker& worker) const
 {
-    m_value[node] = value;
+    return row.value == worker.setOfLowMembers(row.low).index() ? 0 : row.value;
+}
+
+ALWAYS_INLINE void ValueFlowGraph::hold(uint32_t node, uint64_t low, ValueSetID value)
+{
     m_rows[node].low = low;
-    m_rows[node].set = (value == worker.setOfLowMembers(low) ? ValueSets::nothing : value).index();
+    m_rows[node].value = value.index();
 }
 
 void ValueFlowGraph::makeConstant(ValueFlowNodeID node, ValueSetID set, unsigned worker, EdgesOutOfConstant edges)
@@ -402,17 +406,17 @@ void ValueFlowGraph::makeConstant(ValueFlowNodeID node, ValueSetID set, unsigned
     m_isConstant[node.index() / 64].fetch_or(1ull << node.index() % 64, std::memory_order_relaxed);
     if (edges == EdgesOutOfConstant::AreListed)
         m_areEdgesOutOfConstantListed[node.index() / 64].fetch_or(1ull << node.index() % 64, std::memory_order_relaxed);
-    hold(node.index(), lowMembersOf(set, *m_makers[worker]), set, *m_workers[worker]);
+    hold(node.index(), lowMembersOf(set, *m_makers[worker]), set);
 }
 
 ALWAYS_INLINE void ValueFlowGraph::startWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other, Worker& worker)
 {
     uint64_t low = m_rows[other.index()].low;
     uint64_t lowInNoSet = 0;
-    ValueSetID value = m_value[other.index()];
+    ValueSetID value(m_rows[other.index()].value);
     if (uint32_t mask = m_gates[node.index()].mask)
         pass(node.index(), mask, low, lowInNoSet, value, worker);
-    hold(node.index(), low, value, worker);
+    hold(node.index(), low, value);
 }
 
 void ValueFlowGraph::startWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other)
@@ -558,16 +562,17 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
 
     constexpr size_t distance = 12;
     AOT_THRESHOLD(size_t, fewestEdgesForThreads, 4096);
-    auto takeEdge = [&](Shard& shard, ValueFlowEdge edge, Vector<Message>& messages) {
+    auto takeEdge = [&](Shard& shard, ValueFlowEdge edge, Vector<Message>& messages, Worker& worker) {
         willUse(edge.to.index());
         if (!isConstant(edge.from.index()))
             addPredecessor(shard, edge);
         const Row& row = m_rows[edge.from.index()];
-        if ((!row.low && !row.set) || (m_gates[edge.to.index()].flags & IgnoresArrivals))
+        if (!row.value || (m_gates[edge.to.index()].flags & IgnoresArrivals))
             return false;
-        if ((m_gates[edge.to.index()].flags & IsCoveredNode) && didCoveredNodeHoldAllOf(edge.to.index(), row.low, row.set))
+        uint32_t set = setIn(row, worker);
+        if ((m_gates[edge.to.index()].flags & IsCoveredNode) && didCoveredNodeHoldAllOf(edge.to.index(), row.low, set))
             return false;
-        messages.append(Message { edge.to.index(), row.set, row.low });
+        messages.append(Message { edge.to.index(), set, row.low });
         return true;
     };
     if (edges.size() < fewestEdgesForThreads || m_loops.width() == 1) {
@@ -576,7 +581,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                 __builtin_prefetch(&m_predecessors[edges[index + distance].to.index()], 1);
                 __builtin_prefetch(&m_rows[edges[index + distance].from.index()]);
             }
-            takeEdge(*m_shards[shardOf(edges[index].to.index())], edges[index], m_messages[m_parity]);
+            takeEdge(*m_shards[shardOf(edges[index].to.index())], edges[index], m_messages[m_parity], *m_workers[0]);
         }
     } else {
         constexpr unsigned numberOfParts = 64;
@@ -584,7 +589,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
         size_t edgesPerPart = (edges.size() + numberOfParts - 1) / numberOfParts;
         m_edgesByTarget.grow(numberOfParts * numberOfShards);
         m_edgesOnlyToLink.grow(numberOfParts);
-        team.run(numberOfParts, [&](unsigned part, unsigned) {
+        team.run(numberOfParts, [&](unsigned part, unsigned worker) {
             size_t first = std::min(edges.size(), part * edgesPerPart);
             std::span<const ValueFlowEdge> edgesOfPart = edges.subspan(first, std::min(edgesPerPart, edges.size() - first));
             for (size_t index = 0; index < edgesOfPart.size(); ++index) {
@@ -593,7 +598,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                 ValueFlowEdge edge = edgesOfPart[index];
                 if (m_gates[edge.to.index()].flags & IsCoveredNode) {
                     const Row& row = m_rows[edge.from.index()];
-                    if ((!row.low && !row.set) || (m_gates[edge.to.index()].flags & IgnoresArrivals) || didCoveredNodeHoldAllOf(edge.to.index(), row.low, row.set)) {
+                    if (!row.value || (m_gates[edge.to.index()].flags & IgnoresArrivals) || didCoveredNodeHoldAllOf(edge.to.index(), row.low, setIn(row, *m_workers[worker]))) {
                         if (!isConstant(edge.from.index()))
                             m_edgesOnlyToLink[part].append(edge);
                         continue;
@@ -610,7 +615,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                 numberOfEdgesInto[shardOf(covering.covered)] += onlyToLink.size();
         }
         ShardsInOrder shardsInOrder = longestFirst(numberOfEdgesInto);
-        team.run(numberOfShards, [&](unsigned position, unsigned) {
+        team.run(numberOfShards, [&](unsigned position, unsigned worker) {
             unsigned number = shardsInOrder[position];
             Shard& shard = *m_shards[number];
             size_t numberOfMessages = 0;
@@ -632,7 +637,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                         __builtin_prefetch(&m_predecessors[byTarget[index + distance].to.index()], 1);
                         __builtin_prefetch(&m_rows[byTarget[index + distance].from.index()]);
                     }
-                    numberOfMessages += takeEdge(shard, byTarget[index], shard.messages[m_parity][number]);
+                    numberOfMessages += takeEdge(shard, byTarget[index], shard.messages[m_parity][number], *m_workers[worker]);
                 }
                 byTarget.shrink(0);
             }
@@ -717,7 +722,7 @@ void ValueFlowGraph::noteWhatCoveredNodesHold()
 {
     for (Covering& covering : m_coverings) {
         covering.lowMembersHeldByCoveredNode = m_rows[covering.covered].low;
-        covering.setHeldByCoveredNode = m_rows[covering.covered].set;
+        covering.setHeldByCoveredNode = setIn(m_rows[covering.covered]);
     }
 }
 
@@ -920,7 +925,7 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
         if (covering.retiresNoNodeByItself)
             return flowsIntoCovered(covering, node) && !covering.isRetired.quickGet(node) && (m_gates[node].flags & IsRetired);
         return flowsIntoCovered(covering, node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
-            && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].set));
+            && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].value));
     };
     Vector<uint32_t> movedToBeRetired;
     findIndices(&team, moved.size(), movedToBeRetired, [&](size_t index) {
@@ -1075,7 +1080,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
 
     uint64_t lowBefore = row.low;
     uint64_t lowAfter = lowBefore | low;
-    ValueSetID before(row.set);
+    ValueSetID valueBefore(row.value);
+    ValueSetID before(setIn(row, worker));
     ValueSetID after = before;
     if (set != ValueSets::nothing || before != ValueSets::nothing) {
         uint64_t lowToAdd = before == ValueSets::nothing ? lowBefore | lowInNoSet : lowInNoSet & ~lowBefore;
@@ -1088,11 +1094,9 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     }
     if (lowAfter == lowBefore && after == before)
         return;
-    ValueSetID valueBefore = m_value[node];
     ValueSetID value = after == ValueSets::nothing ? worker.setOfLowMembers(lowAfter) : after;
     row.low = lowAfter;
-    row.set = after.index();
-    m_value[node] = value;
+    row.value = value.index();
     if (!std::exchange(m_hasMoved[node], 1))
         worker.movedNodes.append(node);
 
@@ -1134,7 +1138,6 @@ ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worke
         if (index + distance < nodes.size()) {
             __builtin_prefetch(&m_gates[nodes[index + distance]]);
             __builtin_prefetch(&m_successors[nodes[index + distance]]);
-            __builtin_prefetch(&m_value[nodes[index + distance]], 1);
             __builtin_prefetch(&m_hasMoved[nodes[index + distance]], 1);
         }
         evaluate(nodes[index], arrivals, worker, leave);
@@ -1306,8 +1309,8 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
                 continue;
             forEachPredecessor(node, [&](uint32_t predecessor) {
                 const Row& row = m_rows[predecessor];
-                if (row.low || row.set)
-                    m_messages[m_parity].append(Message { node, row.set, row.low });
+                if (row.value)
+                    m_messages[m_parity].append(Message { node, setIn(row), row.low });
             });
         }
         while (m_numberOfMessagesWithShards.load(std::memory_order_relaxed) || !m_messages[m_parity].isEmpty()) {
@@ -1400,21 +1403,28 @@ void ValueFlowGraph::removeFromEveryNode(std::initializer_list<ValueFlowObjectID
             if (!(row.low & bits))
                 continue;
             row.low &= ~bits;
-            if (row.set)
-                row.set = maker.intersect(ValueSetID(row.set), others).index();
-            m_value[node] = maker.intersect(m_value[node], others);
+            row.value = maker.intersect(ValueSetID(row.value), others).index();
         }
     });
 }
 
 void ValueFlowGraph::releaseRows()
 {
+    if (m_hasReleasedRows)
+        return;
+    m_value.grow(0, std::max<size_t>(m_capacity, 1));
+    constexpr uint32_t nodesPerShare = 1 << 16;
+    m_team->run((m_numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned) {
+        for (uint32_t node = share * nodesPerShare; node < std::min<uint64_t>(m_numberOfNodes, static_cast<uint64_t>(share + 1) * nodesPerShare); ++node)
+            m_value[node] = ValueSetID(m_rows[node].value);
+    });
+    m_hasReleasedRows = true;
     m_rows.release(*m_team);
 }
 
 void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
 {
-    m_rows.release(*m_team);
+    releaseRows();
     m_successors.release(*m_team);
     for (const std::unique_ptr<Shard>& shard : m_shards)
         shard->successors = { };
@@ -1476,8 +1486,7 @@ void ValueFlowGraph::keepSetsHeld(ValueSets& sets)
     constexpr uint32_t nodesPerShare = 1 << 14;
     m_team->run((m_numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned) {
         for (uint32_t node = share * nodesPerShare; node < std::min<uint64_t>(m_numberOfNodes, static_cast<uint64_t>(share + 1) * nodesPerShare); ++node) {
-            sets.keep(m_value[node]);
-            sets.keep(ValueSetID(m_rows[node].set));
+            sets.keep(ValueSetID(m_rows[node].value));
         }
     });
     for (const Mask& mask : m_masks) {
@@ -1525,7 +1534,6 @@ void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
     bytes.add("graph: rows of nodes"_s, numberOfNodes * sizeof(Row));
     bytes.add("graph: successors of nodes"_s, numberOfNodes * sizeof(uint32_t));
     bytes.add("graph: predecessors of nodes"_s, numberOfNodes * sizeof(uint32_t));
-    bytes.add("graph: values of nodes"_s, numberOfNodes * sizeof(ValueSetID));
     bytes.add("graph: bits of nodes"_s, (3 + 2 * m_coverings.size()) * (m_capacity / 8));
     bytes.addList("graph: masks"_s, m_masks);
     for (const std::unique_ptr<Worker>& worker : m_workers)
@@ -1568,6 +1576,13 @@ void ValueFlowGraph::forEachListOfOneRound(auto& graph, NOESCAPE const auto& fun
         for (auto& messagesOfWave : shard->messages)
             visitEach(waves, messagesOfWave);
     }
+}
+
+void ValueFlowGraph::giveBackRoomOfEmptyLists()
+{
+    forEachListOfOneRound(*this, [](ASCIILiteral, auto& list) {
+        giveBackRoomIfEmpty(list);
+    });
 }
 
 void ValueFlowGraph::giveBackMostRoomOfListsOfOneRound()

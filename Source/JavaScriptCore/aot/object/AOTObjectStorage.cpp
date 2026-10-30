@@ -78,12 +78,20 @@ Object* Object::createWithBody(VM& vm, Structure* structure, std::span<const uin
 
 Instance& Object::instance() const
 {
-    return *Instance::of(structure()->realm());
+    Instance* first = structure()->realm()->aotInstance();
+    if (!first->above) [[likely]]
+        return *first;
+    return first->instanceWithShape(shape());
 }
 
 State& Object::state() const
 {
     return *instance().state;
+}
+
+bool Object::isDescribedBy(const State& state) const
+{
+    return &instance() == &state.instance;
 }
 
 VM& Object::vm() const
@@ -307,7 +315,7 @@ bool Extension::tryInsert(uint64_t granuleBits)
 
 static StringView nameOfLayout(VM& vm, const LayoutData& layout)
 {
-    const ImageText& text = vm.aotState().image->text();
+    const ImageText& text = vm.aotState().image->holderOf(&layout).text();
     StringID name(layout.name);
     return name && text.hasText(name) ? text.view(name) : StringView("-"_s);
 }

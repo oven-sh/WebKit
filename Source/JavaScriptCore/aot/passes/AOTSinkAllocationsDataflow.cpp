@@ -1114,18 +1114,30 @@ static void removeDeadEntries(AllocationSinking& sinking, SinkingState& state, B
     auto isLive = [&](ValueID value) {
         return isParameterOf(useLists, target, value) || sinking.isLiveAtHead(value, target);
     };
+    // A branch in a later block asks a test again, of the operands that the test names. An operand that is no longer known to be the object would be taken for another value:
+    // `a === object`, where nobody else uses `a`, would come out false.
+    auto isNamedByLiveTest = [&](ValueID value) {
+        return state.tests.containsIf([&](const TestEntry& test) {
+            bool namesValue = false;
+            sinking.function().at(test.test).forEachOperand([&](ValueID operand, uint32_t) {
+                namesValue |= operand == value;
+            });
+            return namesValue && isLive(test.test);
+        });
+    };
+    auto isLiveAlias = [&](const AliasEntry& alias) {
+        return isLive(alias.value) || isNamedByLiveTest(alias.value);
+    };
     bool everyNameIsLive = std::ranges::all_of(state.objects, [&](const ObjectEntry& entry) {
         return isLive(sinking.at(entry.object).definition);
-    }) && std::ranges::all_of(state.aliases, [&](const AliasEntry& alias) {
-        return isLive(alias.value);
-    }) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
+    }) && std::ranges::all_of(state.aliases, isLiveAlias) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
         return isLive(test.test);
     });
     if (everyNameIsLive)
         return;
 
     state.aliases.removeAllMatching([&](const AliasEntry& alias) {
-        return !isLive(alias.value);
+        return !isLiveAlias(alias);
     });
     state.tests.removeAllMatching([&](const TestEntry& test) {
         return !isLive(test.test);

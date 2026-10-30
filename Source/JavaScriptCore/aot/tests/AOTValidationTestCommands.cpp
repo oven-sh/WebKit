@@ -64,13 +64,19 @@ static bool isStageTime(StatisticID statistic)
     });
 }
 
+// Two statements that run side by side on two threads log the same edge twice; on one thread after the other, the second finds it known. The graph is the same.
+static bool dependsOnWhichThreadRanWhat(StatisticID statistic)
+{
+    return statistic == StatisticID::FlowEdgesLogged;
+}
+
 static void printDifferentStatistics(PrintStream& out, const Statistics& release, const Statistics& validated)
 {
     Vector<uint64_t> releaseValues = release.values();
     Vector<uint64_t> validatedValues = validated.values();
     for (StatisticID statistic : allMembersOf<StatisticID>) {
         size_t index = static_cast<size_t>(statistic);
-        if (releaseValues[index] == validatedValues[index] || isStageTime(statistic))
+        if (releaseValues[index] == validatedValues[index] || isStageTime(statistic) || dependsOnWhichThreadRanWhat(statistic))
             continue;
         out.println("statistic ", nameOf(statistic), " release=", releaseValues[index], " validate=", validatedValues[index]);
     }

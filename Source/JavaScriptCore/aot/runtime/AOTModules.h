@@ -18,6 +18,9 @@
 #include "ScriptFetcher.h"
 #include "SourceOrigin.h"
 #include "Strong.h"
+#include <array>
+#include <wtf/BitVector.h>
+#include <wtf/Box.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -85,6 +88,20 @@ struct EvaluationContext {
     JSPromise* importPromise { nullptr };
 };
 
+// A set of mocked modules, and what follows from it and the table alone. Whoever began with one set goes on with it, and the next realm that mocks the same modules takes it over.
+struct MockedModules {
+    static constexpr uint32_t notBelow = std::numeric_limits<uint32_t>::max();
+
+    BitVector modules;
+    // What the mocked modules reach is numbered. A way from a root to any other module passes no mock, so only a question about one of these takes a walk from the root.
+    Vector<uint32_t> positionBelow;
+    uint32_t numberBelow { 0 };
+    // What no module asks for but in the list of a root, as the file of a module of the library: no walk comes to it.
+    BitVector namedByListsAlone;
+    // Which of the numbered ones a root reaches without passing a mock.
+    UncheckedKeyHashMap<ModuleID, Box<BitVector>> reachedFromRoots;
+};
+
 class Modules {
     WTF_MAKE_NONCOPYABLE(Modules);
     WTF_MAKE_TZONE_ALLOCATED(Modules);
@@ -96,6 +113,7 @@ public:
 
     Instance& instance() { return m_instance; }
     const ModuleTable& table() const { return m_table; }
+    const Instance& instance() const { return m_instance; }
     // Moves on when the entry point is linked and when the exports of a file are captured again: a walk made before may pass over what has work now.
     unsigned linkEpoch() const { return m_linkEpoch; }
     // No link has anything left to do with the module.
@@ -116,15 +134,45 @@ public:
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
     bool mayBeMocked(ModuleID) const;
     ModuleID moduleWithExportsOf(ModuleID) const;
-    void willMock(ModuleID module) { m_mockedModules.set(module.index()); }
+    void willMock(ModuleID);
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
-    bool isMocked(ModuleID module) const { return m_mockedModules.get(module.index()); }
+    bool isMocked(ModuleID module) const { return m_mocks && m_mocks->modules.get(module.index()); }
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
-    std::optional<BitVector> modulesNotBehindMocks(ModuleID root) const;
+    // Asked about the modules of the graph below a root.
+    class MocksBelowRoot {
+    public:
+        MocksBelowRoot(const ModuleTable& table, Box<MockedModules> mocks, ModuleID root)
+            : m_table(table)
+            , m_mocks(WTF::move(mocks))
+            , m_root(root)
+        {
+        }
+
+        // Whether only mocked modules import it there. Such a module never runs.
+        bool hides(ModuleID module) const
+        {
+            if (!m_mocks || module == m_root) [[likely]]
+                return false;
+            if (m_mocks->namedByListsAlone.quickGet(module.index()))
+                return true;
+            uint32_t position = m_mocks->positionBelow[module.index()];
+            return position != MockedModules::notBelow && !reachedFromRoot().quickGet(position);
+        }
+
+    private:
+        const BitVector& reachedFromRoot() const;
+
+        const ModuleTable& m_table;
+        Box<MockedModules> m_mocks;
+        ModuleID m_root;
+        mutable Box<BitVector> m_reached;
+    };
+    MocksBelowRoot mocksBelow(ModuleID root) const { return { m_table, m_mocks, root }; }
     bool hasBegunToLoad(ModuleID) const;
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID);
     void runMocksBelow(ModuleID root);
+    void loadEvictedFilesBelow(ModuleID root);
     JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
@@ -158,15 +206,21 @@ public:
     void runMainModuleThatWaited();
     void failMainModuleThatWaited();
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
+    const String* exchangeAskerOfModule(const String* asker) { return std::exchange(m_askerOfModule, asker); }
+    StringView askerOfModule() const { return m_askerOfModule ? StringView(*m_askerOfModule) : StringView(); }
     void evict(ModuleID);
+    void leaveToHostUnlessItHasRun(ModuleID);
+    void forgetFormAnsweredFirst(ModuleID file);
     JSObject* requireCacheEntry(ModuleID module) { return moduleObjectMadeByRequire(module); }
     bool isEvicted(ModuleID module) const { return m_evictedFiles.get(fileOf(module).index()); }
+    bool hasRun(ModuleID);
+    bool isLeftToHost(ModuleID);
     // The text of a data: URL that the program imports under a constant name is part of the program.
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
     bool isAskingHost() const { return m_isAskingHost; }
     // A name that the build did not follow finds an entry point and no other file of the image with code.
-    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
+    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk; }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
     template<typename Visitor> void visitRoots(Visitor&);
@@ -220,7 +274,8 @@ public:
     bool hasNotBegunAsFile(ModuleID) const;
     void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
-    enum class LoadOfFile : uint8_t { IsAskedFor, HasComeToFile, IsRootOfImport };
+    // IsRequested: the loader has listed the file among what a module imports, and comes to it behind what stands in front of it there.
+    enum class LoadOfFile : uint8_t { IsAskedFor, IsRequested, HasComeToFile, IsRootOfImport };
     ModuleRecord* recordOfCommonJSFile(ModuleID, LoadOfFile = LoadOfFile::HasComeToFile);
     void noteLoadOfFile(ModuleID fileOrFace, LoadOfFile = LoadOfFile::HasComeToFile);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
@@ -432,6 +487,7 @@ private:
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
+    bool isNativeModuleThatHostReplaces(ModuleID, const String& name);
     std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     Identifier keyWithoutForm(ModuleID file);
@@ -529,9 +585,14 @@ private:
     BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
-    BitVector m_mockedModules;
+    Box<MockedModules> m_mocks;
+    unsigned m_numberOfMockedSets { 0 };
     BitVector m_evictedFiles;
+    bool m_runsCopyFromDisk { false };
     BitVector m_filesToLoadAgain;
+    // See hasRun(): the answer, and the states that it was made from.
+    BitVector m_modulesThatRanWithImporters;
+    Vector<uint8_t> m_statusesWhenImportsWereFollowed;
     BitVector m_modulesWithMockToRun;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };
@@ -540,6 +601,7 @@ private:
     Strong<JSPromise> m_evaluationOfImportOfMainModule;
     Strong<JSPromise> m_capabilityOfMainModule;
     bool m_admitsCodeOutsideImage;
+    const String* m_askerOfModule { nullptr };
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
     const bool m_showsWaysBetweenModuleObjects;
@@ -695,6 +757,8 @@ private:
     };
     Vector<DeferredImport> m_deferredImports;
     ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
+    bool importsEvictedFile(ModuleID, BitVector& seen);
+    void leaveToHost(ModuleID file);
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     bool isEvaluatedByLoader(ModuleID file) const;
@@ -729,6 +793,9 @@ private:
 
 Modules& modulesOf(Instance&);
 Modules* modulesOf(JSGlobalObject*);
+// The host holds the numbers of modules of every image of a realm.
+ModuleID moduleIDForHost(const Image&, ModuleID);
+std::optional<ModuleID> moduleOfImage(const Image&, std::optional<ModuleID> fromHost);
 
 ALWAYS_INLINE StoredModuleStatus Modules::storedStatus(ModuleID module) const
 {

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <limits>
+#include <optional>
 #include <span>
 #include <wtf/Vector.h>
 #include <wtf/text/Latin1Character.h>
@@ -58,6 +59,12 @@ inline constexpr unsigned maxRequiredTexts = 2;
 
 // Of the body's alternatives that are tried at one place after another. None for a sticky pattern, whose one attempt costs less than a search.
 RequiredTexts findRequiredTexts(const YarrPattern&);
+
+// Of all the body's alternatives, those that are tried at the first place alone too: a subject without it from `start` on has no match. The rarest there is.
+// `^(?:.*\/)?[^\/]*\.pem$` is tried once, and that attempt walks a long path once for each of its folders.
+std::optional<RequiredText> findTextOfEveryMatch(const YarrPattern&);
+bool holdsRequiredText(const RequiredText&, std::span<const Latin1Character> subject, unsigned start);
+bool holdsRequiredText(const RequiredText&, std::span<const char16_t> subject, unsigned start);
 
 // How many times the share of the places in a subject that hold one of these units halves: 10 is one place in a thousand. By what program text, logs and prose hold.
 unsigned rarityOfUnits(const std::array<uint64_t, 2>& asciiMembers, bool matchesAllNonASCII);

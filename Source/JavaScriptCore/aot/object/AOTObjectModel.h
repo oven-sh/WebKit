@@ -235,6 +235,9 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
+    // Whoever has a state at hand passes it to save the way to it. It may be the caller's, and the object of another image.
+    if (state.sharesRealm) [[unlikely]]
+        return this->state().objects->layouts.field(*state.instance.vm, layout(), name.uid());
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

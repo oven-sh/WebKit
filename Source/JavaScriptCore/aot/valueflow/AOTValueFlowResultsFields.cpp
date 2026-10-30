@@ -70,7 +70,7 @@ static FieldFlow& flowOf(FlowApplication& application, FieldReference declaratio
 
 static LayoutID findOnProvenChain(const FlowApplication& application, LayoutID id, NOESCAPE const Invocable<bool(LayoutID)> auto& isWanted)
 {
-    for (size_t steps = 0; id && steps < application.layouts.size(); ++steps, id = provenBaseOf(application, id)) {
+    for (size_t steps = 0; id && steps < application.layouts.size(); ++steps, id = nearestLayoutAlwaysAbove(application, id)) {
         if (isWanted(id))
             return id;
     }
@@ -79,7 +79,7 @@ static LayoutID findOnProvenChain(const FlowApplication& application, LayoutID i
 
 static void forEachOnProvenChain(const FlowApplication& application, LayoutID id, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
 {
-    for (size_t steps = 0; id && steps < application.layouts.size(); ++steps, id = provenBaseOf(application, id))
+    for (size_t steps = 0; id && steps < application.layouts.size(); ++steps, id = nearestLayoutAlwaysAbove(application, id))
         functor(id);
 }
 
@@ -926,7 +926,7 @@ struct FieldResults {
             LayoutID id(index);
             if (program.at(id).kind != LayoutKind::Record || !program.at(id).fields.isEmpty() || !isBornWithCopies.get(index))
                 continue;
-            if (!hasObjects(id) || !stores.getsCopiedProperties(id) || stores.hasObjectOfCodeWithoutSolve(id) || stores.keysReadFrom(id).empty())
+            if (!hasObjects(id) || !stores.getsCopiedProperties(id) || stores.hasObjectOfCodeWithoutSolve(id) || !stores.isAnyKeyReadFrom(id))
                 continue;
             // A name that an object on the prototype chain is observed to hold is treated as a read of that object.
             ValueSetID above;
@@ -1569,7 +1569,7 @@ struct FieldResults {
             }
             return isMemberOfBuiltin;
         };
-        Vector<PropertyKeyID> read(stores.keysReadFrom(id));
+        Vector<PropertyKeyID> read = stores.keysReadFrom(id);
         read.removeAllMatching([&](PropertyKeyID key) {
             return !stores.accessorDefinedUnder(maker, id, key).isAccessor() || liesAbove(key);
         });
@@ -1699,7 +1699,7 @@ struct FieldResults {
             if (findDeclaredMember(application.layouts[current.index()].classFlow, ClassSide::Prototype, key).isDeclared())
                 return true;
             // The answer only steers a prediction, so an unproven `extends` clause counts too.
-            current = application.layouts[current.index()].flow.baseState == BaseState::Unknown ? program.at(current).base : provenBaseOf(application, current);
+            current = application.layouts[current.index()].flow.baseState == BaseState::Unknown ? program.at(current).base : nearestLayoutAlwaysAbove(application, current);
         }
         return false;
     }
@@ -1897,7 +1897,7 @@ struct FieldResults {
             if (keys.isEmpty())
                 continue;
             uint64_t numberOfInheritedKeys = 0;
-            forEachOnProvenChain(application, provenBaseOf(application, layout), [&](LayoutID ancestor) {
+            forEachOnProvenChain(application, nearestLayoutAlwaysAbove(application, layout), [&](LayoutID ancestor) {
                 const Vector<PropertyKeyID>& inheritedKeys = keysByLayout[ancestor.index()];
                 numberOfInheritedKeys += inheritedKeys.size();
                 keys.removeAllMatching([&](PropertyKeyID key) {
@@ -2254,7 +2254,7 @@ struct FieldResults {
                 continue;
             for (bool isProven : { true, false }) {
                 auto above = [&](LayoutID layout) {
-                    return isProven ? provenBaseOf(application, layout) : layoutExpectedAbove(program, layout);
+                    return isProven ? nearestLayoutAlwaysAbove(application, layout) : layoutExpectedAbove(program, layout);
                 };
                 LayoutID current = above(LayoutID(index));
                 for (size_t steps = 0; current && steps < numberOfLayouts; ++steps, current = above(current))
@@ -2468,7 +2468,7 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
 
     results.layoutsDirectlyBelow.grow(results.numberOfLayouts);
     for (uint32_t index = 0; index < results.numberOfLayouts; ++index) {
-        if (LayoutID base = provenBaseOf(results.application, LayoutID(index)))
+        if (LayoutID base = nearestLayoutAlwaysAbove(results.application, LayoutID(index)))
             results.layoutsDirectlyBelow[base.index()].append(LayoutID(index));
     }
     KeysByLayout keysFilledByOutsideCreators;

@@ -2550,7 +2550,9 @@ static bool isAnsweredByCode(const TableEncoder& encoder, ModuleID requester, co
 static void appendExports(TableEncoder& encoder, ModuleID id, const Module& module, ModuleLists& lists)
 {
     for (const ModuleExport& moduleExport : module.exports) {
-        if (!isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport))
+        // Where the host runs files that the build has not seen, the name of an export that the build has let go of stays, so that the run time can say so to a file that asks for it.
+        bool isDescribed = isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport);
+        if (!isDescribed && !encoder.build.options().admitsFilesRunByHost())
             continue;
         ModuleExportData entry { };
         entry.name = encoder.identifierNumberOfText(moduleExport.name, "an export of"_s, id);
@@ -2559,8 +2561,9 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         entry.isFromStarExport = moduleExport.isFromStarExport;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
-            entry.variable = placedVariableSlot(encoder, moduleExport.variable);
+            entry.variable = isDescribed ? placedVariableSlot(encoder, moduleExport.variable) : SlotData { };
             entry.isReplaceable = encoder.program.at(moduleExport.variable).flags.contains(VariableFlags::IsReplaceable);
+            entry.isClosedToOutside = !isDescribed || std::ranges::binary_search(encoder.flow.module(id).exportsClosedToOutside, moduleExport.variable);
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
@@ -2610,7 +2613,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
-    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName()))
+    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName(), encoder.flow.hostRunsFilesOutsideImage()))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
@@ -2661,6 +2664,28 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
         return std::ranges::lexicographical_compare(program.string(program.modules[left].path), program.string(program.modules[right].path));
     });
     encoder.setTable(ProgramTableIndex::modulesByPath, encodeModuleNumbers(encoder, modulesByPath));
+    Vector<uint32_t> hashesOfDirectories;
+    for (uint32_t index : modulesByPath) {
+        String path = String::fromUTF8(program.string(program.modules[index].path));
+        uint32_t hash = HashOfDirectory::ofNoText;
+        for (char16_t character : StringView(path).codeUnits()) {
+            hash = HashOfDirectory::with(hash, character);
+            if (character == '/')
+                hashesOfDirectories.append(hash);
+        }
+    }
+    AOT::sort(hashesOfDirectories);
+    hashesOfDirectories.shrink(std::ranges::unique(hashesOfDirectories).begin() - hashesOfDirectories.begin());
+    Vector<uint32_t> directoriesOfModulesByPath;
+    if (!hashesOfDirectories.isEmpty()) {
+        size_t numberOfBits = WTF::roundUpToPowerOfTwo(std::max<size_t>(hashesOfDirectories.size() * HashOfDirectory::bitsPerDirectory, 32));
+        directoriesOfModulesByPath.fill(0, numberOfBits / 32);
+        for (uint32_t hash : hashesOfDirectories) {
+            size_t bit = HashOfDirectory::bit(hash, numberOfBits);
+            directoriesOfModulesByPath[bit / 32] |= 1u << (bit % 32);
+        }
+    }
+    encoder.setTable(ProgramTableIndex::directoriesOfModulesByPath, directoriesOfModulesByPath);
     setSortedTable(encoder, ProgramTableIndex::compiledRuntimeModules, runtimeModules, std::ranges::less { }, &CompiledRuntimeModuleData::registryID);
 
     BitVector isCalledByHost = functionsCalledByHost(program);
@@ -2672,12 +2697,14 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
 }
 
-// A face has the display path of its file.
+// A face has the display path of its file, and the file has a rule for what importers see of it.
+// What a bundler's `__commonJS` or `__esm` wraps has the display path of the file around it and no such rule: nobody imports it, and the file around it is no face.
 static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
 {
     const Program& program = encoder.program;
-    auto shownPath = [&](const Module& module) {
-        return module.displayPath && !encoder.obfuscates() ? program.string(module.displayPath) : std::span<const uint8_t>();
+    // The program has the paths also where the tables leave them out.
+    auto displayPath = [&](const Module& module) {
+        return module.displayPath ? program.string(module.displayPath) : std::span<const uint8_t>();
     };
     for (size_t index = 0; index < program.modules.size(); ++index) {
         ModuleData& face = lists.modules[index];
@@ -2685,7 +2712,8 @@ static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
         if (face.kind != ModuleKind::SourceText || firstRequest == lists.modules[index + 1].firstRequest || !lists.requests[firstRequest].isRequire)
             continue;
         uint32_t file = lists.requests[firstRequest].target();
-        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+        bool isImported = program.modules[file].exportRule != SyntheticExportRule::None;
+        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && isImported && std::ranges::equal(displayPath(program.modules[index]), displayPath(program.modules[file]));
         lists.modules[file].shownByFace |= face.faceOfFile;
     }
 }
@@ -2871,7 +2899,8 @@ static void encodeIdentifierTables(TableEncoder& encoder)
     Vector<uint32_t> numbers;
     Vector<StringID> texts;
     Vector<uint32_t> engineSymbols;
-    for (uint32_t number = 1; number < encoder.identifiers.count(); ++number) {
+    // The image that gave a number out lists it.
+    for (uint32_t number = std::max(1u, encoder.identifiers.first()); number < encoder.identifiers.count(); ++number) {
         const auto& identifier = encoder.identifiers.at(number);
         if (encoder.identifiers.numberOfText(identifier.text) == number) {
             numbers.append(number);
@@ -2898,8 +2927,11 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
     Vector<uint32_t> members;
     for (BuiltinID member : constantBuiltinMembersToLock(encoder.program, encoder.flow))
         members.append(member.index());
+    BitVector unlocked = encoder.flow.builtinMembersWrittenInSharedRealm();
     for (BuiltinID member : encoder.program.unlockedBuiltins())
-        members.append(member.index() | ProgramTables::unlockedBuiltinMember);
+        unlocked.set(member.index());
+    for (size_t member : unlocked)
+        members.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);
     for (const OpenedName& opened : encoder.program.openedNames)
         members.appendList({ opened.holder.index() | ProgramTables::openedName, encoder.stringNumber(opened.name) | ProgramTables::openedName });
     encoder.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, members);
@@ -3075,7 +3107,7 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     header.instanceSizes = inputs.instanceSizes;
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();
-    header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount };
+    header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount, closureFunctions.numbersBelow };
     encoder.writer.at<ProgramTables>(0) = header;
 
     Vector<uint8_t> bytes = encoder.writer.take();

@@ -1556,6 +1556,9 @@ struct OutliningScan {
         // The accesses with no test of their position name the literal.
         if (value.opcode == Opcode::NewArray && value.keepsLength())
             return false;
+        // Each place counts the short-lived arrays that it has given new storage, and gives up when they are many. In one body for all places, the first that gives up would do so for all.
+        if (value.opcode == Opcode::ConvertToDoubleStorage)
+            return false;
         // The function object that it calls is in this frame.
         if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
             return false;
@@ -2193,6 +2196,10 @@ struct OutliningScan {
             }
             found.splittableSites.append(SplittableSite { index, firstPart, static_cast<uint32_t>(found.parts.size() - firstPart), false });
         }
+        // Those of all functions are kept until the last function has been looked at.
+        found.sites.shrinkToFit();
+        found.parts.shrinkToFit();
+        found.splittableSites.shrinkToFit();
         return found;
     }
 
@@ -2292,7 +2299,7 @@ std::span<const uint8_t> OutliningSiteFinder::hasSites() const
     return m_state->hasSites.span();
 }
 
-ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
+ParallelArray<OutliningSite*> OutliningSiteFinder::chooseSites()
 {
     struct SplittableSiteReference {
         unsigned hash { 0 };
@@ -2317,7 +2324,7 @@ ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
         functions[candidate.function].splittableSites[candidate.splittableSite].isRepeated = equalsPrevious || equalsNext;
     });
 
-    ParallelArray<OutliningSite*> chosenSites = collectIntoArrayInParallel<OutliningSite*>(loops, functions.size(), { }, [&](unsigned functionIndex, Vector<OutliningSite*>& result) {
+    return collectIntoArrayInParallel<OutliningSite*>(loops, functions.size(), { }, [&](unsigned functionIndex, Vector<OutliningSite*>& result) {
         OutliningSites& function = functions[functionIndex];
         size_t firstSiteOfFunction = result.size();
         bool didSplit = false;
@@ -2343,16 +2350,15 @@ ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
             return std::pair { site->orderOfEntryBlock, site->firstIndex };
         });
     });
-    ParallelArray<OutliningSite> sites(loops, chosenSites.size(), [&](unsigned index) {
-        return WTF::move(*chosenSites[index]);
-    });
-    m_state->build.destroyLater(WTF::move(functions));
-    return sites;
 }
 
-static ParallelArray<OutliningSite> findOutliningSites(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+void OutliningSiteFinder::discardSites()
 {
-    OutliningSiteFinder finder(program, inputs, build);
+    m_state->build.destroyLater(WTF::move(m_state->functions));
+}
+
+static void findOutliningSites(OutliningSiteFinder& finder, const Program& program, BuildContext& build)
+{
     const ParallelLoops& loops = build.parallelLoops();
     std::optional<TypeInterningPhase> scratch;
     if (!program.types.hasOpenPhase())
@@ -2366,7 +2372,6 @@ static ParallelArray<OutliningSite> findOutliningSites(const Program& program, c
     }
     if (scratch)
         scratch->discard();
-    return finder.takeSites();
 }
 
 using SiteGroup = Vector<uint32_t, 2>;
@@ -2378,12 +2383,12 @@ static bool savesBytes(const OutliningSite& firstSite, uint64_t numberOfSites)
     return numberOfSites * inlineBytes > numberOfSites * callBytes + inlineBytes + outlinedBodyOverheadBytes;
 }
 
-static Vector<SiteGroup> findProfitableGroups(const Program& program, const ParallelLoops& loops, const ParallelArray<OutliningSite>& sites)
+static Vector<SiteGroup> findProfitableGroups(const Program& program, const ParallelLoops& loops, const ParallelArray<OutliningSite*>& sites)
 {
     // The hash in the upper half, the site in the lower.
     Vector<uint64_t> sortKeys(sites.size());
     forEachIndexInParallel(loops, sites.size(), [&](unsigned site) {
-        sortKeys[site] = static_cast<uint64_t>(sites[site].hash) << 32 | site;
+        sortKeys[site] = static_cast<uint64_t>(sites[site]->hash) << 32 | site;
     });
     parallelSort(loops, sortKeys.mutableSpan(), std::less<uint64_t> { });
     Vector<uint32_t> hashRunStarts = findIndicesInParallel(loops, sortKeys.size(), [&](unsigned position) {
@@ -2406,7 +2411,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
         std::span<const uint64_t> keys = keysOfRun(run);
         // The savings of a group grow with its size, and no group is larger than its hash run.
         bool canAnyGroupBeProfitable = keys.size() >= 2 && std::ranges::any_of(keys, [&](uint64_t key) {
-            return savesBytes(sites[static_cast<uint32_t>(key)], keys.size());
+            return savesBytes(*sites[static_cast<uint32_t>(key)], keys.size());
         });
         if (!canAnyGroupBeProfitable)
             return;
@@ -2415,7 +2420,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
             uint32_t site = static_cast<uint32_t>(key);
             std::span<SiteGroup> candidates = found.mutableSubspan(firstGroupWithHash);
             auto equalGroup = std::ranges::find_if(candidates, [&](const SiteGroup& group) {
-                return areEqualSites(program, sites[group.first()], sites[site]);
+                return areEqualSites(program, *sites[group.first()], *sites[site]);
             });
             if (equalGroup != candidates.end())
                 equalGroup->append(site);
@@ -2423,7 +2428,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
                 found.append(SiteGroup { site });
         }
         found.removeAllMatching([&](const SiteGroup& group) {
-            return !savesBytes(sites[group.first()], group.size());
+            return !savesBytes(*sites[group.first()], group.size());
         }, firstGroupWithHash);
     });
 
@@ -2667,7 +2672,12 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
     RELEASE_ASSERT(finder || !readers);
     PhaseTimes times(build, PassID::OutlineColdOperations);
     const Program& program = editor.program();
-    ParallelArray<OutliningSite> sites = finder ? finder->takeSites() : findOutliningSites(program, inputs, build);
+    std::optional<OutliningSiteFinder> ownFinder;
+    if (!finder) {
+        finder = &ownFinder.emplace(program, inputs, build);
+        findOutliningSites(*finder, program, build);
+    }
+    ParallelArray<OutliningSite*> sites = finder->chooseSites();
     times.didFinish("find or take sites"_s);
     const ParallelLoops& loops = build.parallelLoops();
     Vector<SiteGroup> groups;
@@ -2700,6 +2710,7 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
         return AnalysisContext { build, program, &inputs.flow, &inputs.effects, id };
     };
     if (groups.isEmpty()) {
+        finder->discardSites();
         readRemainingFunctions();
         return;
     }
@@ -2710,7 +2721,7 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
         return FunctionID(firstBody.index() + index);
     });
     forEachIndexInParallel(loops, groups.size(), [&](unsigned index) {
-        editor.replaceFunction(bodies[index], createBodyHead(program, sites[groups[index].first()]));
+        editor.replaceFunction(bodies[index], createBodyHead(program, *sites[groups[index].first()]));
         for (uint32_t site : groups[index])
             bodyOfSite[site] = bodies[index];
     });
@@ -2723,17 +2734,17 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
         return !!bodyOfSite[site];
     });
     Vector<uint32_t> firstSiteOf = findIndicesInParallel(loops, replacedSites.size(), [&](unsigned position) {
-        return !position || sites[replacedSites[position - 1]].function != sites[replacedSites[position]].function;
+        return !position || sites[replacedSites[position - 1]]->function != sites[replacedSites[position]]->function;
     });
     Vector<FunctionID> functions = firstSiteOf.map([&](uint32_t position) {
-        return sites[replacedSites[position]].function;
+        return sites[replacedSites[position]]->function;
     });
     wasRead.fill(static_cast<uint8_t>(0), program.functions.size());
     times.didFinish("createWorkLists"_s);
 
     // A function that comes early holds the first site of most groups, so the bodies are a loop of their own, over the functions as they are before a site is replaced.
     editFunctionsInParallel(editor, build, bodies.span(), [&](unsigned index, FunctionID id, Function& body, TaskArenas& arenas) {
-        const OutliningSite& site = sites[groups[index].first()];
+        const OutliningSite& site = *sites[groups[index].first()];
         buildOutlinedBody(contextOf(id), inputs.callingConventions, program.at(site.function), site, body, arenas.types);
         readIfFinal(id, arenas);
     });
@@ -2745,13 +2756,13 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
         std::span<const uint32_t> sitesOfFunction = replacedSites.subspan(begin, end - begin);
         IRBuilder builder(contextOf(id), function, arenas.types);
         for (uint32_t site : sitesOfFunction) {
-            if (sites[site].isRegion())
-                replaceRegion(builder, sites[site], bodyOfSite[site]);
+            if (sites[site]->isRegion())
+                replaceRegion(builder, *sites[site], bodyOfSite[site]);
         }
 
         Vector<std::pair<BlockID, BitVector>, 4> erasedIndexes;
         for (uint32_t siteIndex : sitesOfFunction) {
-            const OutliningSite& site = sites[siteIndex];
+            const OutliningSite& site = *sites[siteIndex];
             if (site.isRegion())
                 continue;
             convertToCall(function.edit(site.root), site, bodyOfSite[siteIndex]);
@@ -2775,6 +2786,7 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
 
     build.statistics().count(StatisticID::OutlinedBodiesCreated, groups.size());
     build.statistics().count(StatisticID::ColdSitesOutlined, replacedSites.size());
+    finder->discardSites();
     build.destroyLater(WTF::move(sites));
     build.destroyLater(WTF::move(groups));
 }

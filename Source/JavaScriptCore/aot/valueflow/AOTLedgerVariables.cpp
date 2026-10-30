@@ -835,7 +835,9 @@ struct AccessesThroughHolders {
             const Module& module = program.modules[index];
             if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::External || !inputs.build.isEnabled(FlowResultKind::ObjectUses, index))
                 continue;
-            if ((answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
+            // A file that the host runs gets the object of a file with code too, and the run time lets it read only what is not closed: listExportsClosedToOutside().
+            bool showsOnlyWhatIsOpen = solver.input().refusedCode.hostRunsFilesOutsideImage && module.kind != ModuleKind::Data;
+            if ((answersOnlyToLoadsOfProgram(program, ModuleID(index)) ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)) && !showsOnlyWhatIsOpen)
                 continue;
             LedgerOfVariables::NamespaceObject& entry = locations.namespaceOf(ModuleID(index));
             ValueFlowObjectID namespaceObject = inputs.universe().namespaceOf(ModuleID(index));
@@ -1059,6 +1061,31 @@ static void listExportsReadByName(const ValueFlowResultInputs& inputs, const Loc
     }
 }
 
+// Where the host runs files that the build has not seen. Such a file may ask an entry point for any name. What flow has concluded of an object or a function in known hands holds only while that file does not get it.
+static void listExportsClosedToOutside(const ValueFlowResultInputs& inputs, std::span<ModuleFlow> modules)
+{
+    if (!inputs.solver().input().refusedCode.hostRunsFilesOutsideImage)
+        return;
+    const Program& program = inputs.program;
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueSetID objectsInKnownHands = borrowedMaker.get().intersect(inputs.universe().knownObjects(), ValueSets::complement(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped())));
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (modules[index].namespaceUse == NamespaceUse::Unknown)
+            continue;
+        Vector<VariableID> listed;
+        for (const ModuleExport& entry : program.modules[index].exports) {
+            if (entry.kind != ModuleExportKind::Variable || !entry.variable || program.at(entry.variable).flags.contains(VariableFlags::IsReplaceable))
+                continue;
+            ValueSetID held = inputs.solver().possibleValuesOf(inputs.bodies().nodes().variable(entry.variable));
+            if (!ValueSets::isComplement(held) && inputs.sets().meet(held, objectsInKnownHands))
+                listed.append(entry.variable);
+        }
+        AOT::sort(listed);
+        removeRepeatedElements(listed);
+        modules[index].exportsClosedToOutside = WTF::move(listed);
+    }
+}
+
 void computeLocationResults(const ValueFlowResultInputs& inputs, Ledger& ledger, LedgerOfVariables& locations, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -1074,6 +1101,7 @@ void computeLocationResults(const ValueFlowResultInputs& inputs, Ledger& ledger,
     locations.close();
     ledger.install(LedgerPartKind::Variables, locations);
     listExportsReadByName(inputs, locations, tables.wholeProgram.modules.mutableSpan());
+    listExportsClosedToOutside(inputs, tables.wholeProgram.modules.mutableSpan());
 
     auto flowOf = [&](const Place& place, uint32_t switchSubject) {
         LocationFlow flow;

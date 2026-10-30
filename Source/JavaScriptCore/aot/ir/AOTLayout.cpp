@@ -227,12 +227,19 @@ bool isNeverStored(const Program& program, FieldReference reference)
     return location.stores == StoreCount::Never && (location.writers == WriterState::AllKnown || declaration.flags.contains(FieldFlags::IsMethod));
 }
 
+LayoutID nearestLayoutAlwaysAbove(const LayoutFlow& flow)
+{
+    return flow.baseState == BaseState::Layout ? flow.base : flow.commonAncestor;
+}
+
 static LayoutID baseOf(const Layout& layout, BaseChain chain)
 {
     switch (layout.flow.baseState) {
     case BaseState::Layout:
         return layout.flow.base;
     case BaseState::Unknown:
+        if (layout.flow.commonAncestor)
+            return layout.flow.commonAncestor;
         return chain == BaseChain::Predicted ? predictedHeritageOf(layout) : LayoutID();
     case BaseState::None:
     case BaseState::BuiltinClass:
@@ -684,7 +691,7 @@ void initializeAddedLayout(Program& program, LayoutID id)
 
 static bool shouldAppendInheritedFields(const Layout& layout)
 {
-    if (layout.flow.baseState != BaseState::Layout)
+    if (!nearestLayoutAlwaysAbove(layout.flow))
         return false;
     return layout.isDerived() || std::ranges::none_of(layout.fields, [](const Field& field) {
         return field.flags.contains(FieldFlags::IsInherited);
@@ -694,7 +701,7 @@ static bool shouldAppendInheritedFields(const Layout& layout)
 static void appendBaseFields(Program& program, LayoutID id)
 {
     Layout& layout = program.at(id);
-    LayoutID base = layout.flow.base;
+    LayoutID base = nearestLayoutAlwaysAbove(layout.flow);
     const Layout& baseLayout = program.at(base);
     for (uint32_t i = 0; i < baseLayout.fields.size(); ++i) {
         const Field& baseField = baseLayout.fields[i];
@@ -722,7 +729,7 @@ static void appendBaseFields(Program& program, LayoutID id)
 void appendInheritedFields(Program& program, LayoutID id)
 {
     Vector<LayoutID, 8> chain;
-    for (LayoutID current = id; shouldAppendInheritedFields(program.at(current)); current = program.at(current).flow.base) {
+    for (LayoutID current = id; shouldAppendInheritedFields(program.at(current)); current = nearestLayoutAlwaysAbove(program.at(current).flow)) {
         RELEASE_ASSERT(chain.size() < program.layouts.size());
         chain.append(current);
     }

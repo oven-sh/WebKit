@@ -107,6 +107,9 @@ public:
         return named && !named->isDictionary();
     }
     uint16_t extraPropertiesCellSize() const { return hasExtraProperties() ? m_extraKeysAndCellSize.extraPropertiesCellSize : 0; }
+    // What an object of this Structure went on to when a private name was last put among its extra properties. It names their Structure, which says which name that was.
+    CompiledStructure* successorByPrivateName() const { return m_successorByPrivateName.get(); }
+    void setSuccessorByPrivateName(VM& vm, CompiledStructure* successor) { m_successorByPrivateName.set(vm, this, successor); }
     // Where the layout has no word for the extra properties, an object that gets some gets a Structure of its own, which holds them.
     JSObject* heldExtraProperties() const
     {
@@ -204,6 +207,7 @@ public:
     static constexpr ptrdiff_t offsetOfExtensionSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot); }
     static constexpr ptrdiff_t offsetOfEnvironmentShapePage() { return OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_flags); }
+    static constexpr ptrdiff_t offsetOfSuccessorByPrivateName() { return OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName); }
 
     template<typename Visitor>
     static void visitAdditionalChildren(JSCell*, Visitor&);
@@ -266,9 +270,10 @@ private:
     };
     SlotData m_extraPropertiesSlot { };
     SlotData m_extensionSlot { };
+    WriteBarrier<CompiledStructure> m_successorByPrivateName;
 };
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(CompiledStructure) == 144);
+static_assert(sizeof(CompiledStructure) == 152);
 #endif
 
 ALWAYS_INLINE const CompiledStructure* compiledObjectStructureOrNull(const Structure* structure)

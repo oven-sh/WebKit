@@ -70,7 +70,7 @@ public:
     bool isUnlocked(BuiltinID member) const { return std::ranges::binary_search(unlockedBuiltins(), member); }
     // A test run adds a property of this name to the object, which takes no other new name.
     bool isOpened(BuiltinID canonicalHolder, StringID name) const { return std::ranges::contains(openedNames, OpenedName { canonicalHolder, name }); }
-    bool isOpenedSomewhere(StringID name) const { return std::ranges::contains(openedNames, name, &OpenedName::name); }
+    bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
     // A row for a pristine operand leaves out the members that the general row of the function looks up on it: Array.prototype.toString joins a pristine array by itself.
     // Where one of those names is unlocked only the general row says what the function does.
     bool looksUpUnlockedName(BuiltinID function) const { return m_functionsLookingUpUnlockedNames.get(m_builtins.canonicalID(function).index()); }
@@ -242,6 +242,7 @@ private:
     bool asksForPristineOperand(BuiltinTypeID) const;
 
     const BuiltinTable& m_builtins;
+    BitVector m_namesOpenedSomewhere;
     BitVector m_functionsLookingUpUnlockedNames;
     BitVector m_functionsCallingUnlockedMembersThatNoRowNames;
     IRForm m_form { IRForm::AsRead };
@@ -278,7 +279,7 @@ bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 // The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName.
-BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName);
+BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName, bool beginsModulesOfData = false);
 // A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);

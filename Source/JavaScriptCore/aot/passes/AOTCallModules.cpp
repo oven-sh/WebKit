@@ -798,7 +798,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         if (modules[index].kind == ModuleKind::CommonJs && (modules[index].flags.contains(ModuleFlags::MayBeMocked) || modules[index].flags.contains(ModuleFlags::MayBeEvicted)))
             isStart.quickSet(index);
     }
-    BitVector isAskedForByHost = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName());
+    BitVector isAskedForByHost = modulesThatHostAsksFor(program, flow.findsFilesOfProgramByName(), flow.hostRunsFilesOutsideImage());
     isAskedOfLoader.merge(isAskedForByHost);
     // What a required module imports is evaluated with it.
     Vector<uint32_t, 16> reachedByRequire;

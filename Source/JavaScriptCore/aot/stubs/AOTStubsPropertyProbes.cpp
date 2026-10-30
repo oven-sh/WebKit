@@ -186,6 +186,7 @@ static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& pro
         isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
     jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
     isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
+    branchUnlessShapeOfThisImage(jit, probe.index, isNotCompiledObject);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), probe.table);
     jit.load32(BaseIndex(probe.table, probe.index, CCallHelpers::TimesFour), probe.index);
     if (!probe.boundName)
@@ -1628,16 +1629,38 @@ void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const P
     jit.returnToCaller();
 }
 
-void loadStaticsBase(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics)
+void loadStaticsBase(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg instance)
 {
     constexpr int32_t offsetOfSize = OBJECT_OFFSETOF(ProgramTables, instanceSizes) + OBJECT_OFFSETOF(InstanceSizes, sizeOfStatics);
-    RELEASE_ASSERT(noOverlap(staticsBase, roundedSizeOfStatics, instanceGPR));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), roundedSizeOfStatics);
+    RELEASE_ASSERT(noOverlap(staticsBase, roundedSizeOfStatics, instanceGPR) && instance != roundedSizeOfStatics);
+    jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(image.tables)), roundedSizeOfStatics);
     jit.load32(Address(roundedSizeOfStatics, offsetOfSize), roundedSizeOfStatics);
     jit.add32(TrustedImm32(staticsGranuleMask), roundedSizeOfStatics);
     jit.and32(TrustedImm32(~staticsGranuleMask), roundedSizeOfStatics);
-    jit.sub64(instanceGPR, roundedSizeOfStatics, staticsBase);
+    jit.sub64(instance, roundedSizeOfStatics, staticsBase);
     jit.sub64(TrustedImm32(static_cast<int32_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)), staticsBase);
+}
+
+void loadStaticsBaseOfVariable(StubAssembler& jit, const CachedSlot& slot, GPRReg staticsBase, GPRReg scratch)
+{
+    if (!jit.options().sharesRealms) {
+        loadStaticsBase(jit, staticsBase, scratch);
+        return;
+    }
+    // PropertyAnswer::imageOfVariable.
+    slot.loadHiddenWordOffset(jit, scratch);
+    jit.move(instanceGPR, staticsBase);
+    Jump isOfThisInstance = jit.branchTest32(CCallHelpers::Zero, scratch);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), staticsBase);
+    jit.loadPtr(Address(staticsBase, JSGlobalObject::offsetOfAOTInstance()), staticsBase);
+    Label next = jit.label();
+    jit.sub32(TrustedImm32(1 << PackedSlot::hiddenWordOffsetShift), scratch);
+    Jump isFound = jit.branchTest32(CCallHelpers::Zero, scratch);
+    jit.loadPtr(Address(staticsBase, AOT_INSTANCE_OFFSET(above)), staticsBase);
+    jit.jump().linkTo(next, &jit);
+    isFound.link(&jit);
+    isOfThisInstance.link(&jit);
+    loadStaticsBase(jit, staticsBase, scratch, staticsBase);
 }
 
 void markStaticsCard(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics)

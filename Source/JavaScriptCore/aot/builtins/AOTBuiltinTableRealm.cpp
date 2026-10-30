@@ -903,24 +903,32 @@ public:
 
     bool contains(UniquedStringImpl* uid) const final
     {
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
         // The strings of such an object are closed by Part::OtherStrings.
-        if (BuiltinTable::singleton().at(m_holder).flags.contains(BuiltinFlag::IsLockedObject))
-            return uid->isSymbol() && !static_cast<SymbolImpl*>(uid)->isPrivate();
-        BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
+        if (table.at(m_holder).flags.contains(BuiltinFlag::IsLockedObject)) {
+            if (!uid->isSymbol() || static_cast<SymbolImpl*>(uid)->isPrivate())
+                return false;
+            BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID();
+            return !member || !ProgramTables::isUnlocked(m_unlockedMembers, member.index());
+        }
         return name && isFixed(name);
     }
 
-    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
     bool throwsInSloppyMode() const final { return true; }
     bool throwsFromReflect() const final { return m_reflectThrows; }
 
     String setPrototypeErrorMessage() const final
     {
-        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder));
+        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder), lockedIn());
     }
 
 private:
+    // Reflect is told of a refusal in a test run, and nowhere else.
+    LockedIn lockedIn() const { return m_reflectThrows ? LockedIn::TestRun : LockedIn::Executable; }
+
     bool isFixed(BuiltinName name) const
     {
         if (std::ranges::binary_search(m_closedKeys, name))

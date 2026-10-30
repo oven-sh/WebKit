@@ -333,6 +333,9 @@ std::optional<InternalError> findLayoutFlowError(const Program& program, LayoutI
     bool hasValidBaseClass = flow.baseState == BaseState::BuiltinClass ? program.builtins().contains(flow.baseClass) : !flow.baseClass;
     if (!!flow.base != (flow.baseState == BaseState::Layout) || !hasValidBaseClass)
         return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id };
+    bool namesClassesBetween = !flow.intermediateClasses.isEmpty();
+    if ((flow.commonAncestor && flow.baseState != BaseState::Unknown) || (namesClassesBetween && !flow.commonAncestor) || findUnsortedEntry(flow.intermediateClasses))
+        return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id };
 
     bool hasOnlyObjectMembers = std::ranges::all_of(flow.members, [&](LayoutID member) {
         return member && !program.at(member).isEnvironment();

@@ -1265,6 +1265,8 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     JSGlobalObject* realm = state.instance.globalObject;
     if (target.structure()->realm() != realm || source.structure()->realm() != realm)
         return RepeatedCopy::IsNotDone;
+    if (state.sharesRealm && (!target.isDescribedBy(state) || !source.isDescribedBy(state))) [[unlikely]]
+        return RepeatedCopy::IsNotDone;
     uint64_t targetWords = target.orderAndShapeWords();
     uint64_t sourceWords = source.orderAndShapeWords();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(targetWords, sourceWords, excludedRunNumberPlusOne);
@@ -1484,6 +1486,8 @@ RepeatedCopy tryRepeatAssignment(VM& vm, State& state, JSObject* target, JSValue
 {
     ASSERT(isCompiledObject(target));
     Object* to = uncheckedDowncast<Object>(target);
+    if (state.sharesRealm && !to->isDescribedBy(state)) [[unlikely]]
+        return RepeatedCopy::IsNotDone;
     Object* from = compiledObjectOrNull(source);
     if (!from)
         return tryRepeatAssignmentFromOrdinaryObject(vm, state, *to, source, excludedRunNumberPlusOne);
@@ -1562,6 +1566,8 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     DeferGC deferGC(vm);
     JSObject* extra = target.extraProperties();
     State& state = target.state();
+    if (state.sharesRealm && assignmentSource->compiledObject && !assignmentSource->compiledObject->isDescribedBy(state)) [[unlikely]]
+        return false;
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
     // The plan that ran last between these two Structures: no walk through the sets of plans.
     AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->orderWord, 0);

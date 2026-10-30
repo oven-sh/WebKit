@@ -14,6 +14,7 @@
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include <array>
+#include <span>
 #include <optional>
 #include <type_traits>
 #include <wtf/text/ASCIILiteral.h>
@@ -177,6 +178,8 @@ struct CompileOptions {
     ReportSet reports { };
     ExcludedCode excludedCode { };
     OutputOptions output { };
+    // The images that were built before this one for the same realms, the first of them first, as their builds wrote them. They outlive the build.
+    Vector<std::span<const uint8_t>, 2> imagesBelow;
     LoggingOptions logging;
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
@@ -187,12 +190,16 @@ struct CompileOptions {
     bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
     // A test run: what a test replaces on a built-in object is unlocked, and the build is told of what it still finds locked.
     bool admitsReplacedBuiltins() const { return hasFlag(recorded.admitted(), AdmittedCode::ReplacedBuiltins); }
+    // The host runs files with code that the build has not seen, though no load of the program names one.
+    bool admitsFilesRunByHost() const { return !excludesCodeOutsideImage() && hasFlag(recorded.admitted(), AdmittedCode::FilesRunByHost); }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
     bool excludesForeignCallsOfUnseenCode() const { return hasFlag(excludedCode, ExcludedCode::ForeignCallsOfUnseenCode); }
     bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
+    // A realm that runs the image runs other images too. Each is built alone, and takes the cells of the others for cells of code that no build has seen.
+    bool sharesRealms() const { return hasFlag(output, OutputOptions::SharesRealms); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);

@@ -63,7 +63,7 @@ uint32_t Placement::closureNumberOf(FunctionID entrypoint) const
 {
     ClosureFunctionRange range = m_functions.closureFunctions;
     RELEASE_ASSERT(entrypoint.index() >= range.first.index() && entrypoint.index() < range.end.index());
-    return entrypoint.index() - range.first.index();
+    return entrypoint.index() - range.first.index() + range.numbersBelow;
 }
 
 std::optional<uint32_t> Placement::moduleBuiltinCellOffset(BuiltinID builtin, ModuleID module) const
@@ -184,7 +184,7 @@ static void countStatistics(const Placement& placement, const PlacedSites& sites
             ++countOf(shapes.testOf(tests[index].tested).form);
     }
 
-    statistics.count(StatisticID::Shapes, shapes.shapeCountInRange(1, shapes.numberOfShapes()));
+    statistics.count(StatisticID::Shapes, shapes.shapeCountInRange(shapes.shapesBelow() + 1, shapes.numberOfShapes()));
     statistics.count(StatisticID::ShapeTestNeverPasses, neverPasses);
     statistics.count(StatisticID::ShapeTestRange, ranges);
     statistics.count(StatisticID::ShapeTestBitSet, bitSets);

@@ -584,7 +584,7 @@ static bool checkShapeNumbers(const PlacementCheckContext& context)
     numbersInRanges.ensureSize(static_cast<size_t>(context.shapes.numberOfShapes()) + 1);
     for (unsigned i = 0; i < context.program.layouts.size(); ++i)
         areValid &= context.expect(tryMarkShapeRange(context, LayoutID(i), numbersInRanges), PlacementRule::ShapeNumbers, LayoutID(i));
-    for (uint32_t number = 1; number <= context.shapes.numberOfShapes(); ++number) {
+    for (uint32_t number = context.shapes.shapesBelow() + 1; number <= context.shapes.numberOfShapes(); ++number) {
         bool isAssigned = context.shapes.isAssigned(number);
         areValid &= context.expect(isAssigned == numbersInRanges.quickGet(number) && context.shapes.shapeCountInRange(number, number) == static_cast<uint32_t>(isAssigned), PlacementRule::ShapeNumbers, context.shapes.shape(number).layout);
     }

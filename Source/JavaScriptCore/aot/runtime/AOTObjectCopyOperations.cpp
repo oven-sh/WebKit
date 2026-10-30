@@ -475,6 +475,9 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
         if (read == target)
             return "getters called by a list"_s;
         if (read) {
+            // Every name may have been left out.
+            if (!hasOwnPropertiesToCopy(read))
+                return "getters called by a list"_s;
             if (record && tryRepeatAssignment(vm, *instance->state, target, read, 0) != RepeatedCopy::IsNotDone)
                 return "getters called by a list, then as the copy before"_s;
             ExcludedKeys nothing;

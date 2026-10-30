@@ -131,6 +131,12 @@ static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, Ad
         isCalledByInterpreter.link(&jit);
 }
 
+// What StubAssembler::callLeaf() wants to know of a stub that has the frame of an adapter.
+static constexpr unsigned bytesPushedInAdapter(unsigned extraBytes)
+{
+    return (isX86_64() ? sizeof(CPURegister) : 2 * sizeof(CPURegister)) + AdapterFrame::saveAreaSize + extraBytes;
+}
+
 void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBytes)
 {
     const GPRReg instance = jit.reuseScratch(StubRegister::EntryT12);
@@ -152,6 +158,8 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
         jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
         jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
         jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+        for (uint32_t below = 0; below < jit.options().imagesBelow; ++below)
+            jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(above)), instance);
         jit.jump().linkTo(hasInstance, &jit);
     });
 
@@ -175,6 +183,21 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     jit.emitMaterializeTagCheckRegisters();
 #endif
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
+    if (jit.options().sharesRealms) {
+        // Whoever jumps here may be code of another image of the realm, or of the engine on its behalf.
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        jit.loadPtr(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfImage()), scratch);
+        Jump otherImageRuns = jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(program)));
+        Label thisImageRuns = jit.label();
+        jit.addOutOfLinePart([=](StubAssembler& jit) {
+            otherImageRuns.link(&jit);
+            jit.move(instanceGPR, operationArgumentGPR(0));
+            jit.move(fp, operationArgumentGPR(1));
+            jit.callLeaf(Entry::operationAOTRunImageOfAdapter, bytesPushedInAdapter(extraBytes));
+            jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), callee);
+            jit.jump().linkTo(thisImageRuns, &jit);
+        });
+    }
 }
 
 void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
@@ -194,6 +217,23 @@ void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 
 void emitAdapterEpilogue(StubAssembler& jit)
 {
+    if (jit.options().sharesRealms) {
+        const GPRReg scratch = jit.reuseScratch(StubRegister::T9);
+        RELEASE_ASSERT(scratch != GPRInfo::returnValueGPR);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        Jump restoresImage = jit.branchPtr(CCallHelpers::Equal, Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfAdapterFrameThatRestoresImage()), fp);
+        Label hasRestoredImage = jit.label();
+        jit.addOutOfLinePart([=](StubAssembler& jit) {
+            restoresImage.link(&jit);
+            // Nothing below the saved registers is read any more.
+            jit.store64(GPRInfo::returnValueGPR, Address(fp, AdapterFrame::offsetOfNewTarget));
+            jit.addPtr(TrustedImm32(-static_cast<int32_t>(AdapterFrame::saveAreaSize)), fp, sp);
+            jit.move(instanceGPR, operationArgumentGPR(0));
+            jit.callLeaf(Entry::operationAOTRestoreImageBelowAdapter, bytesPushedInAdapter(0));
+            jit.load64(Address(fp, AdapterFrame::offsetOfNewTarget), GPRInfo::returnValueGPR);
+            jit.jump().linkTo(hasRestoredImage, &jit);
+        });
+    }
     emitRestoreAdapterCallerRegisters(jit, fp);
     jit.emitFunctionEpilogue();
     jit.returnToCaller();

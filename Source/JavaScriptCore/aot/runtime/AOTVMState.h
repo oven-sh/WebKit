@@ -11,6 +11,7 @@
 #include <JavaScriptCore/CollectionScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
+#include <wtf/Box.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/UniqueArray.h>
@@ -36,7 +37,9 @@ class RuntimeReporter;
 class RuntimeTable;
 class VMPropertyCaches;
 struct FunctionTables;
+struct QuotesOfPlaces;
 struct Instance;
+struct MockedModules;
 struct RuntimeCounters;
 
 // Every live Structure whose objects store elements without asking the objects above them.
@@ -50,13 +53,49 @@ private:
     Vector<Structure*> m_structures;
 };
 
+// Reads like the std::unique_ptr that owns the object: VMState::PartsOfImage.
+template<typename T>
+class PartOfRunningImage {
+public:
+    T* get() const { return m_part; }
+    T* operator->() const { return m_part; }
+    T& operator*() const { return *m_part; }
+    explicit operator bool() const { return !!m_part; }
+    void operator=(T* part) { m_part = part; }
+
+private:
+    T* m_part { nullptr };
+};
+
 struct VMState {
     WTF_MAKE_NONCOPYABLE(VMState);
 public:
     VMState();
     ~VMState();
 
+    // What a VM has once for each image that it runs. A VM runs several where images share their realms (Image::above()), and then the image that runs is the one
+    // whose code was entered last: an operation finds the tables of its caller in the members of VMState, whichever image the caller is in.
+    struct PartsOfImage {
+        PartsOfImage();
+        PartsOfImage(PartsOfImage&&);
+        ~PartsOfImage();
+
+        const Image* image { nullptr };
+        std::unique_ptr<RuntimeTable> runtimeTable;
+        std::unique_ptr<VMPropertyCaches> propertyCaches;
+        std::unique_ptr<CallSiteCache> callSiteCache;
+        std::unique_ptr<FunctionTables> functionTables;
+        std::unique_ptr<RegExpLiterals> regExpLiterals;
+        // The sets of mocked modules that the last realm went through, in that order.
+        Vector<Box<MockedModules>> mockedModules;
+    };
+
     void attachImage(VM&);
+    JS_EXPORT_PRIVATE void run(const Image&);
+    // The engine jumps to an adapter from many places. Where images share realms, the adapter itself sees to it that its image runs, and that the one before runs again when its frame is left.
+    void runImageOfAdapter(const Image&, const void* adapterFrame);
+    void restoreImageBelowAdapter();
+    PartsOfImage& partsOfRunningImage();
     void willShutDownHeap();
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
@@ -69,6 +108,8 @@ public:
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
+    static constexpr ptrdiff_t offsetOfImage() { return OBJECT_OFFSETOF(VMState, image); }
+    static constexpr ptrdiff_t offsetOfAdapterFrameThatRestoresImage() { return OBJECT_OFFSETOF(VMState, adapterFrameThatRestoresImage); }
     static constexpr ptrdiff_t offsetOfEntriesWithSeveralInstances() { return OBJECT_OFFSETOF(VMState, entriesWithSeveralInstances); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
@@ -83,6 +124,14 @@ public:
 
     const Image* image { nullptr };
     bool hasCompiledCode { false };
+    bool hasSeveralImages { false };
+    struct ImageBelowAdapter {
+        const void* adapterFrame;
+        const Image* image;
+    };
+    // The innermost adapter frame that changed which image runs.
+    const void* adapterFrameThatRestoresImage { nullptr };
+    Vector<ImageBelowAdapter, 8> imagesBelowAdapters;
     bool validatesRuntime { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
@@ -115,15 +164,17 @@ public:
     // What is on top of the stack while an import() of compiled code asks the loader. Bytecode calls a host function for that, and its frame is the first that a stack trace skips.
     CallFrame* frameOfImportThatAsksLoader { nullptr };
     std::unique_ptr<PagesOfVM> pages;
-    std::unique_ptr<RuntimeTable> runtimeTable;
+    PartOfRunningImage<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
-    std::unique_ptr<VMPropertyCaches> propertyCaches;
+    PartOfRunningImage<VMPropertyCaches> propertyCaches;
     std::unique_ptr<RuntimeCounters> counters;
     std::unique_ptr<RuntimeReporter> reporter;
-    std::unique_ptr<CallSiteCache> callSiteCache;
-    std::unique_ptr<FunctionTables> functionTables;
-    std::unique_ptr<RegExpLiterals> regExpLiterals;
+    PartOfRunningImage<CallSiteCache> callSiteCache;
+    PartOfRunningImage<FunctionTables> functionTables;
+    PartOfRunningImage<RegExpLiterals> regExpLiterals;
+    // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
+    Vector<PartsOfImage, 1> parts;
     UniqueArray<int> regExpMatchOutput;
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
@@ -132,9 +183,39 @@ public:
     Vector<Instance*> instancesToDestroy;
     StructuresWithFastIndexing structuresWithFastIndexing;
     PolledInstances polledInstances;
+    // What error messages have quoted so far: AOTErrorMessages.cpp, which alone knows the type.
+    std::unique_ptr<QuotesOfPlaces, void (*)(QuotesOfPlaces*)> quotesOfPlaces { nullptr, nullptr };
 };
 
-static_assert(sizeof(std::unique_ptr<RuntimeTable>) == sizeof(void*));
+static_assert(sizeof(PartOfRunningImage<RuntimeTable>) == sizeof(void*));
+
+bool belongsToOtherImageSlow(VM&, const JSCell*);
+// For whoever has no VM at hand: in the VM of this thread, if it has one that runs compiled code.
+JS_EXPORT_PRIVATE void runImageOnThisThread(const Image&);
+
+// While it lives, the image is the one that runs.
+class RunningImageScope {
+    WTF_MAKE_NONCOPYABLE(RunningImageScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE RunningImageScope(VMState& state, const Image* image)
+        : m_state(state)
+    {
+        if (state.image != image) [[unlikely]] {
+            m_previous = state.image;
+            state.run(*image);
+        }
+    }
+    ALWAYS_INLINE ~RunningImageScope()
+    {
+        if (m_previous) [[unlikely]]
+            m_state.run(*m_previous);
+    }
+
+private:
+    VMState& m_state;
+    const Image* m_previous { nullptr };
+};
 static_assert(sizeof(UniqueArray<int>) == sizeof(void*));
 
 template<typename Visitor>

@@ -38,7 +38,7 @@ struct ThisPrototype {
 
 static std::optional<FunctionID> functionInInstance(const Instance& instance, const JSCell* callee)
 {
-    if (Instance::of(callee->structure()->realm()) != &instance)
+    if (Instance::owning(callee) != &instance)
         return std::nullopt;
     return functionOf(callee);
 }
@@ -201,8 +201,9 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
 // The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
+    // The class of another image is none of this table's.
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
-        return classWithIndex(lazyPrototype->classIndex());
+        return hasClassOf(*lazyPrototype) ? classWithIndex(lazyPrototype->classIndex()) : nullptr;
     ClassSide side;
     const LayoutData* held = classHeldBy(prototype, side);
     return held && side == ClassSide::Prototype && isDefinedByClass(*held) ? held : nullptr;

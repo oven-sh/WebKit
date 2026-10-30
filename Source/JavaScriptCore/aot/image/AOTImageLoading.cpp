@@ -572,13 +572,21 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     static Lock lock;
     Locker locker { lock };
     if (const Image* image = Image::find(bytes)) {
-        Image::setCurrentOfThread(image);
+        Image::setCurrentOfThread(&image->first());
         return ImageVerdict::Accepted;
     }
     if (ImageVerdict verdict = Image::check(bytes, identity); verdict != ImageVerdict::Accepted)
         return verdict;
 
     auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
+    // An image that was built above others joins those that the thread has named so far.
+    const Image* first = nullptr;
+    if (header.numbers.firstStringHeader) {
+        const Image* current = Image::current();
+        if (!current || !current->sharesRealms() || current->last().header().numbers.endOfStringHeaders != header.numbers.firstStringHeader || current->last().header().numbers.lastShape != header.numbers.shapesBelow)
+            return ImageVerdict::OptionsConflict;
+        first = &current->first();
+    }
     uint64_t position = file ? static_cast<uint64_t>(file->offset) : reinterpret_cast<uintptr_t>(bytes.data());
     if (!isOnPageBoundaries(position, header.codeOffset, header.size, WTF::pageSize()))
         return ImageVerdict::Misaligned;
@@ -605,6 +613,20 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return refusal;
     std::unique_ptr<Image> image = Image::create(bytes, static_cast<const uint8_t*>(code));
     image->setPositionInFile(positionInFile);
+    if (first) {
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        // The headers of such an image are made at run time, each image's by itself: nothing numbers them across images yet.
+        return ImageVerdict::CannotMapCode;
+#else
+        if (!copyStringHeadersBehind(first->bytes(), bytes.first(header.size)))
+            return ImageVerdict::CannotMapCode;
+        image->text().didCopyStringHeaders(reinterpret_cast<const ImageStringHeader*>(first->text().identifierAtoms()));
+        const Image& added = *image;
+        Image::publishAbove(*first, WTF::move(image));
+        didPublishImage(added);
+        return ImageVerdict::Accepted;
+#endif
+    }
     Image::publish(WTF::move(image), allImages);
     didPublishImage(*Image::current());
     return ImageVerdict::Accepted;

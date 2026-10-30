@@ -12,8 +12,11 @@
 #include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTImagesBelow.h"
 #include "AOTLayoutData.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTRepresentation.h"
 #include "AOTSharedMemo.h"
 #include "AOTSlotPlanSteps.h"
@@ -139,6 +142,15 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
     auto keysByWeight = order.span();
     auto numberOfColumns = static_cast<size_t>(std::min<uint64_t>(keysByWeight.size(), context.build.limit(LimitID::LookupTableNames)));
     BitVector keysWithColumn(keysByWeight.size());
+    if (const ImagesBelow* below = context.build.imagesBelow()) {
+        // The columns are given out: a name has the one of its number there, or none.
+        for (uint32_t key : keysByWeight) {
+            std::optional<uint32_t> number = weights[key].predicted() > 0 ? numberInImagesBelow(context.program, PropertyKeyID(key), context.program.at(PropertyKeyID(key)).text, *below) : std::nullopt;
+            if (number && RowDisplacementTable::hasColumn(*number))
+                keysWithColumn.quickSet(key);
+        }
+        return keysWithColumn;
+    }
     for (uint32_t key : keysByWeight.first(numberOfColumns))
         keysWithColumn.quickSet(key);
 
@@ -461,7 +473,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
     for (unsigned index = 0; index < numberOfLayouts; ++index) {
         LayoutID id(index);
         LayoutID root = id;
-        for (LayoutID base = provenBaseOf(program.at(id)); base; base = provenBaseOf(program.at(base))) {
+        for (LayoutID base = nearestLayoutAlwaysAbove(program.at(id).flow); base; base = nearestLayoutAlwaysAbove(program.at(base).flow)) {
             RELEASE_ASSERT(m_depths[index] < numberOfLayouts);
             ++m_depths[index];
             root = base;

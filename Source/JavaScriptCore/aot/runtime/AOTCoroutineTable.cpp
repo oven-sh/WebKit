@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTAsyncResumption.h"
 #include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
@@ -159,7 +160,7 @@ Structure* SavedFrame::createStructure(VM& vm, JSGlobalObject* globalObject)
 CallData SavedFrame::getCallData(JSCell* cell)
 {
     JSGlobalObject* realm = uncheckedDowncast<SavedFrame>(cell)->realm();
-    return CallData::forCompiledCode(Instance::of(realm)->state->coroutines->savedFrameEntrypoint(), realm);
+    return CallData::forCompiledCode(Instance::owning(cell)->state->coroutines->savedFrameEntrypoint(), realm);
 }
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
@@ -245,6 +246,9 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
     const Image* image = Image::current();
+    // The collector's threads ask too, and know nothing of which image runs.
+    if (image->sharesRealms()) [[unlikely]]
+        image = image->findInListByCodeAddress(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     // The byte before a return address is in the calling function. The return address itself may start the next one.
     CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     if (where.kind != CodeKind::Function)
@@ -254,7 +258,7 @@ std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) con
 
 void SavedFrame::overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap& map)
 {
-    Instance::of(realm())->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
+    Instance::owning(this)->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
 }
 
 void SavedFrame::overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap& map, uint64_t replacement)
@@ -418,6 +422,7 @@ Generator* Generator::create(VM& vm, Structure* structure)
 
 bool Generator::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
+    ImageOfCellScope imageOfCell(globalObject->vm(), object);
     bool isSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
     uncheckedDowncast<Generator>(object)->m_hasOtherPrototype = !object->structure()->storedPrototype().isObject();
     return isSet;
@@ -466,7 +471,7 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
         return { };
     }
     m_state = State::Running;
-    JSValue result = enterSavedFrame(vm, *Instance::of(realm()), m_savedFrame, mode, value);
+    JSValue result = enterSavedFrame(vm, *Instance::owning(m_savedFrame), m_savedFrame, mode, value);
     if (scope.exception()) [[unlikely]] {
         m_state = State::Completed;
         return { };

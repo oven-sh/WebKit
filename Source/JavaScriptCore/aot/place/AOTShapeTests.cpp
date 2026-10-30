@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTImageFormat.h"
+#include "AOTImagesBelow.h"
 #include "AOTPlacementSteps.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -699,6 +700,12 @@ private:
     uint32_t m_epoch { 0 };
 };
 
+// An object of an image below may come to any test. Its shape is one of these numbers, so they count as given out.
+static uint32_t shapesOfImagesBelow(const BuildContext& build)
+{
+    return build.imagesBelow() ? build.imagesBelow()->numbersOfLast().lastShape : 0;
+}
+
 inline constexpr uint64_t bytesSavedPerBlockTest = 6;
 inline constexpr uint32_t numberOfShapesWithShortConstants = 128;
 
@@ -714,6 +721,8 @@ public:
         , m_candidates(candidates)
         , m_variants(variants)
         , m_numberOfLayouts(context.program.layouts.size())
+        , m_shapesBelow(shapesOfImagesBelow(context.build))
+        , m_nextShape(m_shapesBelow + 1)
     {
     }
 
@@ -903,6 +912,7 @@ private:
     SequenceNumbering assignShapes(const Vector<uint32_t>& sequence, uint32_t headLength, const Blocks& blocks) const
     {
         SequenceNumbering result;
+        result.nextShape = m_shapesBelow + 1;
         result.firstShapeOfLayout.fill(0, m_numberOfLayouts);
         bool isAligned = false;
         for (uint32_t position = 0; position < sequence.size(); ++position) {
@@ -925,6 +935,7 @@ private:
     SiteWeight estimateInstructions(const Vector<uint32_t>& sequence, const SequenceNumbering& numbering) const
     {
         Vector<uint32_t> countPrefixSums(FillWith { }, numbering.nextShape + m_numberOfShapesAfterFrontier, 0);
+        std::ranges::fill(countPrefixSums.mutableSpan().subspan(1, m_shapesBelow), 1);
         for (uint32_t layout : sequence)
             std::ranges::fill(countPrefixSums.mutableSubspan(numbering.firstShapeOfLayout[layout], numberOfShapesOf(layout)), 1);
         std::ranges::fill(countPrefixSums.mutableSubspan(numbering.nextShape), 1);
@@ -1048,7 +1059,8 @@ private:
     Vector<uint32_t> m_frontierByTestsPerShape;
     Vector<uint32_t> m_groupOf;
     uint32_t m_numberOfShapesAfterFrontier { 0 };
-    uint32_t m_nextShape { 1 };
+    uint32_t m_shapesBelow;
+    uint32_t m_nextShape;
     ShapeNumbering m_result;
 };
 
@@ -1283,6 +1295,8 @@ ShapeTable deriveShapeTests(const PlacementContext& context, const PlacedSites& 
     parts.firstEnvironmentShape = numbering.firstEnvironmentShape;
     parts.shapeOfAllocationClass.fill(0, context.inputs.flow.numberOfAllocationClasses());
     parts.shapeCountPrefixSums.fill(0, numbering.numberOfShapes + 1);
+    parts.shapesBelow = shapesOfImagesBelow(context.build);
+    std::ranges::fill(parts.shapeCountPrefixSums.mutableSpan().subspan(1, parts.shapesBelow), 1);
     for (unsigned index = 0; index < numbering.shapesOfLayout.size(); ++index) {
         if (!numbering.shapesOfLayout[index].isEmpty())
             describeShapes(context, variants, LayoutID(index), numbering.shapesOfLayout[index], parts);

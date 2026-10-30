@@ -48,9 +48,12 @@ public:
 
     uint32_t numberOfNodes() const { return m_numberOfNodes; }
     size_t numberOfEdges() const { return m_numberOfEdges; }
-    std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.first(m_numberOfNodes); }
-    ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
-    void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value) { m_value[node.index()] = value; }
+    ValueSetID valueOf(ValueFlowNodeID node) const { return m_hasReleasedRows ? m_value[node.index()] : ValueSetID(m_rows[node.index()].value); }
+    void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value)
+    {
+        RELEASE_ASSERT(m_hasReleasedRows);
+        m_value[node.index()] = value;
+    }
     ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
     ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
     ValueSetID familyObjectsOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].familyObjects; }
@@ -155,10 +158,8 @@ public:
     void prefetchToStartWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other) const
     {
         __builtin_prefetch(&m_rows[other.index()]);
-        __builtin_prefetch(&m_value[other.index()]);
         __builtin_prefetch(&m_gates[node.index()], 1);
         __builtin_prefetch(&m_rows[node.index()], 1);
-        __builtin_prefetch(&m_value[node.index()], 1);
     }
     bool hasNodesJustRetired() const;
     void connectPredecessorsOfNodesJustRetired();
@@ -173,6 +174,7 @@ public:
     // Every member that holds a set is listed there.
     void keepSetsHeld(ValueSets&);
     void giveBackMostRoomOfListsOfOneRound();
+    void giveBackRoomOfEmptyLists();
 
 private:
     class Team;
@@ -216,9 +218,13 @@ private:
 
     struct Row {
         uint64_t low;
-        uint32_t set;
+        uint32_t value;
         uint32_t firstArrivalPlusOne;
     };
+    struct Worker;
+    // What a message carries beside the low members: nothing where all members are low, else the value.
+    uint32_t setIn(const Row&, Worker&) const;
+    uint32_t setIn(const Row& row) const { return row.value && !m_sets.isSubset(ValueSetID(row.value), m_lowMembers) ? row.value : 0; }
 
     struct Mask {
         ValueSetID admitted { ValueSets::anything };
@@ -286,7 +292,7 @@ private:
 
     uint64_t lowMembersOf(ValueSetID, ValueSetMaker&) const;
     void pass(uint32_t node, uint32_t numberOfMask, uint64_t& low, uint64_t& lowInNoSet, ValueSetID& set, Worker&);
-    void hold(uint32_t node, uint64_t low, ValueSetID value, Worker&);
+    void hold(uint32_t node, uint64_t low, ValueSetID value);
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other, Worker&);
     void takeArrival(Arrivals&, const Message&);
     void takeArrivals(Arrivals&, std::span<const Message>);
@@ -400,6 +406,7 @@ private:
     bool m_hasLeftMessagesWithShards { false };
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
+    bool m_hasReleasedRows { false };
     bool m_keepsPredecessors { false };
 
     Vector<std::unique_ptr<Worker>> m_workers;

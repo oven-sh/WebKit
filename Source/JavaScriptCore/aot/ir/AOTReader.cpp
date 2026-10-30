@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowSiteData.h"
+#include "AOTImagesBelow.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -51,6 +52,13 @@ bool Reader::readReplaceableBuiltins()
         checker.requireAscending(members[index - 1].member, members[index].member);
         if (auto failure = checker.takeFailure())
             return report(*failure);
+    }
+    if (const ImagesBelow* below = m_build.imagesBelow()) {
+        below->forEachUnlockedBuiltinMember([&](BuiltinID member) {
+            members.append(ReplaceableBuiltin { member });
+        });
+        AOT::sort(members, { }, &ReplaceableBuiltin::member);
+        members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
     }
     m_program.unlockReplaceableBuiltins();
     return true;

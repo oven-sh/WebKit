@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageOfCellScope.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCheckedFrameCells.h"
@@ -111,6 +112,18 @@ static_assert(!FunctionTables::canConstruct(functionKindWith({ .callableKind = C
 static_assert(FunctionTables::executableKind(functionKindWith({ .takesNewTarget = true })) == FunctionTables::ExecutableKind::Constructible);
 static_assert(closureWordFlags(functionKindWith({ .takesNewTarget = true })) == ClosureWord::Flags { .takesNewTarget = true });
 
+const Image& imageWithClosureNumber(uint32_t number)
+{
+    const Image* running = Image::current();
+    if (running->programTables().hasClosureNumber(number)) [[likely]]
+        return *running;
+    for (const Image* image = &running->first(); image; image = image->above()) {
+        if (image->programTables().hasClosureNumber(number))
+            return *image;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 uint32_t closureNumberOf(FunctionID function)
 {
     return programTables().closureNumberOf(function.index());
@@ -118,6 +131,8 @@ uint32_t closureNumberOf(FunctionID function)
 
 FunctionID closureFunctionWithNumber(uint32_t number)
 {
+    // The number of a function says something in the image that runs.
+    RELEASE_ASSERT(programTables().hasClosureNumber(number));
     return FunctionID(programTables().closureFunctionWithNumber(number));
 }
 
@@ -144,7 +159,7 @@ const BoundFunctionData& boundFunctionData(FunctionID function)
 static const uint64_t* closureWordsByNumber(const Image& image)
 {
     const ClosureFunctionRangeData& range = image.programTables().closureFunctions;
-    return image.section<uint64_t>(ImageSection::ClosureWords).subspan(range.first - range.omittedWordCount).data();
+    return image.section<uint64_t>(ImageSection::ClosureWords).subspan(range.first - range.omittedWordCount).data() - range.numbersBelow;
 }
 
 FunctionTables::FunctionTables(VM& vm)
@@ -169,14 +184,17 @@ FunctionTables& FunctionTables::of(VM& vm)
 {
     RELEASE_ASSERT(vm.hasCompiledCode());
     auto& tables = vm.aotState().functionTables;
-    if (!tables)
-        tables = makeUnique<FunctionTables>(vm);
+    if (!tables) {
+        auto& owner = vm.aotState().partsOfRunningImage().functionTables;
+        owner = makeUnique<FunctionTables>(vm);
+        tables = owner.get();
+    }
     return *tables;
 }
 
 static ClosureTable& closureTableOf(JSObject* callee)
 {
-    return State::of(callee->structure()->realm()).objects->closures;
+    return (*Instance::owning(callee)->state).objects->closures;
 }
 
 static ASCIILiteral initialNamePrefix(FunctionKindData kind)
@@ -274,14 +292,26 @@ static RecordedCallee& entryOfCallFrom(std::span<RecordedCallee> storage, uintpt
     return storage[1 + (stackPointerOfCaller & storage[0].stackPointerOfCaller) / sizeof(RecordedCallee)];
 }
 
+// The VM has tables for each image that it runs, and an instance reads those of its own image.
+static const Image* imageOf(const VMState& state, const FunctionTables& tables)
+{
+    for (auto& parts : state.parts) {
+        if (parts.functionTables.get() == &tables)
+            return parts.image;
+    }
+    return state.image;
+}
+
 static void setRecordedCalleeStorage(VM& vm, FunctionTables& tables, Vector<RecordedCallee>&& storage)
 {
     tables.recordedCalleeStorage = WTF::move(storage);
     tables.phaseOfLastWalkOfRecordedCallees = std::nullopt;
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
-    for (Instance* instance : state.instances)
-        instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&tables);
+    for (Instance* instance : state.instances) {
+        if (instance->program == imageOf(state, tables))
+            instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&tables);
+    }
 }
 
 void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* closure)
@@ -343,8 +373,10 @@ void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
     }
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
-    for (Instance* instance : state.instances)
-        makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+    for (Instance* instance : state.instances) {
+        if (instance->program == imageOf(state, *this))
+            makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+    }
 }
 
 // In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
@@ -475,6 +507,14 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
         setRecordedCalleeStorage(vm, *this, { });
 }
 
+void FunctionTables::forgetRecordedCalleesIfNotEntered(VM& vm)
+{
+    if (!hasRecordedCallees() || vm.isEntered())
+        return;
+    Locker locker { recordedCalleesLock };
+    zeroSpan(recordedCallees());
+}
+
 
 static String nullIfEmpty(const String& text)
 {
@@ -538,7 +578,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
-    State* state = &State::of(closure->structure()->realm());
+    State* state = &(*Instance::owning(closure)->state);
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
         return;
@@ -833,8 +873,11 @@ std::optional<uint32_t> closureNumberOf(const JSCell* cell)
 
 std::optional<FunctionID> functionOf(const JSCell* cell)
 {
+    // A closure of another image of the realm is like a function that no build has seen.
     std::optional<uint32_t> number = closureNumberOf(cell);
-    return number ? std::optional(closureFunctionWithNumber(*number)) : std::nullopt;
+    if (!number || !programTables().hasClosureNumber(*number)) [[unlikely]]
+        return std::nullopt;
+    return closureFunctionWithNumber(*number);
 }
 
 static FunctionID checkedFunctionOf(const JSCell* callee)
@@ -848,21 +891,25 @@ namespace CompiledCallee {
 
 bool isCompiledCallee(const JSCell* cell)
 {
+    ImageOfCellScope imageOfCell(cell);
     return isCompiledCalleeType(cell->type());
 }
 
 String name(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     return initialNameProperty(checkedFunctionOf(callee));
 }
 
 unsigned length(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     return functionLengthOf(checkedFunctionOf(callee));
 }
 
 bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     ASSERT(isSlimClosureType(callee->type()));
     if (callee->type() == SlimClosureType)
         return true;
@@ -882,6 +929,7 @@ bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)
 
 JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
@@ -907,6 +955,7 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
 
 JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
     if (kindData.isBound() || kindData.isInRuntimeModule)
@@ -918,11 +967,13 @@ JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 
 bool isBoundFunction(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     return functionKindData(checkedFunctionOf(callee)).isBound();
 }
 
 FunctionKind kind(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
     if (kindData.isInRuntimeModule)
@@ -951,11 +1002,13 @@ FunctionKind kind(JSObject* callee)
 
 String ownDisplayName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     return ownStringProperty(object, object->vm().propertyNames->displayName);
 }
 
 String displayName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
@@ -971,6 +1024,7 @@ String displayName(JSObject* object)
 
 bool reifyProperties(VM& vm, JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     if (object->type() != SlimClosureType)
         return false;
     uncheckedDowncast<SlimClosure>(object)->reify(vm);
@@ -979,6 +1033,7 @@ bool reifyProperties(VM& vm, JSObject* object)
 
 void setPrototypeProperty(VM& vm, JSObject* callee, JSObject* prototype, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(callee);
     RELEASE_ASSERT(isCompiledCallee(callee));
     if (callee->type() == CompiledClosureType) {
         uncheckedDowncast<Closure>(callee)->setPrototypeProperty(vm, prototype, attributes);
@@ -990,6 +1045,7 @@ void setPrototypeProperty(VM& vm, JSObject* callee, JSObject* prototype, unsigne
 
 void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* name, unsigned attributes)
 {
+    ImageOfCellScope imageOfCell(callee);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(isCompiledCallee(callee));
@@ -1006,12 +1062,14 @@ void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* n
 
 void showNameUntilLookedFor(VM& vm, JSObject* callee, const String& name)
 {
+    ImageOfCellScope imageOfCell(callee);
     RELEASE_ASSERT(isCompiledCallee(callee));
     AOT::showNameUntilLookedFor(vm, callee, name);
 }
 
 Structure* cachedBoundFunctionStructure(JSObject* callee)
 {
+    ImageOfCellScope imageOfCell(callee);
     if (!isSlimClosureType(callee->type()))
         return nullptr;
     return closureTableOf(callee).asyncBoundFunctionStructure();
@@ -1019,6 +1077,7 @@ Structure* cachedBoundFunctionStructure(JSObject* callee)
 
 void setCachedBoundFunctionStructure(VM&, JSObject* callee, Structure* structure)
 {
+    ImageOfCellScope imageOfCell(callee);
     if (isSlimClosureType(callee->type()))
         closureTableOf(callee).setAsyncBoundFunctionStructure(structure);
 }
@@ -1027,9 +1086,14 @@ void setCachedBoundFunctionStructure(VM&, JSObject* callee, Structure* structure
 
 DeclaredAs declaredAs(JSCell* cell)
 {
+    ImageOfCellScope imageOfCell(cell);
     std::optional<FunctionID> function = functionOf(cell);
-    if (!function)
+    std::optional<RunningImageScope> firstImage;
+    if (!function) {
         function = compiledBuiltinFunctionID(cell);
+        if (VMState& state = cell->vm().aotState(); function && state.hasSeveralImages) [[unlikely]]
+            firstImage.emplace(state, &state.image->first());
+    }
     if (!function)
         return standsInForFunction(cell) ? DeclaredAs::Function : DeclaredAs::NotCompiled;
     FunctionKindData kindData = functionKindData(*function);
@@ -1044,6 +1108,7 @@ DeclaredAs declaredAs(JSCell* cell)
 
 String closureDeclaredName(JSObject* object)
 {
+    ImageOfCellScope imageOfCell(object);
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
@@ -1056,12 +1121,14 @@ String closureDeclaredName(JSObject* object)
 
 bool belongsToBuiltinModule(JSCell* cell)
 {
+    ImageOfCellScope imageOfCell(cell);
     std::optional<FunctionID> function = functionOf(cell);
     return function && functionKindData(*function).isInRuntimeModule;
 }
 
 bool isCompiledClassObject(JSFunction* candidate)
 {
+    ImageOfCellScope imageOfCell(candidate);
     std::optional<FunctionID> function = functionOf(candidate);
     return function && functionKindData(*function).isConstructor;
 }

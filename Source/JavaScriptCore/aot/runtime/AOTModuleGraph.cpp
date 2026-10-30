@@ -594,7 +594,7 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
                 rootsThatReach[target] |= rootsThatReach[importer];
             });
         }
-        AOT::sort(visited, { }, [&](uint32_t module) {
+        AOT::sortInLine(visited, { }, [&](uint32_t module) {
             return placeOf[module];
         });
         bool isInCycle;
@@ -609,7 +609,7 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
                 });
             }
         } while (isInCycle);
-        AOT::sort(visited, { }, [&](uint32_t module) {
+        AOT::sortInLine(visited, { }, [&](uint32_t module) {
             return std::pair { groupOf[module], rootsThatReach[module] };
         });
         std::pair<uint32_t, uint64_t> previous { none, 0 };

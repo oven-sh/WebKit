@@ -317,7 +317,9 @@ struct LinkPlanRootData {
 
 struct ModuleExportData {
     uint32_t name : 24;
-    uint32_t kindBits : 5;
+    uint32_t kindBits : 4;
+    // ModuleFlow::exportsClosedToOutside
+    uint32_t isClosedToOutside : 1;
     uint32_t isReplaceable : 1;
     uint32_t isDeferred : 1;
     uint32_t isFromStarExport : 1;
@@ -429,6 +431,14 @@ static_assert(sizeof(ModuleData::Flag) == sizeof(ModuleData::flags));
 static_assert(sizeof(ModuleKind) == 1 && sizeof(ExternalKind) == 1 && sizeof(SyntheticExportRule) == 1 && sizeof(RequireResult) == 1);
 static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<unsigned>(ExternalKind::HostValue) < 2 && static_cast<unsigned>(SyntheticExportRule::RuntimeModule) < 4 && static_cast<unsigned>(RequireResult::NamespaceIfImported) < 4);
 
+// ProgramTables::directoriesOfModulesByPath() has a bit for each text that ends with a slash and starts the path of a module listed by path, at the hash of the UTF-16 text.
+struct HashOfDirectory {
+    static constexpr uint32_t ofNoText = 2166136261u;
+    static constexpr unsigned bitsPerDirectory = 16;
+    static constexpr uint32_t with(uint32_t hash, char16_t character) { return (hash ^ character) * 16777619u; }
+    static constexpr size_t bit(uint32_t hash, size_t numberOfBits) { return (hash ^ hash >> 15) & (numberOfBits - 1); }
+};
+
 #define FOR_EACH_AOT_MODULE_PROGRAM_TABLE(v) \
     v(modules, ModuleData) \
     v(moduleDirectories, ModuleDirectoryData) \
@@ -447,6 +457,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(exportStatements, ExportStatementData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
+    v(directoriesOfModulesByPath, uint32_t) \
     v(modulesOfUncompiledCode, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \

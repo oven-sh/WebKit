@@ -1,0 +1,52 @@
+# outer.mjs: import { inner } from "./inner.mjs"; export function outer(n) { return inner(1); } export function other(n) { return n; }        inner.mjs: export function inner(n) { return n; }
+# names.mjs: import { outer } from "./outer.mjs"; globalThis.sink(outer)
+# The host runs files with code that the build has not seen: the test files of a run that compiles only what they import. No load of the program names a file.
+# A file of the build, names.mjs, names what those files name and hands it to a callee nobody knows. So anybody may call `outer` with anything.
+# Nothing else is out of sight: nobody calls `other`, though its file is an entry point, and `inner` has the one caller that the build sees.
+# OPTIONS: admit=FilesRunByHost
+# RUN: valueflow-apply
+# CHECK: function f2 name="outer" {{*}}parameters=[{type=anything
+# CHECK: function f3 name="inner" {{*}}parameters=[{type=1
+# RUN(RECORDS): valueflow-results
+# RECORDS: function f2 cause=ReachesNativeCode
+# RECORDS: function f3 callers=AllKnown
+# RECORDS-NOT: function f5 cause=ReachesNativeCode
+# What is still in known hands is closed to a file that the host runs, whatever name it asks for: `other` and `inner`, not `outer`.
+# RECORDS: module m0 namespaceUse=NeverCreated exportsClosedToOutside=[g2]
+# RECORDS: module m1 namespaceUse=NeverCreated exportsClosedToOutside=[g1]
+# RECORDS: unseen-code LoadsCodeByName
+# RECORDS-NOT: unseen-code OptionAdmitsCode
+
+variable g0 name="outer" module=m0 declared={type=anything} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="inner" module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsImmutable]
+variable g2 name="other" module=m0 declared={type=anything} initialization=Function function=f5 flags=[IsImmutable]
+module m0 path="/app/outer.mjs" displayPath="outer.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 completes=true}] exports=[{name="other" variable=g2}, {name="outer" variable=g0}]
+module m1 path="/app/inner.mjs" displayPath="inner.mjs" flags=[KeepsError] body=f1 exports=[{name="inner" variable=g1}]
+module m2 path="/app/names.mjs" displayPath="names.mjs" flags=[KeepsError] body=f4 requests=[{target=m0 completes=true}]
+entry module=m0
+entry module=m2
+function f0 name="outerBody" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="innerBody" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="outer" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f3 name="inner" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="namesBody" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, -, v2
+    Return
+}
+function f5 name="other" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

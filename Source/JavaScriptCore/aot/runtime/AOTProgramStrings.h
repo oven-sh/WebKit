@@ -36,9 +36,9 @@ public:
     static String text(const Image& image, StringID string) { return image.text().createString(string); }
     static bool hasText(const Image& image, StringID string, StringView text) { return image.text().equals(string, text); }
     static AtomString atomOf(const Image& image, StringID string) { return AtomString(image.text().createAtom(string)); }
-    static String text(const ProgramTables&, StringID string) { return text(*Image::current(), string); }
-    static StringView viewInImage(const ProgramTables&, StringID string) { return Image::current()->text().view(string); }
-    static StringID identifierString(const ProgramTables&, uint32_t identifier) { return Image::current()->text().identifier(identifier).text(); }
+    static String text(const ProgramTables& tables, StringID string) { return text(Image::current()->holderOf(&tables), string); }
+    static StringView viewInImage(const ProgramTables& tables, StringID string) { return Image::current()->holderOf(&tables).text().view(string); }
+    static StringID identifierString(const ProgramTables& tables, uint32_t identifier) { return Image::current()->holderOf(&tables).text().identifier(identifier).text(); }
 
     // A constant is made once: its cell is kept, or its site runs at most once.
     enum class Made : bool { AnyNumberOfTimes, Once };

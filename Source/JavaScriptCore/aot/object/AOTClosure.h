@@ -62,7 +62,7 @@ public:
     FunctionID function() const { return functionOfClosureWord(m_entry); }
     uint64_t entry() const { return m_entry; }
     void markRenamed() { m_entry |= 1ULL << ClosureWord::isRenamedBit; }
-    State& state() const { return State::of(structure()->realm()); }
+    State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
     // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.

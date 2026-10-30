@@ -262,16 +262,17 @@ struct ProgramTables {
     {
         return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
+    bool hasClosureNumber(uint32_t number) const { return number - closureFunctions.numbersBelow < closureFunctions.end - closureFunctions.first; }
     // What closure words, requests for closures and the stubs have for a function that closures are made of.
     uint32_t closureNumberOf(uint32_t function) const
     {
         ASSERT(function >= closureFunctions.first && function < closureFunctions.end);
-        return function - closureFunctions.first;
+        return function - closureFunctions.first + closureFunctions.numbersBelow;
     }
     uint32_t closureFunctionWithNumber(uint32_t number) const
     {
-        ASSERT(number < closureFunctions.end - closureFunctions.first);
-        return closureFunctions.first + number;
+        ASSERT(hasClosureNumber(number));
+        return closureFunctions.first + number - closureFunctions.numbersBelow;
     }
     uint32_t functionLengthOf(uint32_t function) const
     {
@@ -280,12 +281,13 @@ struct ProgramTables {
     }
     CaptureCounts captureCountsOfClosureNumber(uint32_t number) const
     {
-        uint8_t counts = closureCaptureCounts()[number];
+        uint8_t counts = closureCaptureCounts()[number - closureFunctions.numbersBelow];
         if (counts == countsAreListed) [[unlikely]]
-            return largeCountsOf(closureFunctions.first + number).captureCounts;
+            return largeCountsOf(closureFunctionWithNumber(number)).captureCounts;
         return CaptureCounts::decode(counts);
     }
-    CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(function - closureFunctions.first); }
+    CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(closureNumberOf(function)); }
+    FunctionKindData kindOfClosureNumber(uint32_t number) const { return closureFunctionKinds()[number - closureFunctions.numbersBelow]; }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {

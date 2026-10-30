@@ -168,7 +168,7 @@ static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& regis
 
     // The elements of a compiled object are those of its extra properties.
     Jump hasIndexedStorage = jit.branchTest8(CCallHelpers::NonZero, Address(registers.base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
-    isNoSuchKey.append(jit.branchIfNotType(registers.base, CompiledObjectType));
+    isNoSuchKey.append(branchIfNotCompiledObjectOfThisImage(jit, registers.base));
     if (element == ElementUnderText::IsLookedFor)
         isNoSuchKey.append(jit.branchTest32(CCallHelpers::Zero, Address(registers.base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     hasIndexedStorage.link(&jit);
@@ -867,7 +867,9 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
     hasNoSuchStorage.link(&jit);
     doesNotSay.append(jit.branchTest32(CCallHelpers::NonZero, shape));
     jit.load8(Address(base, JSCell::typeInfoTypeOffset()), type);
-    Jump isNotCompiledObject = jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(CompiledObjectType));
+    JumpList isNotCompiledObject;
+    isNotCompiledObject.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(CompiledObjectType)));
+    branchIfObjectOfOtherImage(jit, base, isNotCompiledObject);
     // The elements of a compiled object are those of its extra properties.
     JumpList isAbsentInExtraProperties;
     JumpList extraPropertiesHaveOtherStorage;
@@ -1319,7 +1321,7 @@ static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegist
     jit.jump().linkTo(loadStorage, &jit);
 
     isNoArrayOfInt32.link(&jit);
-    miss.append(jit.branchIfNotType(base, CompiledObjectType));
+    miss.append(branchIfNotCompiledObjectOfThisImage(jit, base));
     checkStubOperands(storeElementOfCompiledObject(PutMode::Define), { base, registers.key, value });
     jit.jumpToStub(storeElementOfCompiledObject(PutMode::Define));
 }

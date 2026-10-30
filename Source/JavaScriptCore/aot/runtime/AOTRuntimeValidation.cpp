@@ -613,7 +613,7 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 
         const RuntimeType& type = state.objects->layouts.typeOf(field);
         if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
-            if (!slotMayHoldLiteralString(*vm.aotState().image, type, bits))
+            if (!slotMayHoldLiteralString(*state.instance.program, type, bits))
                 return SlotOutsideType { &field, bits, true, { } };
             continue;
         }
@@ -641,7 +641,7 @@ void validateSlotTypes(VM& vm, const Object& object)
 
     const LayoutData& layout = object.layout();
     const FieldData& field = *outside->field;
-    const ImageText& text = vm.aotState().image->text();
+    const ImageText& text = object.state().instance.program->text();
     StringID name = text.identifier(field.name).text();
     dataLog("AOT: field ", layout.indexOf(field), " (", name && text.hasText(name) ? text.view(name) : StringView("-"_s), ") of layout ", layout.index, ", a slot of the kind ", nameOf(field.slot.representation()), " at ", static_cast<uint32_t>(field.slot.offset));
     if (outside->isFormOfValue)

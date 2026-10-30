@@ -113,10 +113,14 @@ JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 // Of what findModule() answers: the host makes the module, and the image holds its number alone.
 JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
-JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
+// A file that the host starts by itself, as a test runner starts a test file, stays compiled whatever it imports.
+enum class StartedBy : uint8_t { Code, Host };
+JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID, StartedBy = StartedBy::Code);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // The path of each program file with code, in any image in use, that starts with `start`. Data files are looked up on disk. A file in several images is reported once per image. Callable from any thread.
 JS_EXPORT_PRIVATE void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&);
+// For a build above the images, the first of them first, which does not run them: whether a file with code at the path is a module of one of them. The bytes stay for as long as the process. Any thread may ask.
+JS_EXPORT_PRIVATE bool imagesHoldFile(std::span<const std::span<const uint8_t>> images, StringView path);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // A file whose loader answers an object of the host, a database or a page.
@@ -133,6 +137,18 @@ JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLa
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
 JS_EXPORT_PRIVATE void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require);
+class Modules;
+// The file whose import or require() the host is answering. A refusal names it.
+class AskerOfModule {
+    WTF_MAKE_NONCOPYABLE(AskerOfModule);
+public:
+    JS_EXPORT_PRIVATE AskerOfModule(JSGlobalObject*, const String& path);
+    JS_EXPORT_PRIVATE ~AskerOfModule();
+
+private:
+    Modules* m_modules;
+    const String* m_outer;
+};
 
 JS_EXPORT_PRIVATE AbstractModuleRecord* moduleRecord(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isCompiledModuleRecord(AbstractModuleRecord*);
@@ -148,6 +164,8 @@ JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 // The host admits code from disk: the next load of the file takes it from there, as a new instance. An executable has its files in no cache.
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+// The host admits code from disk, and the program has given it something that loads the file in another way than the build did. A file that has run stays.
+JS_EXPORT_PRIVATE void willLoadFileInAnotherWay(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isEvaluatedFile(JSGlobalObject*, ModuleID);
 // The module object that require.cache shows for a file that isEvaluatedFile().
 JS_EXPORT_PRIVATE JSObject* requireCacheEntry(JSGlobalObject*, ModuleID);

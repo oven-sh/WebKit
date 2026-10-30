@@ -196,7 +196,10 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && closures.first <= closures.end
         && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
         && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
-        && numberOfElements(ImageSection::StringHeaders) >= numberOfElements(ImageSection::Identifiers);
+        && header.numbers.firstStringHeader <= header.numbers.endOfIdentifiers
+        && header.numbers.endOfIdentifiers <= header.numbers.endOfStringHeaders
+        && numberOfElements(ImageSection::Identifiers) == header.numbers.endOfIdentifiers
+        && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders - header.numbers.firstStringHeader;
 }
 
 Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity)
@@ -292,6 +295,70 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     s_onlyImage.store(images.isEmpty() ? image.get() : nullptr, std::memory_order_release);
     s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
     images.append(image.release());
+}
+
+void Image::publishAbove(const Image& first, std::unique_ptr<Image>&& unpublishedImage)
+{
+    std::unique_ptr<Image> image = WTF::move(unpublishedImage);
+    RELEASE_ASSERT(image && &first.first() == &first);
+    Locker locker { s_publishedImagesLock };
+    Vector<const Image*>& images = publishedImages();
+    const Image& below = first.last();
+    image->m_number = images.size();
+    image->m_first = &first;
+    image->m_position = below.m_position + 1;
+    RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
+    image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
+    s_lastPublished.store(image.get(), std::memory_order_release);
+    // Which of the images a thread runs changes as calls go from one to the other.
+    s_current.store(differsByThread(), std::memory_order_release);
+    below.m_above.store(image.get(), std::memory_order_release);
+    images.append(image.release());
+}
+
+const Image& Image::last() const
+{
+    const Image* image = this;
+    while (const Image* above = image->above())
+        image = above;
+    return *image;
+}
+
+const Image* Image::atPosition(unsigned position) const
+{
+    const Image* image = m_first;
+    while (image && image->m_position != position)
+        image = image->above();
+    return image;
+}
+
+const Image* Image::findInListByCodeAddress(const void* address) const
+{
+    for (const Image* image = m_first; image; image = image->above()) {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_code) < image->header().codeSize)
+            return image;
+    }
+    return nullptr;
+}
+
+const Image& Image::holderInListOf(const void* address) const
+{
+    for (const Image* image = m_first; image; image = image->above()) {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_bytes.data()) < image->m_bytes.size())
+            return *image;
+    }
+    // What a build has not put into the bytes of an image belongs to the one that asks.
+    return *this;
+}
+
+const Image& Image::holderOfStringHeader(uint32_t number) const
+{
+    const Image* image = m_first;
+    while (number >= image->header().numbers.endOfStringHeaders) {
+        image = image->above();
+        RELEASE_ASSERT(image);
+    }
+    return *image;
 }
 
 std::span<const uint8_t> Image::ffiDirectory() const
@@ -424,6 +491,8 @@ bool isCompiledCodePC(const void* pc)
 std::optional<uint32_t> imageCodeOffset(const void* address)
 {
     const Image* image = Image::current();
+    if (image && image->sharesRealms()) [[unlikely]]
+        image = image->findInListByCodeAddress(address);
     if (!image)
         return std::nullopt;
     uintptr_t offset = std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->code().data());
@@ -435,6 +504,8 @@ std::optional<uint32_t> imageCodeOffset(const void* address)
 std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress)
 {
     const Image* image = Image::current();
+    if (image && image->sharesRealms()) [[unlikely]]
+        image = image->findInListByCodeAddress(returnAddress);
     if (!image)
         return std::nullopt;
     CodeLocation code = image->locate(returnAddress);

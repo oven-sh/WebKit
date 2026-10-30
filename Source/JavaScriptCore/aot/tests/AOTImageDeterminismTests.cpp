@@ -125,6 +125,7 @@ static void copyHeaderMembers(ImageHeader& copy, const ImageHeader& header)
     std::ranges::copy(header.entriesUsed, copy.entriesUsed);
     std::ranges::copy(header.singleReturnSites, copy.singleReturnSites);
     copy.numberOfStubsFoundByKey = header.numberOfStubsFoundByKey;
+    copy.numbers = header.numbers;
 }
 
 static void testGapsAreZero()

@@ -64,6 +64,14 @@ static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSiteInRun(CallSiteCac
 static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(VM& vm, const void* pc)
 {
     const VMState& state = vm.aotState();
+    if (state.hasSeveralImages) [[unlikely]] {
+        const Image* image = state.image->findInListByCodeAddress(pc);
+        if (!image)
+            return nullptr;
+        // Making an entry of the cache asks the tables of the image that runs.
+        RunningImageScope scope(vm.aotState(), image);
+        return findReturnSite(*state.callSiteCache, *image, pc);
+    }
     return findReturnSite(*state.callSiteCache, *state.image, pc);
 }
 
@@ -205,6 +213,9 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
 // Every entry of a run while the VM has several instances counts, so the count and the entry frame name one run.
 Instance* CompiledFrameIterator::knownInstanceOfRun(const VMState& state, EntryFrame* entryFrame)
 {
+    // Runs of several images may lie in front of one entry frame.
+    if (state.hasSeveralImages) [[unlikely]]
+        return nullptr;
     const VMState::InstanceOfRun& known = state.instanceOfRecentRun;
     return known.entries == state.entriesWithSeveralInstances && known.entryFrame == entryFrame ? known.instance : nullptr;
 }
@@ -344,6 +355,21 @@ bool CompiledFrame::isActivationOf(JSCell* cell) const
     return isClosureOf(cell, function);
 }
 
+void ImageOfRun::run(VMState& state, const Image& image)
+{
+    ASSERT(!m_state);
+    if (state.image == &image)
+        return;
+    m_state = &state;
+    m_previous = state.image;
+    state.run(image);
+}
+
+void ImageOfRun::restore()
+{
+    std::exchange(m_state, nullptr)->run(*m_previous);
+}
+
 CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool calleeWasEntered)
     : m_vm(&vm)
     , m_image(vm.aotState().image)
@@ -351,6 +377,14 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
     , m_cursor(cursor)
     , m_calleeWasEntered(calleeWasEntered)
 {
+    // The frames of one run are of one image: a call into another image leaves compiled code.
+    if (vm.aotState().hasSeveralImages) [[unlikely]] {
+        if (const Image* image = m_image->findInListByCodeAddress(removeCodePtrTag(cursor.rawPC))) {
+            m_image = image;
+            m_cache = vm.aotState().parts[image->position()].callSiteCache.get();
+            m_imageOfRun.run(vm.aotState(), *image);
+        }
+    }
     enterMachineFrame(findFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
 
@@ -764,6 +798,17 @@ bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
 
 std::span<const uint8_t> compiledCodeOf(VM& vm)
 {
+    if (vm.aotState().hasSeveralImages) [[unlikely]] {
+        // From the first byte of code to the last. What lies between the code of two images is never run, and whoever finds an address in the range asks the tables about it.
+        const uint8_t* begin = nullptr;
+        const uint8_t* end = nullptr;
+        for (const Image* image = &vm.aotState().image->first(); image; image = image->above()) {
+            std::span<const uint8_t> code = image->code();
+            begin = begin ? std::min(begin, code.data()) : code.data();
+            end = std::max(end, code.data() + code.size());
+        }
+        return { begin, end };
+    }
     return vm.hasCompiledCode() ? vm.aotState().image->code() : std::span<const uint8_t> { };
 }
 

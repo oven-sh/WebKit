@@ -16,6 +16,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
 #include "AOTIRProgram.h"
+#include "AOTImagesBelow.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -403,6 +404,8 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     });
     numbering.closureCellNumbers = numberClosureCells(program, loops, declaredByVariables);
     numbering.closureFunctions = closureFunctionRangeOf(program);
+    if (const ImagesBelow* below = context.build.imagesBelow())
+        numbering.closureFunctions.numbersBelow = below->numbersOfLast().endOfClosureNumbers;
     numbering.closureFormsBySource = closureFormsBySourceOf(program);
     return numbering;
 }

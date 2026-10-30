@@ -601,12 +601,21 @@ bool MarkedBlockCage::tryRestoreOwnReserve()
     return true;
 }
 
+void MarkedBlockCage::didCollectForStructureReserve()
+{
+    bool isFirst = std::exchange(m_pollFillsStructureReserve, false);
+    if (!isFirst && !m_owesStructureReserve)
+        return;
+    m_owesStructureReserve = !StructureAlignedMemoryAllocator::tryFillReserve() && isFirst;
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 {
     if (!m_owesCollection || vm.heap.isDeferred())
         return false;
     m_owesCollection = false;
     vm.heap.collectForExhaustedCage();
+    didCollectForStructureReserve();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (!tryRestoreReleasedReserves(vm))
@@ -617,6 +626,16 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 
 bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
 {
+    if (m_pollFillsStructureReserve && m_exhaustedHeaps.isEmpty()) {
+        if (vm.heap.isDeferred())
+            return true;
+        m_errorWaitsForPoll = false;
+        m_owesCollection = false;
+        vm.heap.collectForExhaustedCage();
+        didCollectForStructureReserve();
+        vm.traps().setNeedsOutOfMemoryError(false);
+        return true;
+    }
     m_errorWaitsForPoll = false;
     // A collection takes its own memory from malloc, and malloc has none.
     if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
@@ -626,6 +645,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
     vm.heap.collectForExhaustedCage();
+    didCollectForStructureReserve();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (hasHeapThatReleasedReserve()) {
@@ -751,6 +771,19 @@ void MarkedBlockCage::didThrowOutOfMemoryError()
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
 }
 
+void MarkedBlockCage::didThrowOutOfMemoryError(VM& vm)
+{
+    bool wasForStructures = m_exhaustedHeaps.contains(ExhaustedHeap::Structures);
+    didThrowOutOfMemoryError();
+    if (!wasForStructures)
+        return;
+    m_owesStructureReserve = false;
+    // No error is owed: whoever looks for one waits for the poll.
+    m_pollFillsStructureReserve = true;
+    m_errorWaitsForPoll = true;
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
 void MarkedBlockCage::didCreateOutOfMemoryError()
 {
     m_numberOfBarrenCollections = 0;
@@ -763,8 +796,8 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
     // A range that grows takes its room from where storage takes it.
     if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
-    didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
+    didThrowOutOfMemoryError(vm);
 }
 
 void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)

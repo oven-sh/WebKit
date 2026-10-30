@@ -63,8 +63,9 @@ static JSValue getById(Instance&, JSCell* base, const Identifier&);
 
 static Instance* runningInstanceOf(JSGlobalObject* realm)
 {
-    Instance* instance = Instance::of(realm);
-    return instance && instance->state ? instance : nullptr;
+    Instance* instance = realm->aotInstance();
+    // The caches of one image say nothing about the cells of another: where a realm runs several, the interpreter asks the cells.
+    return instance && instance->state && !instance->above ? instance : nullptr;
 }
 
 // Null where the field lies outside the cell and has no storage yet.

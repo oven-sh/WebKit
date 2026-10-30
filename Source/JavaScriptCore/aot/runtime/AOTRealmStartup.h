@@ -34,6 +34,8 @@ using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
 void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RejectedWrite);
 String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
+// The words of the store that a spy would make, said of the spy. Null: the object says nothing of that key.
+JS_EXPORT_PRIVATE String refusedSpyMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key);
 // In a test run a refusal is an error for everybody: a test that takes it for a replacement that was made goes on to measure nothing.
 bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
 JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();

@@ -325,7 +325,8 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
     auto addMarksOfSources = [&](Node count, const auto& forEachSourceOf) {
         constexpr unsigned nodesInShare = 512;
         // Marks are only added, so the result does not depend on the order in which nodes take marks from their sources. Most marks arrive within a few steps. Long chains are followed from source to target below.
-        AOT_THRESHOLD(unsigned, maxRoundsOverAllNodes, 3);
+        // To list the edges by their sources takes two walks with an atomic count per edge, and a layout that is in many sets is one count for all threads: as long as 37 rounds where 80 million edges were at rest in 13.
+        AOT_THRESHOLD(unsigned, maxRoundsOverAllNodes, 32);
         bool isFinished = false;
         for (unsigned round = 0; round < maxRoundsOverAllNodes && !isFinished; ++round) {
             std::atomic<bool> didAdd { false };

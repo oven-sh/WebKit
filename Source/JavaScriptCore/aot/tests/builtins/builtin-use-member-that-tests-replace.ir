@@ -5,10 +5,12 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=ArrayIteratorPrototypeNext
 replaceablebuiltin member=MathMin
 replaceablebuiltin member=ArrayPrototypeSymbolIterator
+replaceablebuiltin member=FunctionPrototypeCall
+replaceablebuiltin member=PromisePrototypeThen
 replaceablebuiltin member=StringPrototypeIndexOf
-replaceablebuiltin member=StringPrototypeToString
 function f0 name="functionOfNamespace" results=[{type=anything}] {
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="min"
@@ -41,9 +43,26 @@ function f2 name="neighborStaysLocked" parameters=[{type=string}] results=[{type
 # CHECK-LABEL: function f2 name="neighborStaysLocked"
 # CHECK-NOT: IsBuiltinLocationUnchanged
 
-function f3 name="nameThatTheLanguageReadsStaysLocked" parameters=[{type=string}] results=[{type=anything}] {
-    v1 = PropGet v0 key="toString"
+function f3 name="nameThatTheLanguageReadsStaysLocked" results=[{type=anything}] {
+    v0 = Builtin builtin=ArrayIteratorPrototype
+    v1 = PropGet v0 key="next"
     Return v1
 }
 # CHECK-LABEL: function f3 name="nameThatTheLanguageReadsStaysLocked"
 # CHECK-NOT: IsBuiltinLocationUnchanged
+
+function f4 name="nameThatIsLookedUpToResolveAPromise" results=[{type=anything}] {
+    v0 = Builtin builtin=PromisePrototype
+    v1 = PropGet v0 key="then"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="nameThatIsLookedUpToResolveAPromise"
+# CHECK: boolean{{*}} = IsBuiltinLocationUnchanged member=PromisePrototypeThen
+
+function f5 name="nameThatOnlyACallThatSpellsItReads" results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototype
+    v1 = PropGet v0 key="call"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="nameThatOnlyACallThatSpellsItReads"
+# CHECK: boolean{{*}} = IsBuiltinLocationUnchanged member=FunctionPrototypeCall

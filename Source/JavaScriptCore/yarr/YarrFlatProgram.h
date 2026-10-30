@@ -199,6 +199,12 @@ public:
             firstStartFoundByTablesAlone = 0;
     }
 
+    void setRequiredTextsAskedLate(const RequiredTexts& texts)
+    {
+        requiredTexts = texts;
+        asksRequiredTextsLate = true;
+    }
+
     Vector<FlatOp> ops;
     Vector<CharacterSetBits> characterSets;
     Vector<FirstSetBits> firstSets;
@@ -247,6 +253,23 @@ public:
     FlatStartScan startScan { FlatStartScan::None };
     // No attempt is made where these rule a match out.
     RequiredTexts requiredTexts;
+    // `\/[^\/]*\.log` on a path: the start scan is selective, so the texts are not asked at every start. But it stops at every `/` and each attempt walks a folder's name: together they walk the subject.
+    // Once the attempts have come this many units without a match, and as many are left, the texts are looked for, one time: the search walks sixteen units at a time.
+    bool asksRequiredTextsLate { false };
+    static constexpr unsigned unitsWalkedBeforeTextsAreAsked = 128;
+    // Of a program that makes one attempt, with a run in front of the text: `^(?:.*\/)?[^\/]*\.pem$` walks a path once for each of its folders.
+    // A long subject is looked through for the text first: the run alone costs more. A shorter one when the attempt has gone back this often, and then the attempt begins anew: a short attempt pays nothing.
+    std::optional<RequiredText> textOfEveryMatch;
+    static constexpr unsigned leastLengthLookedThroughFirst = 256;
+    static constexpr unsigned stepsBeforeLookingForText = 9;
+    uint8_t stepsPerCharacterBehindLookForText { 0 };
+
+    void setTextOfEveryMatch(RequiredText&& text)
+    {
+        textOfEveryMatch = WTF::move(text);
+        stepsPerCharacterBehindLookForText = std::exchange(stepsPerCharacterBeforeStopping, 0);
+        isEnteredOutOfLine = true;
+    }
     Latin1Character onlyStartCharacter { 0 };
     // The first character of every match, if there is only one. Unlike onlyStartCharacter it can be wide, and the table may be deeper than one place.
     std::optional<char32_t> onlyStart;

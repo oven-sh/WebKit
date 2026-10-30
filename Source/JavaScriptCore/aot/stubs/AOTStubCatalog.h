@@ -47,6 +47,16 @@ struct StubOptions {
     bool forceGCSlowPaths { false };
     bool imageHasWebAssembly { false };
     bool hasOneInstance { false };
+    // CompileOptions::sharesRealms(): a compiled object or a closure of the realm may be of another image, and its numbers say nothing in the tables of this one.
+    bool sharesRealms { false };
+    // How many instances stand in front of this image's in the list of a realm.
+    uint32_t imagesBelow { 0 };
+    // ImageNumberRanges.
+    uint32_t shapesBelow { 0 };
+    uint32_t lastShape { 0 };
+    uint32_t firstStringHeader { 0 };
+    uint32_t closureNumbersBelow { 0 };
+    uint32_t endOfClosureNumbers { 0 };
     // Whether the stubs read and call the traps of a proxy themselves. It chooses between two roads to one answer and says nothing about the program: where it is false, the stubs leave an access through a proxy to the run time.
     // So it may rest on a guess that the program meets no proxy.
     Typed::Expected<bool> callsTrapsOfProxies { true };

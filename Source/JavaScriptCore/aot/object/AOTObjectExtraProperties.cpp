@@ -372,6 +372,8 @@ bool tryAddPendingStar(VM& vm, Object& target, Object& source, FunctionID getter
     JSGlobalObject* realm = target.structure()->realm();
     if (&target == &source || source.structure()->realm() != realm)
         return false;
+    if (vm.aotState().hasSeveralImages && &source.state() != &target.state()) [[unlikely]]
+        return false;
     if (!canGetPendingStars(target) || !canBeSourceOfPendingStar(vm, realm, source) || !descriptorsHaveOnlyOwnMembers(realm))
         return false;
 

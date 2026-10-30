@@ -1,0 +1,55 @@
+# A value kept in a heap word is read back once for each stretch of code that no suspension interrupts, so a test and the read that names its guard must stand in one stretch.
+# Here two tests stand in two stretches and hand their guards to one block, which is a stretch of its own: the object stays where it is. The other object crosses the same suspensions, no guard speaks of it, and it is kept.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass KeepValuesInHeapWords
+# STATISTIC: ValuesKeptInHeapWords = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+layout L0 name="Box" fields=[{key="w" declared={type=number}}]
+layout L1 name="Other" fields=[{key="w" declared={type=number}}]
+
+function f0 name="readsBehindTwoTests" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: boolean, v1: undefined|Promise):
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = AwaitBySavingFrame v0, v1, v2, v3
+    v5 = AwaitBySavingFrame v0, v1, v2, v3
+    v6 = AwaitBySavingFrame v0, v1, v2, v3
+    v7 = AwaitBySavingFrame v0, v1, v2, v3
+    v8 = AwaitBySavingFrame v0, v1, v2, v3
+    v9 = AwaitBySavingFrame v0, v1, v2, v3
+    v10 = AwaitBySavingFrame v0, v1, v2, v3
+    v11 = AwaitBySavingFrame v0, v1, v2, v3
+    v12 = AwaitBySavingFrame v0, v1, v2, v3
+    v13 = AwaitBySavingFrame v0, v1, v2, v3
+    v14 = AwaitBySavingFrame v0, v1, v2, v3
+    v15 = AwaitBySavingFrame v0, v1, v2, v3
+    v16 = AwaitBySavingFrame v0, v1, v2, v3
+    v17 = AwaitBySavingFrame v0, v1, v2, v3
+    v18 = AwaitBySavingFrame v0, v1, v2, v3
+    v19 = AwaitBySavingFrame v0, v1, v2, v3
+    v20 = AwaitBySavingFrame v0, v1, v2, v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v21 = AwaitBySavingFrame v0, v1, v2, v3
+    v22 = IsSlotFilled v2 key="w" receivers=[L0] level=Expected
+    Branch v22 -> taken b3(| 0), notTaken b6()
+  b2():
+    v23 = IsSlotFilled v2 key="w" receivers=[L0] level=Expected
+    Branch v23 -> taken b4(| 0), notTaken b6()
+  b3(v24):
+    Jump -> next b5(v24)
+  b4(v25):
+    Jump -> next b5(v25)
+  b5(v26):
+# CHECK: GetSlot v2, {{*}} key="w"
+    v27 = GetSlot v2, v26 key="w" receivers=[L0] level=Expected
+    PutModuleVariable v3 variable=g0
+    Return v27
+  b6() frequency=Unlikely:
+    v29 = Undefined
+    Return v29
+}
+function f1 name="readsBehindTwoTests" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

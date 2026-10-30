@@ -985,7 +985,7 @@ void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
         return buffer >= start && buffer < start + sizeof(VectorUnderTest);
     };
     auto checkEqual = [&](const VectorUnderTest& vector, const ExpectedVector& expected) {
-        AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity());
+        AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() >= vector.size());
         AOT_TEST_CHECK(std::ranges::equal(vector, expected));
         AOT_TEST_CHECK(isInline(vector) == (inlineCapacity && vector.capacity() == inlineCapacity));
     };
@@ -1003,7 +1003,10 @@ void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
             if (vector.size() < vector.capacity() || !vector.size()) {
                 vector.append(T(create(number)));
                 expected.append(T(create(number)));
-                AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity() && vector.last() == expected.last());
+                AOT_TEST_CHECK(vector.size() == expected.size() && vector.last() == expected.last());
+                // The first buffer has room for minCapacity elements or 32 bytes, whichever is less.
+                if (!inlineCapacity && vector.size() == 1)
+                    AOT_TEST_CHECK(vector.capacity() == std::min<size_t>(minCapacity, std::max<size_t>(32 / sizeof(T), 1)));
                 continue;
             }
             onBoth(vector, expected, [&](auto& list) {
@@ -1079,7 +1082,7 @@ void checkGrowthOfVectorsOf(const Invocable<T(unsigned)> auto& create)
 
 } // anonymous namespace
 
-static void testVectorsGrowAsThoseOfWTF()
+static void testVectorsHoldWhatThoseOfWTFHold()
 {
     auto createInteger = [](unsigned number) {
         return number;
@@ -1167,7 +1170,7 @@ std::span<const NativeTest> supportTests()
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
-        { "vector/grows-as-that-of-wtf"_s, testVectorsGrowAsThoseOfWTF },
+        { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };
     return tests;

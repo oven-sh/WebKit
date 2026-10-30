@@ -283,6 +283,20 @@ NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide 
     return next;
 }
 
+static LayoutID commonAncestorIfNoClassBetweenHasMember(const Program& program, const Layout& layout, PropertyKeyID key)
+{
+    if (!layout.flow.commonAncestor || layout.classFlow.prototypeLink != MemberMutability::Fixed)
+        return { };
+    bool isPassedByEveryClassBetween = std::ranges::all_of(layout.flow.intermediateClasses, [&](LayoutID between) {
+        const ClassFlow& classFlow = program.at(between).classFlow;
+        if (classFlow.prototypeLink != MemberMutability::Fixed || !classFlow.prototypeNamesAreComplete)
+            return false;
+        DeclaredMember member = findDeclaredMember(classFlow, ClassSide::Prototype, key);
+        return !member.isDeclared() && !member.isListedWithoutDefinition() && !member.isWritableData;
+    });
+    return isPassedByEveryClassBetween ? layout.flow.commonAncestor : LayoutID();
+}
+
 BuiltinLocationAnswer builtinLocationAnswerOf(const PropertyAccessContext& context, BuiltinID member)
 {
     if (!member)
@@ -495,6 +509,10 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         if (!layout.classFlow.prototypeNamesAreComplete)
             addConditionWithCause(walked, memberUnchanged, UnprovenCause::UnknownKeyStore);
 
+        if (LayoutID ancestor = commonAncestorIfNoClassBetweenHasMember(program, layout, key)) {
+            current = ancestor;
+            continue;
+        }
         NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, walked.conditions);
         switch (next.step) {
         case ChainStep::Unknown:

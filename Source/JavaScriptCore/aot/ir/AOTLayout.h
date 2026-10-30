@@ -114,6 +114,7 @@ bool hasFieldsFilledAtBirth(const Program&, LayoutID);
 bool isNeverStored(const Program&, FieldReference);
 std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID, BaseChain);
 LayoutID expectedBaseOf(const Layout&);
+LayoutID nearestLayoutAlwaysAbove(const LayoutFlow&);
 LayoutID predictedHeritageOf(const Layout&);
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
 // `class A extends Map`, and every subclass of A: Layout::writtenBuiltinBase is Map. It reflects the source, so it never changes during the build.

@@ -202,7 +202,7 @@ static void computeEvaluationList(Modules& modules, EvaluationFrame& frame)
         modules.gatherAsynchronousTransitiveDependencies(request.targetModule(), found, seen);
         RETURN_IF_EXCEPTION(scope, void());
         for (AbstractModuleRecord* record : found) {
-            if (auto* compiled = dynamicDowncast<ModuleRecord>(record))
+            if (auto* compiled = dynamicDowncast<ModuleRecord>(record); compiled && compiled->isOf(modules.instance()))
                 appendOnce(compiled->module());
             else if (listedRecords.add(record).isNewEntry)
                 evaluationList->append(record);
@@ -244,7 +244,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     runMocksBelow(root);
     RETURN_IF_EXCEPTION(scope, void());
     noteModulesLoadedWith(root);
-    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(root);
+    MocksBelowRoot mocks = mocksBelow(root);
 
     EvaluationFrames frames;
     EvaluationInProgress evaluation { frames, m_innermostEvaluation };
@@ -271,7 +271,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     };
 
     auto enter = [&](ModuleID module) {
-        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+        if (mocks.hides(module)) [[unlikely]]
             return false;
         const ModuleData& moduleData = data(module);
         if (moduleData.kind == ModuleKind::CommonJs) {
@@ -332,6 +332,8 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             return;
         if (required->status() == CyclicModuleRecord::Status::Evaluating) {
             auto* compiled = dynamicDowncast<ModuleRecord>(required);
+            if (compiled && !compiled->isOf(m_instance))
+                compiled = nullptr;
             if (compiled ? !compiled->isOnStack(context.stack) : !context.stack.contains(required))
                 return;
             ModuleRecord* record = recordOfImporter();
@@ -415,7 +417,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             cyclic->setStatus(isEvaluated ? CyclicModuleRecord::Status::Evaluated : CyclicModuleRecord::Status::EvaluatingAsync);
             member->setCycleRoot(vm, record);
             auto* compiled = dynamicDowncast<ModuleRecord>(member);
-            if (!compiled || !isEvaluated)
+            if (!compiled || !compiled->isOf(m_instance) || !isEvaluated)
                 canRetireComponent = false;
             else if (!compiled->isRetained())
                 recordsToRetire.append(compiled);
@@ -438,7 +440,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 StoredModuleStatus stored = storedStatus(required);
                 if (stored == StoredModuleStatus::Evaluated)
                     continue;
-                if (notBehindMocks && !notBehindMocks->quickGet(required.index())) [[unlikely]]
+                if (mocks.hides(required)) [[unlikely]]
                     continue;
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
@@ -907,10 +909,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     }
 
     // A file that only a mocked module imports never runs.
-    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(root);
-    auto isBehindMock = [&](ModuleID module) {
-        return notBehindMocks && !notBehindMocks->quickGet(module.index());
-    };
+    MocksBelowRoot mocks = mocksBelow(root);
 
     // No link has come to the files. Whoever evaluates a record takes the names behind the body.
     bool didCaptureLibraryModules = false;
@@ -923,7 +922,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 continue;
             break;
         }
-        if (isBehindMock(imported)) [[unlikely]]
+        if (mocks.hides(imported)) [[unlikely]]
             continue;
         if (!std::exchange(didCaptureLibraryModules, true)) {
             captureExportsOfLibraryModules(root);
@@ -1046,7 +1045,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 continue;
             break;
         }
-        if (isBehindMock(imported)) [[unlikely]]
+        if (mocks.hides(imported)) [[unlikely]]
             continue;
         ModuleStatus statusAtStart = status(imported);
         if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
@@ -2058,7 +2057,7 @@ void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
     if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file) || file == m_fileBeingHandedToLoader)
         return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
-    if (!data(file).mayBeImportedWhileItRuns())
+    if (!data(file).mayBeImportedWhileItRuns() || load == LoadOfFile::IsRequested)
         return;
     // The loader takes the names of the file as they are now. Where no importer asks for one of them, only a later require() can show them.
     std::optional<ModuleID> face = m_table.faceOfFile(file);
@@ -2101,6 +2100,9 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     // A graph that the file requires comes to the file: the loader makes its record a second time.
     if (statusAtStart == ModuleStatus::Evaluating)
         RELEASE_AND_RETURN(scope, noteLoadOfFile(module));
+    // A require() started the file, and its face has not begun.
+    noteLoadOfFile(module);
+    RETURN_IF_EXCEPTION(scope, void());
     // Another load comes to the file before the loader has heard that the file threw. The file does not run again, and the record is made of what it has left.
     if (statusAtStart == ModuleStatus::Failed && loader()->isMakingRecordInline(moduleKey(module)))
         return;
@@ -2288,7 +2290,7 @@ JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluatio
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!host().isImportOfMainModule || mainModuleWaitsForItsImport() || !host().isImportOfMainModule(realm, entryPoint))
+    if (!host().isImportOfMainModule || mainModuleWaitsForItsImport() || !host().isImportOfMainModule(realm, moduleIDForHost(*m_instance.program, entryPoint)))
         return evaluation;
 
     switch (evaluation->status()) {
@@ -2302,7 +2304,7 @@ JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluatio
         return capability;
     }
     case JSPromise::Status::Fulfilled:
-        host().runMainModule(realm, entryPoint);
+        host().runMainModule(realm, moduleIDForHost(*m_instance.program, entryPoint));
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         return evaluation;
     case JSPromise::Status::Rejected:
@@ -2320,7 +2322,7 @@ void Modules::runMainModuleThatWaited()
     JSPromise* capability = m_capabilityOfMainModule.get();
     m_evaluationOfImportOfMainModule.clear();
     m_capabilityOfMainModule.clear();
-    host().runMainModule(m_instance.globalObject, m_importOfMainModule);
+    host().runMainModule(m_instance.globalObject, moduleIDForHost(*m_instance.program, m_importOfMainModule));
     if (scope.exception()) [[unlikely]] {
         capability->rejectWithCaughtException(vm, scope);
         return;
@@ -2717,6 +2719,11 @@ JSValue Modules::loadEvictedFile(ModuleID file)
         setValue(file, value);
     if (storesStatus)
         setStoredStatus(file, StoredModuleStatus::Evaluated);
+    // Whoever imports the file from now on gets what this load exports.
+    if (storesExports) {
+        captureExportsAgain(file);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return value;
 }
 
@@ -2726,7 +2733,7 @@ JSValue Modules::answerRequire(ModuleID target)
     auto scope = DECLARE_THROW_SCOPE(vm);
     runMocksBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
-    if (isEvicted(target)) [[unlikely]]
+    if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
     if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
@@ -2946,7 +2953,7 @@ JSObject* Modules::moduleObject(ModuleID module)
             traits.add(ModuleObjectTrait::HasExportsVariable);
         if (mainCommonJSModule() == module)
             traits.add(ModuleObjectTrait::IsMain);
-        host().createModuleObject(realm, pathString(module), module, traits, objects);
+        host().createModuleObject(realm, pathString(module), moduleIDForHost(*m_instance.program, module), traits, objects);
     } else {
         JSObject* meta = importMeta(module);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -2974,7 +2981,7 @@ JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
     if (data(module).kind == ModuleKind::SourceText)
         traits.add(ModuleObjectTrait::IsESModule);
     ModuleObjects objects;
-    host().createModuleObject(m_instance.globalObject, pathString(module), module, traits, objects);
+    host().createModuleObject(m_instance.globalObject, pathString(module), moduleIDForHost(*m_instance.program, module), traits, objects);
     RETURN_IF_EXCEPTION(scope, nullptr);
     objects.module->putDirect(vm, vm.propertyNames->exports, answered);
     ensureLoaded(module).objectMadeByRequire.set(*this, objects.module);

@@ -585,9 +585,15 @@ static void callOperandOfDescribedCall(const ValueFlowStatement& statement, Valu
     }
     if (!keyReadFromReceiver) {
         ValueFlowOperand receiver = context.operandsOf(statement)[1];
-        if (isCalledOnItsHolder)
-            receiver.mask = context.maker().intersect(receiver.mask, ValueSets::complement(objectsShowingOnlyWhatLibraryExports(context)));
-        context.connect(receiver, ValueFlowProgramNodes::escaped());
+        // Which of these receivers escape is one question for all such calls, and the answer changes as the program writes to more holders. runEscape() asks it of one node.
+        // Asked here, every call would run again at each change and mask its receiver anew.
+        if (isCalledOnItsHolder && receiver.maskKind == ValueFlowMaskKind::Plain)
+            context.connect(receiver, context.nodes().ofHost(ValueFlowHostNode::ReceiversOfMembersNobodyKnows));
+        else {
+            if (isCalledOnItsHolder)
+                receiver.mask = context.maker().intersect(receiver.mask, ValueSets::complement(objectsShowingOnlyWhatLibraryExports(context)));
+            context.connect(receiver, ValueFlowProgramNodes::escaped());
+        }
     }
     bool isInLibrary = isLibraryCode(context.program(), context.program().at(statement.function));
     for (const ValueFlowOperand& argument : context.operandsOf(statement).subspan(2)) {
