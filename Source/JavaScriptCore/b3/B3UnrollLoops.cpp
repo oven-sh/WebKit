@@ -100,6 +100,7 @@ private:
         Value* tested { nullptr };
         // Which operand of the comparison it is, where the test branches on the comparison itself.
         std::optional<unsigned> testedOperandOfBranch;
+        Value* comparison { nullptr };
         bool testsCounterBeforeStep { false };
         Value* start { nullptr };
         Value* bound { nullptr };
@@ -301,6 +302,7 @@ private:
             plan.counter = counter->phi;
             plan.tested = tested;
             plan.testedOperandOfBranch = block->last()->child(0) == comparison && !branchesOnNumber ? std::optional<unsigned>(testedIndex) : std::nullopt;
+            plan.comparison = comparison;
             plan.testsCounterBeforeStep = tested == counter->phi;
             plan.start = counter->start;
             plan.bound = bound;
@@ -923,7 +925,9 @@ private:
                 for (Value* value : *block)
                     numberOfValues += countsTowardsSize(value);
             }
-            if (plan.sideTests.isEmpty() && plan.testedOperandOfBranch && numberOfValues <= Limits::maxValuesPerTurnRunInStretches)
+            // What another block reads too, or holds, the cloner has put into a variable by now, for every reader: the branch then names a Get, which has no operands.
+            bool branchStillNamesComparison = plan.testedOperandOfBranch && plan.test->last()->child(0) == plan.comparison;
+            if (plan.sideTests.isEmpty() && branchStillNamesComparison && numberOfValues <= Limits::maxValuesPerTurnRunInStretches)
                 runCopyInStretches(cloner, plan);
             else {
                 BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);
@@ -961,6 +965,7 @@ private:
         BasicBlock* leaves = test->successorBlock(!plan.stayingSuccessorIndex);
         BasicBlock* ended = m_proc.addBlock(test->frequency());
         BasicBlock* polls = m_proc.addBlock(test->frequency());
+        RELEASE_ASSERT(test->last()->child(0)->numChildren() == 2);
         Value* reached = test->last()->child(0)->child(testedOperand);
         Value* end = m_proc.add<VariableValue>(Get, origin, endOfStretch);
         Value* inStretch = m_proc.add<Value>(plan.relation, origin, reached, end);

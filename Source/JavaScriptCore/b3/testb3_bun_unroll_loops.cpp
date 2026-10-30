@@ -634,6 +634,67 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
     }
 }
 
+// The cloner hands such a comparison to every reader through a variable, its own branch too, and a Get has no operands to look at. The copy polls on every turn.
+static void testUnrollLoopsLeavesPollToCopyOfLoopWhoseComparisonCrossesBlocks()
+{
+    constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    enum class Comparison : uint8_t { StandsInFrontOfBlockOfBranch, IsReadInBodyToo };
+    for (Comparison comparison : { Comparison::StandsInFrontOfBlockOfBranch, Comparison::IsReadInBodyToo }) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            if (comparison == Comparison::IsReadInBodyToo && place == TestPlace::Bottom)
+                continue;
+            for (int64_t step : { 1, -2 }) {
+                int64_t first = 7 * stretch + 3;
+                CountedSum sum(step > 0 ? LessThan : GreaterThan, step, first, policyThatPollsBetweenStretches(), Walks::Nothing);
+                PollState state;
+                appendPollOfShortTurns(sum.graph, sum.loop.body, state);
+                sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
+                if (comparison == Comparison::IsReadInBodyToo)
+                    sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.make(sum.loop.body, ZExt32, sum.loop.header->last()->child(0)));
+                sum.finish(sum.loop.body, place);
+
+                if (comparison == Comparison::StandsInFrontOfBlockOfBranch) {
+                    unsigned numberOfBranchesMoved = 0;
+                    Vector<BasicBlock*> blocks;
+                    for (BasicBlock* block : sum.proc)
+                        blocks.append(block);
+                    for (BasicBlock* block : blocks) {
+                        if (block->last()->opcode() != Branch || !sum.proc.naturalLoops().innerMostLoopOf(block))
+                            continue;
+                        BasicBlock* branches = sum.proc.addBlock(block->frequency());
+                        FrequentedBlock taken = block->taken();
+                        FrequentedBlock notTaken = block->notTaken();
+                        Value* branch = block->values().takeLast();
+                        branches->append(branch);
+                        branches->setSuccessors(taken, notTaken);
+                        block->appendNew<Value>(sum.proc, Jump, branch->origin());
+                        block->setSuccessors(FrequentedBlock(branches));
+                        ++numberOfBranchesMoved;
+                    }
+                    CHECK_EQ(numberOfBranchesMoved, 1u);
+                    sum.proc.resetReachability();
+                    sum.proc.invalidateCFG();
+                    sum.proc.resetValueOwners();
+                    validate(sum.proc);
+                }
+
+                CHECK(unrollLoopsAndValidate(sum.proc));
+                CHECK_EQ(sum.proc.report().countOf(Counter::LoopsUnrolled), 0u);
+                CHECK_EQ(sum.proc.report().countOf(Counter::LoopPollsRemoved), 1u);
+                checkValueCountInEachLoop(sum.proc, isLoopPoll, "polls"_s, { 0, 1 });
+                auto code = compileProc(sum.proc);
+                for (int64_t turns : { int64_t { -5 }, int64_t { 0 }, int64_t { 1 }, int64_t { 9 }, stretch - 1, stretch, stretch + 1, 2 * stretch + 5 }) {
+                    int64_t bound = first + turns * step;
+                    int64_t numberOfTurns = sum.expected(bound, one);
+                    state = { };
+                    CHECK_EQ(run(*code, bound), sum.expected(bound, itself) + (comparison == Comparison::IsReadInBodyToo ? numberOfTurns : 0));
+                    CHECK_EQ(state.numberOfPolls, turns <= stretch ? 0 : numberOfTurns);
+                }
+            }
+        }
+    }
+}
+
 static void testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew()
 {
     for (Walks walks : { Walks::Nothing, Walks::Data }) {
@@ -1177,6 +1238,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsPollsOnceForAllTurns());
     RUN(testUnrollLoopsPollsBetweenStretches());
     RUN(testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut());
+    RUN(testUnrollLoopsLeavesPollToCopyOfLoopWhoseComparisonCrossesBlocks());
     RUN(testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew());
     RUN(testUnrollLoopsKeepsPollThatMustRunOnEveryTurn());
     RUN(testUnrollLoopsTakesPollOutOfLoopItselfWhereRarePathsComeBack());
