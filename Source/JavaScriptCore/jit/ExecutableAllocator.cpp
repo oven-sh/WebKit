@@ -672,6 +672,17 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+static void zeroExecutableMemoryOnFreeIfNeeded(void* start, size_t sizeInBytes)
+{
+    if (!Options::zeroExecutableMemoryOnFree()) [[likely]]
+        return;
+    // We don't have a performJITMemset so just use a zeroed buffer.
+    auto zeros = MallocSpan<uint8_t>::zeroedMalloc(sizeInBytes);
+    auto span = zeros.span();
+    performJITMemcpy<jitMemcpyRepatch>(start, span.data(), span.size());
+    MacroAssembler::cacheFlush(start, sizeInBytes);
+}
+
 class FixedVMPoolExecutableAllocator final {
     // This does not need to be TZONE_ALLOCATED because it's only used as a singleton
     // and is only allocated once long before any scripts are executed.
@@ -1154,6 +1165,12 @@ private:
         void notifyPageIsFree(void* page, size_t count) override
         {
             m_fixedAllocator.m_reservation.decommit(page, executablePageSize() * count);
+        }
+
+        void release(const Locker<Lock>& locker, MetaAllocatorHandle& handle) override
+        {
+            zeroExecutableMemoryOnFreeIfNeeded(handle.start().untaggedPtr(), handle.sizeInBytes());
+            Base::release(locker, handle);
         }
 #endif // !ENABLE(LIBPAS_JIT_HEAP)
 
@@ -1661,12 +1678,7 @@ ExecutableMemoryHandle::~ExecutableMemoryHandle()
     AssemblyCommentRegistry::singleton().unregisterCodeRange(start().untaggedPtr(), end().untaggedPtr());
     FixedVMPoolExecutableAllocator* allocator = g_jscConfig.fixedVMPoolExecutableAllocator;
     allocator->handleWillBeReleased(*this, sizeInBytes());
-    if (Options::zeroExecutableMemoryOnFree()) [[unlikely]] {
-        // We don't have a performJITMemset so just use a zeroed buffer.
-        auto zeros = MallocSpan<uint8_t>::zeroedMalloc(sizeInBytes());
-        auto span = zeros.span();
-        performJITMemcpy<jitMemcpyRepatch>(start().untaggedPtr(), span.data(), span.size());
-    }
+    zeroExecutableMemoryOnFreeIfNeeded(start().untaggedPtr(), sizeInBytes());
     jit_heap_deallocate(key());
 }
 

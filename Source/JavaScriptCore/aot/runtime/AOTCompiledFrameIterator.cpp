@@ -811,16 +811,6 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     return result;
 }
 
-// Native code may sign the return addresses that it holds.
-static ALWAYS_INLINE const void* removeSignature(const void* returnAddress)
-{
-#if CPU(ARM64) && !OS(DARWIN)
-    return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(returnAddress) & ((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1));
-#else
-    return removeCodePtrTag(returnAddress);
-#endif
-}
-
 // The function that a call entered, if the call records it.
 struct CalleeOfCall {
     bool names(const CodeLocation& site) const { return function && site.kind == CodeKind::Function && site.function == *function; }
@@ -947,16 +937,16 @@ static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecor
 static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Image& image, const SampledRegisters& registers, CallFrame* topCallFrame, const SuspendedThreadStack& stack)
 {
     auto* frame = static_cast<CallFrame*>(registers.framePointer);
-    const void* linkRegister = removeSignature(registers.linkRegister);
+    const void* linkRegister = removeReturnAddressSignature(registers.linkRegister);
     if (linkRegister && stack.contains(frame)
-        && removeSignature(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != linkRegister
+        && removeReturnAddressSignature(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != linkRegister
         && image.locate(linkRegister).runsCompiledCode())
         return SampledTop { frame, linkRegister, nullptr };
     const void* pc = registers.pc;
     const void* endOfFrameBelow = registers.stackPointer;
     while (stack.contains(frame)) {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(frame);
-        const void* returnAddress = removeSignature(record->returnPC);
+        const void* returnAddress = removeReturnAddressSignature(record->returnPC);
         CodeLocation returnSite = image.locate(returnAddress);
         if (frame == topCallFrame && !isOperationReturnSite(returnSite))
             return SampledTop { topCallFrame, pc, nullptr };

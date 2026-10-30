@@ -1801,6 +1801,10 @@ JSC_DEFINE_CUSTOM_GETTER(customGetValueGlobalObject, (JSGlobalObject* globalObje
     return JSValue::encode(globalObject->globalThis());
 }
 
+// Signs the return address that it saves, whatever this file is compiled with: a test needs an inline cache stub whose native callee does.
+#if CPU(ARM64) && OS(LINUX)
+__attribute__((target("branch-protection=pac-ret")))
+#endif
 JSC_DEFINE_CUSTOM_SETTER(customSetAccessor, (JSGlobalObject* globalObject, EncodedJSValue thisObject, EncodedJSValue encodedValue, PropertyName))
 {
     DollarVMAssertScope assertScope;

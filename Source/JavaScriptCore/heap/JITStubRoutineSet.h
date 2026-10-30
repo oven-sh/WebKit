@@ -53,7 +53,8 @@ public:
     
     void mark(void* candidateAddress)
     {
-        uintptr_t address = removeCodePtrTag<uintptr_t>(candidateAddress);
+        // A routine that has called native code is found by the return address that the callee saved.
+        uintptr_t address = removeReturnAddressSignature<uintptr_t>(candidateAddress);
         if (!m_range.contains(address))
             return;
         markSlow(address);
