@@ -535,11 +535,12 @@ void ValueFlowHeapTables::listWherePackagesAreNamedInPaths()
         StringID path = m_program.modules[index].path;
         std::span<const uint8_t> text = m_program.string(path);
         m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0, ModuleID(index) });
-        if (const Module& module = m_program.modules[index]; module.runtimeModule && (!module.body || isAskedOfHostByName(module))) {
-            m_libraryModulesThatTextsStandFor.append(ModuleID(index));
+        if (const Module& module = m_program.modules[index]; module.runtimeModule) {
             m_namesOfLibraryModules.append(RestOfPath { path, 0, ModuleID(index) });
             if (spanHasPrefix(text, std::span(prefixOfLibrary)))
                 m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()), ModuleID(index) });
+            for (StringID name : module.otherNames)
+                m_namesOfLibraryModules.append(RestOfPath { name, 0, ModuleID(index) });
         }
         for (size_t start = 0; start + folder.size() < text.size(); ++start) {
             uint8_t separator = text[start + folder.size()];

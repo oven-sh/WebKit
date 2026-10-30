@@ -111,6 +111,13 @@ static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFra
     return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
 }
 
+// Out of line so the frame that a poll collects from has no slot that only the throw writes.
+static NEVER_INLINE void throwOwedOutOfMemoryError(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    DeferGCForAWhile deferGC(vm);
+    throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+}
+
 // The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
 // A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
 static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
@@ -126,8 +133,7 @@ static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& sco
         return;
     if (!hasCollectedInPolledCall(vm, stackPointerOfCaller, frameOfPollStub) || vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm))
         return;
-    DeferGCForAWhile deferGC(vm);
-    throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+    throwOwedOutOfMemoryError(vm, globalObject, scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
@@ -155,10 +161,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
     // Thrown at such a poll, the error would pass the catch clause of the try block around the loop. It stays owed until a poll under a handler, a function entry or the return of an operation.
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]] {
-        DeferGCForAWhile deferGC(vm);
-        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
-    }
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]]
+        throwOwedOutOfMemoryError(vm, globalObject, scope);
     OPERATION_RETURN(scope);
 }
 

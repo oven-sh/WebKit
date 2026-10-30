@@ -561,7 +561,7 @@ NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeForUncached(const ValueFl
     bool namesNodeOfThisRound = key.kind == ValueFlowMadeNodeKind::Masked && ValueFlowRoundLog::isNumberedByLog(key.maskedNode());
     std::optional<uint32_t> existing = namesNodeOfThisRound ? std::nullopt : m_solver.findOrMakeNodesWhereAskedFor(key, hash, m_log, m_maker);
     ValueFlowNodeID node = existing ? m_solver.m_madeNodes[*existing].first : m_log.nodeFor(key);
-    if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].isOfThisTurn)
+    if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].has(ValueFlowSolver::MadeNodes::IsOfThisTurn))
         m_constantsOfThisTurn.add(node.index(), key.set);
     else if (existing)
         known = { static_cast<uint64_t>(key.payload) << 32 | key.set.index(), static_cast<uint32_t>(key.kind) << 8 | key.detail, node, *existing };
@@ -582,7 +582,7 @@ ValueFlowNodeID ValueFlowRuleContext::constantNodeForEdge(const ValueFlowNodeKey
         return ofTurn.node;
     uint32_t number = *m_solver.findOrMakeNodesWhereAskedFor(key, hash, m_log, m_maker);
     ValueFlowNodeID node = m_solver.m_madeNodes[number].first;
-    if (m_solver.m_madeNodes[number].isOfThisTurn)
+    if (m_solver.m_madeNodes[number].has(ValueFlowSolver::MadeNodes::IsOfThisTurn))
         ofTurn = { detailAndSet, turn, node };
     else
         known = { key.set.index(), key.detail, node, number };

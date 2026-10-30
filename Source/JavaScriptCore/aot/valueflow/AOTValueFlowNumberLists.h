@@ -266,6 +266,123 @@ private:
     size_t m_numberOfNumbers { 0 };
 };
 
+// Many maps from 32-bit numbers to 32-bit values, laid out as the lists above: a map is named by 32 bits, 0 for the empty one. Up to sixteen keys stand side by side behind their count, their values behind them;
+// more are dealt out over eight maps by three bits of a hash of the key. A key with its value takes about eleven bytes. One thread writes at a time, and nobody reads meanwhile.
+class ValueFlowNumberMaps {
+public:
+    const uint32_t* find(uint32_t map, uint32_t key) const
+    {
+        for (unsigned shift = firstShift; map; shift -= bitsDealtBy) {
+            const uint32_t* words = m_words.at(map);
+            if (words[0] == isDealtOut) {
+                map = words[1 + mapDealtTo(key, shift)];
+                continue;
+            }
+            for (uint32_t index = 0; index < words[0]; ++index) {
+                if (words[1 + index] == key)
+                    return words + 1 + roomFor(words[0]) + index;
+            }
+            return nullptr;
+        }
+        return nullptr;
+    }
+
+    // The value of a new key is 0. The reference holds until the next key is added.
+    uint32_t& ensure(uint32_t& map, uint32_t key) { return ensureBehind(map, key, firstShift); }
+
+    size_t bytesInUse() const { return m_numberOfKeys * 2 * sizeof(uint32_t); }
+    size_t memoryInBytes() const { return m_words.bytesTaken(); }
+
+private:
+    static constexpr uint32_t isDealtOut = UINT32_MAX;
+    static constexpr uint32_t mostSideBySide = 16;
+    static constexpr unsigned bitsDealtBy = 3;
+    static constexpr unsigned mapsDealtTo = 1 << bitsDealtBy;
+    static constexpr unsigned firstShift = 32 - bitsDealtBy;
+
+    static uint32_t roomFor(uint32_t size)
+    {
+        if (size <= 4)
+            return size;
+        uint32_t powerOfTwo = std::bit_ceil(size);
+        return size <= powerOfTwo / 4 * 3 ? powerOfTwo / 4 * 3 : powerOfTwo;
+    }
+    // Keys that differ have hashes that differ. Maps that 30 bits have dealt out hold four keys at the most.
+    static unsigned mapDealtTo(uint32_t key, unsigned shift) { return key * 0x9e3779b1u >> shift & (mapsDealtTo - 1); }
+
+    uint32_t& ensureBehind(uint32_t& map, uint32_t key, unsigned shift)
+    {
+        if (!map) {
+            map = takeWords(3);
+            uint32_t* words = m_words.at(map);
+            words[0] = 1;
+            words[1] = key;
+            words[2] = 0;
+            ++m_numberOfKeys;
+            return words[2];
+        }
+        uint32_t* words = m_words.at(map);
+        uint32_t size = words[0];
+        if (size == isDealtOut)
+            return ensureBehind(words[1 + mapDealtTo(key, shift)], key, shift - bitsDealtBy);
+        uint32_t room = roomFor(size);
+        for (uint32_t index = 0; index < size; ++index) {
+            if (words[1 + index] == key)
+                return words[1 + room + index];
+        }
+        if (size == mostSideBySide) {
+            uint32_t dealtOut = takeWords(1 + mapsDealtTo);
+            uint32_t* wordsDealtOut = m_words.at(dealtOut);
+            wordsDealtOut[0] = isDealtOut;
+            for (unsigned index = 0; index < mapsDealtTo; ++index)
+                wordsDealtOut[1 + index] = 0;
+            m_numberOfKeys -= size;
+            for (uint32_t index = 0; index < size; ++index)
+                ensureBehind(wordsDealtOut[1 + mapDealtTo(words[1 + index], shift)], words[1 + index], shift - bitsDealtBy) = words[1 + room + index];
+            giveBackWords(map, 1 + 2 * room);
+            map = dealtOut;
+            return ensureBehind(wordsDealtOut[1 + mapDealtTo(key, shift)], key, shift - bitsDealtBy);
+        }
+        if (size == room) {
+            uint32_t roomOfLarger = roomFor(size + 1);
+            uint32_t larger = takeWords(1 + 2 * roomOfLarger);
+            uint32_t* wordsOfLarger = m_words.at(larger);
+            for (uint32_t index = 0; index < size; ++index) {
+                wordsOfLarger[1 + index] = words[1 + index];
+                wordsOfLarger[1 + roomOfLarger + index] = words[1 + room + index];
+            }
+            giveBackWords(map, 1 + 2 * room);
+            map = larger;
+            words = wordsOfLarger;
+            room = roomOfLarger;
+        }
+        words[0] = size + 1;
+        words[1 + size] = key;
+        words[1 + room + size] = 0;
+        ++m_numberOfKeys;
+        return words[1 + room + size];
+    }
+
+    uint32_t takeWords(uint32_t numberOfWords)
+    {
+        uint32_t& firstFree = m_firstFree[numberOfWords];
+        if (firstFree)
+            return std::exchange(firstFree, *m_words.at(firstFree));
+        return m_words.take(numberOfWords);
+    }
+
+    void giveBackWords(uint32_t position, uint32_t numberOfWords)
+    {
+        uint32_t& firstFree = m_firstFree[numberOfWords];
+        *m_words.at(position) = firstFree;
+        firstFree = position;
+    }
+
+    ValueFlowWords m_words;
+    std::array<uint32_t, 2 + 2 * mostSideBySide> m_firstFree { };
+    size_t m_numberOfKeys { 0 };
+};
+
 } } } // namespace JSC::AOT::Typed
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

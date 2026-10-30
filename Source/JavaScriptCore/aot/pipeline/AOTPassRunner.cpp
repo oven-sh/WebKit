@@ -797,7 +797,9 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     context.changes.settle();
     const bool reachedFixpoint = run.reachedFixpoint.get(index);
     run.reachedFixpoint.clear(index);
-    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
+    // No round follows a step outside the rounds.
+    const bool hasWaitedLongEnough = !context.isInRounds && run.isImpatient(id);
+    if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index) && !hasWaitedLongEnough) {
         if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
             // Leave the same state behind as the idle run that this skips.
             ++run.numberOfSkippedRuns;
@@ -1121,7 +1123,7 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
         WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
         switch (step.kind) {
         case ScheduleStep::Kind::RunPass:
-            if (!step.isBehindRounds && run.isAtRest(step.pass))
+            if (!step.isBehindRounds && run.isAtRest(step.pass) && (context.isInRounds || !run.isImpatient(step.pass)))
                 break;
             if (step.isBehindRounds) {
                 // It has run in the rounds and changed nothing there, on purpose.
@@ -1163,7 +1165,10 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
                     break;
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
                 runSteps(body, stepsInside.subspan(index + 1, end - index - 1), context, run);
-                if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
+                if (run.isStopped)
+                    break;
+                // What an impatient pass finds may start another round.
+                if (run.numberOfChanges == numberOfChangesBefore && (wasInRounds || !run.giveWorkToImpatientPasses(stepsInside[index].passes)))
                     break;
             }
             context.isInRounds = wasInRounds;

@@ -394,7 +394,7 @@ JSValue Object::materializeDeferredClosure(VM& vm, const FieldData& field)
         return JSValue::decode(word);
     }
 
-    JSObject* closure = state.objects->closures.createClosureOver(vm, closureFunctionWithNumber(layout().deferredClosureNumberOf(field)), valueCapturedByClosureOf(*this, field, cageBase));
+    JSObject* closure = state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(layout().deferredClosureNumberOf(field))), valueCapturedByClosureOf(*this, field, cageBase));
     JSCell* held = closure;
     if (field.isAccessor()) [[unlikely]]
         held = GetterSetter::create(vm, state.instance.globalObject, closure, nullptr);

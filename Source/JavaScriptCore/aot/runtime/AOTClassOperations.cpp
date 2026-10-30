@@ -23,6 +23,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
@@ -175,6 +176,13 @@ static PropertyOffset offsetAt(int32_t location)
     return static_cast<PropertyOffset>(firstOutOfLineOffset + offsetInButterfly(firstOutOfLineOffset) - location / static_cast<int32_t>(sizeof(EncodedJSValue)));
 }
 
+// The object whose Structure says where the private names lie that no field holds. A class whose parent the compiler does not know has a layout without the parent's names: its instances keep them among their extra properties.
+static JSObject* holderOfNamesWithoutField(JSObject* object)
+{
+    Object* compiledObject = compiledObjectOrNull(object);
+    return compiledObject ? extraPropertiesIfMade(*compiledObject) : object;
+}
+
 // The offset of the value, if a record for the object's Structure says that the object has the name and belongs to this evaluation.
 static std::optional<PropertyOffset> findInKnownStructure(JSCellButterfly* token, uint32_t field, JSObject* object)
 {
@@ -282,6 +290,13 @@ static const LayoutData& declaringLayoutOf(State& state, const Object& object, J
     return layout.index == token->get(ClassToken::classIndexSlot).asUInt32() ? layout : declaringLayoutOf(state, token);
 }
 
+// A read may not allocate, so whoever defines a name outside a field makes the records.
+static void ensureRecordsOfKnownStructures(VM& vm, State& state, JSCellButterfly* token)
+{
+    if (!token->get(ClassToken::knownStructuresSlot)) [[unlikely]]
+        token->setIndex(vm, ClassToken::knownStructuresSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::slotOfRecord(declaringLayoutOf(state, token).numberOfFields, 0)));
+}
+
 static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint32_t fieldIndex)
 {
     RELEASE_ASSERT(fieldIndex < declaringLayout.numberOfFields);
@@ -339,7 +354,7 @@ struct PrivateProperty {
     const FieldData* field { nullptr };
     JSValue value;
     bool isInSlot { false };
-    // Only for a property of an ordinary object.
+    // Only for a property of an ordinary object or of the extra properties.
     PropertyOffset offset { invalidOffset };
     unsigned attributes { 0 };
 };
@@ -371,8 +386,11 @@ static PrivateProperty findPrivateProperty(VM& vm, State& state, JSObject* objec
         FieldProperty found = findFieldProperty(vm, *compiledObject, *property.field);
         property.value = found.valueOrAccessor;
         property.isInSlot = found.isInSlot;
-    } else if (JSObject* extra = compiledObject->extraProperties())
-        property.value = extra->getDirect(vm, uid);
+    } else if (JSObject* extra = compiledObject->extraProperties()) {
+        property.offset = extra->getDirectOffset(vm, uid, property.attributes);
+        if (isValidOffset(property.offset))
+            property.value = extra->getDirect(property.offset);
+    }
     return property;
 }
 
@@ -407,17 +425,18 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
 // What the next access to an object of the same Structure need not look for again.
 static void rememberLocation(VM& vm, JSObject* object, JSCellButterfly* token, uint32_t fieldIndex, const PrivateLocation& found)
 {
-    if (found.compiledObject || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || object->structure()->isDictionary())
+    JSObject* holder = holderOfNamesWithoutField(object);
+    if (!holder || !found.name || found.property.attributes || !isValidOffset(found.property.offset) || holder->structure()->isDictionary())
         return;
     // The declared name is shared by all evaluations of the class, and the brand tells them apart. A name that this evaluation has made for itself needs no brand, nor does a class that is evaluated once.
     bool needsBrand = found.name == found.declaredName && found.hasBrand && !found.isOfOnlyEvaluation;
     if (needsBrand && !isValidOffset(found.brand.offset))
         return;
     // Compiled code stores at a remembered location and tells the Structure nothing.
-    if (object->structure()->mayHaveImmutableProperties())
+    if (holder->structure()->mayHaveImmutableProperties())
         return;
-    object->structure()->didReplaceProperty(found.property.offset);
-    addKnownStructure(vm, token, fieldIndex, object->structure(), found.property.offset, needsBrand ? std::optional(found.brand.offset) : std::nullopt);
+    holder->structure()->didReplaceProperty(found.property.offset);
+    addKnownStructure(vm, token, fieldIndex, holder->structure(), found.property.offset, needsBrand ? std::optional(found.brand.offset) : std::nullopt);
 }
 
 static JSObject* createAbsentNameError(JSGlobalObject* globalObject, const PrivateLocation& absent)
@@ -534,10 +553,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* inst
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (JSObject* holder = holderOfNamesWithoutField(base)) {
+        if (std::optional<PropertyOffset> offset = findInKnownStructure(classToken, field, holder))
+            OPERATION_RETURN(scope, JSValue::encode(holder->getDirect(*offset)));
+    }
     if (JSValue value = tryReadFromSlot(vm, *instance->state, base, classToken, field))
         OPERATION_RETURN(scope, JSValue::encode(value));
-    if (std::optional<PropertyOffset> offset = findInKnownStructure(classToken, field, base))
-        OPERATION_RETURN(scope, JSValue::encode(base->getDirect(*offset)));
     PrivateLocation location = locatePrivateName(vm, *instance->state, base, classToken, field);
     if (!location.name) [[unlikely]] {
         throwException(globalObject, scope, createAbsentNameError(globalObject, location));
@@ -558,7 +579,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateHas, EncodedJSValue, (Instance* inst
         OPERATION_RETURN(scope, encodedJSValue());
     }
     JSObject* holder = asObject(base);
-    if (tryReadFromSlot(vm, *instance->state, holder, classToken, field) || findInKnownStructure(classToken, field, holder))
+    JSObject* holderWithoutField = holderOfNamesWithoutField(holder);
+    if ((holderWithoutField && findInKnownStructure(classToken, field, holderWithoutField)) || tryReadFromSlot(vm, *instance->state, holder, classToken, field))
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(true)));
     if (isKnownToLackName(classToken, field, holder))
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
@@ -578,16 +600,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     JSValue stored = JSValue::decode(value);
-    if (tryStoreIntoFilledSlot(vm, *instance->state, base, classToken, field, stored))
-        OPERATION_RETURN(scope);
-    if (std::optional<PropertyOffset> offset = findInKnownStructure(classToken, field, base)) {
-        Structure* structure = base->structure();
-        if (!structure->mayHaveImmutableProperties()) [[likely]] {
-            structure->didReplaceProperty(*offset);
-            base->putDirectOffset(vm, *offset, stored);
-            OPERATION_RETURN(scope);
+    if (JSObject* holder = holderOfNamesWithoutField(base)) {
+        if (std::optional<PropertyOffset> offset = findInKnownStructure(classToken, field, holder)) {
+            Structure* structure = holder->structure();
+            if (!structure->mayHaveImmutableProperties()) [[likely]] {
+                structure->didReplaceProperty(*offset);
+                holder->putDirectOffset(vm, *offset, stored);
+                OPERATION_RETURN(scope);
+            }
         }
     }
+    if (tryStoreIntoFilledSlot(vm, *instance->state, base, classToken, field, stored))
+        OPERATION_RETURN(scope);
     PrivateLocation location = locatePrivateName(vm, *instance->state, base, classToken, field);
     rememberLocation(vm, base, classToken, field, location);
     if (!location.name) {
@@ -640,8 +664,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     UniquedStringImpl* uid = canUseDeclaredName ? location.declaredName : &privateNameOf(vm, state, classToken, field)->uid();
     if (Object* compiledObject = location.compiledObject) {
         const FieldData* own = canUseDeclaredName ? location.underDeclaredName.field : nullptr;
-        if (!own || !tryCreateField(vm, compiledObject->state(), *compiledObject, *own, defined))
+        if (!own || !tryCreateField(vm, compiledObject->state(), *compiledObject, *own, defined)) {
             compiledObject->putDirectFromNativeCode(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None));
+            ensureRecordsOfKnownStructures(vm, state, classToken);
+        }
     } else {
         // A private name is no property, so a frozen array takes one. The structure of an array whose elements were frozen in place admits nothing more, that of the ordinary frozen form does.
         if (base->hasFrozenElementsInPlace()) [[unlikely]]
@@ -651,8 +677,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
             PutPropertySlot slot(base, true);
             base->definePrivateField(globalObject, uid, defined, slot);
         }
-        if (!classToken->get(ClassToken::knownStructuresSlot)) [[unlikely]]
-            classToken->setIndex(vm, ClassToken::knownStructuresSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::slotOfRecord(declaringLayoutOf(state, classToken).numberOfFields, 0)));
+        ensureRecordsOfKnownStructures(vm, state, classToken);
         // A field of a class that has a brand goes under the declared name in the objects of this evaluation alone, which the brand in the object tells.
         bool needsBrand = !isBrand && location.hasBrand;
         if (canUseDeclaredName && (!needsBrand || isValidOffset(location.brand.offset)))

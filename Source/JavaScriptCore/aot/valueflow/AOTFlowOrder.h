@@ -91,7 +91,6 @@ struct FlowOrderInputs {
     Vector<Vector<FunctionID>> calleeLists;
     Vector<FlowStaticFieldAccess> staticFieldAccesses;
     BitVector staticFieldsOfEscapedClasses;
-    BitVector membersOfFunctionsDefinedByStores;
 
     FunctionID host() const { return FunctionID(program.functions.size()); }
 

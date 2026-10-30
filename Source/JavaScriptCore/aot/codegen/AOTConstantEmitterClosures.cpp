@@ -20,6 +20,7 @@
 #include "AOTInstance.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTShapeTestEmitter.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubsClosures.h"
 #include "AOTVector.h"
@@ -90,22 +91,59 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     });
 }
 
-std::optional<CellPointer> ConstantEmitter::tryMakeClosureOfField(const OperationContext& context, FunctionID function, CellPointer object, uint32_t offsetOfSlot, bool capturesObject)
+CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context, std::span<const DeferredFunction> functions, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime)
 {
-    const Function& callee = m_program.at(function);
-    FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
-    if (!entrypoint || callee.captures.size() != capturesObject || m_placement.closureCellNumber(entrypoint))
-        return std::nullopt;
-    FunctionKindData kind = m_placement.functionKind(entrypoint);
-    if (!kind.isSlim)
-        return std::nullopt;
-    if (capturesObject) {
-        Representation representation = declaredRepresentationOf(m_program, callee.captures[0]);
-        if (representation != Representation::Cell && representation != Representation::JSValue)
-            return std::nullopt;
+    // One stub makes the closures of one kind. Which function a closure is of is a number in the request.
+    struct Made {
+        const DeferredFunction* function;
+        uint32_t closureNumber;
+    };
+    Vector<Made, 4> made;
+    std::optional<unsigned> slimClosureKind;
+    for (const DeferredFunction& deferred : functions) {
+        const Function& callee = m_program.at(deferred.function);
+        FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, deferred.function));
+        // A class with one class object has one closure, which the run time keeps.
+        if (!entrypoint || callee.captures.size() != capturesObject || m_placement.classConstructedBy(entrypoint) || m_placement.classConstructedBy(deferred.function))
+            continue;
+        FunctionKindData kind = m_placement.functionKind(entrypoint);
+        if (!kind.isSlim || kind.isConstructor || (slimClosureKind && *slimClosureKind != kind.slimClosureKind()))
+            continue;
+        if (capturesObject) {
+            Representation representation = declaredRepresentationOf(m_program, callee.captures[0]);
+            if (representation != Representation::Cell && representation != Representation::JSValue)
+                continue;
+        }
+        slimClosureKind = kind.slimClosureKind();
+        made.append({ &deferred, m_placement.closureNumberOf(entrypoint) });
     }
-    Integer request = integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32 | m_placement.closureNumberOf(entrypoint)));
-    return CellPointer(callStub(context, makeClosureOfField(kind.slimClosureKind(), capturesObject), { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
+    if (made.isEmpty())
+        return makeInRunTime();
+
+    ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+    std::optional<Word32> shapeWord;
+    auto isOf = [&](const DeferredFunction& deferred) {
+        if (!shapeWord)
+            shapeWord = shapes.shapeWordOf(object);
+        Condition result;
+        for (LayoutID layout : deferred.layouts)
+            result = logicalOr(result, shapes.isShapeOf(*shapeWord, layout));
+        return result;
+    };
+    auto makeInStub = [&] {
+        Word32 closureNumber = word32(made.last().closureNumber);
+        for (size_t index = 0; index + 1 < made.size(); ++index)
+            closureNumber = select(isOf(*made[index].function), word32(made[index].closureNumber), closureNumber);
+        Integer request = bitOr(zeroExtended(closureNumber), integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32)));
+        return CellPointer(callStub(context, AOT::makeClosureOfField(*slimClosureKind, capturesObject), { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
+    };
+    if (made.size() == functions.size())
+        return makeInStub();
+
+    Condition isMadeInStub;
+    for (const Made& one : made)
+        isMadeInStub = logicalOr(isMadeInStub, isOf(*one.function));
+    return either<CellPointer>(isMadeInStub, makeInStub, makeInRunTime);
 }
 
 bool ConstantEmitter::canUseClosureStub(const NewClosureRequest& request) const

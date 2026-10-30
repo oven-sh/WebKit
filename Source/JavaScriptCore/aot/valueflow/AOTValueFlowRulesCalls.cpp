@@ -620,7 +620,7 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     return context.contains(context.valueOf(context.readWhatWasWritten(inHandsOfProgram, ValueFlowName::property(context.program(), key))), ValueFlowUniverse::unknownObject());
 }
 
-static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
+static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key)
 {
     context.forEachMemberInLine(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
@@ -636,7 +636,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     // A proxy answers any name with what its trap returns.
     if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
         letWhateverHasEscapedBeCalled(context);
-    callOperandOfDescribedCall(statement, context, receiversAreToldApart && statement.key == key ? key : PropertyKeyID(), true);
+    callOperandOfDescribedCall(statement, context, statement.key == key ? key : PropertyKeyID(), true);
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)
@@ -904,7 +904,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (placeholder == ValueFlowUniverse::unknownObject() && isCodeThatRecordsDescribe(context.universe(), statement.function))
             callOperandOfDescribedCall(statement, context);
         else if (keyOfMember)
-            callMemberNobodyKnows(statement, context, keyOfMember, context.meet(callees, enteredClosures));
+            callMemberNobodyKnows(statement, context, keyOfMember);
         else
             passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
     }

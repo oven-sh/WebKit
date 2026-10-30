@@ -131,6 +131,9 @@ HeapSet MemoryNumbering::writesOf(Value* value)
         return constantEffects.fence ? HeapSet(HeapRange::top()) : constantEffects.writes;
     if (isLoad(value->opcode()) && !value->as<MemoryValue>()->hasFence())
         return HeapSet();
+    // A frame comes back from a suspension without the slots that are dead there.
+    if (auto* patchpoint = value->as<PatchpointValue>(); patchpoint && patchpoint->isSuspension())
+        return HeapSet(HeapRange::top());
     Effects effects = value->effects();
     return effects.fence ? HeapSet(HeapRange::top()) : effects.writes;
 }
@@ -450,6 +453,12 @@ MemoryNumbering::Result MemoryNumbering::replaceIfRedundant(Value* current)
             return Result::Unchanged;
         }
         if (memory->isStore()) {
+            // Nothing but this code writes a slot of its frame, so one that holds the value already is not stored again.
+            if (memory->opcode() == Store && memory->lastChild()->opcode() == SlotBase
+                && m_values.find(keyForLoad(Load, memory->child(0)->type(), memory)) == std::optional(memory->child(0))) {
+                current->replaceWithNop();
+                return Result::Replaced;
+            }
             didWriteMemory(memory->range(), memory->origin());
             if (memory->opcode() == Store) {
                 ValueKey keyOfLoad = keyForLoad(Load, memory->child(0)->type(), memory);

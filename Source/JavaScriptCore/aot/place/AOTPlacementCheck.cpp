@@ -1088,6 +1088,10 @@ static void checkStaticsExtents(const PlacementCheckContext& context)
     }
     for (auto& cell : context.statics.moduleBuiltinCells)
         add(cell.offset, sizeOfStaticsWord);
+    for (auto offset : context.statics.moduleNamespaceOffsets) {
+        if (offset)
+            add(*offset, sizeOfStaticsWord);
+    }
     for (auto offset : context.statics.freeCellOffsets) {
         if (offset)
             add(*offset, sizeOfStaticsWord);
@@ -1132,6 +1136,8 @@ static void checkRoots(const PlacementCheckContext& context)
         context.expect(!offset || isRoot(context.statics, *offset), PlacementRule::RootMissing);
     for (auto& cell : context.statics.moduleBuiltinCells)
         context.expect(isRoot(context.statics, cell.offset), PlacementRule::RootMissing);
+    for (auto offset : context.statics.moduleNamespaceOffsets)
+        context.expect(!offset || isRoot(context.statics, *offset), PlacementRule::RootMissing);
 }
 
 static void checkClearedRanges(const PlacementCheckContext& context)

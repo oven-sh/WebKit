@@ -33,9 +33,11 @@
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
+#include "MachineStackMarker.h"
 #include "MarkedSpaceInlines.h"
 #include "MicrotaskQueue.h"
 #include "ObjectConstructor.h"
+#include "SimpleMarkingConstraint.h"
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -1170,6 +1172,80 @@ static void checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten(LoadedProgram& 
 #endif
 }
 
+static const uint64_t* frameOfCollectionCaller;
+static const Thread* threadOfCollectionCaller;
+static unsigned numberOfCollectionsRead;
+
+// Runs while the collection marks. What lies below callWithCurrentThreadState() is not scanned.
+static NEVER_INLINE void readFramesThatCollectionScans()
+{
+    if (!frameOfCollectionCaller || &Thread::currentSingleton() != threadOfCollectionCaller)
+        return;
+    static constexpr size_t largestCapturingFunction = KB;
+    auto* frame = static_cast<const uint64_t*>(__builtin_frame_address(0));
+    unsigned numberOfFramesBelow = 0;
+    while (std::bit_cast<uintptr_t>(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))) - std::bit_cast<uintptr_t>(&callWithCurrentThreadState) >= largestCapturingFunction) {
+        frame = *reinterpret_cast<const uint64_t* const*>(frame);
+        AOT_TEST_CHECK(++numberOfFramesBelow < 40 && frame < frameOfCollectionCaller);
+    }
+    frame = *reinterpret_cast<const uint64_t* const*>(frame);
+    unsigned numberOfFrames = 0;
+    unsigned numberOfUnwrittenWords = 0;
+    while (frame != frameOfCollectionCaller) {
+        auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
+        for (auto* word = frame + 2; word < frameOfCaller; ++word) {
+            if (*word != wordOfDeadStack)
+                continue;
+            ++numberOfUnwrittenWords;
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+        }
+        frame = frameOfCaller;
+        AOT_TEST_CHECK(++numberOfFrames < 16);
+    }
+    if (numberOfUnwrittenWords)
+        dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
+    // The compiler may leave a word of a frame as padding.
+    AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
+    ++numberOfCollectionsRead;
+}
+
+static NEVER_INLINE void collectOverFilledStack(VM& vm)
+{
+    NO_TAIL_CALLS();
+    frameOfCollectionCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
+    threadOfCollectionCaller = &Thread::currentSingleton();
+    // As Heap::collectForExhaustedCage() collects. Nothing runs between the fill and the frames that are looked at.
+    vm.heap.collector().willCollectWithoutHelpers();
+    fillDeadStack();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    vm.heap.collector().didCollectWithoutHelpers();
+    frameOfCollectionCaller = nullptr;
+}
+
+// A thread that runs a collection itself does so below the frames of collectNow() and of what that calls, and scans them.
+// A local of theirs that only a path for waiting writes would show the collection whatever an earlier call left at that depth.
+static void checkCollectorWritesTheFramesItScans(LoadedProgram& program)
+{
+#if !ASAN_ENABLED && !ASSERT_ENABLED && !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    VM& vm = program.vm();
+    vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
+        "Frm"_s, "Frames That The Collection Scans"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([] (auto&) {
+            readFramesThatCollectionScans();
+        })),
+        ConstraintVolatility::GreyedByExecution,
+        ConstraintConcurrency::Sequential,
+        ConstraintParallelism::Sequential));
+    // The first request for a collection grows tables, far enough down the stack to write over everything that is looked at.
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    numberOfCollectionsRead = 0;
+    collectOverFilledStack(vm);
+    AOT_TEST_CHECK(numberOfCollectionsRead);
+#else
+    UNUSED_PARAM(program);
+#endif
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1194,6 +1270,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
         { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
         { "saved-frame/frames-between-job-and-compiled-code-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkFramesBetweenJobAndCompiledCodeAreWritten> },
+        { "saved-frame/collector-writes-the-frames-it-scans"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkCollectorWritesTheFramesItScans> },
         { "saved-frame/job-loop-writes-its-frame"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkJobLoopWritesItsFrame> },
         { "saved-frame/frames-between-job-and-async-generator-body-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithAsyncGeneratorText, checkFramesBetweenJobAndAsyncGeneratorBodyAreWritten> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },

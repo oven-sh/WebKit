@@ -124,6 +124,17 @@ static void rewriteConstantBound(GroupRewriter& rewriter, const ConstantBound& m
     root.setOperand(match.numberOperand, bound);
 }
 
+// Another value takes the place of the number, and the comparison answers as before: what an edge proves of the other operand still holds.
+static bool passesProofOfOperand(SelectionContext& context, ValueID test, uint32_t operandIndex)
+{
+    const Function& function = context.function();
+    return std::ranges::any_of(context.analyses().useLists().usesOf(test), [&](const Use& use) {
+        return use.kind == Use::Kind::TerminatorOperand && std::ranges::any_of(function.at(use.block).terminator.targets, [&](const Target& target) {
+            return target.proofs.contains(operandIndex);
+        });
+    });
+}
+
 static Vector<LoopComparison> collectLoopComparisons(SelectionContext& context)
 {
     const Function& function = context.function();
@@ -133,7 +144,7 @@ static Vector<LoopComparison> collectLoopComparisons(SelectionContext& context)
         for (ValueID id : context.candidates(opcode)) {
             const Value& value = function.at(id);
             std::optional<uint32_t> numberOperand = findNumberOperand(context, value);
-            if (!numberOperand || context.isConditionWithProofs(id))
+            if (!numberOperand || passesProofOfOperand(context, id, *numberOperand))
                 continue;
             ProgramPoint point = context.analyses().useLists().pointOf(id);
             std::optional<InvariantOperand> invariant = findOutermostInvariantLoop(context, point.block, value.operand(*numberOperand), [&](ValueID number) {

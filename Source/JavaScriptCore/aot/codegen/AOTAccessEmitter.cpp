@@ -156,6 +156,14 @@ Boxed AccessEmitter::getMemberAboveEmptySlot(const ValueContext& value)
     PropertyKeyID key = value->key();
     SiteCacheID cache = value->siteCache();
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(key);
+    // A read above the object asks this site, and only this read fills it.
+    bool fillsSite = cache && identifier && RowDisplacementTable::hasColumn(*identifier) && std::ranges::any_of(m_function.values, [&](const Value& other) {
+        return other.opcode == Opcode::ReadAboveFreshObject && other.accessSite() == value->accessSite();
+    });
+    if (fillsSite) {
+        recordArrival(value, receiver);
+        return Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->receiverOperand()), { receiver.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier, .isOnRarePath = true }).first);
+    }
     bool readsAtSite = cache && identifier && value.shape() == CodeShape::Fast && RowDisplacementTable::hasColumn(*identifier) && comesAgain(value);
     std::optional<PlacedSlot> slot = readsAtSite ? findSlotInCellOfEveryMember(m_program, m_placement, typeOf(value->receiverOperand()), key) : std::nullopt;
     if (!slot)
@@ -188,6 +196,55 @@ Boxed AccessEmitter::getMemberAboveEmptySlot(const ValueContext& value)
     m_out.appendTo(asksStub);
     join.add(Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->receiverOperand()), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
     return join.finish();
+}
+
+// The read below stands for this one where the site has no answer: it has the object, fills the site, and names the allocation of the object.
+static const Value* findReadThatMakesTheObject(const Function& function, const Value& read)
+{
+    for (const Value& candidate : function.values) {
+        if (candidate.opcode == Opcode::SuperGet && candidate.key() == read.key() && candidate.baseOperand() == candidate.receiverOperand() && candidate.accessSite() == read.accessSite())
+            return &candidate;
+    }
+    return nullptr;
+}
+
+// An object nobody has seen yet, whose slot is known to be empty: what its Structure says of the name needs no object, so that the object need not be made.
+void AccessEmitter::generateReadAboveFreshObject(const ValueContext& value)
+{
+    const Value* partner = findReadThatMakesTheObject(m_function, value.value());
+    const Value* object = partner ? &m_function.at(sameObjectThroughCasts(m_function, partner->receiverOperand())) : nullptr;
+    if (!partner || !partner->siteCache() || !object || object->opcode != Opcode::NewObject || !object->allocation()) {
+        define(value, Boxed(m_out.constInt64(0)));
+        return;
+    }
+    Pointer site = siteCacheAddress(partner->siteCache());
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    LBasicBlock hasNoAnswer = newBlock();
+    Join<Boxed> join(m_out);
+    Pointer record = emitter<CellAllocationEmitter>().allocationSiteRecord(object->allocation());
+    Word32 structureOfObject(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), record.value(), AllocationSiteRecord::offsetOfHeader())));
+    Word32 structureInSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
+    branchUnless(equal(structureInSlot, structureOfObject), hasNoAnswer);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(Slot::Kind::FieldOrInherited)), hasNoAnswer);
+    Word32 flags(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags())));
+    constexpr uint8_t flagsOfInheritedValue = Slot::needsHandler | Slot::isOwn | Slot::dependsOnChain | Slot::inheritedIsOutOfLine;
+    branchUnless(logicalNot(hasBits(flags, static_cast<uint8_t>(~flagsOfInheritedValue))), hasNoAnswer);
+    CellPointer holder = decode(NarrowReference(m_out.load32(partOfSlot(Slot::offsetOfPayload() + OBJECT_OFFSETOF(Slot::FieldAndHolderPayload, holder)))));
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, holder.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(flags, Slot::inheritedIsOutOfLine), butterfly, Pointer(holder.value()));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
+    join.add(Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0))));
+
+    m_out.appendTo(hasNoAnswer);
+    join.add(Boxed(m_out.constInt64(0)));
+    define(value, join.finish());
+}
+
+void AccessEmitter::generateDidReadAbove(const ValueContext& value)
+{
+    defineTest(value, isNotEmpty(in<Boxed>(value->valueOperand())));
 }
 
 // No layout of the receivers has the name, so the answer lies above the object: in fast code the site is asked in line.

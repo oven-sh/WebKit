@@ -184,6 +184,9 @@ public:
 
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
+    // False: no module has a path that starts so. A program asks about every path that the disk does not have, and nearly all of them lie in directories without modules.
+    bool mayHoldModulePathStartingWith(StringView start) const;
+
 private:
     Image(std::span<const uint8_t> bytes, const uint8_t* code);
 
@@ -205,6 +208,8 @@ private:
     ImageText m_text;
     mutable std::once_flag m_didSortFunctionsByID;
     mutable Vector<uint32_t> m_functionsByID;
+    mutable std::once_flag m_didFindModuleDirectories;
+    mutable Vector<uint64_t> m_moduleDirectories;
 };
 
 template<typename T>

@@ -45,6 +45,8 @@
 #include "B3ValueInlines.h"
 #include "CompilerTimingScope.h"
 #include <array>
+#include <set>
+#include <tuple>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/InterferenceGraph.h>
 #include <wtf/Liveness.h>
@@ -1269,8 +1271,8 @@ private:
 };
 
 // Gives spill slots their places from the ranges of positions, in layout order, at which each is live. A slot shares a
-// place with another when all of its ranges lie between two ranges of the other, or behind the last one. No set of
-// pairs of slots is built, so the time does not grow with the number of slots that are live together.
+// place with others when none of its ranges meets one of theirs. No set of pairs of slots is built, so the time does not
+// grow with the number of slots that are live together.
 class LiveRangeStackAllocator {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
@@ -1294,6 +1296,7 @@ private:
     static constexpr uint32_t noPosition = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noCell = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t noRange = std::numeric_limits<uint32_t>::max();
     static constexpr unsigned unitsPerWideAlignment = 4;
 
     enum PoolKind : uint8_t { OneUnit, TwoUnits, Wide, NoPool };
@@ -1303,7 +1306,7 @@ private:
         uint32_t slotIndex;
         uint32_t start;
         uint32_t end;
-        uint32_t startOfNextRange { noPosition };
+        uint32_t nextRangeOfSlot { noRange };
     };
 
     // Cells of one size. Finds the lowest cell that stays free beyond a position in logarithmic time.
@@ -1313,7 +1316,6 @@ private:
         {
             m_numberOfLeaves = WTF::roundUpToPowerOfTwo(std::max<size_t>(1, maxNumberOfCells));
             m_freeUntil.fill(noPosition, 2 * m_numberOfLeaves);
-            m_topOwner.fill(noSlot, maxNumberOfCells);
         }
 
         uint32_t findLowestCellFreeBeyond(uint32_t position) const
@@ -1336,8 +1338,26 @@ private:
                 m_freeUntil[node] = std::max(m_freeUntil[2 * node], m_freeUntil[2 * node + 1]);
         }
 
+        bool isFreeAt(uint32_t cell, uint32_t position) const { return m_freeUntil[m_numberOfLeaves + cell] > position; }
+
+        // The ranges of the slots in a cell that have not begun yet. No two of one cell meet.
+        void addRangeToCome(uint32_t cell, uint32_t start, uint32_t end) { m_rangesToCome.insert({ cell, start, end }); }
+        void removeRangeToCome(uint32_t cell, uint32_t start, uint32_t end) { m_rangesToCome.erase({ cell, start, end }); }
+        uint32_t startOfNextRangeIn(uint32_t cell) const
+        {
+            auto next = m_rangesToCome.lower_bound({ cell, 0, 0 });
+            return next != m_rangesToCome.end() && std::get<0>(*next) == cell ? std::get<1>(*next) : noPosition;
+        }
+        bool meetsRangeToCome(uint32_t cell, uint32_t start, uint32_t end) const
+        {
+            auto behind = m_rangesToCome.upper_bound({ cell, end, noPosition });
+            if (behind == m_rangesToCome.begin())
+                return false;
+            auto [cellOfLast, startOfLast, endOfLast] = *std::prev(behind);
+            return cellOfLast == cell && endOfLast >= start;
+        }
+
         void didUse(uint32_t cell) { m_numberOfCells = std::max(m_numberOfCells, cell + 1); }
-        uint32_t& topOwner(uint32_t cell) { return m_topOwner[cell]; }
         uint32_t numberOfCells() const { return m_numberOfCells; }
 
         unsigned unitsPerCell { 0 };
@@ -1346,7 +1366,7 @@ private:
     private:
         size_t m_numberOfLeaves { 0 };
         Vector<uint32_t> m_freeUntil;
-        Vector<uint32_t> m_topOwner;
+        std::set<std::tuple<uint32_t, uint32_t, uint32_t>> m_rangesToCome;
         uint32_t m_numberOfCells { 0 };
     };
 
@@ -1494,7 +1514,7 @@ private:
         });
     }
 
-    // Sorts the ranges by start, joins those of one slot that touch, and tells each where the next one of its slot starts.
+    // Sorts the ranges by start, joins those of one slot that touch, and tells each which is the next one of its slot.
     void linkRanges()
     {
         m_ranges.removeAllMatching([&](const Range& range) {
@@ -1520,13 +1540,14 @@ private:
             return range.slotIndex == noSlot;
         });
 
+        RELEASE_ASSERT(m_ranges.size() < noRange);
         m_lastEndOfSlot.fill(noPosition, m_code.stackSlots().size());
-        Vector<uint32_t> startOfNextRange(FillWith { }, m_code.stackSlots().size(), noPosition);
+        Vector<uint32_t> nextRangeOfSlot(FillWith { }, m_code.stackSlots().size(), noRange);
         for (size_t index = m_ranges.size(); index--;) {
             Range& range = m_ranges[index];
             if (m_lastEndOfSlot[range.slotIndex] == noPosition)
                 m_lastEndOfSlot[range.slotIndex] = range.end;
-            range.startOfNextRange = std::exchange(startOfNextRange[range.slotIndex], range.start);
+            range.nextRangeOfSlot = std::exchange(nextRangeOfSlot[range.slotIndex], static_cast<uint32_t>(index));
         }
     }
 
@@ -1553,34 +1574,47 @@ private:
             return m_ranges[a].end != m_ranges[b].end ? m_ranges[a].end < m_ranges[b].end : a < b;
         });
 
-        const size_t numberOfSlots = m_code.stackSlots().size();
-        m_cellOfSlot.fill(noCell, numberOfSlots);
-        Vector<uint32_t> ownerBelow(FillWith { }, numberOfSlots, noSlot);
-        Vector<uint32_t> startAfterGap(FillWith { }, numberOfSlots, noPosition);
+        m_cellOfSlot.fill(noCell, m_code.stackSlots().size());
+
+        // A slot that is read again on a rare path has a range where it is written and one far behind, among the rare blocks. The ranges of two such slots lie
+        // a, b, a, b, so neither fits between two ranges of the other, and a place for each would make the frame grow with the function.
+        auto fitsBesideSlotsOf = [&](const CellPool& pool, uint32_t cell, const Range& first) {
+            if (!pool.isFreeAt(cell, first.start))
+                return false;
+            unsigned numberOfRanges = 0;
+            for (const Range* range = &first;; range = &m_ranges[range->nextRangeOfSlot]) {
+                if (++numberOfRanges > AirLimits::maxRangesFittedBetweenOthers || pool.meetsRangeToCome(cell, range->start, range->end))
+                    return false;
+                if (range->nextRangeOfSlot == noRange)
+                    return true;
+            }
+        };
+        auto chooseCell = [&](const CellPool& pool, const Range& first) {
+            uint32_t numberOfCellsTried = std::min<uint32_t>(pool.numberOfCells(), AirLimits::maxCellsTriedForSlotWithGaps);
+            for (uint32_t cell = 0; first.nextRangeOfSlot != noRange && cell < numberOfCellsTried; ++cell) {
+                if (fitsBesideSlotsOf(pool, cell, first))
+                    return cell;
+            }
+            return pool.findLowestCellFreeBeyond(m_lastEndOfSlot[first.slotIndex]);
+        };
 
         forEachRangeBoundaryInOrder(
             [&](const Range& range) {
                 CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
                 uint32_t& cell = m_cellOfSlot[range.slotIndex];
                 if (cell == noCell) {
-                    cell = pool.findLowestCellFreeBeyond(m_lastEndOfSlot[range.slotIndex]);
+                    cell = chooseCell(pool, range);
                     pool.didUse(cell);
-                    ownerBelow[range.slotIndex] = std::exchange(pool.topOwner(cell), range.slotIndex);
-                }
+                    for (uint32_t next = range.nextRangeOfSlot; next != noRange; next = m_ranges[next].nextRangeOfSlot)
+                        pool.addRangeToCome(cell, m_ranges[next].start, m_ranges[next].end);
+                } else
+                    pool.removeRangeToCome(cell, range.start, range.end);
                 pool.setFreeUntil(cell, 0);
             },
             [&](const Range& range) {
                 CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
                 const uint32_t cell = m_cellOfSlot[range.slotIndex];
-                if (range.startOfNextRange != noPosition) {
-                    startAfterGap[range.slotIndex] = range.startOfNextRange;
-                    pool.setFreeUntil(cell, range.startOfNextRange);
-                    return;
-                }
-                RELEASE_ASSERT(pool.topOwner(cell) == range.slotIndex);
-                const uint32_t owner = ownerBelow[range.slotIndex];
-                pool.topOwner(cell) = owner;
-                pool.setFreeUntil(cell, owner == noSlot ? noPosition : startAfterGap[owner]);
+                pool.setFreeUntil(cell, pool.startOfNextRangeIn(cell));
             });
     }
 

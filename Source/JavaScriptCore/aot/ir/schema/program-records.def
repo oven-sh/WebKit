@@ -87,7 +87,7 @@ record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
-    requiredNames: Span<RequiredName> positions: SourcePositions functionText: Span<Byte>
+    requiredNames: Span<RequiredName> otherNames: Span<String> positions: SourcePositions functionText: Span<Byte>
     | engine namespaceLayout: Layout?
 }
 record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 }

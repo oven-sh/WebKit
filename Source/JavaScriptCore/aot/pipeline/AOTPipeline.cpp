@@ -178,6 +178,7 @@ constexpr std::array rows {
     programPass(PromoteAggregateParameters, Optional, { Prepared, Prepared }, { Flow, EffectSummaries }, { }, resultsAboutBodies),
     programPass(SplitCoroutines, Required, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
     programPass(MoveGeneratorFramesToHeap, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
+    programPass(KeepValuesInHeapWords, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
@@ -453,6 +454,9 @@ constexpr PassesLeftIdle passesThatCanWait[] {
     { SinkConstants, { RetypeValues } },
     { ThreadJumps, { ResolveBuiltins, FoldConstants, PropagateBranchConditions, EliminateRedundantReads } },
 };
+
+// A pass that waits is left out for good where nothing else gives it work. What these find then is too much to lose: they run before the rounds end, and at their steps outside the rounds.
+constexpr PassSet impatientPasses { EliminateRedundantReads };
 
 constexpr ByPass<PassSet> passesThatCanWaitByChanger = [] {
     ByPass<PassSet> result { };
@@ -827,6 +831,11 @@ const PassSet& passesThatCanWaitBehind(PassID changer)
 {
     RELEASE_ASSERT(PassTable::indexOf(changer) < numberOfPasses);
     return PassTable::passesThatCanWaitByChanger[PassTable::indexOf(changer)];
+}
+
+const PassSet& impatientPasses()
+{
+    return PassTable::impatientPasses;
 }
 
 const ScheduleDescriptor& descriptorOf(FunctionSchedule schedule)
@@ -1403,6 +1412,9 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, moveGeneratorFramesToHeap, inputsFor(id), m_runner);
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
+    case PassID::KeepValuesInHeapWords:
+        edit(id, keepValuesInHeapWords, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::CallModules:
         edit(id, callModules, flow(), m_build);
         didAddFunctions();
@@ -1669,6 +1681,8 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);
+    // Behind whatever follows an object from where it is made to where it is written: a word read back does not say where its object was made.
+    stage.run(PassID::KeepValuesInHeapWords);
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);

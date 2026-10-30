@@ -978,6 +978,10 @@ struct DeadCodeEliminator {
 
     bool staysUnused(ValueID id, const Value& value, const OpcodeRules& rules, Position position)
     {
+        // It keeps nothing alive: there is nothing to let go of where nothing else reads the value.
+        if (value.opcode == Opcode::ReleaseHint)
+            return !waitsFor(value.valueOperand(), id);
+
         switch (rules.unusedValue) {
         case UnusedValueRule::IsRemoved:
             return false;
@@ -1072,7 +1076,12 @@ struct DeadCodeEliminator {
             writtenOperand = operandIndex;
         });
         ValueID receiver = writtenOperand && !mayWriteOtherObjects ? value.operand(*writtenOperand) : ValueID();
-        if (!receiver || live.get(receiver.index()))
+        return receiver && waitsFor(receiver, store);
+    }
+
+    bool waitsFor(ValueID receiver, ValueID store)
+    {
+        if (live.get(receiver.index()))
             return false;
 
         auto last = lastWaitingStoreInto.add(receiver.index(), noWaitingStore);
@@ -1122,7 +1131,7 @@ struct DeadCodeEliminator {
     // Whether the escape analysis was asked.
     bool findObjectsOfWaitingStores()
     {
-        auto waits = [&](const WaitingStore& waiting) { return !live.get(waiting.store.index()); };
+        auto waits = [&](const WaitingStore& waiting) { return !live.get(waiting.store.index()) && function.at(waiting.store).opcode != Opcode::ReleaseHint; };
         if (!std::ranges::any_of(waitingStores, waits))
             return false;
 

@@ -287,6 +287,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     askProxiesByTheirTrap(key, BuiltinNames::get, m_statement.result);
     ClimbingSet receivers = m_context.valueOf(object);
+    // In the library a receiver shows a holder of exports until the unknown object covers it, and a key nobody knows finds every export. Whether it still shows it is known once all else is at rest.
+    if (key.keyClass == HeapKeyClass::Unknown && !isInProgramCode() && m_context.meet(receivers, m_universe.holdersOfLibraryExports()) && !isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+        receivers = m_context.restrict(receivers, ValueSets::complement(m_universe.holdersOfLibraryExports()));
     if (!m_statement.isOnlyCalledOnItsHolder) {
         noteName(ValueFlowHostNode::NamesOfReadsThatHandTheirValueOn, key);
         if (mayBeUnknownObject(receivers))
@@ -1531,6 +1534,12 @@ void HeapRule::runOperation()
         return;
     case Opcode::TryPutDoubleIndex:
         write(m_context.valueOf(operand(At::TryPutDoubleIndex::array)), elementsName, operand(At::TryPutDoubleIndex::value));
+        answerBoolean();
+        return;
+    case Opcode::TryCopyFilledElements:
+    case Opcode::TryPutElements:
+        static_assert(At::TryCopyFilledElements::array == At::TryPutElements::array && At::TryCopyFilledElements::source == At::TryPutElements::source);
+        readOwn(operand(At::TryPutElements::source), elementsName, m_context.written(m_context.valueOf(operand(At::TryPutElements::array)), elementsName));
         answerBoolean();
         return;
     case Opcode::PutDoubleIndex:

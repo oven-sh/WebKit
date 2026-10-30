@@ -73,13 +73,13 @@ struct PlacedFunctionSites : SiteLists {
     {
         auto areEmpty = [](const auto&... lists) { return (lists.isEmpty() && ...); };
         return areEmpty(fieldAccesses, shapeTests, allocations, keyOrderTests, fieldCreations, guards, guardSets, tableCalls, profiledArrayLiterals, regExpLiterals, templateObjects)
-            && areEmpty(copyOnWriteArrays, arraysWithStorageInImage, dataMadeOnce, builtinCells, bigIntConstants, requireEdges, moduleBuiltins)
+            && areEmpty(copyOnWriteArrays, arraysWithStorageInImage, dataMadeOnce, builtinCells, bigIntConstants, requireEdges, moduleBuiltins, moduleNamespaces)
             && areEmpty(variables, types, typesTestedByCode, allocatedClosures, data, layouts, layoutSets, layoutsOfData, keyCellUses, globalBindingSites, receiversOfStoresThatMayAdd, sourceFieldCreations)
             && !maxClosureCaptures && !numberOfOperationsWithWordForSiteCache;
     }
 };
 // Name every new list in hasFoundNothing().
-static_assert(sizeof(SiteLists) == 18 * sizeof(Vector<uint32_t>) + sizeof(uint64_t) && sizeof(PlacedFunctionSites) == sizeof(SiteLists) + 12 * sizeof(Vector<uint32_t>) + 2 * sizeof(uint64_t));
+static_assert(sizeof(SiteLists) == 19 * sizeof(Vector<uint32_t>) + sizeof(uint64_t) && sizeof(PlacedFunctionSites) == sizeof(SiteLists) + 12 * sizeof(Vector<uint32_t>) + 2 * sizeof(uint64_t));
 
 using FunctionSitesArray = std::span<PlacedFunctionSites* const>;
 
@@ -534,6 +534,10 @@ private:
         case Opcode::ModuleBuiltin:
             sites.moduleBuiltins.append(ModuleBuiltinUse { value.builtin(), value.module() });
             break;
+        case Opcode::ModuleNamespace:
+            if (value.phase() == ImportPhase::Evaluation)
+                sites.moduleNamespaces.append(value.module());
+            break;
         case Opcode::DefineAccessors:
             for (PropertyKeyID key : value.keys())
                 appendKeyCell(key);
@@ -985,7 +989,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
             mergeEach(&SiteLists::guardSets, &SiteLists::tableCalls);
         },
         [&] { mergeEach(&SiteLists::profiledArrayLiterals, &SiteLists::regExpLiterals, &SiteLists::templateObjects, &SiteLists::copyOnWriteArrays, &SiteLists::arraysWithStorageInImage, &SiteLists::dataMadeOnce); },
-        [&] { mergeEach(&SiteLists::builtinCells, &SiteLists::bigIntConstants, &SiteLists::moduleBuiltins, &SiteLists::requireEdges); },
+        [&] { mergeEach(&SiteLists::builtinCells, &SiteLists::bigIntConstants, &SiteLists::moduleBuiltins, &SiteLists::moduleNamespaces, &SiteLists::requireEdges); },
         [&] { mergeBits(program, functions, sites); },
         [&] { numberStoresThatMayAdd(program, functions, sites); },
         [&] {

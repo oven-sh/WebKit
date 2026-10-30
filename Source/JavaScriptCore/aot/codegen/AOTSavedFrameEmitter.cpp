@@ -286,6 +286,17 @@ void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
     define(value, Boxed(result.value()));
 }
 
+// A heap frame that nothing resumes: the function that makes it keeps values in its words.
+void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
+{
+    uint32_t numberOfWords = value->numberOfWords();
+    if (numberOfWords <= SavedFrame::maxWordsAllocatedInStub) {
+        define(value, Boxed(callStub(value, AOT::newHeapFrame(), { m_out.constInt64(numberOfWords), m_out.intPtrZero }).first));
+        return;
+    }
+    define(value, Boxed(callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(numberOfWords)), Pointer(m_out.intPtrZero) }).value()));
+}
+
 void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 {
     LValue frame = in<Boxed>(value->frameOperand()).value();
@@ -301,6 +312,8 @@ void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
     if (m_function.at(operand).representation == Representation::Cell32 && typeOf(operand).mayBeUnspecified())
         stored = m_out.select(m_out.isZero32(in<NarrowReference>(operand).value()), m_out.int64Zero, stored);
     m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame, SavedFrame::offsetOfWords() + value->index() * sizeof(uint64_t)));
+    if (value->remembersFrame())
+        emitter<BarrierEmitter>().barrierAfterStore(value, CellPointer(frame), Operand(Boxed(stored)), typeOf(operand));
 }
 
 void SavedFrameEmitter::generateGetResumeIndex(const ValueContext& value)

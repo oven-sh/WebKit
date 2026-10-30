@@ -17,6 +17,7 @@
 #include "AOTFlowApply.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTParameterUses.h"
 #include "AOTPassRunner.h"
@@ -94,10 +95,46 @@ static bool canEditParameters(const Program& program, const CallGraph& callGraph
     return !function.constructedClass && !function.isUnsplitCoroutine() && !function.isModuleBody() && !countsEntryParameters(function.creator.kind());
 }
 
-static Vector<BitVector> findUnusedParameters(const Program& program, const CallGraph& callGraph, BuildContext& build)
+// A string is left out: making one may cost a call, and the caller may have made it outside a loop.
+static KnownValue onlyValueOfParameter(const Program& program, const Function& function, unsigned index)
+{
+    const Block& entry = function.at(entryBlock);
+    ValueID parameter = entry.parameters[index];
+    if (entry.handler || entry.subject == parameter)
+        return { };
+    KnownValue value = knownValueOfType(program.at(function.at(parameter).type));
+    switch (value.kind()) {
+    case KnownValue::Kind::Undefined:
+    case KnownValue::Kind::Null:
+    case KnownValue::Kind::Boolean:
+    case KnownValue::Kind::Integer:
+        return value;
+    case KnownValue::Kind::Unknown:
+    case KnownValue::Kind::Double:
+    case KnownValue::Kind::String:
+    case KnownValue::Kind::Object:
+    case KnownValue::Kind::Function:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct RemovedParameters {
+    Vector<BitVector> all;
+    // Those that the body reads and every caller gives the same value.
+    Vector<BitVector> constants;
+};
+
+} // anonymous namespace
+
+static RemovedParameters findUnusedParameters(const Program& program, const CallGraph& callGraph, BuildContext& build)
 {
     unsigned count = program.functions.size();
     Vector<BitVector> unused(count);
+    Vector<BitVector> constants(count);
+    Vector<BitVector> hasOnlyValue(count);
     Vector<Vector<ForwardedParameter>> forwarded(count);
     forEachIndexInParallel(build.parallelLoops(), count, [&](unsigned index) {
         FunctionID id(index);
@@ -112,7 +149,17 @@ static Vector<BitVector> findUnusedParameters(const Program& program, const Call
         }
         auto uses = classifyParameterUses(function, removableEntryParameters, &forwarded[index]);
         for (unsigned i = 0; i < uses.size(); ++i) {
-            if (uses[i] != ParameterUse::Used)
+            if (uses[i] == ParameterUse::Unused) {
+                unused[index].set(i);
+                continue;
+            }
+            if (!removableEntryParameters.get(i))
+                continue;
+            // Whoever enters by value needs the old signature, and what keeps it costs more than a constant in a register.
+            bool isConstant = callGraph.entrySet(id) == EntrySet::DirectCallers && onlyValueOfParameter(program, function, i).isKnown();
+            if (isConstant)
+                (uses[i] == ParameterUse::Used ? constants : hasOnlyValue)[index].set(i);
+            if (isConstant || uses[i] == ParameterUse::ForwardedOnly)
                 unused[index].set(i);
         }
     });
@@ -127,12 +174,16 @@ static Vector<BitVector> findUnusedParameters(const Program& program, const Call
             for (auto& forwardedParameter : forwarded[index]) {
                 if (!unused[index].get(forwardedParameter.parameter) || unused[forwardedParameter.callee.index()].get(forwardedParameter.calleeParameter))
                     continue;
+                if (hasOnlyValue[index].get(forwardedParameter.parameter)) {
+                    constants[index].set(forwardedParameter.parameter);
+                    continue;
+                }
                 unused[index].clear(forwardedParameter.parameter);
                 changed = true;
             }
         }
     }
-    return unused;
+    return { WTF::move(unused), WTF::move(constants) };
 }
 
 void removeEntryParameters(Function& function, const BitVector& removed)
@@ -228,7 +279,7 @@ void removeUnusedParameters(ProgramEditor& editor, const OptimizationInputs& inp
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
 
-    Vector<BitVector> removed = findUnusedParameters(program, inputs.callGraph, build);
+    auto [removed, constants] = findUnusedParameters(program, inputs.callGraph, build);
     Vector<FunctionID> candidates;
     uint64_t numberOfRemovedParameters = 0;
     for (size_t index = 0; index < removed.size(); ++index) {
@@ -283,6 +334,15 @@ void removeUnusedParameters(ProgramEditor& editor, const OptimizationInputs& inp
     callers.appendVector(reducedFunctions);
 
     editFunctionsInParallel(editor, build, callers.span(), [&](unsigned, FunctionID id, Function& caller, TaskArenas& arenas) {
+        if (id.index() >= reducedFunctions.first().index()) {
+            FunctionID original = candidates[id.index() - reducedFunctions.first().index()];
+            uint32_t position = 0;
+            for (size_t parameter : constants[original.index()]) {
+                ValueID value = program.at(original).at(entryBlock).parameters[parameter];
+                becomeConstant(program, caller, arenas.types, value, onlyValueOfParameter(program, program.at(original), parameter));
+                caller.edit(entryBlock, BlockEdit::Values).values.insert(position++, value);
+            }
+        }
         bool didRetarget = false;
         for (auto& block : caller.blocks) {
             for (ValueID value : block.values) {

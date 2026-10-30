@@ -1159,6 +1159,7 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
             // The lookup starts over at the object.
             Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
             lookup.setKey(stamp.key);
+            lookup.setAccessSite(expansion.original().accessSite());
             expansion.finishArm(expansion.append(WTF::move(lookup)));
         }
         expansion.end();

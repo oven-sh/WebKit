@@ -16,6 +16,7 @@
 # REQUIRES(NONE): unsanitized-code
 # RUN(CALLS): generate-code calls
 # REQUIRES(CALLS): unsanitized-code
+# RUN(IR): pipeline Select
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -98,17 +99,48 @@ function f2 name="addAll" module=m0 position=104 flags=[IsChecked, HasExplicitNa
     ReturnCall v5 casts=[{declared={type=number site=w11}}, {declared={type=number site=w6}}]
 }
 
-# The length of the list is not known, so the call goes through the stub that spreads a list: it takes the list, the callee as a value and undefined as the receiver, and is a jump.
+# The length of the list is not known. `add` is a declared function that cannot count its arguments and that comes back, so the place hands the list to the one function that every such place shares: a jump,
+# without the closure of `add` and without a receiver.
 # CHECK-LABEL: name="addAll" role=Source
-# CHECK: Int64 b@[[callee]] = Patchpoint({{*}}:GetModuleVariable)
 # CHECK: Int64 b@[[values]] = ArgumentReg(
-# CHECK: Void b@{{*}} = Patchpoint(b@[[values]]:Register({{*}}), b@[[callee]]:Register({{*}}), $10(b@{{*}}):Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|{{*}}:CallList)
+# CHECK-NEXT: Void b@{{*}} = Patchpoint(b@[[values]]:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|{{*}}:CallDirect)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="addAll" role=Source
-# NONE-NOT: :CallDirect)
+# NONE-NOT: :CallList)
+# NONE-NOT: :GetModuleVariable)
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
 # CALLS-LABEL: f2: size=
-# CALLS-NEXT: stub CallWithArray.InTailPosition x1
-# CALLS-NEXT: stub ClosureOfTable x1
+# CALLS-NEXT: function f{{*}} x1
 # CALLS-NEXT: f{{*}}: size=
+
+# The shared function reads the three arguments out of the storage of the list, whichever of the three kinds it is, and calls the typed body of `add`. It returns from that call, and no stack trace lists it.
+# A list that is too long, too short or has a hole goes to the stub that calls a value with a list, and only that way makes the closure.
+# IR-LABEL: name="addAll"
+# IR-NEXT: b0(v0: {{*}}):
+# IR-NEXT: [[sum]]: anything = CallDirect v0 function={{*}}[isNeverInlined]
+# IR-NEXT: ReturnCall [[sum]]
+# IR-LABEL: name="callWithElements" module=- role=OutlinedBody
+# IR: [[fits]]: boolean = LessEq {{*}}form=Integers
+# IR-NEXT: TestAndBranch [[fits]] -> taken {{*}}(), notTaken [[byValue]]()
+# IR-NEXT: [[byValue]]() frequency=Rare:
+# IR-NEXT: [[closure]]: f1 = GetModuleVariable variable=g0
+# IR-NEXT: [[answer]]: anything = CallList [[closure]], -, v0
+# IR-NEXT: Return [[answer]]
+# IR: [[isDouble]]: boolean = HasArrayStorage v0 arrayStorage=Double
+# IR-NEXT: TestAndBranch [[isDouble]] -> taken {{*}}(| 0), notTaken [[integers]]()
+# IR-NEXT: [[integers]]():
+# IR-NEXT: [[isInt32]]: boolean = HasArrayStorage v0 arrayStorage=Int32
+# IR: = IsElementPresent v0, {{*}} arrayStorage=Double [keyIsIntegral]
+# IR-NEXT: TestAndBranch {{*}} -> taken {{*}}(| 0), notTaken [[byValue]]()
+# IR: [[first]]: number = GetArrayElement v0, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# IR: [[second]]: number = GetArrayElement v0, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# IR: [[third]]: number = GetArrayElement v0, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# IR-NEXT: [[typed]]: number = CallDirect [[first]], [[second]], [[third]] function=
+# IR-NEXT: Return [[typed]]
+# IR: = HasArrayStorage v0 arrayStorage=Contiguous
+# IR: [[firstInteger]]: i32 = GetArrayElement v0, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isPresent]
+# IR: = CallDirect [[firstInteger]], {{*}} function=
+# IR: [[firstValue]]: anything = GetArrayElement v0, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# IR: = CallDirect [[firstValue]], {{*}} function=f1
+# IR-NOT: GetModuleVariable

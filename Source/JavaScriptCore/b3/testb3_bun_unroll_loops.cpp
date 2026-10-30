@@ -589,7 +589,7 @@ static void testUnrollLoopsPollsBetweenStretches()
     }
 }
 
-// A loop that walks nothing is not written out. It goes without its poll where its turns are few, however far from zero they start, and a copy of it that polls takes the others.
+// A loop that walks nothing is not written out. It goes without its poll where its turns are few, however far from zero they start, and a copy of it that polls between stretches takes the others.
 // Where the lower end is not below zero, an upper end within a stretch of zero says that the turns are few. An upper end beyond that is held against the lower end,
 // but for a lower end that is known to lie within a stretch of zero: whoever starts there and ends beyond has many turns or nearly so.
 static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
@@ -626,7 +626,7 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
                         bool startsNearZero = step > 0 && first >= 0 && first <= stretch * step;
                         bool hasFewTurns = startsNearZero ? bound <= stretch * step : turns <= stretch;
                         if (turns >= 0)
-                            CHECK_EQ(state.numberOfPolls, hasFewTurns ? 0 : numberOfTurns);
+                            CHECK_EQ(state.numberOfPolls, hasFewTurns ? 0 : (numberOfTurns - 1) / stretch);
                     }
                 }
             }
@@ -826,7 +826,7 @@ static void testUnrollLoopsAsksInFrontOfLoopAboutBoundThatStandsInLoop()
     for (int64_t turns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1, 3 * stretch }) {
         state = { };
         CHECK_EQ(invoke<int64_t>(*code, bound - turns), turns);
-        CHECK_EQ(state.numberOfPolls, turns <= stretch ? 0 : turns);
+        CHECK_EQ(state.numberOfPolls, (turns - 1) / stretch);
     }
 }
 
@@ -865,7 +865,7 @@ static void testUnrollLoopsAsksInFrontOfLoopAboutCounterOfCopiedLoop()
     CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 2u);
     auto code = compileProc(proc);
     auto pollsOf = [](int64_t turns) {
-        return turns <= stretch ? 0 : turns;
+        return (turns - 1) / stretch;
     };
     for (int64_t firstTurns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1 }) {
         for (int64_t secondTurns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1 }) {

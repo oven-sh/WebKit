@@ -118,9 +118,6 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
         return ClosureForm::Full;
     if (function.captures.size() > ClosureRequest::maxSlimClosureCaptures)
         return ClosureForm::Full;
-    // Only a full closure lists its static fields among its properties.
-    if (function.constructedClass && !program.at(function.constructedClass).staticFields.isEmpty())
-        return ClosureForm::Full;
     // A full closure has the property `name` from the first look for it on, which is what a stack frame asks a function object that has a displayName.
     if (function.has(FunctionCapabilities::NotesLooksForName) && flow.closuresAreGivenDisplayName(id))
         return ClosureForm::Full;
@@ -282,8 +279,6 @@ static FunctionKindData functionKindOf(const Program& program, const SlotPlan& s
     FunctionID targetID = closureTargetOf(program, id);
     auto& described = describedFunctionOf(program, targetID);
     FunctionKindData kind = kindDataOf(described.kind);
-    if (described.kind == FunctionKind::Plain && described.constructedClass && !program.at(described.constructedClass).staticFields.isEmpty())
-        kind.isDerivedConstructor = true;
     if (described.role == FunctionRole::BoundFunction)
         kind.callableKind = static_cast<unsigned>(CallableKind::Bound);
     kind.isAsync = described.has(FunctionFlags::IsAsync);

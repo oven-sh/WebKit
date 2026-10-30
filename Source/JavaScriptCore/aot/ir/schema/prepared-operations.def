@@ -51,6 +51,8 @@ family OwnAccess Prepared..Placed
 operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
 
 family Access Prepared..Placed
+operation ReadAboveFreshObject (key: PropertyKey, accessSite?: AccessSite) -> unknown ; ReadsObjectGraph reads(PrototypeLinks) ; replaces = SuperGet
+operation DidReadAbove (value: Any/inspects) -> natural(boolean) ; none
 operation MayBindAnswersOfGetAndSetTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
 operation MayBindAnswersOfHasTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
 operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap
@@ -144,7 +146,8 @@ operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspect
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
 operation NewHeapFrame (generator: Object/inspects, function: Function(Dispatch), numberOfWords: UInt32) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame
 operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type) -> declared(valueType) ; reads(InternalFields)
-operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) -> none ; writes(InternalFields)
+operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) [remembersFrame] -> none ; writes(InternalFields)
+operation NewHeapWords (numberOfWords: UInt32) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame
 operation GetResumeIndex (frame: Any/inspects) -> natural(integer) ; reads(InternalFields)
 operation SuspendInHeapFrame (generator: Object/inspects, frame: Any/inspects, resumeIndex: UInt32) [isFirstRun staysRunning] -> none ; writes(InternalFields)
 operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield

@@ -2983,10 +2983,13 @@ private:
     Vector<JSGlobalObject*>& m_affectedRealms;
 };
 
+// Neither prototype can get an indexed property or another prototype. Object.prototype may still take a named one: a compiled test run locks it by a list of names.
 bool prototypesOfOrdinaryArraysAreLocked(JSGlobalObject* realm)
 {
-    Structure* arrayPrototype = realm->arrayPrototype()->structure();
-    return arrayPrototype->hasImmutableIndexedProperties() && arrayPrototype->hasImmutablePrototype() && realm->objectPrototype()->structure()->hasImmutableProperties();
+    auto isLocked = [](Structure* structure) {
+        return structure->hasImmutableIndexedProperties() && structure->hasImmutablePrototype();
+    };
+    return isLocked(realm->arrayPrototype()->structure()) && isLocked(realm->objectPrototype()->structure());
 }
 
 } // end private namespace for helpers for JSGlobalObject::haveABadTime()

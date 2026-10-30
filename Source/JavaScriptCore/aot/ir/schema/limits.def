@@ -17,7 +17,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxVariablesFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "variables that hand the name of a built-in module on to one another")
     MaxParametersFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "parameters that hand the name of a built-in module on to one another")
     MaxProgramsPerBuild(Load, CompileTime, NotOptimized, 128, 128, 0, "entry points that are each compiled as a program of their own")
-    MaxGuessedWorkerFiles(Load, CodeSize, NotOptimized, 4, 4, 0, "embedded code files that are compiled in case a Worker with an unknown path starts them")
     MaxRepeatedSourceBytes(Load, CodeSize, NotOptimized, 262144, 262144, 0, "bytes of source text that entry points compiled on their own have in common")
     MaxRepeatedSourcePercent(Load, CodeSize, NotOptimized, 5, 5, 0, "percent of the source text that entry points compiled on their own have in common")
     MaxDataNodes(Load, Memory, BuildError, 16777216, 16777216, 0, "values in a data module or macro result")
@@ -101,6 +100,8 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxIntegerRelationSteps(Optimize, CompileTime, NotOptimized, 64, 64, 0, "work per integer range query")
     MaxFrameEnvironmentFields(Optimize, Memory, HeapAllocation, 32, 32, 0, "variables of a stack-allocated closure environment")
     MaxFrameArrayLength(Optimize, Memory, HeapAllocation, 8, 8, 0, "elements of a stack-allocated array")
+    MaxSuspensionsCrossedOnStack(Optimize, CompileTime, HeapAllocation, 16, 16, 0, "awaits and yields that a value lives across in the stack frame")
+    MaxValuesOnStackAcrossSuspension(Optimize, Memory, HeapAllocation, 256, 256, 0, "values that live across one await or yield in the stack frame")
 
     MaxInlineDepth(Optimize, CodeSize, NotOptimized, 4, 4, 0, "nesting of inlined calls")
     MaxInlinedCallerBytes(Optimize, CodeSize, NotOptimized, 4096, 4096, 0, "the size of a function after inlining")

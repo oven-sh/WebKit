@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBlockCycles.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
@@ -1547,6 +1548,7 @@ struct CallResolver {
             { { Opcode::CallList }, &CallResolver::planRestHandover },
             { { Opcode::CallList }, &CallResolver::planSpreadHandover },
             { { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList }, &CallResolver::planListCall },
+            { { Opcode::CallList }, &CallResolver::planCallWithElements },
             { { Opcode::InstanceOf }, &CallResolver::planInstanceOf },
             { { Opcode::CallBuiltin }, &CallResolver::planFunctionMethod },
         };
@@ -2899,6 +2901,75 @@ struct CallResolver {
         };
     }
 
+    // Every way out of the function is a return, or a tail call of a function that comes back too. Whoever calls it where the language asks for a tail call keeps one frame, however often that happens.
+    bool comesBack(FunctionID id, uint64_t depth = 0) const
+    {
+        const Function& body = program.at(id);
+        return body.hasBody() && std::ranges::all_of(body.blocks, [&](const Block& block) {
+            if (block.terminator.kind != TerminatorKind::ReturnCall)
+                return true;
+            const Value& call = body.at(block.terminator.callOperand());
+            return call.opcode == Opcode::CallDirect && depth < context.limit(LimitID::MaxForwardingDepth) && comesBack(call.function(), depth + 1);
+        });
+    }
+
+    // The block is entered only where the test of the array has just passed, and nothing has run since.
+    bool hasPassedPristineTestInFrontOf(const ValueSite& site, ValueID array, const PristineRequirement& requirement)
+    {
+        context.planAsksAboutPlace = true;
+        FunctionAnalyses& analyses = context.analyses;
+        std::span<const BlockID> predecessors = analyses.cfg().predecessors(site.block);
+        if (predecessors.size() != 1)
+            return false;
+        const Block& tests = function.at(predecessors[0]);
+        if (tests.terminator.kind != TerminatorKind::Branch || tests.terminator.taken().block != site.block || tests.terminator.notTaken().block == site.block)
+            return false;
+        ValueID testID = tests.terminator.conditionOperand();
+        const Value& test = function.at(testID);
+        if (test.opcode != Opcode::IsPristine || test.builtinClass() != requirement.builtinClass || !test.aspects().containsAll(requirement.aspects) || analyses.identityOf(test.operand(0)) != analyses.identityOf(array))
+            return false;
+        auto isPure = [&](ValueID id) { return analyses.hasNoEffects(id); };
+        size_t indexOfTest = tests.values.find(testID);
+        return indexOfTest != notFound && std::ranges::all_of(tests.values.span().subspan(indexOfTest + 1), isPure) && std::ranges::all_of(function.at(site.block).values.span().first(site.index), isPure);
+    }
+
+    // `f(...list)` where f is a declared function that cannot count its arguments, and the list an unchanged array that is made elsewhere. One function for all such places reads what f takes out of the storage of the array
+    // and calls f: the place hands it the list, which takes no more code than the stub that calls any value with a list.
+    Plan planCallWithElements(const CallSite& site)
+    {
+        if (isRare(site).predicted() || isOutlinedIteration(function))
+            return declined;
+        const Value& call = function.at(site.position.value);
+        if (call.thisValueOperand() || call.calledBuiltin())
+            return declined;
+        const Value& read = function.at(CastChain(function, call.calleeOperand()).last());
+        if (read.opcode != Opcode::GetModuleVariable)
+            return declined;
+        const Variable& variable = program.at(read.variable());
+        std::optional<ProvenValue<FunctionID>> only = calleeCandidates(program, function, call.calleeOperand()).only();
+        if (!only || !variable.function || !variable.flags.contains(VariableFlags::IsImmutable) || variable.function != only->value())
+            return declined;
+        const Function& target = program.at(variable.function);
+        if (target.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }) || !canCallWithoutClosure(program, variable.function))
+            return declined;
+        // The shared function returns from its call of f.
+        bool hasToComeBack = isTailCall(function, site.position) && function.at(site.position.block).terminator.requirement() == TailCallRequirement::Required;
+        if (hasToComeBack && !comesBack(variable.function))
+            return declined;
+        // A list that is made here may yet go altogether.
+        if (resultRuleOf(function.at(sameObjectBehindFacts(function, call.listOperand())).opcode) == ResultRule::Allocation)
+            return declined;
+        if (!isProvenPristine(call.listOperand(), pristineArray, site) && !hasPassedPristineTestInFrontOf(site.position, call.listOperand(), pristineArray))
+            return declined;
+
+        return [this, &site, shared = context.derivedFunction(keyOfCallWithElements(read.variable()))] {
+            expansion.begin(site.position);
+            ValueID list = expansion.original().listOperand();
+            expansion.finishArm(appendDirectCall(builder, { .callee = shared, .arguments = singleElementSpan(list), .accessSite = expansion.original().accessSite(), .isNeverInlined = true, .isTailCall = expansion.isTailCall() }));
+            expansion.end();
+        };
+    }
+
     // A function that cannot count its arguments sees no more of a list than its parameters name, and undefined past the end of the list either way.
     Plan planListCall(const CallSite& site)
     {
@@ -3469,6 +3540,97 @@ struct RefusedMemberUse {
 PassOutcome resolveCalls(FunctionPassContext& context)
 {
     return CallResolver { context, false }.run();
+}
+
+DerivedFunctionKey keyOfCallWithElements(VariableID variable)
+{
+    return { .role = FunctionRole::OutlinedBody, .target = FunctionID(), .parameter = variable.index(), .node = static_cast<uint32_t>(OutlinedIteration::CallWithElements) };
+}
+
+Function buildCallWithElements(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
+{
+    const Program& program = inputs.program;
+    VariableID variable(key.parameter);
+    unsigned numberOfArguments = program.at(program.at(variable).function).numberOfPositionalParameters();
+
+    Function function;
+    function.name = inputs.strings.intern(StringView("callWithElements"_s));
+    function.kind = FunctionKind::Plain;
+    function.role = FunctionRole::OutlinedBody;
+    function.length = 1;
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+    TypeID listType = inputs.types.intern(Type::builtinClass(BuiltinClasses::Array));
+    function.parameters.append(DeclaredType(Proven::byPosition(listType)));
+    function.derivation.parameterMap.append(ParameterOrigin { });
+    function.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
+    function.capabilities = initialCapabilitiesOf(function);
+
+    IRBuilder builder({ inputs.build, program, &inputs.flow, nullptr }, function, inputs.types);
+    BlockID entry = builder.addBlock();
+    ValueID list = builder.addParameter(entry, listType);
+    BlockID byValue = builder.addBlock(BlockFrequency::Rare);
+    builder.moveToEndOf(entry);
+
+    // Each way reads the variable for itself: where the call is resolved, the closure is not made.
+    auto makeListCall = [&] {
+        Value read = IRBuilder::make(Opcode::GetModuleVariable);
+        read.setVariable(variable);
+        Value call = IRBuilder::make(Opcode::CallList);
+        call.setCalleeOperand(builder.append(WTF::move(read)));
+        call.setListOperand(list);
+        return call;
+    };
+    auto goOnWithProofOf = [&](Value&& test, BlockID otherwise) {
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(WTF::move(test)), testedOperandIndex, BlockFrequency::Normal, BlockFrequency::Rare, { BlockID(), Target { otherwise, { }, { } } });
+        builder.moveToEndOf(branch.taken);
+        return branch.provenOnTaken;
+    };
+    auto emitCall = [&](std::span<const ValueID> arguments) {
+        Value call = makeListCall();
+        convertListCall(call, arguments);
+        builder.emitReturn(builder.append(WTF::move(call)));
+    };
+
+    // The call refuses a list that does not fit on the stack.
+    Value lengthRead = IRBuilder::make(Opcode::PropGet, { list });
+    lengthRead.setKey(program.keyOf(BuiltinNames::length));
+    ValueID length = builder.append(IRBuilder::make(Opcode::ToLength, { builder.append(WTF::move(lengthRead)) }));
+    BlockID fits = builder.addBlock();
+    builder.emitBranch(builder.append(IRBuilder::make(Opcode::LessEq, { length, builder.appendInteger(inputs.build.limit(LimitID::MaxReservedStackArguments)) })), Target { fits, { }, { } }, Target { byValue, { }, { } });
+    builder.moveToEndOf(fits);
+
+    if (!numberOfArguments)
+        emitCall({ });
+    else {
+        constexpr std::array storages { ArrayStorage::Double, ArrayStorage::Int32, ArrayStorage::Contiguous };
+        for (size_t index = 0; index < storages.size(); ++index) {
+            ArrayStorage storage = storages[index];
+            BlockID next = index + 1 < storages.size() ? builder.addBlock() : byValue;
+            ValueID hasStorage = goOnWithProofOf(makeArrayStorageTest(list, storage), next);
+            Vector<ValueID, 8> arguments;
+            for (uint32_t position = 0; position < numberOfArguments; ++position) {
+                ValueID elementKey = builder.appendInteger(position);
+                Value test = makePresenceTest(list, elementKey, storage, true);
+                test.setGuardOperand(hasStorage);
+                ValueID isPresent = goOnWithProofOf(WTF::move(test), byValue);
+                Value element = IRBuilder::make(Opcode::GetArrayElement, { list, elementKey });
+                element.setGuardOperand(builder.append(IRBuilder::make(Opcode::AllGuards, { hasStorage, isPresent })));
+                element.setArrayStorage(storage);
+                element.setLevel(KnowledgeLevel::Expected);
+                element.setKeyIsIntegral(true);
+                element.setIsPresent(true);
+                arguments.append(builder.append(WTF::move(element)));
+            }
+            emitCall(arguments.span());
+            if (next != byValue)
+                builder.moveToEndOf(next);
+        }
+    }
+
+    // A short list, a hole, another kind of storage.
+    builder.moveToEndOf(byValue);
+    builder.emitReturn(builder.append(makeListCall()));
+    return function;
 }
 
 PassOutcome callThroughMethodTable(FunctionPassContext& context)

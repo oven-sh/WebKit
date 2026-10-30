@@ -18,6 +18,7 @@
 #include "AOTPrimitiveKeyTexts.h"
 #include "AOTSchemaOperandPositions.h"
 #include "AOTSort.h"
+#include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowResultsPlaces.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
@@ -875,7 +876,7 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             if (inputs.sets().contains(builtinCallees, callOfFunctions) && inputs.bodies().operandsOf(call).size() > 2) {
                 ValueSetID forwarded = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(call)[1]);
                 if (!ValueSets::isComplement(forwarded)) {
-                    for (BuiltinID made : { Builtins::ArrayPrototypeValues, Builtins::ArrayPrototypeKeys, Builtins::ArrayPrototypeEntries }) {
+                    for (BuiltinID made : makersOfIteratorsCalledInPlace) {
                         ValueFlowObjectID object = universe.objectOf(builtins.canonicalID(made));
                         if (inputs.sets().contains(forwarded, object))
                             builtinCallees = maker.unite(builtinCallees, maker.of(object));

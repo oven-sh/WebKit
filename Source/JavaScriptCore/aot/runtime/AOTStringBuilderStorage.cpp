@@ -586,9 +586,11 @@ void StringBuilderStorage::rollBack(uint32_t length)
 
 StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
 {
-    if (isOnStack()) {
+    if (isOnStack() || holdsOneString()) {
+        JSString* first = holdsOneString() ? oneString : nullptr;
         storage = StringBuilderStorage::acquire(instance);
-        if (storage->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
+        bool failed = first && storage->append(globalObject, first) == StringBuilderStorage::AppendResult::Failed;
+        if (failed || storage->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
             storage->release(instance);
             return nullptr;
         }
@@ -602,6 +604,15 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
     }
     storage->m_position = static_cast<uint32_t>(position);
     return storage;
+}
+
+Latin1Character* StackStringBuilder::holdOneString(JSString* string)
+{
+    ASSERT(isOnStack());
+    oneString = string;
+    limit = buffer;
+    lengthOrigin = std::bit_cast<Latin1Character*>(std::bit_cast<uintptr_t>(&buffer[0]) - string->length());
+    return buffer;
 }
 
 Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject)
@@ -719,6 +730,8 @@ JSString* StringBuilderStorage::createStringFromBuffer(JSGlobalObject* globalObj
 JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor, StringBuilderStorage::StringUse use)
 {
     VM& vm = globalObject->vm();
+    if (holdsOneString() && cursor == buffer)
+        return oneString;
     if (!isOnStack()) {
         if (!moveToStorage(globalObject, instance, cursor)) [[unlikely]]
             return nullptr;
@@ -1501,10 +1514,17 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
     constexpr Entry entry = Entry::operationAOTStackStringBuilderAppendStringRange;
     AOT_OPERATION_BEGIN(instance, entry);
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    // `"" + text.slice(start, end)` is the slice.
+    JSString* base = cellArgument<JSString>(string, entry);
+    if (stackBuilder.isOnStack() && byteCast<Latin1Character>(cursor) == stackBuilder.buffer && start >= 0 && start < end && static_cast<unsigned>(end) <= base->length()) {
+        JSString* range = jsSubstring(globalObject, base, start, end - start);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.holdOneString(range)));
+    }
     StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
     if (!storage) [[unlikely]]
         OPERATION_RETURN(scope, nullptr);
-    appendStringRange(globalObject, *storage, cellArgument<JSString>(string, entry), start, end, entry);
+    appendStringRange(globalObject, *storage, base, start, end, entry);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.didChangeStorage(globalObject)));
 }
@@ -1526,7 +1546,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (Instance* instance, uint8_t* builder))
 {
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    if (!stackBuilder.isOnStack())
+    if (!stackBuilder.isOnStack() && !stackBuilder.holdsOneString())
         stackBuilder.storage->release(*instance);
 }
 

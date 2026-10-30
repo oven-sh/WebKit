@@ -214,6 +214,14 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     return logicalAnd(hasBits(shapeWord, compiledObjectShapeBit), passesTest);
 }
 
+Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
+{
+    ShapeRange shapes = m_placement.shapes().shapesOf(layout);
+    if (shapes.isEmpty())
+        return boolean(false);
+    return passesRange(shapeWord, ShapeTest { .form = ShapeTestForm::Range, .first = shapes.first, .count = shapes.count });
+}
+
 void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, const Type& known, BranchTargets targets)
 {
     branch(hasShapeIn(cell, tested, known), targets);

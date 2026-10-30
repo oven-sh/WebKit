@@ -2756,7 +2756,7 @@ private:
         return callees;
     }
 
-    // `m.call(o)` where m makes an array iterator is `o.m()`: it makes the object of this call, not the one object that stands for all that native code makes.
+    // `m.call(o)` where m makes an iterator of a list, a Map or a Set is `o.m()`: it makes the object of this call, not the one object that stands for all that native code makes.
     ClimbingSet applyBuiltinsCalledInPlace(const BuiltinCallback& callback, ClimbingSet callees)
     {
         if (callback.constructs || m_builtins.canonicalID(m_builtin) != m_builtins.canonicalID(Builtins::FunctionPrototypeCall) || !m_call.operation || m_call.arguments.empty() || m_call.otherArguments.node || m_call.otherArguments.constant != ValueSets::nothing)
@@ -2769,7 +2769,10 @@ private:
         Vector<ValueFlowObjectID, 4> applied;
         m_context.forEachMember(m_context.restrict(callees, m_universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
             BuiltinID builtin = m_builtins.canonicalID(m_universe.builtinOf(callee));
-            if (builtin != Builtins::ArrayPrototypeValues && builtin != Builtins::ArrayPrototypeKeys && builtin != Builtins::ArrayPrototypeEntries)
+            bool makesIterator = std::ranges::any_of(makersOfIteratorsCalledInPlace, [&](BuiltinID maker) {
+                return m_builtins.canonicalID(maker) == builtin;
+            });
+            if (!makesIterator)
                 return;
             applied.append(callee);
             applyBuiltin(builtin, description, m_context);

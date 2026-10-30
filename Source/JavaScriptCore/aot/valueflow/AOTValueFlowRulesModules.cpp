@@ -1106,7 +1106,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); found.fileOfProgram)
             loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
         else {
-            noteLoadUnderSpelledNames(context, statement.function);
+            noteLoadUnderSpelledNames(context, statement.function, found, settledValueOfPromiseAt(statement, context));
             for (ModuleID module : found.libraryModules)
                 importModule(statement, context, module);
         }
@@ -1117,7 +1117,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         if (program.at(operation.referrer()).exportsVariable)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, context.universe().objectOf(Builtins::ModuleObject, operation.referrer())));
         if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.fileOfProgram) {
-            noteLoadUnderSpelledNames(context, statement.function);
+            noteLoadUnderSpelledNames(context, statement.function, found, statement.result);
             for (ModuleID module : found.libraryModules)
                 requireModule(statement, context, module);
         } else if (statement.result)

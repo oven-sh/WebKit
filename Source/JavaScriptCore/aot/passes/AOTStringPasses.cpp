@@ -1811,6 +1811,100 @@ static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// `let out = ""; .. return out + text.slice(start, end)`: where nothing was appended on the way there, the last part is the text.
+static PassOutcome takeOnlyPartsOutOfBuilders(FunctionPassContext& context, std::span<const ValueID> appends)
+{
+    static constexpr OpcodeSet operationsThatAppendNothing { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard, Opcode::StringBuilderLength, Opcode::StringBuilderToString, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack };
+    Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    struct LastAppend {
+        ValueLocation location;
+        ValueID append;
+        ValueID finish;
+    };
+    // A builder goes from block to block as a parameter.
+    auto followsAnotherAppend = [&](ValueID append, ProgramPoint point) {
+        Vector<ValueID, 8> names { function.at(append).builderOperand() };
+        auto add = [&](ValueID name) {
+            if (name && !names.contains(name))
+                names.append(name);
+        };
+        for (size_t position = 0; position < names.size(); ++position) {
+            ValueID name = names[position];
+            ValueLocation location = useLists.locationOf(name);
+            if (location.placement == ValuePlacement::Parameter) {
+                for (Edge edge : cfg.incomingEdges(location.block))
+                    add(valuePassedOn(function, edge, location.index));
+            }
+            for (const Use& use : useLists.usesOf(name)) {
+                if (use.isEdgeUse()) {
+                    add(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+                    continue;
+                }
+                if (use.kind == Use::Kind::Operand && use.user != append && !operationsThatAppendNothing.contains(function.at(use.user).opcode) && context.analyses.dominates(use.user, point))
+                    return true;
+            }
+        }
+        return false;
+    };
+    Vector<LastAppend, 2> lastAppends;
+    for (ValueID id : appends) {
+        const Value& append = function.at(id);
+        if (append.opcode != Opcode::StringBuilderAppend || append.partsOperands().size() != 1 || !context.program.typeOf(function, append.partsOperands()[0]).isString())
+            continue;
+        ValueLocation location = useLists.locationOf(id);
+        if (location.placement != ValuePlacement::InBlock)
+            continue;
+        const Block& block = function.at(location.block);
+        if (block.handler || location.index + 1 >= block.values.size())
+            continue;
+        ValueID handle = append.builderOperand();
+        ValueID finishID = block.values[location.index + 1];
+        const Value& finish = function.at(finishID);
+        if (finish.opcode != Opcode::StringBuilderFinish || finish.builderOperand() != handle || finish.isLikelyKey())
+            continue;
+        if (!followsAnotherAppend(id, { location.block, location.index }))
+            lastAppends.append({ location, id, finishID });
+    }
+    if (lastAppends.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // Of the appends of a block the last one is cut out first, so each is still where it was found.
+    AOT::sort(lastAppends, std::greater { }, [](const LastAppend& last) {
+        return last.location.index;
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (const LastAppend& last : lastAppends) {
+        BlockID block = last.location.block;
+        Value finish = function.at(last.finish);
+        ValueID handle = finish.builderOperand();
+        ValueID part = function.at(last.append).partsOperands()[0];
+        // A slice made for the append alone is made on either side: behind other text its characters are copied and no string is made.
+        bool isMadeForAppend = function.at(part).opcode == Opcode::Substring && useLists.usesOf(part).size() == 1 && useLists.locationOf(part).placement == ValuePlacement::InBlock && useLists.blockOf(part) == block;
+        BlockValues moved;
+        BlockValues remaining;
+        for (ValueID id : function.at(block).values)
+            (id == last.append || (isMadeForAppend && id == part) ? moved : remaining).append(id);
+        function.edit(block).values = WTF::move(remaining);
+        context.analyses.didChangeValues();
+
+        builder.setOrigin(finish.origin());
+        Expected<BlockFrequency> frequency = function.at(block).frequency;
+        IRBuilder::Expansion expansion = builder.beginExpansion({ block, static_cast<uint32_t>(function.at(block).values.find(last.finish)) });
+        ValueID length = builder.append(Opcode::StringBuilderLength, { handle });
+        IRBuilder::BranchBlocks isEmpty = builder.emitBranch(builder.append(Opcode::StrictEq, { length, builder.appendInteger(0) }), frequency, frequency);
+        builder.append(Opcode::StringBuilderDiscard, { handle });
+        builder.endExpansion(expansion, isMadeForAppend ? builder.append(Value(function.at(part))) : part);
+        function.edit(isEmpty.notTaken).values.appendVector(moved);
+        context.analyses.didChangeValues();
+        builder.moveToEndOf(isEmpty.notTaken);
+        builder.endExpansion(expansion, builder.append(WTF::move(finish)));
+    }
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -1841,8 +1935,9 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const Bit
             break;
         }
     }
+    Vector<ValueID, 8> appends;
     if (!plan.createdWebs().empty()) {
-        Vector<ValueID, 8> appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
+        appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
         StringBuilderStep { context, statesReadAsStrings }.foldConversionsInto(appends.span());
         outcome = PassOutcome::Changed;
     }
@@ -1850,6 +1945,7 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const Bit
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
     outcome |= expandAppendedStringRanges(context);
+    outcome |= takeOnlyPartsOutOfBuilders(context, appends.span());
     return outcome | rollBackAppendsUnderHandlers(context);
 }
 

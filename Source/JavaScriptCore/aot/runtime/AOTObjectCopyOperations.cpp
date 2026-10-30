@@ -357,8 +357,6 @@ static NEVER_INLINE ASCIILiteral defineCollectedProperties(JSGlobalObject* globa
 // None of the ways that run no code takes a getter, and each would walk the source to find that out.
 static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* from, const ExcludedKeys& excluded)
 {
-    if (!PropertyWalk::hasGetterToCall(from))
-        return std::nullopt;
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<RefPtr<UniquedStringImpl>, 32> heldNames;
     Vector<UniquedStringImpl*, 8> names;
@@ -464,7 +462,24 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     if (takesPlainPropertiesDirectly(target->structure()) && tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names()))
         return "into an ordinary object, by a plan"_s;
-    if (isCompiledObject(from)) {
+    if (isCompiledObject(from) && PropertyWalk::hasGetterToCall(from)) {
+        // What the getters give is read into an ordinary object, which is copied like any other. Nothing sees the target before the copy is complete.
+        auto isExcluded = [&](UniquedStringImpl* name) {
+            return excluded.contains(name);
+        };
+        ScopedLambda<bool(UniquedStringImpl*)> isLeftOut = isExcluded;
+        // A rest is read into the object that was made for it.
+        bool isEmptyOrdinaryObject = !excluded.isEmpty() && target->structure() == globalObject->objectStructureForObjectConstructor();
+        JSObject* read = PropertyWalk::tryCopyCallingGetters(globalObject, from, PropertyWalk::NewObjectTakes::Definitions, excluded.isEmpty() ? nullptr : &isLeftOut, isEmptyOrdinaryObject ? target : nullptr);
+        RETURN_IF_EXCEPTION(scope, threw);
+        if (read == target)
+            return "getters called by a list"_s;
+        if (read) {
+            if (record && tryRepeatAssignment(vm, *instance->state, target, read, 0) != RepeatedCopy::IsNotDone)
+                return "getters called by a list, then as the copy before"_s;
+            ExcludedKeys nothing;
+            RELEASE_AND_RETURN(scope, copyDataPropertiesByAnyWay(instance, globalObject, vm, target, read, nothing));
+        }
         std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, target, from, excluded);
         RETURN_IF_EXCEPTION(scope, threw);
         if (way)
@@ -612,17 +627,13 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // None of the ways that run no code takes a getter. A copy of all that the source holds has tried two of them by now; one that leaves names out asks further on.
+    // None of the ways that run no code takes a getter. A copy that leaves names out asks further on.
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
-        JSObject* copy = constructEmptyObject(globalObject);
-        ExcludedKeys excluded;
-        excluded.collect(instance, globalObject, run, excludedKeys);
+        JSObject* copy = PropertyWalk::tryCopyCallingGetters(globalObject, asObject(source), PropertyWalk::NewObjectTakes::Definitions);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, copy, asObject(source), excluded);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (way) {
+        if (copy) {
             if (Options::aotCountsPath()) [[unlikely]]
-                instance->state->objects->caches->assignmentPlans.noteCopy(*way);
+                instance->state->objects->caches->assignmentPlans.noteCopy("getters called by a list"_s);
             return copy;
         }
     }
@@ -671,6 +682,12 @@ static bool isAssignedAsCopied(VM& vm, JSGlobalObject* globalObject, JSValue sou
 static NEVER_INLINE JSObject* assignToNewObject(JSGlobalObject* globalObject, VM& vm, JSValue source)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
+        JSObject* copy = PropertyWalk::tryCopyCallingGetters(globalObject, asObject(source), PropertyWalk::NewObjectTakes::Stores);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (copy)
+            return copy;
+    }
     JSFinalObject* target = constructEmptyObject(globalObject);
     if (source.isUndefinedOrNull())
         return target;

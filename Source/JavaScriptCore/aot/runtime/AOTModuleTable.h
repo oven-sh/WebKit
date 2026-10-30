@@ -88,6 +88,9 @@ public:
     bool hasFileWithExtension(StringView) const;
     // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
+    // A bit for the hash of each text that ends with a slash and starts the path of a module. Empty: nothing is known.
+    Vector<uint64_t> hashedDirectories() const;
+    static bool mayHoldPathStartingWith(std::span<const uint64_t> hashedDirectories, StringView start);
 
 private:
     using PiecesOfPath = Vector<StringView, 16>;

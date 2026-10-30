@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncAwaitConditions.h"
+#include "AOTBarrierEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
@@ -78,7 +80,19 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
         return callOperation<CellPointer>(value, RuntimeOperation::GetModuleNamespace, { moduleIndex(module), word32(static_cast<int32_t>(phase)) }, options);
     };
     if (!keepsNamespaceInValueWord(m_program.at(module), phase) || !m_placement.hasModuleValue(module)) {
-        define(value, getInSlowPath({ }));
+        std::optional<uint32_t> offset = phase == ImportPhase::Evaluation ? m_placement.moduleNamespaceOffset(module) : std::nullopt;
+        if (!offset) {
+            define(value, getInSlowPath({ }));
+            return;
+        }
+        // `fs.existsSync(path)` behind `import * as fs` hands the object on as `this`, at every call. It is made once.
+        TypedPointer cellWord = emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *offset);
+        define(value, emitter<ConstantEmitter>().permanentCell(cellWord, false, [&] {
+            CellPointer cell = getInSlowPath({ .isOnRarePath = true });
+            m_out.store64(cell.value(), cellWord);
+            emitter<BarrierEmitter>().markCardOfStatics(*offset);
+            return cell;
+        }));
         return;
     }
 

@@ -142,15 +142,44 @@ public:
         return false;
     }
 
+    // Whether a path leads from an entry of the copy to the block without passing the definition. Only there does the value get another name.
+    bool isReachedAroundDefinition(ValueID definition, BlockID use) const
+    {
+        const Liveness& liveness = (*m_liveness)();
+        BlockID definingBlock = m_useLists.blockOf(definition);
+        BitVector seen(m_function.blocks.size());
+        Vector<BlockID, 16> worklist;
+        auto visit = [&](BlockID block) {
+            if (block != definingBlock && contains(block) && !seen.set(block.index()))
+                worklist.append(block);
+        };
+        for (BlockID entry : m_entries) {
+            if (liveness.isLiveAtHead(definition, entry))
+                visit(entry);
+        }
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (block == use)
+                return true;
+            forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
+                visit(target.block);
+            });
+        }
+        return false;
+    }
+
     bool canBeSeparatedFromUses(ValueID definition) const
     {
         bool isSeparated = false;
         for (const Use& use : m_useLists.usesOf(definition)) {
             if (contains(use.block) && (use.block == m_useLists.blockOf(definition) || !isLiveAtEntry(definition)))
                 continue;
-            if (!acceptsParameter(use, definition))
+            if (acceptsParameter(use, definition)) {
+                isSeparated = true;
+                continue;
+            }
+            if (!contains(use.block) || isReachedAroundDefinition(definition, use.block))
                 return false;
-            isSeparated = true;
         }
         return !isSeparated || canBecomeParameter(definition);
     }

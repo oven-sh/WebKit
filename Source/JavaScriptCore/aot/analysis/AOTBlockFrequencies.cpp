@@ -699,7 +699,9 @@ void BlockFrequencies::estimateCounts() const
     unsigned deepest = 0;
     for (unsigned cycle = 0; cycle < forest.size(); ++cycle)
         deepest = std::max(deepest, forest.depth(cycle));
-    for (unsigned depth = deepest; depth; --depth) {
+    // Each level costs a walk over the function. Some 250 loops deep a flow has reached its limit, and from there on every loop looks as if it were seldom gone round.
+    constexpr unsigned deepestLevelLookedAt = 64;
+    for (unsigned depth = std::min(deepest, deepestLevelLookedAt); depth; --depth) {
         bool hasCycleSeldomGoneRound = false;
         for (unsigned cycle = 0; cycle < forest.size(); ++cycle) {
             double returning = returningShares[cycle];

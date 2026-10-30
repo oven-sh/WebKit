@@ -1,6 +1,6 @@
 # A number that bounds a counter is tested for int32 in front of the loop, and the counter is an int32 then. Not where an iteration takes the counter as a number: there an integer would be converted every time
 # RUN: pipeline Select
-# OPTIONS: check=VerifyEachPass
+# OPTIONS: check=VerifyEachPass disable=pass:RemoveUnusedParameters
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

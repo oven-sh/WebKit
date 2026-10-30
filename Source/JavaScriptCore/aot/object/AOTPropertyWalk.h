@@ -63,6 +63,10 @@ struct GetterWalkHooks {
     bool refusesProtoName { false };
 };
 bool hasGetterToCall(JSObject* compiledObject);
+// A new ordinary object that holds what { ...object } holds, or what Object.assign({}, object) makes, getters called. Null where the object is not read this way, with nothing run, and where a getter threw.
+// A name that isLeftOut answers for is not read. With a target that nobody has seen, which takes stores without running code: where the copy has to be finished by name, it is finished on the target, which is then returned.
+enum class NewObjectTakes : bool { Definitions, Stores };
+JSObject* tryCopyCallingGetters(JSGlobalObject*, JSObject* compiledObject, NewObjectTakes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut = nullptr, JSObject* unseenTarget = nullptr);
 Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks = { });
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
 // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field.
@@ -90,6 +94,8 @@ void setIntegrity(VM&, JSObject*, Integrity);
 Presence testIntegrity(JSObject*, Integrity);
 // Calls the getters of a compiled source, which may throw.
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
+// The same for a target that nobody but the caller has: a getter cannot tell when it is stored to.
+bool tryAssignToUnseenTarget(VM&, JSObject* compiledTarget, JSObject* source);
 // Object.assign(target, source) of a compiled source with a getter, in the steps of the language. False before anything has run.
 bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source);
 // What canPerformFastPutInlineExcludingProto() and isStructureExtensible() would answer for the target if an ordinary object stood in the place of each compiled one, of the target and of those above it.

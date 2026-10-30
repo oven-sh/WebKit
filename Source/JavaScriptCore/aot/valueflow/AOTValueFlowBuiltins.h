@@ -7,11 +7,20 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTFlowPrototypes.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowRuleContext.h"
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+// `m.call(o)` with one of these is `o.m()`: tslib's __values and __read call them so.
+inline constexpr std::array makersOfIteratorsCalledInPlace {
+    Builtins::ArrayPrototypeValues, Builtins::ArrayPrototypeKeys, Builtins::ArrayPrototypeEntries,
+    Builtins::MapPrototypeKeys, Builtins::MapPrototypeValues, Builtins::MapPrototypeEntries,
+    Builtins::SetPrototypeValues, Builtins::SetPrototypeEntries,
+};
 
 struct ValueFlowBuiltinCall {
     ValueFlowCallKind kind { ValueFlowCallKind::Call };

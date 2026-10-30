@@ -599,7 +599,7 @@ static bool changesNothingThroughSetterOfPrototype(VM& vm, JSGlobalObject* globa
     if ((value.isObject() || value.isNull()) && object->getPrototypeDirect() != value)
         return false;
     JSObject* holderOfAccessor = globalObject->objectPrototype();
-    if (!holderOfAccessor->structure()->hasImmutableProperties())
+    if (!holderOfAccessor->structure()->isImmutableProperty(propertyName.uid()))
         return false;
     for (JSObject* current = object; current != holderOfAccessor;) {
         Structure* structure = current->structure();

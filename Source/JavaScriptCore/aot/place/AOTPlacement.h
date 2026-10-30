@@ -195,6 +195,8 @@ struct StaticsPlan {
     Vector<std::optional<uint32_t>> moduleValueOffsets;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
+    // The namespace object of a module of the run time, whose value word holds what require() answers.
+    Vector<std::optional<uint32_t>> moduleNamespaceOffsets;
     Vector<uint32_t> roots;
     Vector<StaticsRange> clearedEachCollection;
     uint32_t distanceFromArrayProfileToLastArray { 0 };
@@ -335,6 +337,7 @@ public:
     uint32_t sizeOfStatics() const { return m_statics.size; }
     bool hasModuleValue(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].has_value(); }
     uint32_t moduleValueOffset(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].value(); }
+    std::optional<uint32_t> moduleNamespaceOffset(ModuleID id) const { return m_statics.moduleNamespaceOffsets[id.index()]; }
     std::optional<uint32_t> freeCellOffset(LayoutID id) const { return id.index() < m_statics.freeCellOffsets.size() ? m_statics.freeCellOffsets[id.index()] : std::nullopt; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> moduleBuiltinCellOffset(BuiltinID, ModuleID) const;
 

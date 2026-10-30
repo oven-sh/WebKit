@@ -116,5 +116,5 @@ function f1 name="range" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # NONE-NOT: :CallBuiltin
 # NONE-NOT: Register(
 # NONE-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1
+# X64: loop #{{*}}, instructions: 9, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 8, patchpoints: 0

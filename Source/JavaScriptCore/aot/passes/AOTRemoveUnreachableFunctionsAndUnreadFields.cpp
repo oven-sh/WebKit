@@ -96,7 +96,26 @@ BitVector findReachableFunctions(const Program& program, const CallGraph& callGr
     Vector<FunctionID> frontier;
     // The tables take the body of a module or of a function that is registered for the host as the sign that it can run.
     BitVector isCalledByHost = functionsCalledByHost(program, loops);
+    // A declared function is a root for whoever reads its variable and gets its closure. What is left of one that has lost parameters only hands on to the version without them, for nobody where the variable is never read.
+    BitVector isOnlyInUnreadVariable(count);
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads == ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickSet(variable.function.index());
+    }
+    for (const Variable& variable : program.variables) {
+        if (variable.function && variable.flow.reads != ReadState::NeverRead)
+            isOnlyInUnreadVariable.quickClear(variable.function.index());
+    }
+    auto onlyHandsOnToOwnVersion = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        if (!function.hasBody() || function.blocks.size() != 1 || function.at(entryBlock).values.size() != 1)
+            return false;
+        const Value& call = function.at(function.at(entryBlock).values[0]);
+        return call.opcode == Opcode::CallDirect && program.at(call.function()).derivation.source == id;
+    };
     for (FunctionID root : callGraph.roots()) {
+        if (isOnlyInUnreadVariable.quickGet(root.index()) && !isCalledByHost.get(root.index()) && callGraph.numberOfCallSites(root) == callGraph.numberOfCallSitesInCode(root) && onlyHandsOnToOwnVersion(root))
+            continue;
         if (isCalledByHost.get(root.index()) || entrypointsOf(root).empty())
             reach(root, frontier);
     }
@@ -697,9 +716,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         areReceiverSetsEnabled = build.isEnabled(FlowResultKind::ReceiverSets, function);
     for (uint32_t layoutIndex = 0; areReceiverSetsEnabled && layoutIndex < program.layouts.size(); ++layoutIndex) {
         const Layout& layout = program.layouts[layoutIndex];
-        if (!supportsRemovalOf(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
+        if (!supportsRemovalOf(layout.kind))
             continue;
+        bool onlyDeclaresFieldsOfLayoutsBelow = layout.flow.allocation == AllocationState::NeverAllocated;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (onlyDeclaresFieldsOfLayoutsBelow && !hasNoAccesses(layout.fields[field].flow.location))
+                continue;
             if (isUnread(build, layout, layout.fields[field]))
                 fields.append(FieldReference { LayoutID(layoutIndex), field });
         }

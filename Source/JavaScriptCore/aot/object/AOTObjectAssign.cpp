@@ -676,6 +676,7 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
     }
     uint64_t* bits = bitsOfRun;
     Extension* sourceExtension = m_plan.readsOutOfLineFields ? source.compiledObject->extension() : nullptr;
+    using MovesFrom = AssignmentPlan::FieldStore::MovesFrom;
     for (AssignmentPlan::FieldStore& store : m_plan.fieldStores) {
         if (store.copiesBitsUntested) {
             const void* from = slotIn(*source.compiledObject, sourceExtension, *store.from);
@@ -687,6 +688,27 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
             ++bits;
             m_didStoreCell |= store.holdsCell;
             continue;
+        }
+        if (store.movesFrom != MovesFrom::Nowhere) {
+            const uint8_t* place;
+            if (store.movesFrom == MovesFrom::Cell)
+                place = reinterpret_cast<const uint8_t*>(source.object);
+            else if (store.movesFrom == MovesFrom::InlineProperties)
+                place = reinterpret_cast<const uint8_t*>(source.propertyStorage->inlineStorageUnsafe());
+            else
+                place = reinterpret_cast<const uint8_t*>(source.propertyStorage->outOfLineStorage());
+            place += store.bytesInSource;
+            // A move out of a property expects a value there.
+            bool didMove = (store.movesFrom == MovesFrom::Cell || *reinterpret_cast<const uint64_t*>(place)) && tryMove(m_state.instance.cellCageBase, store.move, place, [&](uint64_t moved) ALWAYS_INLINE_LAMBDA {
+                *bits = moved;
+            }, [] {
+                return false;
+            }, m_state.instance.runtime.constants.literalStrings);
+            if (didMove) [[likely]] {
+                ++bits;
+                m_didStoreCell |= store.holdsCell;
+                continue;
+            }
         }
         JSValue value = source.read(store);
         if (store.writesInt32AsItIs && value.isInt32() && value.asInt32() >= store.leastInt32 && value.asInt32() <= store.greatestInt32) {
@@ -1343,7 +1365,7 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentBetweenLayouts(VM& vm, State
     return tryRepeatAssignmentByRecentPlan(vm, state, to, from, excludedRunNumberPlusOne);
 }
 
-static std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable& layouts, const AssignmentPlan::FieldStore& store)
+std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable& layouts, const AssignmentPlan::FieldStore& store)
 {
     using Kind = MappedCopy::MoveKind;
     const FieldData& to = *store.to;

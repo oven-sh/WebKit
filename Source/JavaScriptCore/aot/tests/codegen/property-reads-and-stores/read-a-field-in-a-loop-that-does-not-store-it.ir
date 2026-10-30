@@ -96,5 +96,5 @@ function f1 name="walk" module=m0 position=30 flags=[IsChecked, HasExplicitName]
 # LOOP-LABEL: loop #
 # LOOP-NOT: Reads:ObjectFields
 # LOOP-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 3, patchpoints: 1
-# ARM64: loop #{{*}}, instructions: 3, patchpoints: 1
+# X64: loop #{{*}}, instructions: 3, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 3, patchpoints: 0

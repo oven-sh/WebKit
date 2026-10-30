@@ -110,9 +110,14 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements };
 
 bool isOutlinedIteration(const Function&);
+// Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.
+struct DerivedFunctionKey;
+struct DerivedFunctionInputs;
+DerivedFunctionKey keyOfCallWithElements(VariableID);
+Function buildCallWithElements(const DerivedFunctionKey&, DerivedFunctionInputs&);
 
 // A parameter, a constant and a cast stay what they are, and so does a test whose proof lasts for a stretch.
 inline constexpr OpcodeSet foldableOpcodes = [] {

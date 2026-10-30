@@ -30,6 +30,7 @@ public:
     void generateAwaitCallBySavingFrame(const ValueContext&);
     void generateYieldBySavingFrame(const ValueContext&);
     void generateNewHeapFrame(const ValueContext&);
+    void generateNewHeapWords(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
     void generatePutHeapFrameWord(const ValueContext&);
     void generateGetResumeIndex(const ValueContext&);

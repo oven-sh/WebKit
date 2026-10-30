@@ -250,7 +250,7 @@ public:
     void setNumberOfFrameWordsToClearAtFirstSuspension(unsigned numberOfWords) { m_numberOfFrameWordsToClearAtFirstSuspension = numberOfWords; }
     unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return m_numberOfFrameWordsToClearAtFirstSuspension; }
 
-    // The program lets go of an object here. Air clears what this function has written, reads no more and would leave as it is across a later call:
+    // The program lets go of its one child here. Air clears the places that still hold that value and are read no more:
     // stack slots by stores behind this, and the generator clears those of registersToRelease() that are not in use.
     void setReleasesDeadValues(bool releasesDeadValues) { m_releasesDeadValues = releasesDeadValues; }
     bool releasesDeadValues() const { return m_releasesDeadValues; }

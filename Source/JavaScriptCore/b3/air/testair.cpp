@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include "AirCCallingConvention.h"
 #include "AirCode.h"
 #include "AirFixSpillsAfterTerminals.h"
 #include "AirFoldTrapsIntoAccesses.h"
@@ -33,6 +34,7 @@
 #include "AirSpecial.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "B3CCallValue.h"
 #include "B3Const64Value.h"
 #include "B3ConstDoubleValue.h"
 #include "B3MemoryValue.h"
@@ -78,6 +80,7 @@
 #include "AirShrinkWrapFrame.h"
 #include "AirSplitLiveRangesAroundFrame.h"
 #include "AirStackAllocation.h"
+#include "AirReleaseDeadValues.h"
 #include "AirStackColoring.h"
 #include "AirTmpInlines.h"
 #include "AirValidate.h"

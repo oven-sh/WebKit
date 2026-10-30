@@ -828,28 +828,20 @@ ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, Functio
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
-    const ValueFlowHeapTables& tables = universe.builtinTables().heap();
     ModulesThatNamesFind found;
-    bool isSpelledOtherwise = false;
     auto add = [&](std::span<const uint8_t> text) {
-        if (ModuleID module = tables.libraryModuleNamed(text))
+        if (ModuleID module = universe.builtinTables().heap().libraryModuleNamed(text))
             found.libraryModules.append(module);
         else if (hasSchemeOfLibrary(text) || isNameOfPackageOutsideImage(context, text))
-            isSpelledOtherwise = true;
+            found.nativeModule = true;
         else
             found.fileOfProgram = true;
-    };
-    // "sys" is node:util. Only the front end knows that, and it lists the module that a text of the program stands for.
-    auto finish = [&] {
-        if (isSpelledOtherwise)
-            found.libraryModules = Vector<ModuleID, 16>(tables.libraryModulesThatTextsStandFor());
-        return found;
     };
     // A text that is no key of the program is any string to the values.
     const Function& function = program.at(load);
     if (const Value& definition = function.at(definitionThroughSameValues(function, written)); definition.opcode == Opcode::String) {
         add(program.string(definition.string()));
-        return finish();
+        return found;
     }
     context.forEachMember(context.valueOf(name), [&](ValueFlowObjectID member) {
         if (found.fileOfProgram)
@@ -868,13 +860,27 @@ ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, Functio
         });
         found.fileOfProgram = text == std::end(primitiveKeyTexts) || !isNameOfPackageOutsideImage(context, byteCast<uint8_t>(text->text.span()));
     });
-    return finish();
+    return found;
 }
 
-void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load)
+static ClimbingSet publicNativeModules(ValueFlowRuleContext& context)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    Vector<ValueFlowObjectID, 32> objects;
+    for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
+        const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
+        if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource))
+            objects.append(context.universe().objectOf(module.namespaceObject));
+    }
+    return ClimbingSet(context.maker().of(objects.span()));
+}
+
+void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, const ModulesThatNamesFind& found, ValueFlowNodeID answer)
 {
     if (isWrittenInProgram(context.program().at(load)))
         raiseHostFlag(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames);
+    if (found.nativeModule && answer)
+        context.add(answer, publicNativeModules(context));
 }
 
 static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context)
@@ -911,7 +917,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context);
         if (found.fileOfProgram)
             return loadsOnlyLibraryModules(builtin) ? handLibraryModulesTo(context, statement.result) : raiseEvent(context, builtin, *cause, statement.result);
-        noteLoadUnderSpelledNames(context, statement.function);
+        noteLoadUnderSpelledNames(context, statement.function, found, statement.result);
         for (ModuleID module : found.libraryModules)
             requireModule(statement, context, module);
     });
@@ -1296,14 +1302,7 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
             connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::LibraryValuesLoadedByName));
     });
 
-    const BuiltinTable& builtins = context.program().builtins();
-    Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
-    for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
-        const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
-        if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource))
-            objectsOfNativeModules.append(context.universe().objectOf(module.namespaceObject));
-    }
-    ClimbingSet nativeModules(context.maker().of(objectsOfNativeModules.span()));
+    ClimbingSet nativeModules = publicNativeModules(context);
     if (areRequired)
         context.add(nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName), nativeModules);
     if (areImported)

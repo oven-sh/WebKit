@@ -29,6 +29,7 @@
 #include "DeferGC.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <optional>
@@ -521,6 +522,158 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
     return Result::Completed;
 }
 
+static bool newObjectsTakeStoresAsDefinitions(JSGlobalObject* globalObject)
+{
+    return !globalObject->objectPrototype()->structure()->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+}
+
+static NEVER_INLINE void fillGetterSourceList(JSGlobalObject* globalObject, GetterSourceList& list, const Object& typed, JSObject* extra)
+{
+    VM& vm = globalObject->vm();
+    list.structure = typed.structureID();
+    list.orderWord = typed.orderWord();
+    list.extraPropertiesStructure = extra ? extra->structureID() : StructureID();
+    list.structureOfCopy = nullptr;
+    list.properties.shrink(0);
+    if (hasFieldPreparedBeforeLookups(vm, typed))
+        return;
+    // A dictionary changes and releases names without a new Structure.
+    if (extra && (extra->type() != FinalObjectType || extra->structure()->isDictionary() || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties()))
+        return;
+    State& state = typed.state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    Vector<OrderedKey, 32> ordered;
+    if (extra)
+        ordered = collectKeysInOrder(vm, typed, extra);
+    else {
+        std::span<const FieldData> fields = typed.layout().fields();
+        typed.forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed.isInSlot(field))
+                ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed.attributesOf(field) });
+        });
+    }
+    Vector<UniquedStringImpl*, 8> names;
+    for (bool wantsSymbols : { false, true }) {
+        for (const OrderedKey& key : ordered) {
+            if (key.name->isSymbol() != wantsSymbols || PropertyName(key.name).isPrivateName())
+                continue;
+            if (key.attributes & (PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue) || key.name == vm.propertyNames->underscoreProto.impl())
+                return;
+            bool isEnumerable = !(key.attributes & PropertyAttribute::DontEnum);
+            list.properties.append({ key.name, key.field, key.offsetInExtraProperties, isEnumerable ? static_cast<PropertyOffset>(names.size()) : invalidOffset, !!(key.attributes & PropertyAttribute::Accessor) });
+            if (isEnumerable)
+                names.append(key.name);
+        }
+    }
+    Structure* empty = globalObject->objectStructureForObjectConstructor();
+    if (names.isEmpty() || names.size() > empty->inlineCapacity())
+        return;
+    MarkedArgumentBuffer values;
+    for (size_t index = 0; index < names.size(); ++index)
+        values.appendWithCrashOnOverflow(jsUndefined());
+    JSFinalObject* model = constructEmptyObject(vm, empty);
+    model->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+    Structure* structure = model->structure();
+    if (structure->isDictionary())
+        return;
+    for (size_t index = 0; index < names.size(); ++index) {
+        if (structure->get(vm, names[index]) != static_cast<PropertyOffset>(index))
+            return;
+    }
+    list.structureOfCopy = structure;
+}
+
+// A getter has moved something, or has put something on Object.prototype that a store meets. What was read in front of it is in the copy that was begun, and went there while a store was a definition.
+static NEVER_INLINE JSObject* finishCopyByName(JSGlobalObject* globalObject, JSObject* object, std::span<const GetterSourceList::Property> properties, size_t numberRead, JSFinalObject* begun, JSValue valueOfNext, NewObjectTakes takes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut, JSObject* unseenTarget)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* copy = unseenTarget ? unseenTarget : constructEmptyObject(globalObject);
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    for (const GetterSourceList::Property& property : properties.first(numberRead)) {
+        JSValue value = isValidOffset(property.offsetInCopy) ? begun->getDirect(property.offsetInCopy) : JSValue();
+        if (!value)
+            continue;
+        names.append(property.name);
+        values.appendWithCrashOnOverflow(value);
+    }
+    if (!names.isEmpty()) {
+        Object* record = compiledObjectOrNull(copy);
+        if (!record)
+            copy->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+        else if (!storePropertiesInOrder(vm, *record, names.mutableSpan(), { values.data(), values.size() })) {
+            for (size_t index = 0; index < names.size(); ++index) {
+                PutPropertySlot slot(copy, true);
+                copy->putInline(globalObject, PropertyName(names[index]), values.at(index), slot);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+        }
+    }
+    for (size_t index = numberRead; index < properties.size(); ++index) {
+        PropertyName name(properties[index].name);
+        if (isLeftOut && (*isLeftOut)(name.uid()))
+            continue;
+        JSValue value = std::exchange(valueOfNext, JSValue());
+        if (!value) {
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                continue;
+            value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, name) : slot.getValue(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (takes == NewObjectTakes::Stores) {
+            PutPropertySlot slot(copy, true);
+            copy->putInline(globalObject, name, value, slot);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else
+            copy->putDirect(vm, name, value);
+    }
+    return copy;
+}
+
+JSObject* tryCopyCallingGetters(JSGlobalObject* globalObject, JSObject* object, NewObjectTakes takes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut, JSObject* unseenTarget)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object& typed = *uncheckedDowncast<Object>(object);
+    if (typed.structure()->realm() != globalObject || (takes == NewObjectTakes::Stores && !newObjectsTakeStoresAsDefinitions(globalObject)))
+        return nullptr;
+    JSObject* extra = typed.extraProperties();
+    PlacesOfProperties places(typed);
+    GetterSourceList& list = typed.state().objects->caches->getterSources.placeFor(places.structure, places.orderWord);
+    if (!list.isFor(places.structure, places.orderWord, places.structureOfExtra)) [[unlikely]]
+        fillGetterSourceList(globalObject, list, typed, extra);
+    if (!list.structureOfCopy)
+        return nullptr;
+    // A getter may copy another object, which may take the place of the list, and may collect, which empties it. The Structure of the second object holds the names.
+    Vector<GetterSourceList::Property, 8> properties(list.properties);
+    EnsureStillAliveScope namesScope(extra ? extra->structure() : nullptr);
+    JSFinalObject* copy = JSFinalObject::create(vm, list.structureOfCopy);
+    for (size_t index = 0; index < properties.size(); ++index) {
+        const GetterSourceList::Property& property = properties[index];
+        if (!isValidOffset(property.offsetInCopy) || (isLeftOut && (*isLeftOut)(property.name)))
+            continue;
+        JSValue value = property.field ? typed.read(*property.field) : extra->getDirect(property.offsetInExtraProperties);
+        if (!value) [[unlikely]]
+            RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), index, copy, JSValue(), takes, isLeftOut, unseenTarget));
+        if (property.isGetter) {
+            value = uncheckedDowncast<GetterSetter>(value)->callGetter(globalObject, object);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!places.areStill(typed) || (takes == NewObjectTakes::Stores && !newObjectsTakeStoresAsDefinitions(globalObject))) [[unlikely]]
+                RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), index, copy, value, takes, isLeftOut, unseenTarget));
+        }
+        copy->putDirectOffset(vm, property.offsetInCopy, value);
+    }
+    // The Structure names what was left out too.
+    if (isLeftOut)
+        RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), properties.size(), copy, JSValue(), takes, isLeftOut, unseenTarget));
+    return copy;
+}
+
 bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)
 {
     KeyListingThatShowsNoOrder listing(object);
@@ -751,10 +904,36 @@ bool wouldPerformFastPut(VM& vm, JSObject* target)
     return isCompiledObject(target) ? testIntegrity(target, Integrity::NonExtensible) == Presence::Absent : target->isStructureExtensible();
 }
 
+enum class TargetIs : bool { MaybeSeen, Unseen };
+
+// What the getters give is read into an ordinary object, which is assigned like any other.
+static NEVER_INLINE bool tryAssignReadingFirst(VM& vm, Object& target, JSObject* source)
+{
+    JSGlobalObject* globalObject = target.structure()->realm();
+    if (target.getPrototypeDirect() != JSValue(globalObject->objectPrototype()) || !wouldPerformFastPut(vm, &target))
+        return tryAssignCallingGetters(globalObject, &target, source);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* read = tryCopyCallingGetters(globalObject, source, NewObjectTakes::Stores, nullptr, &target);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (read == &target)
+        return true;
+    if (!read)
+        RELEASE_AND_RETURN(scope, tryAssignCallingGetters(globalObject, &target, source));
+    if (tryAssignOrdinaryObjectAsBefore(vm, target.state(), target, read) || target.tryAssignPropertiesOf(vm, read))
+        return true;
+    scope.release();
+    objectAssignGeneric(globalObject, vm, &target, read);
+    return true;
+}
+
+template<TargetIs targetIs>
 static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
 {
     if (source == &target || !isCompiledObject(source))
         return false;
+    // A walk that runs no code takes no getter, and goes a long way to find one.
+    if (hasGetterToCall(source))
+        return targetIs == TargetIs::Unseen ? tryAssignReadingFirst(vm, target, source) : tryAssignCallingGetters(target.structure()->realm(), &target, source);
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
     EnsureStillAliveScope sourceScope(source);
@@ -767,9 +946,6 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         values.appendWithCrashOnOverflow(own.value);
         return IterationStatus::Continue;
     }, Elements::AreLeftOut);
-    // A walk that runs no code takes no getter.
-    if (result == Result::NeedsGenericPath)
-        return tryAssignCallingGetters(target.structure()->realm(), &target, source);
     if (result != Result::Completed || !wouldPerformFastPut(vm, &target))
         return false;
     JSObject* holder = objectHoldingIndexedProperties(source);
@@ -868,7 +1044,13 @@ bool tryAssignCallingGetters(JSGlobalObject* globalObject, JSObject* target, JSO
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)
 {
     Object* typed = compiledObjectOrNull(compiledTarget);
-    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation(vm, *typed, source));
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation<TargetIs::MaybeSeen>(vm, *typed, source));
+}
+
+bool tryAssignToUnseenTarget(VM& vm, JSObject* compiledTarget, JSObject* source)
+{
+    Object* typed = compiledObjectOrNull(compiledTarget);
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation<TargetIs::Unseen>(vm, *typed, source));
 }
 
 void didBecomePrototype(VM& vm, JSObject* object)

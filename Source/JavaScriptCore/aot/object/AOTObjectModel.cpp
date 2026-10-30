@@ -75,12 +75,18 @@ ObjectModelCaches::ObjectModelCaches(State& state)
     : movePlans(state)
     , assignmentPlans(state)
     , propertyLists(state)
+    , getterSources(state)
     , classStructures(state)
     , memberGuardWatchpoints(state)
 {
 }
 
 ObjectModelCaches::~ObjectModelCaches() = default;
+
+GetterSourceLists::GetterSourceLists(State& state)
+{
+    state.caches->add(CacheKind::ClearedEachCollection, "lists of sources with getters"_s, *this);
+}
 
 enum class FieldKeyKind : uint8_t { String, Symbol, PrivateName };
 
@@ -955,7 +961,9 @@ CompiledStructure* StructureTable::find(const Variant& variant) const
 CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested)
 {
     // outOfLineKeyOrder may point into a Structure that nothing else keeps alive.
-    DeferGC deferGC(vm);
+    // A collection that is put off runs at the next poll or allocation, not when this returns: this frame and the caller's hold Variants,
+    // and an empty std::optional leaves its payload unwritten, so the conservative scan would keep whatever stale pointers lie there alive.
+    DeferGCForAWhile deferGC(vm);
     const LayoutData& layout = *requested.layout;
     CompiledStructure* usualStructure = usualStructureIfExists(layout.shape);
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));

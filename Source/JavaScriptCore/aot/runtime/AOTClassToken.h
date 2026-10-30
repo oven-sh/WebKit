@@ -24,7 +24,7 @@ public:
     static constexpr unsigned structuresWithoutNamesSlot = 3;
     static constexpr unsigned firstNameSlot = 4;
 
-    // Where a private name of this evaluation of the class lies in an object that is no compiled object: an instance of a class with a built-in parent, or an object that a constructor returned.
+    // Where a private name of this evaluation of the class lies in an object that is no compiled object: an instance of a class with a built-in parent, an object that a constructor returned, or the extra properties of an instance of a class whose layout lacks the name.
     enum KnownStructureSlot : unsigned {
         // The number is written last. Compiled code compares it with the number in the header of the object.
         StructureNumber,

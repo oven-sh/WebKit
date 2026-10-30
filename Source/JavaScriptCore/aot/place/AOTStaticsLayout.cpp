@@ -540,6 +540,14 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         for (const ModuleBuiltinUse& use : sites.moduleBuiltins)
             plan.moduleBuiltinCells.append({ use.builtin, use.module, allocateRoot() });
     };
+    auto placeModuleNamespaces = [&] {
+        plan.moduleNamespaceOffsets.fill(std::nullopt, program.modules.size());
+        for (ModuleID module : sites.moduleNamespaces) {
+            ModuleKind kind = program.at(module).kind;
+            if (kind == ModuleKind::Runtime || kind == ModuleKind::RuntimeSource)
+                plan.moduleNamespaceOffsets[module.index()] = allocateRoot();
+        }
+    };
     // The table of constant data begins with these nodes, in this order.
     auto placeStorageInImage = [&] {
         uint64_t next = DataNodeHeader::firstNode;
@@ -564,6 +572,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         && placeRegion(placeModuleValues)
         && placeRegion(placeGuardWords)
         && placeRegion(placeModuleBuiltinCells)
+        && placeRegion(placeModuleNamespaces)
         && placeRegion([&] { literals.sharedStorageOffsets = allocateEach(sites.copyOnWriteArrays.size(), allocateRoot); })
         && placeRegion(placeStorageInImage)
         && placeRegion([&] { literals.cellOffsetsOfDataMadeOnce = allocateEach(sites.dataMadeOnce.size(), allocateRoot); })

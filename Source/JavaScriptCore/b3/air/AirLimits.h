@@ -45,6 +45,8 @@ inline constexpr unsigned maxSlotsForDenseInterference = 8192;
 // As many as the slots at that limit can have.
 inline constexpr size_t maxInterferenceEdgesAboveDenseLimit = static_cast<size_t>(maxSlotsForDenseInterference) * maxSlotsForDenseInterference / 2;
 inline constexpr size_t bytesPerNeighborInSparseInterference = 6;
+inline constexpr unsigned maxCellsTriedForSlotWithGaps = 32;
+inline constexpr unsigned maxRangesFittedBetweenOthers = 64;
 inline constexpr size_t minSlotsToOrderByUse = 13;
 inline constexpr size_t minAssignedSlotsToWalkComplement = 256;
 inline constexpr size_t minRatioOfAssignedToNonInterfering = 16;

@@ -734,6 +734,29 @@ static ALWAYS_INLINE VM& vmFor(const JSCell* cell) { return cell->vm(); }
 template<typename First>
 concept CanFindVM = requires(First first) { vmFor(first); };
 
+// There is a wrapper for every operation, in every executable. The counting preserves the registers that hold the operation's arguments, so a wrapper is little more than a call and a jump.
+static NEVER_INLINE void AOT_PRESERVE_MOST_LEAF_ATTRIBUTES countCall(VM* vm, Entry entry)
+{
+    vm->aotState().runtimeTable->didCall(entry);
+}
+
+static NEVER_INLINE void AOT_PRESERVE_MOST_LEAF_ATTRIBUTES countCall(JSGlobalObject* globalObject, Entry entry)
+{
+    vmFor(globalObject).aotState().runtimeTable->didCall(entry);
+}
+
+static NEVER_INLINE void AOT_PRESERVE_MOST_LEAF_ATTRIBUTES countCall(const JSCell* cell, Entry entry)
+{
+    vmFor(cell).aotState().runtimeTable->didCall(entry);
+}
+
+static NEVER_INLINE void AOT_PRESERVE_MOST_LEAF_ATTRIBUTES countCall(Instance* instance, Entry entry)
+{
+    vmFor(instance).aotState().runtimeTable->didCall(entry);
+    if (ArrivalCounts* arrivals = instance->state ? instance->state->arrivalCounts.get() : nullptr)
+        arrivals->didCallOperation(entry);
+}
+
 // No primary definition: an operation whose calling convention matches no specialization fails to compile instead of going uncounted.
 template<Entry entry, auto operation, typename Function>
 struct CountedCall;
@@ -758,11 +781,7 @@ struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Res
     static constexpr bool isCounted = true;
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest) noexcept(isNoexcept)
     {
-        vmFor(first).aotState().runtimeTable->didCall(entry);
-        if constexpr (std::is_same_v<First, Instance*>) {
-            if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
-                arrivals->didCallOperation(entry);
-        }
+        countCall(first, entry);
         AOT_MUST_TAIL_CALL return operation(first, rest...);
     }
 };

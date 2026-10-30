@@ -231,15 +231,6 @@ bool makesCollectionIterator(const Program& program, const Function& function, c
     return false;
 }
 
-static bool isPassedToHandler(FunctionAnalyses& analyses, ValueID alias)
-{
-    return std::ranges::any_of(analyses.useLists().usesOf(alias), [&](const Use& use) {
-        if (use.kind == Use::Kind::HandlerArgument)
-            return true;
-        return use.kind == Use::Kind::Operand && !use.operandIndex && interpretedOf(analyses.function().at(use.user).opcode) == Interpretation::Cast && isPassedToHandler(analyses, use.user);
-    });
-}
-
 static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const Value& call, VirtualObjectDescription description, TypeArena* types)
 {
     const Program& program = analyses.program();
@@ -253,9 +244,6 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
         return supported(description);
     }
     if (makesCollectionIterator(program, function, call)) {
-        // Each step moves the iterator on, and a handler takes one list of arguments from a whole block: what it would take for the position differs within the block.
-        if (isPassedToHandler(analyses, description.allocation))
-            return unsupported(VirtualObjectSupport::HasNoPartsForm);
         description.kind = VirtualObjectKind::CollectionIterator;
         return supported(description);
     }

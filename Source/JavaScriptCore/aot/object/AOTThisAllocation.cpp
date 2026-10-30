@@ -225,7 +225,7 @@ static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, c
         captured = &instance;
     else if (field.flags & fieldDeferredClosureCapturesEnvironment)
         captured = closureEnvironmentOf(state, allocated, field);
-    return state.objects->closures.createClosureOver(vm, closureFunctionWithNumber(allocated.layout().deferredClosureNumberOf(field)), captured);
+    return state.objects->closures.createClosureOver(vm, FunctionID(state.tables.closureFunctionWithNumber(allocated.layout().deferredClosureNumberOf(field))), captured);
 }
 
 static void shareClosureEnvironment(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance, const FieldData& target)

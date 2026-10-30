@@ -1909,20 +1909,22 @@ static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
-// `list[k]` behind `list[k]` on a straight way, with nothing between them that writes elements or runs code of the program: `if (list[k] > list[k + 1]) { swap }`. The second takes what the first found.
-static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
+static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context, Opcode opcode, AbstractHeapSet heapsRead, NOESCAPE const Invocable<bool(ValueID, const Value&)> auto& mayBeDropped, NOESCAPE const Invocable<std::pair<ValueID, ValueID>(const Value&)> auto& operandsOf, NOESCAPE const Invocable<bool(const Value&, const Value&)> auto& hasSamePayload)
 {
-    AOT_THRESHOLD(unsigned, maxValuesBehindElementRead, 64);
-    if (!context.analyses.opcodesOfValues().contains(Opcode::GetArrayElement))
+    AOT_THRESHOLD(unsigned, maxValuesBehindRepeatedRead, 64);
+    if (!context.analyses.opcodesOfValues().contains(opcode))
         return PassOutcome::Unchanged;
 
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     const CFG& cfg = analyses.cfg();
+    auto identitiesOf = [&](const Value& read) {
+        auto [first, second] = operandsOf(read);
+        return std::pair { analyses.identityOf(first), analyses.identityOf(second) };
+    };
     auto findEarlierRead = [&](BlockID block, uint32_t index, const Value& read) -> ValueID {
-        ValueID array = analyses.identityOf(read.arrayOperand());
-        ValueID position = analyses.identityOf(read.positionOperand());
-        unsigned budget = maxValuesBehindElementRead;
+        std::pair<ValueID, ValueID> operands = identitiesOf(read);
+        unsigned budget = maxValuesBehindRepeatedRead;
         for (;;) {
             std::span<const ValueID> values = function.at(block).values.span();
             while (index--) {
@@ -1930,10 +1932,9 @@ static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
                     return { };
                 const Value& earlier = function.at(values[index]);
                 Effects effects = analyses.effectsOf(values[index]).onAnyEdge();
-                if (effects.mayRunOtherCode() || effects.writes.containsAny(AbstractHeapSet { AbstractHeap::Elements, AbstractHeap::ArrayStorage }))
+                if (effects.mayRunOtherCode() || effects.writes.containsAny(heapsRead))
                     return { };
-                if (earlier.opcode == Opcode::GetArrayElement && earlier.type == read.type && earlier.arrayStorage() == read.arrayStorage() && earlier.readsHoleAsNaN() == read.readsHoleAsNaN()
-                    && analyses.identityOf(earlier.arrayOperand()) == array && analyses.identityOf(earlier.positionOperand()) == position)
+                if (earlier.opcode == opcode && earlier.type == read.type && hasSamePayload(earlier, read) && identitiesOf(earlier) == operands)
                     return values[index];
             }
             std::span<const BlockID> predecessors = cfg.predecessors(block);
@@ -1959,7 +1960,7 @@ static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            if (value.opcode != Opcode::GetArrayElement || keptReads.get(values[index].index()) || analyses.effectsOf(values[index]).onAnyEdge().mayExitSideways())
+            if (value.opcode != opcode || keptReads.get(values[index].index()) || !mayBeDropped(values[index], value))
                 continue;
             ValueID first = findEarlierRead(block, index, value);
             if (!first)
@@ -1996,6 +1997,30 @@ static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
     }
     analyses.didChangeValues();
     return PassOutcome::Changed;
+}
+
+// `list[k]` behind `list[k]` on a straight way, with nothing between them that writes elements or runs code of the program: `if (list[k] > list[k + 1]) { swap }`. The second takes what the first found.
+static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
+{
+    return dropRepeatedReadsOnStraightWays(context, Opcode::GetArrayElement, AbstractHeapSet { AbstractHeap::Elements, AbstractHeap::ArrayStorage }, [&](ValueID id, const Value&) {
+        return !context.analyses.effectsOf(id).onAnyEdge().mayExitSideways();
+    }, [](const Value& read) {
+        return std::pair { read.arrayOperand(), read.positionOperand() };
+    }, [](const Value& earlier, const Value& read) {
+        return earlier.arrayStorage() == read.arrayStorage() && earlier.readsHoleAsNaN() == read.readsHoleAsNaN();
+    });
+}
+
+static PassOutcome dropRepeatedPrivateReads(FunctionPassContext& context)
+{
+    return dropRepeatedReadsOnStraightWays(context, Opcode::PrivateGet, AbstractHeapSet { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords }, [&](ValueID, const Value& read) {
+        const Field& field = context.program.at(read.layout()).fields[read.field()];
+        return field.form.isEmpty() && !field.flags.contains(FieldFlags::IsBrand);
+    }, [](const Value& read) {
+        return std::pair { read.objectOperand(), read.tokenOperand() };
+    }, [](const Value& earlier, const Value& read) {
+        return earlier.layout() == read.layout() && earlier.field() == read.field();
+    });
 }
 
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
@@ -2144,6 +2169,7 @@ static PassOutcome eliminateReadsOnce(FunctionPassContext& context)
     // First: reads and tests under one sum are then reads and tests under one key.
     PassOutcome outcome = dropRepeatedIntegerSums(context);
     outcome |= dropRepeatedElementReads(context);
+    outcome |= dropRepeatedPrivateReads(context);
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome |= RedundantReadElimination { context }.run();
     outcome |= dropRepeatedMapSets(context);

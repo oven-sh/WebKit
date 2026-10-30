@@ -444,9 +444,9 @@ public:
         forEachRecordAskedForBy(statement.index(), [&](uint32_t index) {
             const MadeNodes& madeNodes = m_madeNodes[index];
             if constexpr (Invocable<decltype(functor), void(const ValueFlowNodeKey&, ValueFlowStatementID, ValueFlowNodeID)>)
-                functor(madeNodes.key, madeNodes.statement, madeNodes.first);
+                functor(madeNodes.key, madeNodes.statement(), madeNodes.first);
             else
-                functor(madeNodes.key, madeNodes.statement);
+                functor(madeNodes.key, madeNodes.statement());
         });
     }
 
@@ -470,7 +470,7 @@ public:
             for (uint32_t list = 0; list < count; ++list) {
                 beginStatement(base + list);
                 for (uint32_t index : found[list])
-                    functor(index, m_madeNodes[index].key, m_madeNodes[index].statement);
+                    functor(index, m_madeNodes[index].key, m_madeNodes[index].statement());
             }
         }
     }
@@ -479,7 +479,7 @@ public:
     const ValueFlowNodeKey& keyOfMadeNodesAt(uint32_t index) const LIFETIME_BOUND { return m_madeNodes[index].key; }
     ValueFlowNodeID firstOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].first; }
     uint32_t numberOfUsesOfMadeNodesAt(uint32_t index) const { return index < m_numberOfUsers.size() ? m_numberOfUsers[index] : 0; }
-    ValueFlowStatementID statementOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].statement; }
+    ValueFlowStatementID statementOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].statement(); }
     uint32_t numberOfRecordsOfMadeNodes() const { return m_madeNodes.size(); }
 
     const Counters& counters() const { return m_counters; }
@@ -489,24 +489,69 @@ private:
     friend class ValueFlowRuleContext;
 
     struct MadeNodes {
+        enum Flag : uint8_t {
+            StaysAtRest = 1 << 0,
+            HasBeenAtRest = 1 << 1,
+            IsListedUnderName = 1 << 2,
+            IsListedUnderMembers = 1 << 3,
+            IsUnionOfParts = 1 << 4,
+            IsOfThisTurn = 1 << 5,
+            HasStatementRunWhereMade = 1 << 6,
+            HasParts = 1 << 7,
+        };
+        // Threads that look after different things write to different flags of one record at a time.
+        bool has(Flag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&flags), std::memory_order_relaxed) & flag; }
+        bool set(Flag flag) { return WTF::atomicExchangeOr(&flags, static_cast<uint8_t>(flag), std::memory_order_relaxed) & flag; }
+        bool clear(Flag flag) { return WTF::atomicExchangeAnd(&flags, static_cast<uint8_t>(~flag), std::memory_order_relaxed) & flag; }
+        void setTo(Flag flag, bool value) { value ? set(flag) : clear(flag); }
+
+        // A record has a statement or parts, never both.
+        ValueFlowStatementID statement() const { return has(HasParts) ? ValueFlowStatementID() : ValueFlowStatementID(statementOrFirstPart); }
+        void setStatement(ValueFlowStatementID statement)
+        {
+            RELEASE_ASSERT(!has(HasParts));
+            statementOrFirstPart = statement.index();
+        }
+        uint32_t firstPart() const
+        {
+            ASSERT(has(HasParts));
+            return statementOrFirstPart;
+        }
+        void setFirstPart(uint32_t firstPart)
+        {
+            RELEASE_ASSERT(has(HasParts) || statementOrFirstPart == UINT32_MAX);
+            set(HasParts);
+            statementOrFirstPart = firstPart;
+        }
+
         ValueFlowNodeKey key;
         ValueFlowNodeID first;
-        ValueFlowStatementID statement;
-        bool staysAtRest { false };
-        bool hasBeenAtRest { false };
-        bool isListedUnderName { false };
-        bool isListedUnderMembers { false };
-        bool isUnionOfParts { false };
-        bool isOfThisTurn { false };
-        bool hasStatementRunWhereMade { false };
+        uint32_t statementOrFirstPart { UINT32_MAX };
+        uint8_t flags { 0 };
         // Of a union of two blocks: one more than the higher rank of the two. A record that is no such union is a block of rank 0.
         static constexpr uint8_t partsAreBlocksOfFallingRank = UINT8_MAX;
         uint8_t rank { 0 };
-        uint32_t firstPart { 0 };
-        uint32_t numberOfParts { 0 };
     };
+    static_assert(sizeof(MadeNodes) == 24);
+    // The parts of a record stand side by side. The last of them has this bit.
+    static constexpr uint32_t isLastPart = 1u << 31;
+    static void forEachPartFrom(const uint32_t* part, NOESCAPE const Invocable<void(uint32_t madeNodes)> auto& functor)
+    {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        for (;; ++part) {
+            functor(*part & ~isLastPart);
+            if (*part & isLastPart)
+                return;
+        }
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    }
+    void forEachPartOf(const MadeNodes& madeNodes, NOESCAPE const Invocable<void(uint32_t madeNodes)> auto& functor) const
+    {
+        if (madeNodes.has(MadeNodes::HasParts))
+            forEachPartFrom(&m_partsOfMadeNodes[madeNodes.firstPart()], functor);
+    }
 
-    bool keepsAwake(ValueFlowStatementID asker, uint32_t madeNodes) const { return !m_madeNodes[madeNodes].staysAtRest && m_madeNodes[madeNodes].statement != asker; }
+    bool keepsAwake(ValueFlowStatementID asker, uint32_t madeNodes) const { return !m_madeNodes[madeNodes].has(MadeNodes::StaysAtRest) && m_madeNodes[madeNodes].statement() != asker; }
 
     // The records that a statement asked for stand side by side, the latest first. The last of them has this bit.
     static constexpr uint32_t isLastUse = 1u << 31;
@@ -551,6 +596,9 @@ private:
         ShortList<NodeOfSet> ofFewObjects;
         ShortList<NodeOfSet> ofManyObjects;
         ShortList<NodeOfSet> ofVeryManyObjects;
+        // From a member to the list of the nodes whose sets hold it. The maps and the lists lie with the shard of the name.
+        uint32_t ofFewObjectsByMember { 0 };
+        uint32_t ofManyObjectsByMember { 0 };
     };
 
     struct Name {
@@ -723,10 +771,27 @@ private:
                 return room;
             return mostUsesWithoutSpareRoom + 1 + 2 * (std::bit_width(room) - 6) - std::has_single_bit(room);
         }
+        static uint64_t roomOf(unsigned size)
+        {
+            if (size <= mostUsesWithoutSpareRoom)
+                return size;
+            unsigned above = size - mostUsesWithoutSpareRoom - 1;
+            return (above % 2 ? 64ull : 48ull) << above / 2;
+        }
+        // The largest room that a list may have and that fits into so many words.
+        static uint64_t largestRoomIn(uint64_t words)
+        {
+            if (words <= mostUsesWithoutSpareRoom)
+                return words;
+            uint64_t powerOfTwo = std::bit_floor(words);
+            return powerOfTwo / 2 * 3 <= words ? powerOfTwo / 2 * 3 : powerOfTwo;
+        }
 
         UsesOfThread() { firstFree.fill(UINT32_MAX); }
 
         std::array<uint32_t, numberOfSizes> firstFree;
+        // A bit for each size: a list of that size is free.
+        std::array<uint64_t, 2> sizesWithFreeLists { };
         size_t nextFresh { 0 };
         size_t endOfFresh { 0 };
     };
@@ -736,7 +801,7 @@ private:
     Vector<UsesOfThread> m_usesOfThreads;
     template<typename T> void growAndFill(ListWithRoomToFill<T>&, size_t size, T value);
     void takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& madeNodes);
-    void letGoOf(Vector<uint32_t>&& listsOfUses);
+    void letGoOf(Vector<uint32_t>&& madeNodes);
     void makeReadersDue(std::span<const ValueFlowNodeID> moved);
     struct WatchShard;
     void watch(WatchShard&, ValueFlowNodeID, ValueSetID within, ValueFlowStatementID, bool isAskedLast);
@@ -859,8 +924,7 @@ private:
     struct NodesOfManyObjects {
         Vector<uint32_t> madeNodes;
         HashMap<uint64_t, LatestNodes, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latest;
-        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> latestWithBlock;
-        HashMap<uint32_t, std::array<uint64_t, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sampleOfSet;
+        ValueFlowNumbersByKey latestWithBlock;
         HashMap<uint64_t, Vector<ValueSetID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> cells;
     };
     static constexpr unsigned numberOfNodeMakers = 64;
@@ -1092,7 +1156,7 @@ private:
         VeryMany,
     };
     struct NodesOfMembers {
-        ValueFlowNumbersByKey listOfMember;
+        ValueFlowNumberMaps listOfMember;
         ValueFlowNumberLists lists;
     };
     struct Linked {

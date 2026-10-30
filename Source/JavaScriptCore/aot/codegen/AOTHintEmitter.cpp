@@ -94,9 +94,14 @@ void HintEmitter::generateLoopHint(const ValueContext& value)
 }
 
 // `x = null` stores to no place that the collector reads: the object stays in whatever register or stack slot held it until something else is put there.
-void HintEmitter::generateReleaseHint(const ValueContext&)
+void HintEmitter::generateReleaseHint(const ValueContext& value)
 {
+    // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
+    Operand released = get(value->valueOperand());
+    if (!released.value || released.value->type() != B3::Int64 || released.value->hasInt64())
+        return;
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    patchpoint->append(released.value, B3::ValueRep::ColdAny);
     patchpoint->effects = B3::Effects::none();
     patchpoint->effects.writesLocalState = true;
     patchpoint->setReleasesDeadValues(true);

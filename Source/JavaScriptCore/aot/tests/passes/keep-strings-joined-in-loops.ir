@@ -1,5 +1,5 @@
 # A string joined in a loop from parts that the loop leaves alone is the same in every iteration. The first iteration that gets to the join makes it, where it stands, and hands it on:
-# a join that throws does so where it did, and a loop that never gets there joins nothing.
+# a join that throws does so where it did, and a loop that never gets there joins nothing. Every later iteration reads the string, so it is made in one piece, as a key is.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass KeepStringsJoinedInLoops
@@ -19,18 +19,18 @@ function f0 name="partsFromOutside" parameters=[{type=string}, {type=string}, {t
   b3():
     Return v0
 # CHECK: b0(
-# CHECK-NEXT: [[nothing]]: absent = Absent
+# CHECK-NEXT: [[nothing]]: false = Boolean
 # CHECK-NEXT: Jump -> next b4([[nothing]])
-# CHECK-NEXT: b1([[held]]: string|absent):
+# CHECK-NEXT: b1([[held]]: boolean|string):
 # CHECK: b2():
-# CHECK: [[test]]: boolean = TypeTest [[held]] testedType=absent
+# CHECK: [[test]]: boolean = TypeTest [[held]] testedType=boolean
 # CHECK-NEXT: Branch [[test]] -> taken b6(| 0), notTaken b7(| 0)
 # CHECK: b5(v5: string):
-# CHECK-NEXT: [[next]]: string = Upcast v5 castType=string|absent
+# CHECK-NEXT: [[next]]: string = Upcast v5 castType=boolean|string
 # CHECK-NEXT: v6: boolean = StrictEq v5, v0
 # CHECK-NEXT: Branch v6 -> taken b1([[next]]), notTaken b3()
 # CHECK-NEXT: b6({{*}}) frequency=Rare:
-# CHECK-NEXT: [[joined]]: string = Strcat v0, v4, v1
+# CHECK-NEXT: [[joined]]: string = Strcat v0, v4, v1 [isLikelyKey]
 # CHECK-NEXT: Jump -> next b5([[joined]])
 # CHECK-NEXT: b7([[kept]]: string):
 # CHECK-NEXT: Jump -> next b5([[kept]])
@@ -82,12 +82,12 @@ function f3 name="staysInBothLoops" parameters=[{type=string}, {type=string}, {t
   b4():
     Return v0
 # CHECK: b0(
-# CHECK-NEXT: [[nothingOfBoth]]: absent = Absent
-# CHECK: b1([[outer]]: string|absent):
+# CHECK-NEXT: [[nothingOfBoth]]: false = Boolean
+# CHECK: b1([[outer]]: boolean|string):
 # CHECK: Branch v2 -> taken b2([[outer]]), notTaken b4()
-# CHECK-NEXT: b2([[inner]]: string|absent):
+# CHECK-NEXT: b2([[inner]]: boolean|string):
 # CHECK: Branch v3 -> taken b3(), notTaken b1([[inner]])
-# CHECK: = TypeTest [[inner]] testedType=absent
+# CHECK: = TypeTest [[inner]] testedType=boolean
 }
 
 function f4 name="staysInTheInnerLoop" parameters=[{type=string}, {type=string}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
@@ -108,10 +108,10 @@ function f4 name="staysInTheInnerLoop" parameters=[{type=string}, {type=string},
     Return v0
 # CHECK: b1(v4: string):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: [[nothingOfInner]]: absent = Absent
+# CHECK-NEXT: [[nothingOfInner]]: false = Boolean
 # CHECK-NEXT: Branch v2 -> taken b6([[nothingOfInner]]), notTaken b5()
-# CHECK-NEXT: b2([[heldInInner]]: string|absent):
-# CHECK: = TypeTest [[heldInInner]] testedType=absent
+# CHECK-NEXT: b2([[heldInInner]]: boolean|string):
+# CHECK: = TypeTest [[heldInInner]] testedType=boolean
 # CHECK: b4():
 # CHECK-NEXT: Jump -> next b1(v1)
 }
@@ -130,11 +130,11 @@ function f5 name="enteredFromTheBlockOfAnotherJoin" parameters=[{type=string}, {
     Branch v8 -> taken b2(), notTaken b3()
   b3():
     Return v0
-# CHECK: b1([[heldInFirst]]: string|absent):
-# CHECK: = TypeTest [[heldInFirst]] testedType=absent
-# CHECK: b2([[heldInSecond]]: string|absent):
-# CHECK: = TypeTest [[heldInSecond]] testedType=absent
-# CHECK: [[nothingOfSecond]]: absent = Absent
+# CHECK: b1([[heldInFirst]]: boolean|string):
+# CHECK: = TypeTest [[heldInFirst]] testedType=boolean
+# CHECK: b2([[heldInSecond]]: boolean|string):
+# CHECK: = TypeTest [[heldInSecond]] testedType=boolean
+# CHECK: [[nothingOfSecond]]: false = Boolean
 # CHECK-NEXT: Branch v5 -> taken b1({{*}}), notTaken b{{*}}([[nothingOfSecond]])
 }
 
@@ -156,5 +156,5 @@ function f6 name="textOfAPart" parameters=[{type=undefined|string}, {type=string
 # CHECK-NOT: ToString
 # CHECK: frequency=Rare:
 # CHECK-NEXT: v4: string = ToString v0
-# CHECK-NEXT: = Strcat v4, v5
+# CHECK-NEXT: = Strcat v4, v5 [isLikelyKey]
 }

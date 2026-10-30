@@ -408,34 +408,151 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
     return region;
 }
 
-// The live region of an iteration that has no block in common with those asked about before it in this round. The walk ends at the first block that another one has looked at.
-static std::optional<Vector<BlockID>> takeLiveRegion(FunctionPassContext& pass, ValueID open, uint32_t taker, Vector<uint32_t>& takerOfBlock)
+namespace {
+
+// How the iterations of a round lie in one another. Each has a number, an inner one a lower number than the one around it.
+// A block is taken by the first iteration that finds it: by the innermost in whose region it lies, or by the one whose open ends it.
+struct IterationNest {
+    static constexpr uint32_t nobody = 0;
+
+    explicit IterationNest(const Function& function, size_t numberOfIterations)
+        : takerOfBlock(FillWith { }, function.blocks.size(), nobody)
+        , outer(FillWith { }, numberOfIterations + 1, nobody)
+        , parent(FillWith { }, numberOfIterations + 1, nobody)
+        , head(numberOfIterations + 1)
+        , hasFailed(numberOfIterations + 1)
+        , stampOfBlock(FillWith { }, function.blocks.size(), 0u)
+    {
+    }
+
+    uint32_t outermostAround(uint32_t taker)
+    {
+        uint32_t outermost = taker;
+        while (outer[outermost] != nobody)
+            outermost = outer[outermost];
+        while (outer[taker] != nobody && outer[taker] != outermost)
+            taker = std::exchange(outer[taker], outermost);
+        return outermost;
+    }
+
+    // In the order of a walk that enters an iteration before what lies in it: what lies in an iteration has the numbers from its own to the last one below it.
+    void numberIterations()
+    {
+        size_t count = parent.size();
+        Vector<uint32_t> numberOfNested(FillWith { }, count, 0u);
+        // An inner iteration has the lower number, so each is added to the one around it when it is complete.
+        for (uint32_t taker = 1; taker < count; ++taker) {
+            if (parent[taker] != nobody)
+                numberOfNested[parent[taker]] += numberOfNested[taker] + 1;
+        }
+        first.fill(0, count);
+        last.fill(0, count);
+        Vector<uint32_t> nextBelow(FillWith { }, count, 0u);
+        uint32_t nextAtTop = 1;
+        for (uint32_t taker = count; --taker;) {
+            uint32_t& next = parent[taker] == nobody ? nextAtTop : nextBelow[parent[taker]];
+            first[taker] = next;
+            last[taker] = next + numberOfNested[taker];
+            nextBelow[taker] = next + 1;
+            next = last[taker] + 1;
+        }
+    }
+
+    // Whether the iterator is live at the head of the block, or another one is in whose region this one is live.
+    bool isInRegionOf(uint32_t taker, BlockID block) const
+    {
+        uint32_t takerOfThis = block.index() < takerOfBlock.size() ? takerOfBlock[block.index()] : nobody;
+        return takerOfThis != nobody && block != head[taker] && first[taker] <= first[takerOfThis] && first[takerOfThis] <= last[taker];
+    }
+
+    void didSplitOff(BlockID newBlock, uint32_t taker)
+    {
+        RELEASE_ASSERT(newBlock.index() == takerOfBlock.size());
+        takerOfBlock.append(taker);
+        stampOfBlock.append(0);
+    }
+
+    Vector<uint32_t> takerOfBlock;
+    // What outermostAround() follows. It is shortened as it is followed.
+    Vector<uint32_t> outer;
+    Vector<uint32_t> parent;
+    Vector<BlockID> head;
+    BitVector hasFailed;
+    Vector<uint32_t> first;
+    Vector<uint32_t> last;
+    Vector<uint32_t> stampOfBlock;
+    uint32_t lastStamp { 0 };
+};
+
+struct PlaceInNest {
+    const IterationNest* nest { nullptr };
+    uint32_t number { 0 };
+    // All that the iterations inside do, once they are expanded.
+    Effects effectsInside { Effects::none() };
+};
+
+struct TakenRegion {
+    // Without the blocks of what lies in the iteration. The block that an inner open ends is among them.
+    Vector<BlockID> blocks;
+    Vector<uint32_t, 2> nested;
+};
+
+} // anonymous namespace
+
+// The blocks in which the iterator is live and no iterator opened behind it is. An iteration that was asked about before and lies in this one is stepped over: every way into its region comes through its open.
+// Nothing where the two only overlap: where an operation of this iteration stands in the region of the other.
+static std::optional<TakenRegion> takeLiveRegion(FunctionPassContext& pass, ValueID open, uint32_t taker, IterationNest& nest, bool mayLieAroundOthers)
 {
-    constexpr uint32_t nobody = 0;
+    constexpr uint32_t nobody = IterationNest::nobody;
     RELEASE_ASSERT(taker != nobody);
     const CFG& cfg = pass.analyses.cfg();
     const UseLists& useLists = pass.analyses.useLists();
     BlockID blockOfOpen = useLists.blockOf(open);
-    if (std::exchange(takerOfBlock[blockOfOpen.index()], taker) != nobody)
+    nest.head[taker] = blockOfOpen;
+    auto fail = [&] {
+        nest.hasFailed.quickSet(taker);
         return std::nullopt;
+    };
+    if (std::exchange(nest.takerOfBlock[blockOfOpen.index()], taker) != nobody)
+        return fail();
 
-    Vector<BlockID> region { };
+    TakenRegion region;
     Vector<BlockID, 16> worklist;
-    for (const Use& use : useLists.usesOf(open))
-        worklist.append(use.block);
-    while (!worklist.isEmpty()) {
-        BlockID block = worklist.takeLast();
+    auto visit = [&](BlockID block, bool holdsOperation) {
         if (!cfg.isReachable(block))
-            continue;
-        uint32_t formerTaker = std::exchange(takerOfBlock[block.index()], taker);
+            return true;
+        uint32_t formerTaker = nest.takerOfBlock[block.index()];
         if (formerTaker == taker)
-            continue;
-        if (formerTaker != nobody)
-            return std::nullopt;
-        region.append(block);
-        worklist.append(cfg.predecessors(block));
+            return true;
+        if (formerTaker == nobody) {
+            nest.takerOfBlock[block.index()] = taker;
+            region.blocks.append(block);
+            worklist.append(cfg.predecessors(block));
+            return true;
+        }
+        if (!mayLieAroundOthers)
+            return false;
+        uint32_t inner = nest.outermostAround(formerTaker);
+        if (inner == taker)
+            return !holdsOperation || (nest.parent[formerTaker] == taker && nest.head[formerTaker] == block);
+        if (nest.hasFailed.quickGet(inner) || (holdsOperation && block != nest.head[inner]))
+            return false;
+        nest.outer[inner] = taker;
+        nest.parent[inner] = taker;
+        region.nested.append(inner);
+        region.blocks.append(nest.head[inner]);
+        worklist.append(cfg.predecessors(nest.head[inner]));
+        return true;
+    };
+    for (const Use& use : useLists.usesOf(open)) {
+        if (!visit(use.block, true))
+            return fail();
     }
-    AOT::sort(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    while (!worklist.isEmpty()) {
+        if (!visit(worklist.takeLast(), false))
+            return fail();
+    }
+    AOT::sort(region.blocks, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
     return region;
 }
 
@@ -1769,6 +1886,8 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
         return buildClose("closeStringOrIterator"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Normal);
     case OutlinedIteration::CloseStringOrIteratorAfterThrow:
         return buildClose("closeStringOrIteratorAfterThrow"_s, inputs.types.unionOf(TypeTable::object, TypeTable::string), IteratorCompletion::Throw);
+    case OutlinedIteration::CallWithElements:
+        return buildCallWithElements(key, inputs);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1955,24 +2074,27 @@ static bool isLandingCode(const Dominators& dominators, const Iteration& iterati
 }
 
 // What may run between the open and the last operation of the pattern, but for those operations themselves and the landing code.
-static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
+// With a nest: the region is without the blocks of the iterations that lie in this one. The caller asks about those by their effects.
+static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration& iteration, std::span<const BlockID> liveRegion, const PlaceInNest& place, NOESCAPE const Invocable<bool(ValueID)> auto& matchesValue, NOESCAPE const Invocable<bool(BlockID)> auto& matchesTerminator)
 {
     const Function& function = pass.function;
     auto isOperation = [&](ValueID id) {
         const Value& value = function.at(id);
         return (value.opcode == Opcode::IteratorResume || value.opcode == Opcode::IteratorClose) && value.iteratorOperand() == iteration.open;
     };
-    BitVector liveAtHead = blockSetOf(function, liveRegion);
+    BitVector liveAtHead = place.nest ? BitVector() : blockSetOf(function, liveRegion);
+    auto isLiveAtHeadOf = [&](BlockID block) { return place.nest ? place.nest->isInRegionOf(place.number, block) : liveAtHead.get(block.index()); };
+    auto opensIterationInside = [&](ValueID id) { return place.nest && function.at(id).opcode == Opcode::IteratorOpen; };
     for (BlockID id : liveRegion) {
         if (isLandingCode(pass.analyses.dominators(), iteration, id))
             continue;
 
         // The block of the last close goes on with the code after the pattern, which no step moves across.
         const BlockValues& values = function.at(id).values;
-        bool isLiveAtTail = std::ranges::any_of(pass.analyses.cfg().successors(id), [&](BlockID successor) { return liveAtHead.get(successor.index()); });
+        bool isLiveAtTail = std::ranges::any_of(pass.analyses.cfg().successors(id), isLiveAtHeadOf);
         static_assert(!(notFound + 1));
         for (ValueID value : values.span().first(isLiveAtTail ? values.size() : values.reverseFindIf(isOperation) + 1)) {
-            if (!isOperation(value) && matchesValue(value))
+            if (!isOperation(value) && !opensIterationInside(value) && matchesValue(value))
                 return true;
         }
         if (isLiveAtTail && matchesTerminator(id))
@@ -1982,7 +2104,7 @@ static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration&
 }
 
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
-static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
+static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, const PlaceInNest& place, ValueID array)
 {
     if (pass.build.isSabotaged(Sabotage::WalkedArraysStayAsTheyWereOpened))
         return false;
@@ -1997,12 +2119,16 @@ static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& ite
     if (!arm.namesAreProven)
         relyOn(makePristineTest(array, arm.builtinClass, { PristineAspects::Storage, PristineAspects::Names }));
 
-    return anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
+    auto mayEndByEffects = [&](const Effects& effects) {
+        return effects.maySuspend || std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return effects.writes.overlaps(relied.masks); });
+    };
+    if (mayEndByEffects(place.effectsInside))
+        return true;
+    return anyOperationBetweenSteps(pass, iteration, liveRegion, place, [&](ValueID value) {
         GuardWriter writer(analyses, value);
         return std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return writer.mayEnd(relied); });
     }, [&](BlockID block) {
-        Effects effects = analyses.effectsOfTerminator(block).onAnyEdge();
-        return effects.maySuspend || std::ranges::any_of(dependencies, [&](const GuardDependencies& relied) { return effects.writes.overlaps(relied.masks); });
+        return mayEndByEffects(analyses.effectsOfTerminator(block).onAnyEdge());
     });
 }
 
@@ -2037,7 +2163,7 @@ static bool operationsShareHandler(FunctionPassContext& pass, const Iteration& i
     return std::ranges::all_of(iteration.resumes, hasSharedHandler) && std::ranges::all_of(iteration.closes, hasSharedHandler);
 }
 
-static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion)
+static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, const PlaceInNest& place = { })
 {
     const Function& function = pass.function;
     const Value& open = function.at(iteration.open);
@@ -2049,7 +2175,7 @@ static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration&
         const ClassPart* part = arm.namesAreProven ? pass.program.typeOf(function, open.iterableOperand()).singleBuiltinClass() : nullptr;
         if (arm.kind != JSC::IterationKind::Values || (arm.namesAreProven && (!part || !part->provenPristine.contains(PristineAspects::Storage))))
             return PatternRead::BySteps;
-        return stepsMatchElements(function, iteration, *count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, open.iterableOperand()) ? PatternRead::ByIndex : PatternRead::BySteps;
+        return stepsMatchElements(function, iteration, *count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, place, open.iterableOperand()) ? PatternRead::ByIndex : PatternRead::BySteps;
     }
     if (arm.form != IterationForm::Protocol || arm.alsoWalksLists || pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open) || !stepsMatchElements(function, iteration, *count))
         return PatternRead::BySteps;
@@ -2062,7 +2188,7 @@ static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration&
     if (method.isComplete && !method.methods.isEmpty())
         return PatternRead::BySteps;
 
-    bool regionInterferesWithSteps = anyOperationBetweenSteps(pass, iteration, liveRegion, [&](ValueID value) {
+    bool regionInterferesWithSteps = place.effectsInside.interferesWith(Effects::unknownCode()) || anyOperationBetweenSteps(pass, iteration, liveRegion, place, [&](ValueID value) {
         return pass.analyses.effectsOf(value).onAnyEdge().interferesWith(Effects::unknownCode());
     }, [&](BlockID block) {
         return pass.analyses.effectsOfTerminator(block).onAnyEdge().interferesWith(Effects::unknownCode());
@@ -2191,13 +2317,35 @@ static void dropCleanupRegions(FunctionPassContext& pass, IRBuilder& builder, st
         isDropped.quickSet(cleanupBlock.index());
     auto leadsToDroppedBlock = [&](const std::optional<Target>& handler) { return handler && isDropped.quickGet(handler->block.index()); };
 
+    // The cleanup blocks of patterns that lie in one another cover each other, all the way out. Where nothing is passed along, what stands at the end of such a row is found once for all the blocks of the row.
+    Vector<std::optional<std::optional<Target>>> handlerAroundDroppedBlocks(function.blocks.size());
+    auto passesNothing = [&](const std::optional<Target>& handler) { return !handler || handler->arguments.isEmpty(); };
+    Vector<BlockID, 8> row;
+    auto findHandlerAroundDroppedBlocks = [&](std::optional<Target> handler) {
+        row.shrink(0);
+        bool rowPassesNothing = true;
+        while (leadsToDroppedBlock(handler)) {
+            if (rowPassesNothing && passesNothing(handler) && handlerAroundDroppedBlocks[handler->block.index()]) {
+                handler = *handlerAroundDroppedBlocks[handler->block.index()];
+                break;
+            }
+            rowPassesNothing &= passesNothing(handler);
+            if (rowPassesNothing)
+                row.append(handler->block);
+            handler = findHandlerAround(function, *handler);
+        }
+        if (rowPassesNothing && passesNothing(handler)) {
+            for (BlockID dropped : row)
+                handlerAroundDroppedBlocks[dropped.index()] = handler;
+        }
+        return handler;
+    };
+
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         BlockID coveredBlock(index);
         if (!leadsToDroppedBlock(function.at(coveredBlock).handler))
             continue;
-        std::optional<Target> handler = function.at(coveredBlock).handler;
-        while (leadsToDroppedBlock(handler))
-            handler = findHandlerAround(function, *handler);
+        std::optional<Target> handler = findHandlerAroundDroppedBlocks(function.at(coveredBlock).handler);
         if (handler)
             builder.redirectEdge(Edge::toHandlerOf(coveredBlock), WTF::move(*handler));
         else
@@ -2272,6 +2420,13 @@ struct ArmDispatcher {
     FunctionAnalyses& analyses { pass.analyses };
     IterationExpansion expansion { &pass, pass.program, pass.function, pass.types, builder, &repair, iteration.origin };
     Vector<BlockID> region { };
+    // Where other iterations of the round lie in this one, the region is without their blocks.
+    IterationNest* nest { nullptr };
+    uint32_t numberInNest { 0 };
+    Vector<uint32_t, 2> nested { };
+    bool didAskForEffects { false };
+    std::optional<Effects> effectsOnceExpandedAnswer { };
+    std::optional<uint64_t> bytesThatStayAnswer { };
     ValueLocation open { analyses.useLists().locationOf(iteration.open) };
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
@@ -2297,6 +2452,10 @@ struct ArmDispatcher {
         // Flow has answered for the iterable. An arm may walk another object: the receiver of the call that made the iterator.
         const Value& opened = function.at(iteration.open);
         storageIsUndecided = opened.storageIsUndecided() && plan.armSources.isEmpty() && plan.source == opened.iterableOperand();
+        if (!nested.isEmpty()) {
+            planArmsAroundNestedIterations();
+            return;
+        }
         BitVector liveRegion = blockSetOf(function, region.span());
         mayBeUsedAfterDone = findsOperationAfterDone(liveRegion);
         if (plan.arms.size() <= 1)
@@ -2306,6 +2465,48 @@ struct ArmDispatcher {
         for (ValueID close : iteration.closes) {
             ValueLocation location = analyses.useLists().locationOf(close);
             if (location.index + 1 < function.at(location.block).values.size() && isLastUseOfOpen(analyses, iteration.open, liveRegion, location))
+                cutsAfterLastCloses.append(ProgramPoint { location.block, location.index + 1 });
+        }
+    }
+
+    bool isLiveAtHeadOf(BlockID block) const { return nest->isInRegionOf(numberInNest, block); }
+
+    // As planArms(), asking the nest which blocks the iterator is live in. No set of all those blocks is made: the iterations of a nest would make one as deep as the nest each.
+    void planArmsAroundNestedIterations()
+    {
+        const UseLists& useLists = analyses.useLists();
+        Vector<ValueLocation, 8> operations;
+        for (ValueID resume : iteration.resumes)
+            operations.append(useLists.locationOf(resume));
+        for (ValueID close : iteration.closes)
+            operations.append(useLists.locationOf(close));
+        auto holdsOperation = [&](BlockID block) { return operations.containsIf([&](const ValueLocation& operation) { return operation.block == block; }); };
+
+        mayBeUsedAfterDone = false;
+        for (size_t index = 0; index < iteration.resumes.size() && !mayBeUsedAfterDone; ++index) {
+            ValueLocation step = operations[index];
+            mayBeUsedAfterDone = operations.containsIf([&](const ValueLocation& operation) { return operation.block == step.block && operation.index > step.index; });
+            uint32_t stamp = ++nest->lastStamp;
+            Vector<BlockID, 16> worklist { step.block };
+            while (!worklist.isEmpty() && !mayBeUsedAfterDone) {
+                forEachOutgoingEdge(function, worklist.takeLast(), [&](Edge edge, const Target& target) {
+                    if (!isLiveAtHeadOf(target.block) || provesNotDone(function, edge, iteration.resumes[index]) || std::exchange(nest->stampOfBlock[target.block.index()], stamp) == stamp)
+                        return;
+                    mayBeUsedAfterDone |= holdsOperation(target.block);
+                    worklist.append(target.block);
+                });
+            }
+        }
+        if (plan.arms.size() <= 1)
+            return;
+
+        for (ValueID close : iteration.closes) {
+            ValueLocation location = useLists.locationOf(close);
+            if (location.index + 1 >= function.at(location.block).values.size())
+                continue;
+            bool isLiveAtTail = std::ranges::any_of(analyses.cfg().successors(location.block), [&](BlockID successor) { return isLiveAtHeadOf(successor); });
+            bool isUsedBehind = std::ranges::any_of(useLists.usesOf(iteration.open), [&](const Use& use) { return use.kind == Use::Kind::Operand && use.block == location.block && useLists.locationOf(use.user).index > location.index; });
+            if (!isLiveAtTail && !isUsedBehind)
                 cutsAfterLastCloses.append(ProgramPoint { location.block, location.index + 1 });
         }
     }
@@ -2336,11 +2537,109 @@ struct ArmDispatcher {
         return false;
     }
 
-    void splitAfterLastCloses()
+    // What stands behind the cut belongs to the iteration around this one.
+    void splitAfterLastCloses(Vector<std::pair<BlockID, uint32_t>>& blocksForOuterIterations)
     {
         builder.setOrigin(function.at(iteration.open).origin());
-        for (ProgramPoint point : cutsAfterLastCloses)
-            builder.splitBlock(point);
+        for (ProgramPoint point : cutsAfterLastCloses) {
+            BlockID behind = builder.splitBlock(point);
+            uint32_t outer = nest->parent[numberInNest];
+            nest->didSplitOff(behind, outer);
+            if (outer != IterationNest::nobody)
+                blocksForOuterIterations.append({ behind, outer });
+        }
+    }
+
+    // What is left of the blocks of the iteration when it is expanded takes at least this much.
+    uint64_t bytesThatStay(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!bytesThatStayAnswer) {
+            uint64_t bytes = 0;
+            for (BlockID block : region) {
+                bytes += estimatedCodeBytes(function.at(block).terminator);
+                for (ValueID id : function.at(block).values) {
+                    if (!isOperationOfNest(id))
+                        bytes += estimatedCodeBytes(pass.program, function, function.at(id));
+                }
+            }
+            for (uint32_t inner : nested)
+                bytes += dispatcherInNest[inner]->bytesThatStay(dispatcherInNest);
+            bytesThatStayAnswer = bytes;
+        }
+        return *bytesThatStayAnswer;
+    }
+
+    // In the blocks of the region: an operation of this iteration, or the open of one that lies in it.
+    bool isOperationOfNest(ValueID id) const
+    {
+        Opcode opcode = function.at(id).opcode;
+        return opcode == Opcode::IteratorOpen || opcode == Opcode::IteratorResume || opcode == Opcode::IteratorClose;
+    }
+
+    // What runs from the open to the last operation once the pattern and all inside it are expanded, where each of them only reads elements of a list that is known to be one. Nothing else is foreseen.
+    std::optional<Effects> effectsOnceExpanded(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!didAskForEffects) {
+            didAskForEffects = true;
+            if (!plan.isExpandedWithoutTest() || !plan.replacedValues.isEmpty() || patternReads.size() != 1 || patternReads.first() != PatternRead::ByIndex)
+                return std::nullopt;
+            // A read of the length or of an element of such a list runs no code and writes nothing.
+            Effects effects = Effects::none();
+            for (uint32_t inner : nested) {
+                std::optional<Effects> effectsOfInner = dispatcherInNest[inner]->effectsOnceExpanded(dispatcherInNest);
+                if (!effectsOfInner)
+                    return std::nullopt;
+                effects.merge(*effectsOfInner);
+            }
+            for (BlockID block : region) {
+                // Closing does nothing, so the blocks that close go.
+                if (isLandingCode(analyses.dominators(), iteration, block))
+                    continue;
+                effects.merge(analyses.effectsOfTerminator(block).onAnyEdge());
+                for (ValueID id : function.at(block).values) {
+                    if (!isOperationOfNest(id))
+                        effects.merge(analyses.effectsOf(id).onAnyEdge());
+                }
+            }
+            effectsOnceExpandedAnswer = effects;
+        }
+        return effectsOnceExpandedAnswer;
+    }
+
+    // Whether the iteration can be expanded beside those that lie in it: whether its form is the one it would get behind them.
+    bool chooseFormsAroundNestedIterations(const Vector<ArmDispatcher*>& dispatcherInNest)
+    {
+        if (!plan.armSources.isEmpty() || !plan.replacedValues.isEmpty() || std::ranges::any_of(nested, [&](uint32_t inner) { return !dispatcherInNest[inner] || !dispatcherInNest[inner]->plan.armSources.isEmpty(); }))
+            return false;
+        // Each asks the ones right below it, which have their answer by now.
+        bytesThatStay(dispatcherInNest);
+        if (plan.arms.size() > 1) {
+            // Expanding adds code, so blocks that are too many to copy now are too many then.
+            if (bytesThatStay(dispatcherInNest) * (plan.arms.size() - 1) <= pass.limit(LimitID::MaxVersionedIterationBytes))
+                return false;
+            hasCopyPerArm = !pass.exceeds(LimitID::MaxVersionedIterationBytes, bytesThatStay(dispatcherInNest) * (plan.arms.size() - 1), iteration.open);
+            RELEASE_ASSERT(!hasCopyPerArm);
+            patternReads.fill(PatternRead::BySteps, plan.arms.size());
+            return true;
+        }
+        hasCopyPerArm = true;
+        if (!function.at(iteration.open).isDestructuring()) {
+            patternReads.append(PatternRead::BySteps);
+            return true;
+        }
+        // What a pattern may become goes by what runs between its steps.
+        PlaceInNest place { nest, numberInNest };
+        for (uint32_t inner : nested) {
+            std::optional<Effects> effects = dispatcherInNest[inner]->effectsOnceExpanded(dispatcherInNest);
+            if (!effects)
+                return false;
+            place.effectsInside.merge(*effects);
+        }
+        PatternRead read = choosePatternRead(pass, iteration, plan.arms.first(), region.span(), place);
+        if (read != PatternRead::ByIndex)
+            return false;
+        patternReads.append(read);
+        return true;
     }
 
     void chooseForms()
@@ -2646,9 +2945,15 @@ struct ArmDispatcher {
         AOT::sort(sites, std::ranges::greater { }, [](const OperationSite& site) { return blockAndIndexOf(site.point); });
     }
 
-    void expandOperations()
+    // An operation that is expanded ends its block, and what stood behind it stands in another block from then on.
+    void expandOperations(BitVector& blocksThatWereCut)
     {
+        if (sites.containsIf([&](const OperationSite& site) { return blocksThatWereCut.get(site.point.block.index()); })) {
+            sites.shrink(0);
+            collectOperationSites();
+        }
         for (const OperationSite& site : sites) {
+            blocksThatWereCut.set(site.point.block.index());
             RELEASE_ASSERT(function.at(site.point.block).values[site.point.index] == site.value);
             Value original = function.at(site.value);
             bool isStep = original.opcode == Opcode::IteratorResume;
@@ -2802,6 +3107,15 @@ struct ArmDispatcher {
         return std::ranges::all_of(plan.arms, &IterationArm::closingHasNoEffect);
     }
 
+    void findOpenAgain(const BitVector& blocksThatWereCut)
+    {
+        if (!blocksThatWereCut.get(head.index()))
+            return;
+        open = analyses.useLists().locationOf(iteration.open);
+        RELEASE_ASSERT(open.placement == ValuePlacement::InBlock && plan.replacedValues.isEmpty());
+        head = open.block;
+    }
+
     void eraseOpenAndReport()
     {
         const BlockValues& values = function.at(head).values;
@@ -2863,6 +3177,7 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
 {
     constexpr unsigned nobody = 0;
     Vector<unsigned> ownerOfBlock(FillWith { }, pass.function.blocks.size(), nobody);
+    // The block that an inner open ends is also a block of the iteration around it, which comes later and is its owner here.
     for (unsigned index = 0; index < dispatchers.size(); ++index) {
         ownerOfBlock[dispatchers[index]->head.index()] = index + 1;
         for (BlockID block : dispatchers[index]->region)
@@ -2879,7 +3194,14 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
             continue;
         }
 
-        if (std::ranges::any_of(plan.armSources, [&](const ArmSource& source) { return ownerOfBlock[source.block.index()] != nobody && ownerOfBlock[source.block.index()] != index + 1; })) {
+        auto liesAround = [&](unsigned owner) {
+            const IterationNest& nest = *dispatchers[index]->nest;
+            uint32_t inner = dispatchers[index]->numberInNest;
+            uint32_t outer = dispatchers[owner - 1] ? dispatchers[owner - 1]->numberInNest : inner;
+            return outer != inner && nest.first[outer] <= nest.first[inner] && nest.first[inner] <= nest.last[outer];
+        };
+        // An iteration around this one waits for it: see chooseFormsAroundNestedIterations().
+        if (std::ranges::any_of(plan.armSources, [&](const ArmSource& source) { unsigned owner = ownerOfBlock[source.block.index()]; return owner != nobody && owner != index + 1 && !liesAround(owner); })) {
             isPostponed.quickSet(index);
             continue;
         }
@@ -2896,7 +3218,7 @@ static void selectByPlans(FunctionPassContext& pass, ArmDispatchers& dispatchers
 }
 
 // The iterations of a function that have no block in common are expanded together: the analyses are computed a fixed number of times for all of them, and SSA is repaired once.
-static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations, BitVector& separatedOpens, PassOutcome& outcome)
+static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations, BitVector& separatedOpens, PassOutcome& outcome, bool expandsNestsAtOnce = true)
 {
     SSARepair repair(builder, pass.analyses);
     Vector<Iteration> iterations = collectIterations(pass);
@@ -2913,15 +3235,19 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     // From the last iteration to the first, so that an iteration is asked after the ones nested in it.
     ArmDispatchers dispatchers;
-    Vector<uint32_t> takerOfBlock(FillWith { }, pass.function.blocks.size(), 0u);
+    IterationNest nest(pass.function, iterations.size());
     uint32_t taker = 0;
     for (const Iteration& iteration : iterations | std::views::reverse) {
-        std::optional<Vector<BlockID>> region = takeLiveRegion(pass, iteration.open, ++taker, takerOfBlock);
+        std::optional<TakenRegion> region = takeLiveRegion(pass, iteration.open, ++taker, nest, expandsNestsAtOnce);
         if (!region)
             continue;
         dispatchers.append(makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration));
-        dispatchers.last()->region = WTF::move(*region);
+        dispatchers.last()->region = WTF::move(region->blocks);
+        dispatchers.last()->nested = WTF::move(region->nested);
+        dispatchers.last()->nest = &nest;
+        dispatchers.last()->numberInNest = taker;
     }
+    nest.numberIterations();
     auto forEachDispatcher = [&](auto step, auto&... arguments) {
         for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)
             (dispatcher.get()->*step)(arguments...);
@@ -2934,18 +3260,43 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
     outcome = PassOutcome::Changed;
 
     passParametersOfCleanupBlocksOn(pass, builder);
-    forEachDispatcher(&ArmDispatcher::splitAfterLastCloses);
-    forEachDispatcher(&ArmDispatcher::chooseForms);
+    Vector<ArmDispatcher*> dispatcherInNest(FillWith { }, iterations.size() + 1, nullptr);
+    for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)
+        dispatcherInNest[dispatcher->numberInNest] = dispatcher.get();
+    Vector<std::pair<BlockID, uint32_t>> blocksForOuterIterations;
+    forEachDispatcher(&ArmDispatcher::splitAfterLastCloses, blocksForOuterIterations);
+    for (auto [block, outer] : blocksForOuterIterations) {
+        if (ArmDispatcher* dispatcher = dispatcherInNest[outer])
+            dispatcher->region.append(block);
+    }
+    // An iteration whose form goes by the code that those inside it become waits for the next round, and so does whatever lies around it.
+    for (std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers) {
+        if (dispatcher->nested.isEmpty())
+            dispatcher->chooseForms();
+        else if (!dispatcher->chooseFormsAroundNestedIterations(dispatcherInNest)) {
+            dispatcherInNest[dispatcher->numberInNest] = nullptr;
+            dispatcher = nullptr;
+        }
+    }
+    dispatchers.removeAllMatching([](const std::unique_ptr<ArmDispatcher>& dispatcher) { return !dispatcher; });
+    // Whatever waited for something inside it that this round left out.
+    if (dispatchers.isEmpty()) {
+        RELEASE_ASSERT(expandsNestsAtOnce);
+        return expandRoundOfIterations(pass, builder, opensOfSpreads, expandedIterations, separatedOpens, outcome, false);
+    }
     forEachDispatcher(&ArmDispatcher::emitOpens);
     forEachDispatcher(&ArmDispatcher::addVariablesOfCopies);
     Vector<PatternInOneRead> patternsReadAtOnce;
     forEachDispatcher(&ArmDispatcher::collectPatternsReadAtOnce, patternsReadAtOnce);
     expandPatternsInOneRead(pass, builder, patternsReadAtOnce.span());
     forEachDispatcher(&ArmDispatcher::collectOperationSites);
-    forEachDispatcher(&ArmDispatcher::expandOperations);
+    BitVector blocksThatWereCut;
+    forEachDispatcher(&ArmDispatcher::expandOperations, blocksThatWereCut);
 
     Vector<BlockID> cleanupBlocksToDrop;
     forEachDispatcher(&ArmDispatcher::finishCleanupBlocks, cleanupBlocksToDrop);
+    // Every open ends a block of its own, so erasing one leaves the others where they are.
+    forEachDispatcher(&ArmDispatcher::findOpenAgain, blocksThatWereCut);
     // An iteration that never opens leaves the ones behind it unreachable, and dropping a region empties every unreachable block.
     forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     dropCleanupRegions(pass, builder, cleanupBlocksToDrop.span());

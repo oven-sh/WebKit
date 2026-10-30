@@ -17,6 +17,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
+#include "AOTSplitUnions.h"
 #include "AOTStatistics.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -602,11 +603,82 @@ static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context)
     return outcome;
 }
 
+// `new Message(i).retries`, where the program never stores the name: all that remains of the object is that the lookup starts at it.
+// What the site knows of the Structure answers without the object, and a miss makes it. Nothing else names the object, and it lists nothing under the name, so its slot is empty.
+static PassOutcome readAboveObjectsMadeOnlyForTheRead(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::SuperGet) || !context.analyses.opcodesOfValues().contains(Opcode::NewObject))
+        return PassOutcome::Unchanged;
+    const UseLists& useLists = context.analyses.useLists();
+    auto isMadeOnlyForTheRead = [&](const Value& read) {
+        if (read.opcode != Opcode::SuperGet || !read.key() || !read.accessSite() || read.baseOperand() != read.receiverOperand())
+            return false;
+        const Value& made = function.at(read.receiverOperand());
+        if (made.opcode != Opcode::NewObject || made.prototypeOperand() || useLists.useCount(read.receiverOperand()) != 2)
+            return false;
+        std::optional<FieldReference> field = findField(context.program, made.layout(), read.key(), BaseChain::Proven);
+        if (!field)
+            return false;
+        const Layout& layout = context.program.at(made.layout());
+        if (std::ranges::any_of(made.fields(), [&](uint32_t listed) { return layout.fields[listed].key == read.key(); }))
+            return false;
+        // The read that makes the object after a miss looks the same.
+        return std::ranges::none_of(function.values, [&](const Value& other) {
+            return other.opcode == Opcode::ReadAboveFreshObject && other.accessSite() == read.accessSite();
+        });
+    };
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID id = values[index];
+            if (!isMadeOnlyForTheRead(function.at(id)))
+                continue;
+            Value made = function.at(function.at(id).receiverOperand());
+            ValueID oldObject = function.at(id).receiverOperand();
+            SiteExpansion expansion(context, builder);
+            expansion.begin(ValueSite { block, index, id });
+            Value above = IRBuilder::make(Opcode::ReadAboveFreshObject);
+            above.setKey(expansion.original().key());
+            above.setAccessSite(expansion.original().accessSite());
+            ValueID answer = expansion.append(WTF::move(above));
+            ValueID didRead = expansion.append(IRBuilder::make(Opcode::DidReadAbove, { answer }));
+            BlockID hasAnswer = builder.addBlock(expansion.frequency());
+            BlockID hasNoAnswer = builder.addBlock(BlockFrequency::Rare);
+            builder.emitBranch(didRead, Target { hasAnswer, { }, { } }, Target { hasNoAnswer, { }, { } });
+            builder.moveToEndOf(hasAnswer);
+            expansion.finishArm(answer);
+            builder.moveToEndOf(hasNoAnswer);
+            ValueID object = builder.append(WTF::move(made));
+            Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
+            lookup.setKey(expansion.original().key());
+            lookup.setAccessSite(expansion.original().accessSite());
+            expansion.finishArm(expansion.append(WTF::move(lookup)));
+            expansion.end();
+            for (BlockID other : context.analyses.cfg().reversePostOrder()) {
+                const BlockValues& inOther = function.at(other).values;
+                for (uint32_t position = 0; position < inOther.size(); ++position) {
+                    if (inOther[position] != oldObject)
+                        continue;
+                    BitVector erased;
+                    erased.set(position);
+                    builder.eraseValues(other, erased);
+                    context.analyses.didChangeValues();
+                    return PassOutcome::Changed;
+                }
+            }
+            context.analyses.didChangeValues();
+            return PassOutcome::Changed;
+        }
+    }
+    return PassOutcome::Unchanged;
+}
+
 static PassOutcome declareListsOfNumbers(FunctionPassContext&);
 
-// `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No array iterator has a `return`.
+// `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No iterator of a list, a Map or a Set has a `return`.
 // Read as undefined, the member leaves the handler without a use of the iterator, which then need not be made.
-static PassOutcome readAbsentMembersOfArrayIterators(FunctionPassContext& context)
+static PassOutcome readAbsentMembersOfIterators(FunctionPassContext& context)
 {
     Function& function = context.function;
     if (!context.analyses.opcodesOfValues().contains(Opcode::PropGet) || !context.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
@@ -620,9 +692,10 @@ static PassOutcome readAbsentMembersOfArrayIterators(FunctionPassContext& contex
                 continue;
             // Flow has proven that the program gives this iterator no member of its own.
             const ClassPart* iterator = context.program.typeOf(function, read.objectOperand()).singleBuiltinClass();
-            if (!iterator || iterator->builtinClass != BuiltinClasses::ArrayIterator || !iterator->provenPristine.contains(PristineAspects::Names))
+            static constexpr std::array classes { BuiltinClasses::ArrayIterator, BuiltinClasses::MapIterator, BuiltinClasses::SetIterator };
+            if (!iterator || !std::ranges::contains(classes, iterator->builtinClass) || !iterator->provenPristine.contains(PristineAspects::Names))
                 continue;
-            BuiltinMemberAnswer member = findMemberOfInstances({ context.program, context.inputs.flow }, BuiltinClasses::ArrayIterator, read.key());
+            BuiltinMemberAnswer member = findMemberOfInstances({ context.program, context.inputs.flow }, iterator->builtinClass, read.key());
             if (member.outcome == BuiltinMemberLookup::Outcome::Absent && member.proof == LocationProof::Constant)
                 reads.append(id);
         }
@@ -651,11 +724,16 @@ static PassOutcome sinkAllocations(FunctionPassContext& context, SinkingRun run)
         return PassOutcome::Changed;
     if (run == SinkingRun::OfThePass && testPrototypesOfCreatedObjects(context) == PassOutcome::Changed)
         return PassOutcome::Changed;
-    if ((declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
+    if ((declareListsOfNumbers(context) | readAbsentMembersOfIterators(context)) == PassOutcome::Changed)
         return PassOutcome::Changed;
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
 
+    {
+        IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+        if (readAboveObjectsMadeOnlyForTheRead(context, builder) == PassOutcome::Changed)
+            return PassOutcome::Changed;
+    }
     PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
     SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };

@@ -57,6 +57,8 @@ public:
     StubKey stubThatReadsAtSite(uint32_t identifierNumber, ValueID receiver);
     Boxed getMemberAboveLayouts(const ValueContext&);
     Boxed getMemberAboveEmptySlot(const ValueContext&);
+    void generateReadAboveFreshObject(const ValueContext&);
+    void generateDidReadAbove(const ValueContext&);
     void checkAbsentFieldWasNotRemoved(const ValueContext& read, Boxed result);
     // What the slot at the site finds for every object with its Structure, where the object has that Structure and the slot is of the kind.
     Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);

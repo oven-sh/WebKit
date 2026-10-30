@@ -2256,8 +2256,10 @@ bool holdsFormThatAttributeAsksFor(StringView publicPath)
 
 bool mayHoldPathStartingWith(StringView start)
 {
-    std::optional<ModuleTable> table = currentModuleTable();
-    return table && (start.isEmpty() || start.startsWith('#') || table->holdsPathStartingWith(start));
+    const Image* image = Image::current();
+    if (!image)
+        return false;
+    return start.isEmpty() || start.startsWith('#') || (image->mayHoldModulePathStartingWith(start) && ModuleTable(image->programTables()).holdsPathStartingWith(start));
 }
 
 // Each frame of each stack trace asks.
@@ -2373,6 +2375,8 @@ void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)
 void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor)
 {
     Image::forEachPublishedImage([&](const Image& image) {
+        if (!image.mayHoldModulePathStartingWith(start))
+            return IterationStatus::Continue;
         return ModuleTable(image.programTables()).forEachFilePathStartingWith(start, functor);
     });
 }

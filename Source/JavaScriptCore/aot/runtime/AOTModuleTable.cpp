@@ -112,6 +112,76 @@ bool ModuleTable::holdsPathStartingWith(StringView start) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
+static constexpr uint32_t hashOfNoPath = 2166136261u;
+
+static ALWAYS_INLINE uint32_t hashWithCharacter(uint32_t hash, char16_t character)
+{
+    return (hash ^ character) * 16777619u;
+}
+
+static ALWAYS_INLINE size_t bitOfDirectory(uint32_t hash, size_t numberOfBits)
+{
+    return (hash ^ hash >> 15) & (numberOfBits - 1);
+}
+
+Vector<uint64_t> ModuleTable::hashedDirectories() const
+{
+    std::span<const ModuleDirectoryData> directories = m_tables->moduleDirectories();
+    Vector<uint32_t> hashes;
+    hashes.reserveInitialCapacity(directories.size());
+    for (const ModuleDirectoryData& directory : directories) {
+        std::optional<uint32_t> parent = directory.parentDirectory();
+        if (parent && *parent >= hashes.size())
+            return { };
+        uint32_t hash = parent ? hashes[*parent] : hashOfNoPath;
+        for (char16_t character : ProgramStrings::viewInImage(*m_tables, StringID(directory.name)).codeUnits())
+            hash = hashWithCharacter(hash, character);
+        hashes.append(hash);
+    }
+    for (unsigned index = 0; index < size(); ++index) {
+        const ModuleData& module = data(ModuleID(index));
+        if (module.directory != Number24::max)
+            continue;
+        uint32_t hash = hashOfNoPath;
+        for (char16_t character : ProgramStrings::viewInImage(*m_tables, StringID(module.publicPathOrName)).codeUnits()) {
+            hash = hashWithCharacter(hash, character);
+            if (character == '/')
+                hashes.append(hash);
+        }
+    }
+
+    size_t numberOfBits = WTF::roundUpToPowerOfTwo(std::max<size_t>(hashes.size() * 16, 64));
+    Vector<uint64_t> bits;
+    bits.fill(0, numberOfBits / 64);
+    for (uint32_t hash : hashes) {
+        size_t bit = bitOfDirectory(hash, numberOfBits);
+        bits[bit / 64] |= 1ull << (bit % 64);
+    }
+    return bits;
+}
+
+bool ModuleTable::mayHoldPathStartingWith(std::span<const uint64_t> hashedDirectories, StringView start)
+{
+    size_t slash = start.reverseFind('/');
+    if (hashedDirectories.empty() || slash == notFound)
+        return true;
+    uint32_t hash = hashOfNoPath;
+    for (char16_t character : start.left(slash + 1).codeUnits())
+        hash = hashWithCharacter(hash, character);
+    size_t bit = bitOfDirectory(hash, hashedDirectories.size() * 64);
+    return hashedDirectories[bit / 64] >> (bit % 64) & 1;
+}
+
+bool Image::mayHoldModulePathStartingWith(StringView start) const
+{
+    std::call_once(m_didFindModuleDirectories, [&] {
+        m_moduleDirectories = ModuleTable(programTables()).hashedDirectories();
+    });
+    bool mayHold = ModuleTable::mayHoldPathStartingWith(m_moduleDirectories.span(), start);
+    ASSERT(mayHold || !ModuleTable(programTables()).holdsPathStartingWith(start));
+    return mayHold;
+}
+
 std::span<const ImportOfHeldFileData> ModuleTable::importsOfHeldFile(ModuleID file) const
 {
     std::span<const ImportOfHeldFileData> imports = m_tables->importsOfHeldFiles();

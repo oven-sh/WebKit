@@ -641,7 +641,8 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
 {
     RELEASE_ASSERT(m_builtins.isEmpty());
     for (BuiltinID member : members) {
-        if (m_table.contains(member) && m_table.canBeReplacedInTestRuns(member))
+        // A member that is constant unless written is listed for the sake of an image that does not hold the write: it is not to lock the member at its start.
+        if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
             m_unlockedMembers.append(member);
     }
     if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty())

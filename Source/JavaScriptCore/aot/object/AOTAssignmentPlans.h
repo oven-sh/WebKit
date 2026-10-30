@@ -141,6 +141,11 @@ struct AssignmentPlan {
         uint64_t absentBits { 0 };
         mutable uint32_t lastLiteralStringWord { 0 };
         mutable JSString* lastLiteralString { nullptr };
+        // How most values get the form of the slot: a load and a test or two. A value that the move does not take goes by the tests of a run.
+        enum class MovesFrom : uint8_t { Nowhere, Cell, InlineProperties, OutsideProperties };
+        MovesFrom movesFrom { MovesFrom::Nowhere };
+        int32_t bytesInSource { 0 };
+        MappedCopy::Move move { };
     };
 
     struct ExtraPropertyStore {
@@ -359,6 +364,7 @@ private:
     ALWAYS_INLINE AssignmentPlan* find(StructureID target, StructureID extraProperties, const AssignmentSource&, uint32_t hash);
     AssignmentPlan* makePlan(VM&, JSObject* target, JSObject* extraProperties, const AssignmentSource&, uint32_t hash);
     void fillPlan(VM&, AssignmentPlan&, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource&);
+    void describeMove(VM&, AssignmentPlan::FieldStore&, const LayoutData& target, bool sharesTypes);
     void fillPlanForCopyOfTwo(VM&, CopyOfTwoPlan&, JSGlobalObject*, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy);
     bool isSecondCopy(uint32_t hash);
     AssignmentPlan* planAt(uint32_t index) const { return m_sets ? (*m_sets)[index / waysPerSet].ways[index % waysPerSet].get() : nullptr; }
@@ -471,6 +477,7 @@ bool tryAssignOrdinaryObjectAsBefore(VM&, State&, Object& target, JSObject* sour
 // Null unless the source has plain properties and plain elements. The copy has the Structure of the source.
 JSFinalObject* tryCopyWithElements(VM&, JSObject* source);
 bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);
+std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLayoutTable&, const AssignmentPlan::FieldStore&);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.
 JSFinalObject* tryCopyTwoObjects(VM&, State&, JSGlobalObject*, JSValue first, JSValue second);

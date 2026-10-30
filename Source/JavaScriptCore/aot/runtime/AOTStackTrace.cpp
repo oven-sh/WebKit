@@ -1179,6 +1179,16 @@ std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* 
     return std::nullopt;
 }
 
+std::optional<SourcePosition> definitionOf(const TraceFrame& frame)
+{
+    if (std::optional<SourcePosition> definition = FunctionDescription(frame.function).definition())
+        return definition;
+    // A function that has lost parameters is left as a jump to the version without them, or has no code at all. The version is what runs, and it begins where the function does.
+    if (!frame.code || frame.isInlined)
+        return std::nullopt;
+    return Image::current()->positionOf(frame.code.index(), CallSiteIndex(0));
+}
+
 std::optional<SourcePosition> positionOf(const TraceFrame& frame)
 {
     const Image& image = *Image::current();

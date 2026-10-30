@@ -50,6 +50,7 @@ public:
     const LayoutData* classWithIndex(uint32_t) const;
     void askEveryClassForItsPrototype(VM&);
     const LayoutData* classConstructedBy(FunctionID) const;
+    const LayoutData* classConstructedByClosureWithNumber(uint32_t closureNumber) const { return classConstructedBy(FunctionID(m_tables.closureFunctionWithNumber(closureNumber))); }
     const LayoutData* baseOf(const LayoutData& layout) const { return layout.base() == LayoutData::noBase ? nullptr : classWithIndex(layout.base()); }
     const LayoutData& classOfInstances(const LayoutData& instanceLayout) const
     {

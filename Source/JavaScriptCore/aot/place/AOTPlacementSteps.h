@@ -177,6 +177,7 @@ struct SiteLists {
     Vector<StringID> bigIntConstants;
     Vector<RequireEdgeUse> requireEdges;
     Vector<ModuleBuiltinUse> moduleBuiltins;
+    Vector<ModuleID> moduleNamespaces;
     unsigned maxClosureCaptures { 0 };
 };
 

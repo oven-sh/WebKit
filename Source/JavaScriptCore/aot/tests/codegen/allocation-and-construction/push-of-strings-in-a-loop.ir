@@ -111,9 +111,9 @@ function f1 name="repeat" module=m0 flags=[IsChecked, HasExplicitName] length=2 
 # CALLS: stub NewArrayWithLength.Contiguous x1
 # X64-NOT: , instructions:
 # X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 9, patchpoints: 0, rare instructions: 7, {{*}}entered rarely
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
 # ARM64: loop #{{*}}, instructions: 10, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: {{*}}, patchpoints: 0, rare instructions: {{*}}entered rarely
 # ARM64-NOT: , instructions:

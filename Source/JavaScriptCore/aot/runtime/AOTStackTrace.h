@@ -119,6 +119,8 @@ JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(V
 // What a stack trace lists for a function that was constructed and whose frame a tail call has taken from the stack. `enteredSince` is the code that stands in its place, if compiled code does.
 std::optional<TraceFrame> frameOfConstructedFunctionThatLeft(const Image&, FunctionID constructed, CompiledFunctionID enteredSince);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
+// Where the function of the frame is written.
+JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
 // What the engine writes for the file in the lines `name@url:line:column`.

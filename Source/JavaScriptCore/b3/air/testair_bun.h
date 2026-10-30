@@ -892,6 +892,7 @@ void testStorePairOfCallArguments()
 #include "testair_bun_allocation.h"
 #include "testair_bun_entry_clobbers.h"
 #include "testair_bun_validate.h"
+#include "testair_bun_release.h"
 
 #if CPU(ARM64)
 #define RUN_BUN_TESTS_OF_CPU() do { \
@@ -939,4 +940,5 @@ void testStorePairOfCallArguments()
         RUN_BUN_ALLOCATION_TESTS(); \
         RUN_BUN_ENTRY_CLOBBER_TESTS(); \
         RUN_BUN_VALIDATE_TESTS(); \
+        RUN_BUN_RELEASE_TESTS(); \
     } while (false)

@@ -77,7 +77,7 @@ function f3 name="beforeCall" module=m0 position=88 text={start=88 end=174} flag
     v7 = Call v6, -, v3 calleeName="use"
     v8 = Null
     v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
-    ReleaseHint
+    ReleaseHint v3
     v11 = GetModuleVariable variable=g1
     v12 = Integer integer=2
     v13 = Call v11, -, v12 calleeName="use"
@@ -98,7 +98,7 @@ function f4 name="beforeReturn" module=m0 position=175 text={start=175 end=253} 
     v7 = Call v6, -, v3 calleeName="use"
     v8 = Null
     v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
-    ReleaseHint
+    ReleaseHint v3
     v11 = Undefined
     Return v11
 }

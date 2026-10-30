@@ -209,7 +209,7 @@ CellPointer ArrayAllocationEmitter::allocateArrayCell(Integer header, Pointer bu
     return array;
 }
 
-CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath)
+CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, LBasicBlock slowPath, ElementsBelowLength elementsBelowLength)
 {
     auto setLength = [&](CellPointer array) {
         CodeGenerator::InitializationScope scope(generator());
@@ -227,9 +227,14 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     // Nobody makes an array of no elements to leave it so.
     bool isEmpty = length.value()->hasInt64() && !length.value()->asInt64();
     Integer capacity = isEmpty ? integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) : bitOr(length, integer(1));
-    CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
+    Integer lengthAndCapacity(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift)));
+    // The stub sets the length that it is handed and puts holes behind it.
+    static_assert(maxHoleArrayCapacity < 1 << holeArrayCapacityShift);
+    if (elementsBelowLength == ElementsBelowLength::NotCleared)
+        lengthAndCapacity = bitOr(lengthAndCapacity, length);
+    CellPointer array = callNewArrayWithLength(context, form, lengthAndCapacity);
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
-    return setLength(array);
+    return elementsBelowLength == ElementsBelowLength::NotCleared ? array : setLength(array);
 }
 
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)

@@ -28,6 +28,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
+#include "AOTStringBuilderAnalysis.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -46,6 +47,19 @@ struct CounterCandidate {
     uint32_t testedOperandIndex;
     Edge stayingEdge;
     Vector<ValueID, 1> stepsEqualToTested { };
+    // `i-- > 0`, `++i < n`: what is compared is no variable, so the front end has passed on nothing of what the comparison says.
+    bool comparesNoVariable { false };
+};
+
+struct SumWithCounter {
+    ValueID counter;
+    int64_t addend { 0 };
+    uint32_t counterIndex { 0 };
+};
+
+struct SumAheadOfTest {
+    ValueID sum;
+    uint32_t counterIndex;
 };
 
 struct LoopClobbers {
@@ -99,12 +113,102 @@ static bool stepsBeyondInt32(FunctionPassContext& context, const InductionVariab
     });
 }
 
+static std::optional<SumWithCounter> findSumWithConstant(FunctionPassContext& context, ValueID id)
+{
+    const Function& function = context.function;
+    const Value& sum = function.at(context.analyses.identityOf(id));
+    auto constantAt = [&](uint32_t index) {
+        return integerConstantThroughCasts(context.program, function, sum.operand(index));
+    };
+    switch (sum.opcode) {
+    case Opcode::Increment:
+        return SumWithCounter { sum.operand(0), 1 };
+    case Opcode::Decrement:
+        return SumWithCounter { sum.operand(0), -1 };
+    case Opcode::Add:
+        if (std::optional<int64_t> right = constantAt(1))
+            return SumWithCounter { sum.operand(0), *right };
+        if (std::optional<int64_t> left = constantAt(0))
+            return SumWithCounter { sum.operand(1), *left, 1 };
+        return std::nullopt;
+    case Opcode::Sub:
+        if (std::optional<int64_t> right = constantAt(1); right && *right != std::numeric_limits<int64_t>::min())
+            return SumWithCounter { sum.operand(0), -*right };
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
+static ValueID sameNumberThroughConversions(FunctionPassContext& context, ValueID id)
+{
+    for (id = context.analyses.identityOf(id);; id = context.analyses.identityOf(context.function.at(id).operand(0))) {
+        const Value& value = context.function.at(id);
+        if ((value.opcode != Opcode::ToNumber && value.opcode != Opcode::ToNumeric) || !context.program.typeOf(context.function, value.operand(0)).isNumber())
+            return id;
+    }
+}
+
+// The block parameter that a number is, or was before constants were added to it.
+static ValueID findParameterCountedFrom(FunctionPassContext& context, ValueID id)
+{
+    constexpr unsigned mostSums = 4;
+    for (unsigned numberOfSums = 0; numberOfSums <= mostSums; ++numberOfSums) {
+        id = sameNumberThroughConversions(context, id);
+        if (context.analyses.useLists().locationOf(id).placement == ValuePlacement::Parameter)
+            return id;
+        std::optional<SumWithCounter> sum = findSumWithConstant(context, id);
+        if (!sum)
+            return { };
+        id = sum->counter;
+    }
+    return { };
+}
+
+// `turns++ < 16`, `i-- > 0`: the step stands in front of the test, so the test says nothing about it. These are the sums of the tested number and a constant that stand there.
+static Vector<SumAheadOfTest, 2> findSumsAheadOfTest(FunctionPassContext& context, Edge stayingEdge, ValueID tested)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<SumAheadOfTest, 2> sums;
+    for (ValueID number = tested;;) {
+        for (const Use& use : analyses.useLists().usesOf(number)) {
+            if (use.kind != Use::Kind::Operand || analyses.identityOf(use.user) != use.user || dominatesAfterSplit(analyses, stayingEdge, use.block))
+                continue;
+            std::optional<SumWithCounter> sum = findSumWithConstant(context, use.user);
+            if (sum && sum->counterIndex == use.operandIndex && !std::ranges::contains(sums, use.user, &SumAheadOfTest::sum))
+                sums.append({ use.user, sum->counterIndex });
+        }
+        const Value& value = function.at(number);
+        bool isConversion = value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric;
+        if (!isCastWithoutTest(value.opcode) && (!isConversion || !context.program.typeOf(function, value.operand(0)).isNumber()))
+            return sums;
+        number = value.operand(0);
+    }
+}
+
 // A staying edge into a shared block is split before it is used.
 static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const InductionVariable& variable)
 {
     const UseLists& useLists = analyses.useLists();
     return std::ranges::all_of(variable.steppedValues, [&](ValueID stepped) {
         return dominatesAfterSplit(analyses, edge, useLists.blockOf(stepped));
+    });
+}
+
+// A step in front of the test is repeated behind it. That bounds the counter where only turns that have passed the test hand it on.
+static bool dominatesEveryStepOrItsWayOn(FunctionPassContext& context, const LoopInduction& induction, Edge edge, const InductionVariable& variable, ValueID tested)
+{
+    FunctionAnalyses& analyses = context.analyses;
+    if (dominatesEveryStep(analyses, edge, variable))
+        return true;
+    Vector<SumAheadOfTest, 2> sums = findSumsAheadOfTest(context, edge, tested);
+    bool canRepeatSteps = std::ranges::all_of(variable.steppedValues, [&](ValueID stepped) {
+        return std::ranges::contains(sums, stepped, &SumAheadOfTest::sum) || dominatesAfterSplit(analyses, edge, analyses.useLists().blockOf(stepped));
+    });
+    const NaturalLoop& loop = analyses.naturalLoops().loop(induction.loopIndex);
+    return canRepeatSteps && std::ranges::all_of(analyses.cfg().incomingEdges(induction.header), [&](Edge incoming) {
+        return !analyses.naturalLoops().belongsTo(incoming.from, loop) || dominatesAfterSplit(analyses, edge, incoming.from);
     });
 }
 
@@ -130,13 +234,13 @@ static bool mayBecomeIntegerCounter(FunctionPassContext& context, const Inductio
     return false;
 }
 
-static std::optional<CounterCandidate> findCandidateTestedBeforeStep(FunctionPassContext& context, const InductionVariable& variable)
+static std::optional<CounterCandidate> findCandidateTestedBeforeStep(FunctionPassContext& context, const LoopInduction& induction, const InductionVariable& variable)
 {
     FunctionAnalyses& analyses = context.analyses;
     for (const InductionTest& test : variable.tests) {
         if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
             continue;
-        if (!context.program.typeOf(context.function, test.bound).isInteger() || !dominatesEveryStep(analyses, test.stayingEdge, variable))
+        if (!context.program.typeOf(context.function, test.bound).isInteger())
             continue;
         const Value& comparison = context.function.at(test.comparison);
         ValueID bound = analyses.identityOf(test.bound);
@@ -145,9 +249,11 @@ static std::optional<CounterCandidate> findCandidateTestedBeforeStep(FunctionPas
         if (isLeftBound == isRightBound)
             continue;
         uint32_t testedOperandIndex = isLeftBound ? 1 : 0;
+        if (!dominatesEveryStepOrItsWayOn(context, induction, test.stayingEdge, variable, comparison.operand(testedOperandIndex)))
+            continue;
         if (targetOf(context.function, test.stayingEdge).proofs.contains(testedOperandIndex))
             return std::nullopt;
-        return CounterCandidate { variable.parameter, test.comparison, testedOperandIndex, test.stayingEdge };
+        return CounterCandidate { variable.parameter, test.comparison, testedOperandIndex, test.stayingEdge, { }, !dominatesEveryStep(analyses, test.stayingEdge, variable) };
     }
     return std::nullopt;
 }
@@ -209,7 +315,7 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
         for (const InductionVariable& variable : loop.variables) {
             if (!mayBecomeIntegerCounter(context, variable, parametersOverStepLimit))
                 continue;
-            if (std::optional<CounterCandidate> candidate = findCandidateTestedBeforeStep(context, variable))
+            if (std::optional<CounterCandidate> candidate = findCandidateTestedBeforeStep(context, loop, variable))
                 candidates.append(*candidate);
             else if (std::optional<CounterCandidate> candidate = findCandidateTestedAheadOfStep(context, loop, variable))
                 candidates.append(*candidate);
@@ -244,14 +350,17 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
             const Type& tested = typeOf(comparison.operand(operandIndex));
             if (!tested.isNumberWithoutFraction() || tested.isInt32() || (!testsForTruth && !typeOf(comparison.operand(1 - operandIndex)).isInteger()))
                 continue;
-            ValueID parameter = analyses.identityOf(comparison.operand(operandIndex));
-            ValueLocation location = useLists.locationOf(parameter);
-            if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || terminator.taken().proofs.contains(operandIndex))
+            // `while (++i < n)`: what a turn has counted up is tested as often as what it is about to.
+            ValueID number = sameNumberThroughConversions(context, comparison.operand(operandIndex));
+            ValueID parameter = findParameterCountedFrom(context, number);
+            if (!parameter || useLists.blockOf(parameter) == entryBlock || terminator.taken().proofs.contains(operandIndex))
                 continue;
-            if (!testsForTruth && cycles.forest()[*cycle].isReducible() && isJudgedAsCounter.get(parameter.index()))
+            if (!testsForTruth && number == parameter && cycles.forest()[*cycle].isReducible() && isJudgedAsCounter.get(parameter.index()))
                 continue;
-            if (!std::ranges::contains(candidates, Edge { block, 0 }, &CounterCandidate::stayingEdge))
-                candidates.append(CounterCandidate { parameter, terminator.conditionOperand(), operandIndex, Edge { block, 0 } });
+            if (std::ranges::contains(candidates, Edge { block, 0 }, &CounterCandidate::stayingEdge))
+                continue;
+            bool comparesNoVariable = number != parameter || !findSumsAheadOfTest(context, Edge { block, 0 }, comparison.operand(operandIndex)).isEmpty();
+            candidates.append(CounterCandidate { number, terminator.conditionOperand(), operandIndex, Edge { block, 0 }, { }, comparesNoVariable });
         }
     }
 
@@ -276,29 +385,52 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     Function& function = context.function;
     Vector<Edge, 2> sharedEdges;
     for (const CounterCandidate& candidate : candidates) {
-        bool isShared = !context.analyses.hasSingleIncomingEdge(targetOf(function, candidate.stayingEdge).block);
+        BlockID target = targetOf(function, candidate.stayingEdge).block;
+        bool isShared = !context.analyses.hasSingleIncomingEdge(target);
+        // The handler of a block sees nothing that the block defines, so a sum that is repeated in front of a `try` gets a block of its own.
+        if (!isShared && function.at(target).handler)
+            isShared = !findSumsAheadOfTest(context, candidate.stayingEdge, function.at(candidate.comparison).operand(candidate.testedOperandIndex)).isEmpty();
         if (isShared && !sharedEdges.contains(candidate.stayingEdge))
             sharedEdges.append(candidate.stayingEdge);
     }
     for (Edge edge : sharedEdges)
         builder.splitEdge(edge);
 
+    struct RepeatedSum {
+        SumAheadOfTest original;
+        Vector<Use, 4> dominatedUses;
+    };
     const UseLists& useLists = context.analyses.useLists();
     Vector<Vector<Use, 8>, 4> dominatedUses(candidates.size());
+    Vector<Vector<RepeatedSum, 1>, 4> repeatedSums(candidates.size());
     for (size_t index = 0; index < candidates.size(); ++index) {
         const CounterCandidate& candidate = candidates[index];
-        auto collectUsesOf = [&](ValueID value) {
+        auto collectUsesOf = [&](ValueID value, auto& uses) {
             for (const Use& use : useLists.usesOf(value)) {
                 if (context.analyses.dominates(candidate.stayingEdge, use.block))
-                    dominatedUses[index].append(use);
+                    uses.append(use);
             }
         };
         ValueID tested = function.at(candidate.comparison).operand(candidate.testedOperandIndex);
-        collectUsesOf(tested);
+        collectUsesOf(tested, dominatedUses[index]);
         for (ValueID stepped : candidate.stepsEqualToTested)
-            collectUsesOf(stepped);
+            collectUsesOf(stepped, dominatedUses[index]);
         if (candidate.stepsEqualToTested.isEmpty() && tested != candidate.parameter && function.at(tested).type == function.at(candidate.parameter).type)
-            collectUsesOf(candidate.parameter);
+            collectUsesOf(candidate.parameter, dominatedUses[index]);
+        for (SumAheadOfTest sum : findSumsAheadOfTest(context, candidate.stayingEdge, tested)) {
+            RepeatedSum repeated { sum, { } };
+            // A cast that says no more of the sum may stand in front of the test too.
+            Vector<ValueID, 2> names { sum.sum };
+            for (size_t nameIndex = 0; nameIndex < names.size(); ++nameIndex) {
+                collectUsesOf(names[nameIndex], repeated.dominatedUses);
+                for (const Use& use : useLists.usesOf(names[nameIndex])) {
+                    if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(function.at(use.user).opcode) && function.at(use.user).type == function.at(sum.sum).type && !context.analyses.dominates(candidate.stayingEdge, use.block))
+                        names.append(use.user);
+                }
+            }
+            if (!repeated.dominatedUses.isEmpty())
+                repeatedSums[index].append(WTF::move(repeated));
+        }
     }
 
     Vector<ValueID, 4> narrowedCounters;
@@ -307,9 +439,85 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
         narrowedCounters.append(builder.addEdgeResult(candidates[index].stayingEdge, candidates[index].testedOperandIndex));
         for (const Use& use : dominatedUses[index])
             replaceUse(function, use, narrowedCounters.last());
+        for (const RepeatedSum& repeated : repeatedSums[index]) {
+            const Value& original = function.at(repeated.original.sum);
+            Value sum = original.numberOfOperands() == 1 ? IRBuilder::make(original.opcode, { narrowedCounters.last() }) : IRBuilder::make(original.opcode, { original.operand(0), original.operand(1) });
+            sum.setOperand(repeated.original.counterIndex, narrowedCounters.last());
+            builder.setOrigin(original.origin());
+            ValueID behindTest = builder.insertBefore(ProgramPoint::atHeadOf(targetOf(function, candidates[index].stayingEdge).block), WTF::move(sum));
+            for (const Use& use : repeated.dominatedUses)
+                replaceUse(function, use, behindTest);
+        }
     }
+    builder.applyInsertions();
     context.analyses.didChangeValues();
     return narrowedCounters;
+}
+
+static bool isHandedToBoundedCounter(FunctionPassContext& context, ValueID parameter)
+{
+    constexpr size_t mostJoins = 8;
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<ValueID, mostJoins> joins { parameter };
+    for (size_t index = 0; index < joins.size(); ++index) {
+        if (const InductionVariable* variable = analyses.inductionVariables().find(joins[index]))
+            return variable->step.kind == InductionStepKind::Constant && variable->boundingTest();
+        for (const Use& use : analyses.useLists().usesOf(joins[index])) {
+            if (use.kind != Use::Kind::EdgeArgument || joins.size() == mostJoins)
+                continue;
+            const Block& target = function.at(targetOf(function, use.edge()).block);
+            if (target.frequency.predicted() == BlockFrequency::Normal && use.operandIndex < target.parameters.size() && !joins.contains(target.parameters[use.operandIndex]))
+                joins.append(target.parameters[use.operandIndex]);
+        }
+    }
+    return false;
+}
+
+// A way back from the copy of failed tests is planned while the typed loop's counter is still a number: `i = values.length - 1` before anybody has tested `values`. It asks only whether what the copy has counted is without a fraction,
+// and with that in its join the typed loop's counter never becomes an integer. So it asks for an integer as far from zero as an int32 or as what else enters the loop. Whatever fails goes on in the copy, as a fraction did.
+static Vector<ValueID, 2> testForIntegersOnWaysBack(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<ValueID, 2> narrowed;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || function.at(block).frequency.predicted() == BlockFrequency::Normal || !analyses.isInCycle(block))
+            continue;
+        ValueID id = terminator.conditionOperand();
+        const Value& test = function.at(id);
+        if (test.opcode != Opcode::TypeTest || analyses.useLists().useCount(id) != 1)
+            continue;
+        const Type& tested = context.types.at(test.testedType());
+        size_t proofIndex = terminator.taken().proofs.find(OperandIndex::TypeTest::value);
+        if (!tested.isNumberWithoutFraction() || tested.isInteger() || proofIndex == notFound || !terminator.notTaken().proofs.isEmpty())
+            continue;
+        ValueID proof = function.at(terminator.taken().block).parameters[firstEdgeResultParameter(function, block, 0) + proofIndex];
+        std::optional<Use> handedOn = analyses.useLists().singleUse(proof);
+        if (!handedOn || handedOn->kind != Use::Kind::EdgeArgument)
+            continue;
+        BlockID join = targetOf(function, handedOn->edge()).block;
+        if (handedOn->operandIndex >= function.at(join).parameters.size())
+            continue;
+        Range range = Range::int32();
+        bool othersAreIntegers = std::ranges::all_of(analyses.cfg().incomingEdges(join), [&](Edge edge) {
+            if (edge == handedOn->edge())
+                return true;
+            IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(function, edge, handedOn->operandIndex);
+            if (incoming.kind != IncomingValue::Kind::Argument || !context.program.typeOf(function, incoming.argument).isInteger())
+                return false;
+            range = range.unionWith(context.program.typeOf(function, incoming.argument).integers);
+            return true;
+        });
+        if (!othersAreIntegers || !range.isSubsetOf(Range::exact()) || !isHandedToBoundedCounter(context, function.at(join).parameters[handedOn->operandIndex]))
+            continue;
+        function.edit(id, ValueEdit::Definition).setTestedType(context.types.intern(Type::integer(range)));
+        narrowed.append(proof);
+    }
+    if (!narrowed.isEmpty())
+        analyses.didChangeValues();
+    return narrowed;
 }
 
 namespace {
@@ -372,7 +580,9 @@ struct TallyFinder {
             return constant(1) ? plus(value.operand(0), constant(1), false) : plus(value.operand(1), constant(0), false);
         if (value.opcode == Opcode::Sub)
             return plus(value.operand(0), constant(1), true);
-        return isCastWithoutTest(value.opcode) ? changeOf(value.operand(0)) : std::nullopt;
+        // `count++` of a variable without a declared type converts it first.
+        bool isConversionOfNumber = (value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric) && context.program.typeOf(function, value.operand(0)).isNumber();
+        return isCastWithoutTest(value.opcode) || isConversionOfNumber ? changeOf(value.operand(0)) : std::nullopt;
     }
 };
 
@@ -626,11 +836,6 @@ static bool expectCarriedNumbersToStayInt32(FunctionPassContext& context, IRBuil
 
 namespace {
 
-struct SumWithCounter {
-    ValueID counter;
-    int64_t addend { 0 };
-};
-
 struct TestOfSum {
     ValueID comparison;
     uint32_t sideOfSum;
@@ -638,33 +843,6 @@ struct TestOfSum {
 };
 
 } // anonymous namespace
-
-static std::optional<SumWithCounter> findSumWithConstant(FunctionPassContext& context, ValueID id)
-{
-    const Function& function = context.function;
-    const Value& sum = function.at(context.analyses.identityOf(id));
-    auto constantAt = [&](uint32_t index) {
-        return integerConstantThroughCasts(context.program, function, sum.operand(index));
-    };
-    switch (sum.opcode) {
-    case Opcode::Increment:
-        return SumWithCounter { sum.operand(0), 1 };
-    case Opcode::Decrement:
-        return SumWithCounter { sum.operand(0), -1 };
-    case Opcode::Add:
-        if (std::optional<int64_t> right = constantAt(1))
-            return SumWithCounter { sum.operand(0), *right };
-        if (std::optional<int64_t> left = constantAt(0))
-            return SumWithCounter { sum.operand(1), *left };
-        return std::nullopt;
-    case Opcode::Sub:
-        if (std::optional<int64_t> right = constantAt(1); right && *right != std::numeric_limits<int64_t>::min())
-            return SumWithCounter { sum.operand(0), -*right };
-        return std::nullopt;
-    default:
-        return std::nullopt;
-    }
-}
 
 static bool testsSumInCycle(FunctionPassContext& context)
 {
@@ -872,6 +1050,29 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
     return false;
 }
 
+static bool comparesNoVariableInCycle(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    return std::ranges::any_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || function.at(block).frequency.predicted() != BlockFrequency::Normal)
+            return false;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        if ((comparison.opcode != Opcode::ToBoolean && !relationalOperators.contains(comparison.opcode)) || !analyses.isInCycle(block))
+            return false;
+        for (uint32_t operandIndex = 0; operandIndex < comparison.numberOfOperands(); ++operandIndex) {
+            const Type& tested = context.program.typeOf(function, comparison.operand(operandIndex));
+            if (!tested.isNumberWithoutFraction() || tested.isInt32() || terminator.taken().proofs.contains(operandIndex))
+                continue;
+            ValueID number = sameNumberThroughConversions(context, comparison.operand(operandIndex));
+            if (analyses.useLists().locationOf(number).placement != ValuePlacement::Parameter ? !!findParameterCountedFrom(context, number) : !findSumsAheadOfTest(context, Edge { block, 0 }, comparison.operand(operandIndex)).isEmpty())
+                return true;
+        }
+        return false;
+    });
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (context.isBehindRounds && std::exchange(context.hasConvertedCountersBehindRounds, true) && !std::exchange(context.hasBoundsTestedBehindRounds, false))
@@ -885,11 +1086,25 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
         outcome = PassOutcome::Changed;
-    // During the rounds, only a counter that has just got its own test is converted, before the tests that the round would place on it. Other counters have their bound by then or get it after the rounds.
-    if (context.isInRounds && outcome == PassOutcome::Unchanged)
+    // During the rounds, only a counter that has just got its own test, or of whose test the front end has passed on nothing, is converted, before the tests that the round would place on it:
+    // one for int32 stays in the loop for good where the counter may pass int32. Other counters have their bound by then or get it after the rounds.
+    bool convertsOnlyWhatComparesNoVariable = context.isInRounds && outcome == PassOutcome::Unchanged;
+    if (convertsOnlyWhatComparesNoVariable && !comparesNoVariableInCycle(context))
         return outcome;
+    if (Vector<ValueID, 2> narrowed = convertsOnlyWhatComparesNoVariable ? Vector<ValueID, 2> { } : testForIntegersOnWaysBack(context); !narrowed.isEmpty()) {
+        outcome = PassOutcome::Changed;
+        narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, narrowed.span());
+    }
     for (;;) {
         Vector<CounterCandidate, 4> candidates = findCounterCandidates(context, parametersOverStepLimit);
+        if (convertsOnlyWhatComparesNoVariable) {
+            // An unlikely path that widens the counter is taken out of its loop behind the rounds, and only as long as it widens it.
+            candidates.removeAllMatching([&](const CounterCandidate& candidate) {
+                return !candidate.comparesNoVariable || context.function.at(candidate.stayingEdge.from).frequency.predicted() != BlockFrequency::Normal;
+            });
+            if (candidates.isEmpty() && !numberOfConvertedCounters)
+                break;
+        }
         if (candidates.isEmpty()) {
             Vector<Tally, 2> tallies = findTallies(context);
             if (tallies.isEmpty())
@@ -920,11 +1135,11 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
         context.hasCountersConvertedSinceTestsWerePlaced = true;
     }
-    if (expectCarriedNumbersToStayInt32(context, builder)) {
+    if (!convertsOnlyWhatComparesNoVariable && expectCarriedNumbersToStayInt32(context, builder)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
-    while (copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
+    while (!convertsOnlyWhatComparesNoVariable && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
@@ -1444,11 +1659,12 @@ PassOutcome keepStringsJoinedInLoops(FunctionPassContext& context)
 
     // A test is typed from the definition it names, before SSARepair picks the one that reaches it: the parameter of a block in front of the loop has the type of all of them.
     // The blocks in front come first: a cut takes the edges of its block along.
+    // Until it is joined the variable holds false: beside undefined, null or nothing at all a string may be held as the word of a literal, which a joined string has to be looked up for.
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     Vector<std::pair<Edge, BlockID>, 2> blocksInFront;
     Vector<std::pair<ValueID, ValueID>, 4> variables;
     auto heldTypeOf = [&](const JoinKeptInLoop& kept) {
-        return context.types.intern(program.at(function.at(kept.join).type).withPrimitives(Primitive::Absent));
+        return context.types.unionOf(function.at(kept.join).type, TypeTable::boolean);
     };
     for (const JoinKeptInLoop& kept : joins) {
         builder.setOrigin(function.at(kept.join).origin());
@@ -1457,7 +1673,7 @@ PassOutcome keepStringsJoinedInLoops(FunctionPassContext& context)
             blocksInFront.append({ kept.entry, builder.splitEdge(kept.entry) });
             known = &blocksInFront.last();
         }
-        ValueID nothing = builder.addDetached(IRBuilder::make(Opcode::Absent));
+        ValueID nothing = builder.addDetached(IRBuilder::make(Opcode::Boolean));
         function.edit(kept.entry.from).values.append(nothing);
         context.analyses.didChangeValues();
         variables.append({ builder.addParameter(known->second, heldTypeOf(kept)), ValueID() });
@@ -1481,12 +1697,16 @@ PassOutcome keepStringsJoinedInLoops(FunctionPassContext& context)
         explainOperationThatGoes(function, kept.join, InPlaceOfOperation::ItsExpansion);
         Expected<BlockFrequency> frequency = function.at(kept.block).frequency;
         IRBuilder::Expansion expansion = builder.beginExpansion({ kept.block, static_cast<uint32_t>(function.at(kept.block).values.find(kept.join)) });
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(variables[position].first, TypeTable::absent), 0, BlockFrequency::Rare, frequency);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(variables[position].first, TypeTable::boolean), 0, BlockFrequency::Rare, frequency);
         if (!madeForJoin.isEmpty()) {
             function.edit(branch.taken).values.appendVector(madeForJoin);
             context.analyses.didChangeValues();
         }
-        builder.endExpansion(expansion, builder.append(WTF::move(join)));
+        // Every later iteration reads it, so it is made in one piece, as a key is: no rope for the first reader to flatten.
+        ValueID joined = builder.append(WTF::move(join));
+        if (canBeMarkedAsLikelyKey(program, function, function.at(joined)))
+            markAsLikelyKey(function, joined);
+        builder.endExpansion(expansion, joined);
         builder.moveToEndOf(branch.notTaken);
         builder.endExpansion(expansion, branch.provenOnNotTaken);
 

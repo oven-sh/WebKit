@@ -98,6 +98,8 @@ private:
         Vector<BasicBlock*, 2> blocksBehindTest;
         Opcode relation { Oops };
         Value* tested { nullptr };
+        // Which operand of the comparison it is, where the test branches on the comparison itself.
+        std::optional<unsigned> testedOperandOfBranch;
         bool testsCounterBeforeStep { false };
         Value* start { nullptr };
         Value* bound { nullptr };
@@ -286,6 +288,7 @@ private:
             plan.stayingSuccessorIndex = firstStays ? 0 : 1;
             plan.counter = counter->phi;
             plan.tested = tested;
+            plan.testedOperandOfBranch = block->last()->child(0) == comparison ? std::optional<unsigned>(testedIndex) : std::nullopt;
             plan.testsCounterBeforeStep = tested == counter->phi;
             plan.start = counter->start;
             plan.bound = bound;
@@ -897,14 +900,66 @@ private:
         appendTest(block->appendNew<Value>(m_proc, Sub, origin, upperEnd, lowerEnd), headerOfCopy);
     }
 
+    // A loop of more turns than one stretch runs in stretches too, in a copy of its own. Its test asks about the end of the stretch; only there is it asked whether the loop ends, and the loop polls.
+    // A side path that ends its turn by itself does not pass that test, so such a copy polls on every turn.
     void leavePollToCopy(RegionCloner& cloner, const Plan& plan)
     {
         if (!fitsOneStretch(plan)) {
-            BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);
-            m_proc.deleteValue(plan.preHeader->values().takeLast());
-            appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, headerOfCopy);
+            if (plan.sideTests.isEmpty() && plan.testedOperandOfBranch)
+                runCopyInStretches(cloner, plan);
+            else {
+                BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);
+                m_proc.deleteValue(plan.preHeader->values().takeLast());
+                appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, headerOfCopy);
+            }
         }
         removePolls(plan);
+    }
+
+    void runCopyInStretches(RegionCloner& cloner, const Plan& plan)
+    {
+        Origin origin = plan.test->last()->origin();
+        Type type = plan.tested->type();
+        Variable* endOfStretch = m_proc.addVariable(type);
+        unsigned testedOperand = *plan.testedOperandOfBranch;
+
+        RegionCloner::BlockMap copies = cloner.cloneBlocks(plan.blocks.span());
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *copies.get(block)) {
+                if (isLoopPoll(value))
+                    value->replaceWithNop();
+            }
+        }
+
+        BasicBlock* entered = m_proc.addBlock(plan.preHeader->frequency());
+        entered->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, appendBoundOfStretch(m_proc, entered, origin, { plan.start, plan.bound, plan.relation, plan.step, BoundLiesBeyond::No }));
+        entered->appendNew<Value>(m_proc, Jump, origin);
+        entered->setSuccessors(FrequentedBlock(copies.get(plan.header)));
+        m_proc.deleteValue(plan.preHeader->values().takeLast());
+        appendChoiceOfLoop(plan, plan.preHeader, plan.start, plan.bound, entered);
+
+        BasicBlock* test = copies.get(plan.test);
+        BasicBlock* stays = test->successorBlock(plan.stayingSuccessorIndex);
+        BasicBlock* leaves = test->successorBlock(!plan.stayingSuccessorIndex);
+        BasicBlock* ended = m_proc.addBlock(test->frequency());
+        BasicBlock* polls = m_proc.addBlock(test->frequency());
+        Value* reached = test->last()->child(0)->child(testedOperand);
+        Value* end = m_proc.add<VariableValue>(Get, origin, endOfStretch);
+        Value* inStretch = m_proc.add<Value>(plan.relation, origin, reached, end);
+        test->appendNonTerminal(end);
+        test->appendNonTerminal(inStretch);
+        test->replaceLastWithNew<Value>(m_proc, Branch, origin, inStretch);
+        test->setSuccessors(FrequentedBlock(stays), FrequentedBlock(ended, FrequencyClass::Rare));
+
+        ended->appendNew<Value>(m_proc, Branch, origin, ended->appendNew<Value>(m_proc, plan.relation, origin, reached, plan.bound));
+        ended->setSuccessors(FrequentedBlock(polls), FrequentedBlock(leaves));
+
+        // The next stretch is counted from the end of this one, which the counter has reached or passed by less than a step: whoever counted from the counter would keep it alive beside its successor, at the price of a move in every turn.
+        polls->append(m_proc.clone(plan.poll));
+        Value* endReached = polls->appendNew<VariableValue>(m_proc, Get, origin, endOfStretch);
+        polls->appendNew<VariableValue>(m_proc, Set, origin, endOfStretch, appendBoundOfStretch(m_proc, polls, origin, { endReached, plan.bound, plan.relation, plan.step, BoundLiesBeyond::Yes }));
+        polls->appendNew<Value>(m_proc, Jump, origin);
+        polls->setSuccessors(FrequentedBlock(stays));
     }
 
     // Every turn moves the counter one step towards a bound that does not change, so the turns between two polls can be counted. That takes a plan that holds the whole loop:
