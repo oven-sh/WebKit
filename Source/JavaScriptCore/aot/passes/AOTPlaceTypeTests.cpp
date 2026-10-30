@@ -4949,6 +4949,8 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         std::span<const Edge> incomingEdges = analyses.cfg().incomingEdges(loop.header());
         if (header.parameters.isEmpty() || header.frequency.predicted() != BlockFrequency::Normal || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
             continue;
+        if (numberOfSharedExplicitParameters(function, analyses.cfg(), loop.header()) != header.parameters.size())
+            continue;
         if (!beginsWithTestThatLeavesForGenericCopy(context, loop.header()))
             continue;
         // Behind a failed test each parameter of the header is defined again, by an Upcast, which takes no environment and no iterator state.
