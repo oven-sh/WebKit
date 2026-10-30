@@ -220,12 +220,13 @@ static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, std
 
 static Presence compiledObjectHasProperty(const Object& typed, UniquedStringImpl* name)
 {
-    if (const FieldData* field = typed.fieldNamed(typed.state(), name)) {
+    State& state = typed.state();
+    if (const FieldData* field = typed.fieldNamed(state, name)) {
         bool defersClosure = field->slot.representation() == SlotRepresentation::DeferredClosure;
         if (defersClosure ? typed.isInSlot(*field) : typed.readInline(*field) || typed.read(*field))
             return Presence::Present;
     } else
-        typed.state().objects->layouts.didReadAbsentField(typed.vm(), typed.layout(), name);
+        state.objects->layouts.didReadAbsentField(*state.instance.vm, typed.layout(), name);
     JSObject* extra = typed.extraProperties();
     if (!extra)
         return Presence::Absent;

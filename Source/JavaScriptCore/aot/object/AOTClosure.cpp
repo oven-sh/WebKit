@@ -248,7 +248,10 @@ bool Closure::hasStructureOfNewClosure(VM& vm) const
 {
     ImageOfCellScope imageOfCell(this);
     unsigned index = kind().closureStructure;
-    return index != classObjectClosureStructure && structure() == state().objects->closures.closureStructure(vm, index);
+    if (index == classObjectClosureStructure)
+        return false;
+    Structure* ofNewClosure = state().objects->closures.closureStructure(vm, index);
+    return structureID() == ofNewClosure->id();
 }
 
 static NEVER_INLINE void createClassObject(Closure* classObject)
