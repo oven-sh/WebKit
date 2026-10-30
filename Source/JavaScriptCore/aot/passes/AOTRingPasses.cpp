@@ -1588,6 +1588,8 @@ struct ConstantFolder {
         }
         case Opcode::CallBuiltin:
             return foldStringCall(id, value);
+        case Opcode::Substring:
+            return foldSubstringOfKnownString(id, value);
         case Opcode::HasInPrototypeChain:
             return foldWalkFromNewObject(id, value);
         case Opcode::GetInternalField:
@@ -1979,6 +1981,59 @@ struct ConstantFolder {
         if (!literal || literal->flags().containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
             return std::nullopt;
         return std::pair { *literal, function.at(operand).type };
+    }
+
+    std::optional<int64_t> knownInteger(ValueID id) const
+    {
+        KnownValue known = knownValueOf(id);
+        if (!known.isNumber() || known.asNumber() != std::trunc(known.asNumber()) || std::abs(known.asNumber()) > INT32_MAX)
+            return std::nullopt;
+        return static_cast<int64_t>(known.asNumber());
+    }
+
+    // Where a bound of a part of a text with `length` code units comes out of StringRange, as `s.slice(a, b)` and `s.substring(a, b)` have it.
+    std::optional<int64_t> knownBoundOfPart(ValueID id, int64_t length) const
+    {
+        if (std::optional<int64_t> integer = knownInteger(id))
+            return integer;
+        const Value& result = function.at(id);
+        if (result.opcode != Opcode::ResultAt || function.at(result.resultsOperand()).opcode != Opcode::StringRange)
+            return std::nullopt;
+        const Value& range = function.at(result.resultsOperand());
+        if (knownInteger(range.lengthOperand()) != length || (range.method() != StringRangeMethod::Slice && range.method() != StringRangeMethod::Substring))
+            return std::nullopt;
+        std::optional<int64_t> first = knownInteger(range.firstOperand());
+        std::optional<int64_t> second = range.secondOperand() ? knownInteger(range.secondOperand()) : length;
+        if (!first || !second)
+            return std::nullopt;
+        int64_t start;
+        int64_t end;
+        if (range.method() == StringRangeMethod::Slice) {
+            auto relative = [&](int64_t index) { return index < 0 ? std::max<int64_t>(length + index, 0) : std::min(index, length); };
+            start = relative(*first);
+            end = std::max(start, relative(*second));
+        } else {
+            start = std::clamp<int64_t>(std::min(*first, *second), 0, length);
+            end = std::clamp<int64_t>(std::max(*first, *second), 0, length);
+        }
+        return result.index() ? end : start;
+    }
+
+    bool foldSubstringOfKnownString(ValueID id, const Value& value)
+    {
+        KnownValue known = knownValueOf(value.stringOperand());
+        if (known.kind() != KnownValue::Kind::String)
+            return false;
+        String text = program.strings.toWTFString(known.asString());
+        // A part of a wide text may be half of a pair.
+        if (!text.is8Bit())
+            return false;
+        int64_t length = text.length();
+        std::optional<int64_t> start = knownBoundOfPart(value.startOperand(), length);
+        std::optional<int64_t> end = knownBoundOfPart(value.endOperand(), length);
+        if (!start || !end || *start < 0 || *end > length || *start > *end)
+            return false;
+        return becomeConstant(id, KnownValue::string(context.strings.intern(StringView(text).substring(*start, *end - *start))));
     }
 
     bool foldStringCall(ValueID id, const Value& value)
@@ -3997,8 +4052,7 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
-// An operation whose allocation fails throws when it returns. A poll throws the out-of-memory error that an operation has left owed because it could not throw it:
-// a store that adds a field, a catch, or a call whose callee caught what it threw. So a loop poll keeps its handler, also where nothing in the loop allocates.
+// An operation whose allocation fails throws when it returns.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
     auto needsHandler = [](const EffectsOnEdges& effects) {
@@ -4059,6 +4113,268 @@ static constexpr Rule redundantHandlerRules[] {
     { TerminatorKindSet { TerminatorKind::Throw, TerminatorKind::Rethrow }, skipRethrowingHandler },
 };
 
+static bool isRare(const Block& block)
+{
+    return block.frequency.predicted() == BlockFrequency::Rare;
+}
+
+static bool isPollOfLoop(const Function& function, ValueID id)
+{
+    return function.at(id).opcode == Opcode::LoopHint && !function.at(id).throwsOwedError();
+}
+
+static bool likelyIterationsDoNotAllocate(FunctionAnalyses& analyses, const NaturalLoop& loop)
+{
+    const Function& function = analyses.function();
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = function.at(loop.at(index));
+        if (isRare(block))
+            continue;
+        for (ValueID value : block.values) {
+            if (!isPollOfLoop(function, value) && analyses.effectsOf(value).onAnyEdge().mayCollect)
+                return false;
+        }
+        if (analyses.effectsOfTerminator(loop.at(index)).onAnyEdge().mayCollect)
+            return false;
+    }
+    return true;
+}
+
+// A store that adds a field does not throw when its allocation fails: a poll under the handler throws for it, and in a loop that may be the loop's poll.
+static bool addsFields(const Function& function, const NaturalLoop& loop)
+{
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        for (ValueID id : function.at(loop.at(index)).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::PutSlotOrAdd || (value.opcode == Opcode::LoopHint && value.throwsOwedError()))
+                return true;
+            if (value.opcode == Opcode::PutSlots && std::ranges::any_of(value.placedKeys(), &PlacedKey::mayAdd))
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool needsHandler(const EffectsOnEdges& effects)
+{
+    return effects.mayThrow() || effects.onAnyEdge().mayCollect;
+}
+
+// The polls that throw an owed error before it reaches a loop poll outside its handler.
+struct OwedErrorPolls {
+    struct Preheader {
+        Edge entry;
+        Target handler;
+    };
+    Vector<ProgramPoint, 4> points;
+    Vector<Preheader, 1> preheaders;
+};
+
+// After the last operation of the block that may leave an error owed, unless a poll that stays under the handler already follows it.
+// A fused test stays the last value of its block.
+static ProgramPoint pointBeforeBranchOf(const Function& function, BlockID id)
+{
+    ProgramPoint point = pointBeforeTerminatorOf(function, id);
+    if (function.at(id).terminator.kind == TerminatorKind::TestAndBranch)
+        --point.index;
+    return point;
+}
+
+static bool branchNeedsHandler(FunctionAnalyses& analyses, BlockID id)
+{
+    const Terminator& terminator = analyses.function().at(id).terminator;
+    return needsHandler(analyses.effectsOfTerminator(id)) || (terminator.kind == TerminatorKind::TestAndBranch && needsHandler(analyses.effectsOf(terminator.conditionOperand())));
+}
+
+static std::optional<ProgramPoint> findPollAfterOperations(FunctionAnalyses& analyses, BlockID id)
+{
+    const Function& function = analyses.function();
+    const Block& block = function.at(id);
+    size_t last = block.values.reverseFindIf([&](ValueID value) {
+        return !isPollOfLoop(function, value) && needsHandler(analyses.effectsOf(value));
+    });
+    if (last == notFound || function.at(block.values[last]).opcode == Opcode::LoopHint)
+        return std::nullopt;
+    return ProgramPoint { id, static_cast<uint32_t>(last + 1) };
+}
+
+static bool pollOnRarePaths(FunctionAnalyses& analyses, const NaturalLoop& loop, OwedErrorPolls& polls)
+{
+    const Function& function = analyses.function();
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        BlockID id = loop.at(index);
+        const Block& block = function.at(id);
+        if (!isRare(block))
+            continue;
+        // What is thrown inside the loop arrives in a handler block of the loop, which polls for itself.
+        if (block.terminator.kind == TerminatorKind::Throw || block.terminator.kind == TerminatorKind::Rethrow)
+            continue;
+        if (branchNeedsHandler(analyses, id))
+            return false;
+        std::optional<ProgramPoint> point = findPollAfterOperations(analyses, id);
+        if (!point)
+            continue;
+        if (!block.handler)
+            return false;
+        polls.points.append(*point);
+    }
+    return true;
+}
+
+// An edge from the loop entry reaches the handler without passing the header, so what is defined from the header on must not be read after the handler.
+static bool canReachHandlerFromEntry(FunctionAnalyses& analyses, BlockID entry, BlockID header, BlockID handler)
+{
+    const Function& function = analyses.function();
+    Dominators& dominators = analyses.dominators();
+    if (dominators.dominates(dominators.idom(handler), entry))
+        return true;
+    if (!dominators.dominates(header, handler))
+        return false;
+    BitVector reachedFromHandler(function.blocks.size());
+    Vector<BlockID, 16> worklist { handler };
+    reachedFromHandler.set(handler.index());
+    while (!worklist.isEmpty()) {
+        for (BlockID successor : analyses.cfg().successors(worklist.takeLast())) {
+            if (successor != header && !reachedFromHandler.set(successor.index()))
+                worklist.append(successor);
+        }
+    }
+    auto isReadAfterHandler = [&](ValueID id) {
+        return std::ranges::any_of(analyses.useLists().usesOf(id), [&](const Use& use) { return reachedFromHandler.get(use.block.index()); });
+    };
+    for (BlockID block = dominators.idom(handler);; block = dominators.idom(block)) {
+        if (std::ranges::any_of(function.at(block).parameters, isReadAfterHandler) || std::ranges::any_of(function.at(block).values, isReadAfterHandler))
+            return false;
+        if (block == header)
+            return true;
+    }
+}
+
+// A poll on the loop entry under the handler of the loop poll stands for that poll in the first iteration.
+static bool pollOnEntry(FunctionAnalyses& analyses, const NaturalLoop& loop, const Target& handlerOfPoll, OwedErrorPolls& polls)
+{
+    const Function& function = analyses.function();
+    std::optional<Edge> entry = analyses.naturalLoops().findSingleEntry(loop);
+    if (!entry || branchNeedsHandler(analyses, entry->from))
+        return false;
+    const Block& from = function.at(entry->from);
+    const Block& header = function.at(loop.header());
+    if (from.handler) {
+        ProgramPoint end = pointBeforeBranchOf(function, entry->from);
+        bool endsWithPoll = end.index && function.at(from.values[end.index - 1]).opcode == Opcode::LoopHint && !isPollOfLoop(function, from.values[end.index - 1]);
+        if (!endsWithPoll)
+            polls.points.append(end);
+        return true;
+    }
+    if (!canReachHandlerFromEntry(analyses, entry->from, loop.header(), handlerOfPoll.block))
+        return false;
+    Target handler = handlerOfPoll;
+    const Target& target = targetOf(function, *entry);
+    if (target.arguments.size() != header.parameters.size())
+        return false;
+    ProgramPoint endOfEntry = pointBeforeTerminatorOf(function, entry->from);
+    for (ValueID& argument : handler.arguments) {
+        size_t parameter = header.parameters.find(argument);
+        if (parameter != notFound)
+            argument = target.arguments[parameter];
+        else if (!analyses.dominates(argument, endOfEntry))
+            return false;
+    }
+    polls.preheaders.append({ *entry, WTF::move(handler) });
+    return true;
+}
+
+// Outside the handler, the back end treats the loop as it would outside a try block. A poll throws the out-of-memory error that an operation has left owed because it could not throw it:
+// a store that adds a field, a catch, or a call whose callee caught what it threw. A poll that has left its handler leaves that error owed (operationAOTPollSlow),
+// wherever the back end moves it. So that the error is thrown soon, a loop poll only leaves its handler where the likely iterations do not allocate, and a poll under a handler runs
+// on the loop entry and after what may allocate on the rare paths. Selection hoists what allocates out of some loops, so it asks again.
+static bool removeLoopPollsFromHandlers(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.cfg().hasCycle())
+        return false;
+    struct Poll {
+        ProgramPoint point;
+        bool restNeedsHandler;
+    };
+    Vector<Poll, 4> polls;
+    OwedErrorPolls owedErrorPolls;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    Vector<unsigned, 8> outermostFirst;
+    for (unsigned index = 0; index < loops.numLoops(); ++index)
+        outermostFirst.append(index);
+    AOT::sort(outermostFirst, [&](unsigned a, unsigned b) {
+        unsigned depthOfA = loops.loopDepth(loops.loop(a).header());
+        unsigned depthOfB = loops.loopDepth(loops.loop(b).header());
+        return depthOfA != depthOfB ? depthOfA < depthOfB : a < b;
+    });
+    BitVector loopsWhereNothingIsOwed(loops.numLoops());
+    for (unsigned loopIndex : outermostFirst) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        std::optional<bool> canRemovePoll;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID id = loop.at(index);
+            const Block& block = function.at(id);
+            if (!block.handler || loops.innerMostLoopOf(id) != &loop)
+                continue;
+            size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
+            if (position == notFound || !isPollOfLoop(function, block.values[position]))
+                continue;
+            if (!canRemovePoll) {
+                const NaturalLoop* outer = loops.innerMostOuterLoop(loop);
+                canRemovePoll = outer && loopsWhereNothingIsOwed.get(outer->index());
+                if (!*canRemovePoll) {
+                    OwedErrorPolls added;
+                    canRemovePoll = id == loop.header() && likelyIterationsDoNotAllocate(analyses, loop) && !addsFields(function, loop) && pollOnRarePaths(analyses, loop, added) && pollOnEntry(analyses, loop, *block.handler, added);
+                    if (*canRemovePoll) {
+                        for (ProgramPoint point : added.points)
+                            owedErrorPolls.points.appendIfNotContains(point);
+                        owedErrorPolls.preheaders.appendVector(WTF::move(added.preheaders));
+                    }
+                }
+                if (*canRemovePoll)
+                    loopsWhereNothingIsOwed.set(loopIndex);
+            }
+            if (!*canRemovePoll)
+                break;
+            bool restNeedsHandler = needsHandler(analyses.effectsOfTerminator(id)) || std::ranges::any_of(block.values.span().subspan(position + 1), [&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
+            polls.append({ { id, static_cast<uint32_t>(position) }, restNeedsHandler });
+        }
+    }
+    if (polls.isEmpty())
+        return false;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    auto insertPoll = [&](ProgramPoint point) {
+        const Block& block = function.at(point.block);
+        Value poll = IRBuilder::make(Opcode::LoopHint);
+        poll.setThrowsOwedError(true);
+        builder.setOrigin(point.index ? function.at(block.values[point.index - 1]).origin() : block.terminator.origin());
+        builder.insertBefore(point, WTF::move(poll));
+    };
+    for (ProgramPoint point : owedErrorPolls.points) {
+        for (Poll& poll : polls)
+            poll.restNeedsHandler |= poll.point.block == point.block;
+        insertPoll(point);
+    }
+    builder.applyInsertions();
+    for (OwedErrorPolls::Preheader& preheader : owedErrorPolls.preheaders) {
+        builder.setOrigin(function.at(preheader.entry.from).terminator.origin());
+        insertPoll(ProgramPoint::atHeadOf(builder.splitEdge(preheader.entry, WTF::move(preheader.handler))));
+        builder.applyInsertions();
+    }
+    for (const Poll& poll : polls) {
+        if (poll.restNeedsHandler) {
+            builder.setOrigin(function.at(function.at(poll.point.block).values[poll.point.index]).origin());
+            builder.splitBlock({ poll.point.block, poll.point.index + 1 });
+        }
+        builder.removeHandler(poll.point.block);
+        function.edit(function.at(poll.point.block).values[poll.point.index], ValueEdit::Definition).setLeavesOwedError(true);
+    }
+    return true;
+}
+
 // A store that adds a field allocates and may not collect, so it does not throw when its allocation fails. Under a handler, a poll after the last such store of a block throws for them.
 static bool pollAfterFieldAddingStores(FunctionPassContext& context)
 {
@@ -4077,7 +4393,7 @@ static bool pollAfterFieldAddingStores(FunctionPassContext& context)
         if (std::ranges::any_of(block.values.span().subspan(last + 1), [&](ValueID value) { return function.at(value).opcode == Opcode::LoopHint; }))
             continue;
         Value poll = IRBuilder::make(Opcode::LoopHint);
-        poll.setFollowsStores(true);
+        poll.setThrowsOwedError(true);
         builder.setOrigin(function.at(block.values[last]).origin());
         builder.insertBefore({ id, static_cast<uint32_t>(last + 1) }, WTF::move(poll));
         hasChanged = true;
@@ -4099,6 +4415,7 @@ PassOutcome removeRedundantHandlers(FunctionPassContext& context)
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
     bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    hasAddedPolls |= removeLoopPollsFromHandlers(context);
     return removeRedundantHandlers(context, hasAddedPolls);
 }
 
@@ -4107,6 +4424,7 @@ PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext& context, 
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
     bool hasAddedPolls = pollAfterFieldAddingStores(context);
+    hasAddedPolls |= removeLoopPollsFromHandlers(context);
     if (!hasAddedPolls && !removedAllocationUnderHandler)
         return PassOutcome::Unchanged;
     return removeRedundantHandlers(context, hasAddedPolls);

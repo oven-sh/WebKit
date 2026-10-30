@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include <JavaScriptCore/MarkedVector.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCell.h>
 #include <JavaScriptCore/PropertyName.h>

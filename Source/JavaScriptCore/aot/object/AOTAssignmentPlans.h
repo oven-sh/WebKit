@@ -144,6 +144,11 @@ struct AssignmentPlan {
     };
 
     struct ExtraPropertyStore {
+        // For a new second object filled from an ordinary object: byte offsets, from the inline storage or from the storage outside the cell.
+        int32_t bytesInSource { 0 };
+        int32_t bytesInTarget { 0 };
+        bool isOutsideInSource { false };
+        bool isOutsideInTarget { false };
         const FieldData* from { nullptr };
         PropertyOffset sourceOffset { invalidOffset };
         PropertyOffset offset { invalidOffset };
@@ -179,7 +184,7 @@ struct AssignmentPlan {
     bool fillsEmptySlotsOf(const Object& targetObject, const Object& sourceObject, uint32_t excludedRunNumberPlusOne) const
     {
         return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID()
-            && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
+            && !leavesElementsOut && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
     }
 
     bool runsAsBeforeOn(const Object& targetObject, const AssignmentSource& from, uint32_t excludedRunNumberPlusOne) const
@@ -212,6 +217,8 @@ struct AssignmentPlan {
     const ExcludedNameList* excludedList { nullptr };
     Vector<RefPtr<UniquedStringImpl>, 2> excludedNames;
     bool isUsable { false };
+    // It reads the fields of a record and leaves the elements of its second object to the caller, so a copy of the whole record does not repeat it.
+    bool leavesElementsOut { false };
     bool sourceStructureNamesPropertyStorage { false };
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
@@ -458,6 +465,8 @@ bool storePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> n
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // Null unless the source is a dictionary of many plain properties. The copy has the prototype of the source.
 JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
+bool tryDefineFieldsLeavingElementsOut(VM&, Object& target, Object& source);
+bool tryAssignOrdinaryObjectAsBefore(VM&, State&, Object& target, JSObject* source);
 // Null unless the source has plain properties and plain elements. The copy has the Structure of the source.
 JSFinalObject* tryCopyWithElements(VM&, JSObject* source);
 bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);

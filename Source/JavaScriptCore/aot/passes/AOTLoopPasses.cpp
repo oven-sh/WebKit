@@ -1494,7 +1494,7 @@ static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID
     BitVector hints;
     std::span<const ValueID> values = function.at(block).values.span();
     for (size_t index = 0; index < values.size(); ++index) {
-        if (function.at(values[index]).opcode == Opcode::LoopHint && !function.at(values[index]).followsStores())
+        if (function.at(values[index]).opcode == Opcode::LoopHint && !function.at(values[index]).throwsOwedError())
             hints.set(index);
     }
     if (hints.isEmpty())

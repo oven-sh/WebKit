@@ -95,7 +95,8 @@ static JSFunction* findPrivateGlobalFunction(VM& vm, std::span<const Latin1Chara
     PrivateSymbolImpl* uid = vm.propertyNames->builtinNames().lookUpPrivateName(name);
     if (!uid || instances.isEmpty())
         return nullptr;
-    JSGlobalObject* realm = instances.first()->globalObject;
+    // The first may be the realm of a test file that has ended, which no collection has freed yet.
+    JSGlobalObject* realm = instances.last()->globalObject;
     if (JSObject* property = findExistingObject(realm, uid))
         return dynamicDowncast<JSFunction>(property);
     PropertySlot slot(realm, PropertySlot::InternalMethodType::VMInquiry, &vm);

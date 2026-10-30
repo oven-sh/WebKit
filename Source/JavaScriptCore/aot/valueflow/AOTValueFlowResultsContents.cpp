@@ -1059,6 +1059,14 @@ private:
                 m_facts[array].arrayStorage = storage;
             }
         }
+        // Where lists of one component stayed undecided, a reader tests and may convert what arrives: a list that may hold numbers claims no storage of its own.
+        BitVector meetsUndecidedList(m_containers.size());
+        for (const Vector<uint32_t>& members : m_membersOfComponent) {
+            if (members.size() > 1 && m_facts[members[0]].arrayStorage == ArrayStorage::Other) {
+                for (uint32_t array : members)
+                    meetsUndecidedList.quickSet(array);
+            }
+        }
         Vector<ValueFlowObjectID> arraysThatMustNotBeConverted;
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
             if (!isArray(index))
@@ -1066,7 +1074,9 @@ private:
             if (m_facts[index].arrayStorage == ArrayStorage::Other && m_facts[index].contentsAreProven && m_arrayWrites[index].keepsStorageOfLiteral()) {
                 const Type& elements = m_types.at(m_facts[index].contents[m_indexOfElements]);
                 bool isGivenMoreThanNumbers = m_arrayWrites[index].has(ArrayWrites::IsGivenMoreThanNumbers) && !m_arrayWrites[index].has(ArrayWrites::MeetsObjectThatIsNoArray);
-                if (isGivenMoreThanNumbers || (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayGetDoubleStorage(ArrayStorage::Contiguous, elements)))
+                // Nothing converts a list that may read undefined: ArrayCapacities' flowAllowsConversion().
+                bool mayBeConverted = mayGetDoubleStorage(ArrayStorage::Contiguous, elements) && !(elements.primitives & Primitive::Undefined);
+                if ((isGivenMoreThanNumbers && !(mayBeConverted && meetsUndecidedList.quickGet(index))) || (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayBeConverted))
                     m_facts[index].arrayStorage = ArrayStorage::Contiguous;
             }
             if (m_facts[index].arrayStorage != ArrayStorage::Other && mayGetDoubleStorage(m_facts[index].arrayStorage, m_types.at(m_facts[index].contents[m_indexOfElements])))

@@ -109,7 +109,7 @@ public:
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
     // Tables: the VM's hash tables that hold one entry per live value of some kind, such as Symbols. Growing one is a single large malloc.
-    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2 };
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Tables = 1 << 2, ListOfArrayBuffers = 1 << 3 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
@@ -137,6 +137,8 @@ public:
     static void willUseLastReserve(VM&);
     // Called on the VM's thread before each Symbol is created. With limited address space, grows the Symbol table early, so a failed allocation can schedule an out-of-memory error while the table still has room.
     JS_EXPORT_PRIVATE static void willAddSymbol(VM&);
+    // The same for the heap's list of array buffers. No collection runs here: the caller's cell is not finished.
+    void willAddArrayBuffer(VM&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 

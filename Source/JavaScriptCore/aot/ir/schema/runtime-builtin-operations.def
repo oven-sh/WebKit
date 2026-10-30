@@ -39,6 +39,7 @@ runtime ObjectAssignWithoutCode : size_t (JSCell* target, EncodedJSValue source)
 runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
 
 runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
+runtime ReadsIteratorOfListUnseen : size_t (EncodedJSValue value) ; reads(all)
 runtime ArraySpeciesCreate : EncodedJSValue (EncodedJSValue length, JSCell* array) ; unknownCode
 runtime ResumeGenerator : EncodedJSValue (EncodedJSValue generator, int32_t mode, EncodedJSValue value) ; unknownCode
 runtime IsGeneratorSuspendedAtStart : size_t (JSCell* generator) ; reads(all)

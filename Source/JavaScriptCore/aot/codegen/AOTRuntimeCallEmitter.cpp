@@ -924,6 +924,11 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     bool underreportsWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(underreportsWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
+    if (m_callsOnlyMoveTables) {
+        writes.removeAll(&m_heaps.entire(AbstractHeap::CollectionStorage));
+        writes.append(&m_heaps.JSMap_storage);
+        writes.append(&m_heaps.JSSet_storage);
+    }
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !underreportsWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     if (effects.mayCollect)

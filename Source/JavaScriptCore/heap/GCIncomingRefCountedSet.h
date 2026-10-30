@@ -45,6 +45,8 @@ public:
     ALWAYS_INLINE bool addReference(JSCell*, T*);
     // After this returns true, adding one object that is new to this set allocates nothing.
     bool tryReserveCapacityForNewObject();
+    // Keeps room for an eighth of the capacity more, so that an error can be owed while objects can still be added.
+    bool tryGrowEarly();
     
     void sweep(VM&, CollectionScope);
     

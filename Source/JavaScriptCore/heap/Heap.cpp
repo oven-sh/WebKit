@@ -715,11 +715,18 @@ void Heap::addGCAwareJITStubRoutine(GCAwareJITStubRoutine* routine)
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     ASSERT(cell->heap() == this);
+    if (MarkedBlockCage::isRequired()) [[unlikely]]
+        cage().willAddArrayBuffer(vm());
     if (m_arrayBuffers.addReference(cell, buffer)) {
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
     }
+}
+
+bool Heap::tryGrowListOfArrayBuffersEarly()
+{
+    return m_arrayBuffers.tryGrowEarly();
 }
 
 bool Heap::tryReserveCapacityForNewArrayBuffer()

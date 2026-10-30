@@ -28,7 +28,10 @@ public:
 private:
     Boxed normalizedNumber(const OperationContext&, Number);
     void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
+    bool hasReceiverThatLeavesLoop(const InlineCall&);
     bool looksAmongTags(const InlineCall&);
+    bool looksIntoHomeSlot(const InlineCall&, KeyComparison);
+    Boxed lookUpInHomeSlot(const InlineCall&, CellPointer owner, Boxed key, KeyComparison, HashTableOwner, bool returnsValue);
     Boxed lookUpAmongTags(const InlineCall&, CellPointer owner, CellPointer key, StubKey, bool returnsValue);
     void insert(const InlineCall&, HashTableOwner);
     void generateSize(const InlineCall&, HashTableOwner);

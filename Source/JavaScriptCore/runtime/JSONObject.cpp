@@ -3229,6 +3229,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
 
         // An object with a toJSON that answers a primitive needs no serializer of its own. A cycle among the holders is thrown before toJSON runs.
         JSValue toJSON = value.isObject() && !StringBuilderStorage::hasRepeatedHolder(holders) ? findToJSONWithoutRunningCode(globalObject, asObject(value)) : JSValue();
+        RETURN_IF_EXCEPTION(scope, false);
         if (toJSON) {
             JSValue key = property;
             if (key.isNumber()) {
@@ -3257,6 +3258,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
 
     // Only the general serializer calls toJSON, which is told the key.
     String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason);
+    RETURN_IF_EXCEPTION(scope, false);
     if (text.isNull())
         text = stringifyProperty(*globalObject, value, property, holders);
     RETURN_IF_EXCEPTION(scope, false);

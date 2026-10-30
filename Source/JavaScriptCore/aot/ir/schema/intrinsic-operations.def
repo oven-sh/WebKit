@@ -7,6 +7,7 @@ enum SetNextResult { | engine HasEntry Entry Element }
 
 family EngineIntrinsic AsRead..Placed ; isIntrinsic = true
 operation IsConstructor (value: Any/inspects) -> natural(boolean) ; none ; runtime = IsConstructor ; flow = TableProves
+operation ReadsIteratorOfListUnseen (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; runtime = ReadsIteratorOfListUnseen ; flow = TableProves
 operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species)) -> unknown ; Allocates throws ; runtime = ArraySpeciesCreate ; flow = Copies
 operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis ; flow = Copies ; flowRule = Heap
 operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty ; flow = Copies ; flowRule = Heap

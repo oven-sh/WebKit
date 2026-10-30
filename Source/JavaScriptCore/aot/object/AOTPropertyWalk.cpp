@@ -310,6 +310,9 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
+    // A second object that holds nothing but elements has no name for a walk that leaves them out.
+    if (extra && elements == Elements::AreLeftOut && extra->structure() == typed->instance().realm.extraPropertiesWithElementsStructure)
+        extra = nullptr;
     if (!extra) {
         unsigned attributes = typed->attributesOfPublicFields();
         bool isListed = typed->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
@@ -369,10 +372,7 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
                 ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed->attributesOf(field) });
         });
     }
-    StructureID structure = typed->structureID();
-    uint32_t orderWord = typed->orderWord();
-    StructureID structureOfExtra = extra ? extra->structureID() : StructureID();
-    // A getter may change the object: what is left is then asked for by name.
+    // A getter may change the object in any way: what follows it is asked for by name.
     bool isAsListed = true;
     for (bool wantsSymbols : { false, true }) {
         for (const OrderedKey& key : ordered) {
@@ -391,7 +391,7 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
                     continue;
                 value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, PropertyName(key.name)) : slot.getValue(globalObject, PropertyName(key.name));
                 RETURN_IF_EXCEPTION(scope, Result::Stopped);
-                isAsListed = isAsListed && typed->structureID() == structure && typed->orderWord() == orderWord && (!extra || (typed->extraProperties() == extra && extra->structureID() == structureOfExtra && !extra->structure()->isDictionary()));
+                isAsListed = false;
             }
             names.append(key.name);
             values.appendWithCrashOnOverflow(value);

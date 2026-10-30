@@ -70,6 +70,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_globalBindings, 0, RuntimeState) \
     v(AOTClassToken_knownStructures, JSCellButterfly::offsetOfData() + ClassToken::knownStructuresSlot * sizeof(EncodedJSValue), RuntimeState) \
     v(AOTClassToken_records, 0, RuntimeState) \
+    v(AOTCompactTable_lookupHeader, 0, CollectionStorage) \
     v(hostObjectCachedValues, 0, ExternalState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \

@@ -31,20 +31,20 @@ static_assert(static_cast<int64_t>(StackManager::StopRequestMarkerValue) < 0);
 
 static constexpr StubKey pollSlowKey = callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 
-static void emitFaultingLoad(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site)
+static void emitFaultingLoad(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site, bool leavesOwedError)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     bool isFrameless = !params.context().frameIsSetUp;
     CCallHelpers::Label label = jit.labelIgnoringWatchpoints();
     size_t start = jit.m_assembler.codeSize();
-    jit.load32(CCallHelpers::Address(instanceGPR, InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0)), jit.scratchRegister());
+    jit.load32(CCallHelpers::Address(instanceGPR, InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0) + (leavesOwedError ? offsetOfPollLeavingOwedErrorInLoopPollPage : 0)), jit.scratchRegister());
     RELEASE_ASSERT(jit.m_assembler.codeSize() - start == sizeOfLoopPoll);
     jit.addLinkTask([=](LinkBuffer& linkBuffer) {
         records->traps.pollSites.append(PollSite { linkBuffer.offsetOf(label), isFrameless, OptionalIndex { site } });
     });
 }
 
-static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site)
+static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationParams& params, CodeRecords* records, uint32_t site, bool leavesOwedError)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     RELEASE_ASSERT(params.context().frameIsSetUp);
@@ -53,6 +53,8 @@ static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationPa
     params.addLatePath([=](CCallHelpers& jit) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         isInterrupted.link(&jit);
+        if (leavesOwedError)
+            jit.store32(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.pollLeavesOwedError)));
         records->stubCalls.call(jit, pollSlowKey, offsetInRuntimeTable(AOT::Entry::operationAOTPollSlow), OptionalIndex { site });
         jit.jump().linkTo(done, &jit);
     });
@@ -100,7 +102,7 @@ void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(context);
     patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         if (!params.context().frameIsSetUp)
-            emitFaultingLoad(jit, params, records, site);
+            emitFaultingLoad(jit, params, records, site, false);
     });
 }
 
@@ -119,10 +121,11 @@ void HintEmitter::emitPoll(const ValueContext& value)
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 
+    bool leavesOwedError = value->leavesOwedError();
     if (hasFaultingLoopPolls) {
         patchpoint->setRunsWithoutFrame(true);
-        patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            emitFaultingLoad(jit, params, records, site);
+        patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            emitFaultingLoad(jit, params, records, site, leavesOwedError);
         });
         emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
         return;
@@ -130,8 +133,8 @@ void HintEmitter::emitPoll(const ValueContext& value)
 
     patchpoint->clobberLate(inputs().stubCatalog.summaryOf(pollSlowKey).clobbered);
     m_records.totals.entriesUsed.set(static_cast<unsigned>(AOT::Entry::operationAOTPollSlow));
-    patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        emitCompareAndCall(jit, params, records, site);
+    patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        emitCompareAndCall(jit, params, records, site, leavesOwedError);
     });
     emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
 }

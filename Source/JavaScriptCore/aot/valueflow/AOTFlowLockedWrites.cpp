@@ -118,7 +118,17 @@ static bool alwaysRuns(const Program& program, const BitVector& alwaysEvaluatedM
             return false;
         hasReturn = true;
     }
-    return hasReturn;
+    if (hasReturn)
+        return true;
+    bool hasEnd = false;
+    for (BlockID other : analyses.cfg().reversePostOrder()) {
+        if (!analyses.cfg().successors(other).empty())
+            continue;
+        if (!dominators.dominates(block, other))
+            return false;
+        hasEnd = true;
+    }
+    return hasEnd;
 }
 
 static bool writesOnlyTo(const Program& program, const FlowResults& results, const Function& function, const Value& value, BuiltinID holder)

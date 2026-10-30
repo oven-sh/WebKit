@@ -622,6 +622,7 @@ public:
     // as allocated. The size of the heap (extraMemorySize()) gets the whole buffer either way.
     void addReference(JSCell*, ArrayBuffer*, size_t bytesAlreadyReported = 0);
     JS_EXPORT_PRIVATE bool tryReserveCapacityForNewArrayBuffer();
+    bool tryGrowListOfArrayBuffersEarly();
     
     bool isDeferred() const { return !!m_deferralDepth; }
 

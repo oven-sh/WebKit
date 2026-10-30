@@ -334,8 +334,10 @@ static unsigned markNotSteppedArmsRare(FunctionPassContext& context)
     Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
     auto isComparisonWithNotStepped = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
         const Value& user = function.at(use.user);
-        if (use.kind != Use::Kind::Operand || user.opcode != Opcode::StrictEq)
+        if (user.opcode != Opcode::StrictEq)
             return false;
         const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
         return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);

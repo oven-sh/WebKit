@@ -370,22 +370,31 @@ static NEVER_INLINE std::optional<ASCIILiteral> tryCopyNamesThenElements(Instanc
     IndexingType indexingType = holder->indexingType();
     if (!hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType))
         return std::nullopt;
-    Vector<UniquedStringImpl*, 8> names;
-    MarkedArgumentBuffer values;
-    auto walked = PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, from, [&](const PropertyWalk::OwnProperty& property) {
-        if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+    bool holdsOnlyElements = holder->structure() == instance->realm.extraPropertiesWithElementsStructure;
+    if (!holdsOnlyElements || !tryDefineFieldsLeavingElementsOut(vm, target, *uncheckedDowncast<Object>(from))) {
+        Vector<UniquedStringImpl*, 8> names;
+        MarkedArgumentBuffer values;
+        auto walked = PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, from, [&](const PropertyWalk::OwnProperty& property) {
+            if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+                return IterationStatus::Continue;
+            if (property.name == vm.propertyNames->underscoreProto.impl())
+                return IterationStatus::Done;
+            names.append(property.name);
+            values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
-        if (property.name == vm.propertyNames->underscoreProto.impl())
-            return IterationStatus::Done;
-        names.append(property.name);
-        values.appendWithCrashOnOverflow(property.value);
-        return IterationStatus::Continue;
-    }, PropertyWalk::Elements::AreLeftOut);
-    if (walked != PropertyWalk::Result::Completed)
-        return std::nullopt;
-    if (!names.isEmpty() && !target.tryDefineFields(vm, names.span(), { values.data(), values.size() }) && !tryAssignCollectedProperties(globalObject, vm, target, names, values)) {
-        definePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
-        RETURN_IF_EXCEPTION(scope, "threw"_s);
+        }, PropertyWalk::Elements::AreLeftOut);
+        if (walked != PropertyWalk::Result::Completed)
+            return std::nullopt;
+        if (!names.isEmpty() && !target.tryDefineFields(vm, names.span(), { values.data(), values.size() }) && !tryAssignCollectedProperties(globalObject, vm, target, names, values)) {
+            definePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+            RETURN_IF_EXCEPTION(scope, "threw"_s);
+        }
+    }
+    if (!target.hasExtraProperties() && holder->structure() == instance->realm.extraPropertiesWithElementsStructure && target.layout().extraPropertiesSlot() && !target.structure()->mayBePrototype() && !target.layout().isClass() && instance->state->tables.addedNames().empty()) {
+        if (JSFinalObject* elements = tryCopyWithElements(vm, holder)) {
+            target.setExtraProperties(vm, elements, instance->state->objects->structures.withExtraProperties(vm, target.compiledStructure(), nullptr));
+            return "names at once, then a copy of the elements"_s;
+        }
     }
     holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
         if (!tryDefineElementOfCompiledObject(instance, &target, index, value))
@@ -420,6 +429,16 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
         // An object of the target's own layout is copied word by word.
         if (other && record->shapeWord() == other->shapeWord() && record->tryCopyFieldsOf(vm, *other))
             return "fields by words or moves"_s;
+        // A plan and the other ways that run no code do not read elements.
+        if (other && other->hasExtraProperties() && !(record->orderWord() & orderWordIntegrityBits)) {
+            JSObject* holder = PropertyWalk::objectHoldingIndexedProperties(other);
+            if (holder && hasIndexedProperties(holder->indexingType())) {
+                std::optional<ASCIILiteral> way = tryCopyNamesThenElements(instance, globalObject, vm, *record, from, holder);
+                RETURN_IF_EXCEPTION(scope, threw);
+                if (way)
+                    return *way;
+            }
+        }
         if (tryDefinePropertiesOf(vm, *record, from, excluded.names()))
             return "by a plan"_s;
     }
@@ -462,12 +481,6 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
             return "into an ordinary object, objectAssignFast"_s;
     }
     bool canDefineDirectly = record ? !(record->orderWord() & orderWordIntegrityBits) : canPutDirectly;
-    if (canDefineDirectly && record && excluded.isEmpty() && hasElements && isCompiledObject(from)) {
-        std::optional<ASCIILiteral> way = tryCopyNamesThenElements(instance, globalObject, vm, *record, from, holderOfElements);
-        RETURN_IF_EXCEPTION(scope, threw);
-        if (way)
-            return *way;
-    }
     if (canDefineDirectly) {
         std::optional<ASCIILiteral> way = tryCopyPropertiesExcluding(globalObject, vm, target, from, excluded);
         RETURN_IF_EXCEPTION(scope, threw);

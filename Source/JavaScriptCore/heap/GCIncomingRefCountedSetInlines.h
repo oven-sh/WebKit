@@ -76,6 +76,15 @@ bool GCIncomingRefCountedSet<T>::tryReserveCapacityForNewObject()
 }
 
 template<typename T>
+bool GCIncomingRefCountedSet<T>::tryGrowEarly()
+{
+    size_t capacity = m_vector.capacity();
+    if (capacity - m_vector.size() > capacity / 8) [[likely]]
+        return true;
+    return m_vector.tryReserveCapacity(std::max<size_t>(capacity * 2, 16));
+}
+
+template<typename T>
 void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
 {
     auto filter = [&](T* object) {

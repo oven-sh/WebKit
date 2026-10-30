@@ -21,7 +21,7 @@ function f0 name="covered" parameters=[{type=L0}, {type=anything}] results=[{typ
 # CHECK: handler=b3():
 # CHECK-NEXT: PutSlotOrAdd {{*}} key="x"
 # CHECK-NEXT: PutSlotOrAdd {{*}} key="y"
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump
 # CHECK-NOT: LoopHint
 }
@@ -69,5 +69,5 @@ function f3 name="insideLoop" parameters=[{type=L0}, {type=int[0, 100]}] results
 # CHECK-NEXT: = Less
 # CHECK: handler=b4():
 # CHECK-NEXT: PutSlotOrAdd
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 }

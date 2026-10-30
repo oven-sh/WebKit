@@ -539,6 +539,46 @@ static NEVER_INLINE bool hasEveryExtraPropertyOfPlan(const AssignmentPlan& plan,
     });
 }
 
+enum class StoreToEveryName : bool { No, Yes };
+static ALWAYS_INLINE JSObject* createEmptyExtraProperties(VM& vm, Structure* after, StoreToEveryName storeToEveryName)
+{
+    // Where every name of the new object has a store, all that stays empty is the room behind them.
+    size_t capacity = after->outOfLineCapacity();
+    Butterfly* butterfly = capacity ? Butterfly::createUninitialized(vm, nullptr, 0, capacity, false, 0) : nullptr;
+    // By hand: the room is mostly one or two words, which a call of memset would not pay for.
+    for (size_t index = storeToEveryName == StoreToEveryName::Yes ? after->outOfLineSize() : 0; index < capacity; ++index) {
+        butterfly->propertyStorage()[-static_cast<ptrdiff_t>(index) - 1].clear();
+        WTF::compilerFence();
+    }
+    std::array<WriteBarrierBase<Unknown>, extraPropertiesInlineCapacity> emptyInlineStorage;
+    for (auto& slot : emptyInlineStorage)
+        slot.clear();
+    RELEASE_ASSERT(after->inlineCapacity() == extraPropertiesInlineCapacity);
+    return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, after, butterfly, emptyInlineStorage.data());
+}
+
+// A new second object filled from an ordinary object, which no test at a store can tell apart.
+static bool storeNewExtraPropertiesFromOrdinaryObject(VM& vm, Object& target, const AssignmentPlan& plan, const JSObject* from)
+{
+    if (plan.addsExtraProperties)
+        validateMutation(vm, target, ObjectMutation::AddProperty);
+    JSObject* extra = createEmptyExtraProperties(vm, plan.extraPropertiesAfter, StoreToEveryName::Yes);
+    std::array<const uint8_t*, 2> sourceStorages { reinterpret_cast<const uint8_t*>(from->inlineStorageUnsafe()), reinterpret_cast<const uint8_t*>(from->butterfly() ? from->outOfLineStorage() : nullptr) };
+    std::array<uint8_t*, 2> targetStorages { reinterpret_cast<uint8_t*>(extra->inlineStorageUnsafe()), reinterpret_cast<uint8_t*>(extra->butterfly() ? extra->outOfLineStorage() : nullptr) };
+    for (auto& store : plan.extraPropertyStores) {
+        EncodedJSValue value = *reinterpret_cast<const EncodedJSValue*>(sourceStorages[store.isOutsideInSource] + store.bytesInSource);
+        // The object goes unused, but the collector may find it on the stack and visit every name.
+        if (!value) [[unlikely]] {
+            for (size_t index = 0; index < extra->structure()->outOfLineCapacity(); ++index)
+                extra->butterfly()->propertyStorage()[-static_cast<ptrdiff_t>(index) - 1].clear();
+            return false;
+        }
+        *reinterpret_cast<EncodedJSValue*>(targetStorages[store.isOutsideInTarget] + store.bytesInTarget) = value;
+    }
+    target.setExtraProperties(vm, extra, plan.targetAfter);
+    return true;
+}
+
 static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
 {
     if (plan.addsExtraProperties)
@@ -547,10 +587,9 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
         return false;
     Structure* after = plan.extraPropertiesAfter;
     Structure* before = extra ? extra->structure() : nullptr;
-    if (!extra) {
-        Butterfly* butterfly = after->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, after->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
-        extra = JSFinalObject::createWithButterfly(vm, after, butterfly);
-    } else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
+    if (!extra)
+        extra = createEmptyExtraProperties(vm, after, StoreToEveryName::No);
+    else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
         if (source.compiledObject && !hasEveryExtraPropertyOfPlan(plan, source))
             return false;
         extra->nukeStructureAndSetButterfly(vm, before->id(), extra->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity()));
@@ -1514,6 +1553,53 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     if (!plan->isUsable)
         return false;
     assignByPlan(vm, target, state, *plan, extra, *assignmentSource);
+    return true;
+}
+
+// Object.assign(record, ordinary) as the last such assignment between these two Structures went, on a record as fresh as that one was.
+bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObject* source)
+{
+    if (source->type() != FinalObjectType || source->canHaveExistingOwnIndexedProperties())
+        return false;
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(target.structureID(), source->structureID(), 0, 0);
+    if (!plan)
+        return false;
+    StructureID ofSource = source->structureID();
+    bool isThePlan = plan->target == target.structureID() && plan->source == ofSource && !plan->sourceOrderWord && plan->sourcePropertyStorage == ofSource && !plan->extraPropertiesBefore
+        && plan->isUsable && !plan->servesDefinitionsOnly && !plan->storesNameBehindSymbol && !plan->excludedList && plan->excludedNames.isEmpty() && plan->orderWordBeforeRun == target.orderWord();
+    if (!isThePlan)
+        return false;
+    DeferGC deferGC(vm);
+    if (plan->fieldStores.isEmpty() && !plan->extraPropertyStores.isEmpty()) {
+        if (!storeNewExtraPropertiesFromOrdinaryObject(vm, target, *plan, source))
+            return false;
+        target.at<uint32_t>(offsetOfOrderWord) = plan->orderWordAfterRun;
+    } else {
+        AssignmentSource assignmentSource { source, nullptr, source, 0, { }, false };
+        FieldStoreRun run(vm, target, state, *plan, nullptr);
+        if (!run.tryRunAsBefore(assignmentSource))
+            return false;
+    }
+    if (target.structure()->mayBePrototype()) [[unlikely]]
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return true;
+}
+
+// The fields of a record whose second object holds nothing but elements: the plan does not see that object.
+bool tryDefineFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
+{
+    uint32_t orderWord = source.orderWord();
+    if (target.orderWord() & orderWordIntegrityBits || &source == &target || isOrderStoredOutOfLine(orderWord) || source.layout().keysAreNeverEnumerated || &source.state() != &target.state())
+        return false;
+    AssignmentSource assignmentSource { &source, &source, nullptr, orderWord, { }, true, source.extension(), source.state().strings.get() };
+    DeferGC deferGC(vm);
+    State& state = target.state();
+    JSObject* extra = target.extraProperties();
+    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, assignmentSource);
+    if (!plan->isUsable)
+        return false;
+    plan->leavesElementsOut = true;
+    assignByPlan(vm, target, state, *plan, extra, assignmentSource);
     return true;
 }
 

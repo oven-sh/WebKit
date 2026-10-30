@@ -17,6 +17,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTEntryParameterIndexes.h"
 #include "AOTFlowApply.h"
+#include "AOTFlowNamespaces.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
@@ -245,6 +246,7 @@ private:
     bool typeLoopsByRules();
     void assumeIntegersOfCounters();
     BitVector findPlacesTakenAsValues(const BitVector& places) const;
+    std::optional<uint32_t> staticFieldNamedBy(const Function&, const Value& access) const;
     bool runRound();
 
     const ValueFlowResultInputs& m_inputs;
@@ -258,6 +260,7 @@ private:
     Vector<ReadOfMaps> m_readsOfMaps;
     Vector<ValueFlowNumbers> m_numbers;
     BitVector m_isFollowed;
+    BitVector m_isStaticFieldReadBehindItsStore;
     Vector<CallByValue> m_calls;
     Vector<ManyCallees> m_manyCallees;
     Vector<SharedRange> m_sharedRanges;
@@ -692,6 +695,11 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         });
     };
 
+    m_isStaticFieldReadBehindItsStore = BitVector(program.variables.size());
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        if (program.variables[index].owner && application.variables[index].flow.initialization == InitializationState::StoredBeforeEveryRead)
+            m_isStaticFieldReadBehindItsStore.quickSet(index);
+    }
     forEachIndex(program.variables.size(), [&](const auto& follow, unsigned index) {
         const LocationFlow& flow = application.variables[index].flow;
         if (namesEveryWriter(flow) || (program.variables[index].owner && flow.writers == WriterState::AllKnown && everyStoreThroughObjectSpellsItsValue(VariableID(index))))
@@ -1276,6 +1284,17 @@ std::optional<Type> NumbersOfPositions::typeOfCall(Evaluation& evaluation, Funct
     return answered;
 }
 
+// `Ticket.issued`, where the receiver is the class and nothing else. In front of the field's own store the name finds what the class inherits: `class B extends A { static m = B.n; static n = 0; }` reads A.n.
+std::optional<uint32_t> NumbersOfPositions::staticFieldNamedBy(const Function& function, const Value& access) const
+{
+    const Program& program = m_inputs.program;
+    FunctionID classConstructor = access.key() ? program.typeOf(function, access.operand(0)).singleFunction() : FunctionID();
+    VariableID variable = classConstructor ? findStaticFieldVariable(program, classConstructor, access.key()) : VariableID();
+    if (!variable || !m_isFollowed.quickGet(variable.index()) || !m_isStaticFieldReadBehindItsStore.quickGet(variable.index()))
+        return std::nullopt;
+    return variable.index();
+}
+
 Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID valueID, unsigned depth) const
 {
     const Program& program = m_inputs.program;
@@ -1300,6 +1319,10 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         return typeAt(evaluation, value.variable().index(), WTF::move(known));
     case Opcode::GetEnvironmentField:
         return typeAt(evaluation, m_firstField[value.layout().index()] + value.field(), WTF::move(known));
+    case Opcode::PropGet: {
+        std::optional<uint32_t> variable = staticFieldNamedBy(function, value);
+        return variable ? typeAt(evaluation, *variable, WTF::move(known)) : known;
+    }
     case Opcode::CallDirect: {
         const Function& callee = program.at(value.function());
         if (callee.results.size() != 1 || callee.isUnsplitCoroutine())
@@ -1476,12 +1499,14 @@ BitVector NumbersOfPositions::findPlacesTakenAsValues(const BitVector& places) c
     constexpr OpcodeSet conversions { Opcode::ToNumeric, Opcode::ToNumber };
     constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
     constexpr size_t maxNames = 32;
-    auto placeOf = [&](const Value& value) -> std::optional<uint32_t> {
+    constexpr OpcodeSet readsOfPlaces { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet };
+    constexpr OpcodeSet storesIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::PropSet };
+    auto placeOf = [&](const Function& function, const Value& value) -> std::optional<uint32_t> {
         if (value.opcode == Opcode::GetModuleVariable || value.opcode == Opcode::PutModuleVariable)
             return value.variable().index();
         if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
             return m_firstField[value.layout().index()] + value.field();
-        return std::nullopt;
+        return staticFieldNamedBy(function, value);
     };
     constexpr uint32_t isCompared = 1u << 31;
     BitVector taken(places.size());
@@ -1493,8 +1518,8 @@ BitVector NumbersOfPositions::findPlacesTakenAsValues(const BitVector& places) c
             return;
         Vector<ValueID, 8> reads;
         for (uint32_t value = 0; value < function.values.size(); ++value) {
-            Opcode opcode = function.values[value].opcode;
-            if ((opcode == Opcode::GetModuleVariable || opcode == Opcode::GetEnvironmentField) && places.get(*placeOf(function.values[value])))
+            std::optional<uint32_t> place = readsOfPlaces.contains(function.values[value].opcode) ? placeOf(function, function.values[value]) : std::nullopt;
+            if (place && places.get(*place))
                 reads.append(ValueID(value));
         }
         if (reads.isEmpty())
@@ -1513,7 +1538,7 @@ BitVector NumbersOfPositions::findPlacesTakenAsValues(const BitVector& places) c
             return user.opcode == Opcode::Div || (other.isNumber() && !other.isInteger());
         };
         for (ValueID read : reads) {
-            uint32_t place = *placeOf(copy.at(read));
+            uint32_t place = *placeOf(copy, copy.at(read));
             Vector<ValueID, maxNames> names { read };
             bool isTaken = false;
             for (size_t name = 0; name < names.size() && !isTaken; ++name) {
@@ -1525,7 +1550,7 @@ BitVector NumbersOfPositions::findPlacesTakenAsValues(const BitVector& places) c
                         found.append(place | isCompared);
                         continue;
                     }
-                    if (user && (isReckonedAsDouble(*user, use.operandIndex) || ((user->opcode == Opcode::PutModuleVariable || user->opcode == Opcode::PutEnvironmentField) && placeOf(*user) == place)))
+                    if (user && (isReckonedAsDouble(*user, use.operandIndex) || (storesIntoPlaces.contains(user->opcode) && placeOf(copy, *user) == place)))
                         continue;
                     bool isFollowed = user && (isCast(user->opcode) || conversions.contains(user->opcode) || mayBeStepOfOne(user->opcode)) && names.size() < maxNames;
                     if (!isFollowed) {
@@ -2282,8 +2307,9 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     std::optional<Type> anyValue;
     EntryParameterIndexes entryParameters;
 
+    // A cast of a parameter says no more than the parameter does: an unseen caller may hand in an object that only inherits from those flow holds.
     auto mayComeFromUnseenCaller = [&](ValueID value) {
-        return callers != CallerState::AllKnown && entryParameters.find(function, value);
+        return callers != CallerState::AllKnown && entryParameters.find(function, definitionThroughSameValues(function, value));
     };
     // runConversionToObject() leaves the global object out of what the uses behind the test meet. In front of the test the value holds it.
     Vector<ValueID, 1> conversionsTestedBeforeUse;

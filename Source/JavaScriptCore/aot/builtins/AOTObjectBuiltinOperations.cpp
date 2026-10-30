@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAssignmentPlans.h"
 #include "AOTBuiltinFamilyState.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
@@ -443,6 +444,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
+// No getter on the list or above it can see a second read of @@iterator.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadsIteratorOfListUnseen, size_t, (Instance* instance, EncodedJSValue encodedList))
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    Structure* structure = asObject(JSValue::decode(encodedList))->structure();
+    return !structure->hasAnyKindOfGetterSetterProperties() && structure->storedPrototype() == JSValue(globalObject->arrayPrototype()) && globalObject->isArrayPrototypeIteratorProtocolFastAndNonObservable();
+}
+
 // Object.assign(target, source) where it runs no code of the program: nothing the source has may call back, and nothing above the target may intercept a store. Otherwise the call of the built-in does it from the start.
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
 {
@@ -456,8 +465,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
-    if (compiledObjectOrNull(object))
-        OPERATION_RETURN(scope, PropertyWalk::tryAssign(vm, object, from));
+    if (Object* record = compiledObjectOrNull(object))
+        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);

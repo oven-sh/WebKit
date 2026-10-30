@@ -612,6 +612,15 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         for (size_t i = 0; i < addedNames.size(); ++i)
             extraPropertyStores[storesOfAddedNames[i]].offset = extraPropertiesAfter->get(vm, addedNames[i]);
         plan.extraPropertiesAfter = extraPropertiesAfter;
+        for (auto& store : extraPropertyStores) {
+            auto bytesOf = [](PropertyOffset offset) {
+                return static_cast<int32_t>((isInlineOffset(offset) ? offset : offsetInOutOfLineStorage(offset)) * sizeof(EncodedJSValue));
+            };
+            store.isOutsideInSource = isValidOffset(store.sourceOffset) && !isInlineOffset(store.sourceOffset);
+            store.isOutsideInTarget = !isInlineOffset(store.offset);
+            store.bytesInSource = isValidOffset(store.sourceOffset) ? bytesOf(store.sourceOffset) : 0;
+            store.bytesInTarget = bytesOf(store.offset);
+        }
         if (record)
             plan.targetAfter = m_state.objects->structures.withExtraProperties(vm, record->compiledStructure(), extraPropertiesAfter);
     }

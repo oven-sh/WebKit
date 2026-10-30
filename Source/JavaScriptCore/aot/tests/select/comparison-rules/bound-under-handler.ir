@@ -1,4 +1,4 @@
-# In front of a loop whose header has another handler than the block that enters it, the bound is computed in a block of its own. Nothing is left that may throw, so the handler goes
+# In front of a loop whose header has another handler than the block that enters it, the bound is computed in a block of its own. Nothing in the loop may throw then, so its poll leaves the handler
 # FORM: Prepared
 # RUN: pass Select
 # STATISTIC: IntegerBoundGroups = 2
@@ -23,8 +23,9 @@ function f0 name="loop-in-try-entered-from-outside" parameters=[{type=int}, {typ
     Return v9
 # CHECK: Jump -> next [[entry]]()
 # CHECK: boolean = Less v4, [[bound]]
-# CHECK: [[entry]]():
+# CHECK: [[entry]]() handler=b4():
 # CHECK-NEXT: [[bound]]: int = IntegerBound v1 comparison=Less
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b1(v0)
 }
 
@@ -47,6 +48,7 @@ function f1 name="loop-and-entry-in-one-try" parameters=[{type=int}, {type=numbe
     v9 = CatchValue
     Return v9
 # CHECK: [[bound]]: int = IntegerBound v1 comparison=Less
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK: boolean = Less v4, [[bound]]
 }

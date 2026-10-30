@@ -116,6 +116,7 @@ export default b.declarations(
   operation("CreatePromise", "createPromise"),
   operation("GetByValWithThis", "getByValWithThis"),
   operation("IsConstructor", "isConstructor"),
+  operation("ReadsIteratorOfListUnseen", "readsIteratorOfListUnseen"),
   operation("ToObject", "toObject"),
 
   jsTypeTests({

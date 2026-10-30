@@ -171,7 +171,7 @@ static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const Elemen
     loadExtraProperties(jit, base, hiddenWordOffset, extraProperties, hasNone);
 }
 
-static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch)
+static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters& registers, FPRReg numberScratch, JumpList& isNeitherStringNorCompiledObject)
 {
     const auto [base, index, storage, length, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
@@ -204,7 +204,7 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
     // A table that a literal with numbers for keys has made.
     isNotString.link(&jit);
-    notHandled.append(jit.branchIfNotType(base, CompiledObjectType));
+    Jump isNotCompiledObject = jit.branchIfNotType(base, CompiledObjectType);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -222,6 +222,11 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     notHandled.append(jit.branch64(CCallHelpers::AboveOrEqual, index, length));
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
+
+    // Mostly a typed array. The entry for any key would only come to the same place by testing all of the above again.
+    isNotCompiledObject.link(&jit);
+    jit.boxInt52(index, index, storage, number);
+    isNeitherStringNorCompiledObject.append(jit.jump());
 
     notHandled.link(&jit);
     jit.boxInt52(index, index, storage, number);
@@ -407,7 +412,8 @@ void generateGetByVal(StubAssembler& jit)
     JumpList slow;
     JumpList absent;
 
-    emitGetByValAtIndexEntry(jit, registers, numberScratch);
+    JumpList isNeitherStringNorCompiledObject;
+    emitGetByValAtIndexEntry(jit, registers, numberScratch, isNeitherStringNorCompiledObject);
     jit.bindEntry(jit.key());
     Jump notInt32 = jit.branch64(CCallHelpers::Below, key, numberTag);
     Label indexReady = jit.label();
@@ -446,6 +452,7 @@ void generateGetByVal(StubAssembler& jit)
     loadCompiledObjectElementAndReturn(jit, registers, numberScratch, slow);
 
     isNotCompiledObject.link(&jit);
+    isNeitherStringNorCompiledObject.link(&jit);
     loadTypedArrayElementAndReturn(jit, registers, numberScratch, slow, isAbsent);
 
     notInt32.link(&jit);

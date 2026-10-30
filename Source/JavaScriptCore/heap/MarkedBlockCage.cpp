@@ -618,6 +618,9 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
 {
     m_errorWaitsForPoll = false;
+    // A collection takes its own memory from malloc, and malloc has none.
+    if (m_exhaustedHeaps == ExhaustedHeap::ListOfArrayBuffers)
+        return false;
     if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
         return false;
     m_owesCollection = false;
@@ -758,7 +761,7 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Tables) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
@@ -848,6 +851,16 @@ void MarkedBlockCage::willAddSymbol(VM& vm)
     if (vm.heap.tryCollectForExhaustedCage(nullptr, nullptr) && vm.symbolImplToSymbolMap.tryGrowEarly())
         return;
     vm.heap.cage().addExhaustedHeap(ExhaustedHeap::Tables);
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddArrayBuffer(VM& vm)
+{
+    if (!s_isGrowable || vm.heap.tryGrowListOfArrayBuffersEarly()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    addExhaustedHeap(ExhaustedHeap::ListOfArrayBuffers);
     vm.traps().setNeedsOutOfMemoryError(true);
 }
 

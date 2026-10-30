@@ -484,7 +484,11 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         ValueFlowHeapView heap(inputs);
         numbersOfValues = prepareNumbersOfPositions(inputs, heap, tables);
     });
-    auto numbers = add("numbers"_s, { numbersPrepared, locations }, [&](PhaseTimes&) {
+    auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
+        computeOrderResults(inputs, calls, tables);
+    });
+    // A static field is a place to follow only where every read comes behind its store.
+    auto numbers = add("numbers"_s, { numbersPrepared, locations, order }, [&](PhaseTimes&) {
         computeNumbersOfPositions(*numbersOfValues, tables);
         inputs.numbersOfValues = numbersOfValues.get();
     });
@@ -501,9 +505,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto classes = add("classes"_s, { locations }, [&](PhaseTimes&) {
         computeClassResults(inputs, tables);
     });
-    auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
-        computeOrderResults(inputs, calls, tables);
-    }, TaskPriority::Background);
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
         writesUnderNewNames = computeBuiltinResults(inputs, WTF::move(usesOfLibraryCode), tables, ledgerOfBuiltinObjects);
         ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);

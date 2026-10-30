@@ -25,6 +25,7 @@
 #include "AOTShellProcess.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
+#include "AOTAsyncResumption.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTVMState.h"
@@ -999,6 +1000,18 @@ static String describeCodeAddress(const void* address)
     return makeString("code at "_s, hex(std::bit_cast<uintptr_t>(address)));
 }
 
+#if CPU(X86_64)
+// A job function is written in C++, and the compiler may leave a word of its frame as padding.
+static bool isInJobFunction(const void* code)
+{
+    static constexpr size_t largestJobFunction = 4 * KB;
+    auto isIn = [&](auto function) {
+        return std::bit_cast<uintptr_t>(code) - std::bit_cast<uintptr_t>(function) < largestJobFunction;
+    };
+    return isIn(&runAsyncFunctionResumeJob) || isIn(&runAsyncGeneratorBodyJob);
+}
+#endif
+
 static JSC_DECLARE_HOST_FUNCTION(readFramesBelowJobCaller);
 JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* callFrame))
 {
@@ -1007,6 +1020,7 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
     auto* frame = reinterpret_cast<const uint64_t*>(callFrame);
     unsigned numberOfFrames = 0;
     unsigned numberOfUnwrittenWords = 0;
+    [[maybe_unused]] unsigned numberOfPaddingWords = 0;
     while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
         // The words between two frame records belong to the caller, and the callee returns into it.
         auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
@@ -1014,6 +1028,9 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
             if (*word != wordOfDeadStack)
                 continue;
             ++numberOfUnwrittenWords;
+#if CPU(X86_64)
+            numberOfPaddingWords += isInJobFunction(removeCodePtrTag(std::bit_cast<const void*>(frame[1])));
+#endif
             dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
         }
         frame = frameOfCaller;
@@ -1025,7 +1042,7 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
     // Registers are saved in pairs: a frame that saves an odd number of them has a word of padding.
     AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
 #else
-    AOT_TEST_CHECK(!numberOfUnwrittenWords);
+    AOT_TEST_CHECK(numberOfUnwrittenWords == numberOfPaddingWords && numberOfPaddingWords <= 1);
 #endif
     ++numberOfJobEntriesRead;
     return JSValue::encode(jsNumber(2));

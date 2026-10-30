@@ -60,8 +60,8 @@ export function groupBy(items, callback)
     var groups = $Object.$create(null);
     var k = 0;
 
-    // The loop over a list takes no iterator while the list is as it was made, and reads @@iterator again only where it is not.
-    if ($isJSArray(items) && iteratorMethod === $arrayProtoValues) {
+    // The loop over a list takes no iterator while the list is as it was made. Reading @@iterator again must not show.
+    if ($isJSArray(items) && iteratorMethod === $arrayProtoValues && $readsIteratorOfListUnseen(items)) {
         for (var item of items) {
             var key = $toPropertyKey(callback.$call($undefined, item, k));
             var group = groups[key];

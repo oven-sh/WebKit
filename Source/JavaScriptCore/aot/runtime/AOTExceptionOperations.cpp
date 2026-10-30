@@ -149,11 +149,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (In
 JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
+    bool leavesOwedError = std::exchange(instance->runtime.exceptions.pollLeavesOwedError, 0);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
+    // Thrown at such a poll, the error would pass the catch clause of the try block around the loop. It stays owed until a poll under a handler, a function entry or the return of an operation.
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
     }
