@@ -2657,7 +2657,9 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });
-        if (!isNeverEvaluated(program, module) && (!isBundlerHelperModule(program, module) || isBundlerHelperNamedByProgram(program, ModuleID(index))))
+        // The host looks a module up by the name that a mock gives.
+        bool isNamed = !isBundlerHelperModule(program, module) || module.flags.contains(ModuleFlags::MayBeMocked) || isBundlerHelperNamedByProgram(program, ModuleID(index));
+        if (!isNeverEvaluated(program, module) && isNamed)
             modulesByPath.append(index);
     }
     AOT::sortInLine(modulesByPath, [&](uint32_t left, uint32_t right) {

@@ -3577,23 +3577,30 @@ struct TestedSuperAccess {
 struct RefusedMemberUse {
     RefusedMemberUse(TestSiteReporter& reporter, ValueID receiver, NOESCAPE const Invocable<std::optional<SiteContent>()> auto& contentOfUse)
         : cache(reporter.program().propertyAccessCache())
+        , types(reporter.context().types)
     {
         if (!cache || reporter.mayHaveFailedTestOf(receiver))
             return;
         content = contentOfUse();
         isCached = content && cache->refusedContents.find(*content);
+        unshareableEventCountBefore = types.unshareableEventCount();
     }
 
     bool isKnown() const { return isCached && !cache->checksAnswers; }
+    // The memo is one for all threads. A plan that has used a record of this phase has given it its place among the first uses of the task, and whoever finds the refusal
+    // in the memo skips that: which thread came first would decide the numbers of new layout sets and types.
     void didRefuse(bool hasFailedTest)
     {
-        if (content && !isCached && !hasFailedTest)
+        RELEASE_ASSERT(!isCached || types.unshareableEventCount() == unshareableEventCountBefore);
+        if (content && !isCached && !hasFailedTest && types.unshareableEventCount() == unshareableEventCountBefore)
             cache->refusedContents.add(*content);
     }
     void willReport() const { RELEASE_ASSERT(!isCached); }
 
     PropertyAccessCache* cache;
+    TypeArena& types;
     std::optional<SiteContent> content;
+    uint64_t unshareableEventCountBefore { 0 };
     bool isCached { false };
 };
 

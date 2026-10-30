@@ -2561,8 +2561,10 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
     bool isKnownToBeRefused = content && cache->refusedContents.find(*content);
     if (isKnownToBeRefused && !cache->checksAnswers) [[likely]]
         return std::nullopt;
+    uint64_t unshareableEventCountBefore = context.types.unshareableEventCount();
     auto refuse = [&]() -> std::optional<Type> {
-        if (content && !isKnownToBeRefused)
+        RELEASE_ASSERT(!isKnownToBeRefused || context.types.unshareableEventCount() == unshareableEventCountBefore);
+        if (content && !isKnownToBeRefused && context.types.unshareableEventCount() == unshareableEventCountBefore)
             cache->refusedContents.add(*content);
         return std::nullopt;
     };
@@ -4948,6 +4950,8 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         const Block& header = function.at(loop.header());
         std::span<const Edge> incomingEdges = analyses.cfg().incomingEdges(loop.header());
         if (header.parameters.isEmpty() || header.frequency.predicted() != BlockFrequency::Normal || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
+            continue;
+        if (numberOfSharedExplicitParameters(function, analyses.cfg(), loop.header()) != header.parameters.size())
             continue;
         if (!beginsWithTestThatLeavesForGenericCopy(context, loop.header()))
             continue;

@@ -578,6 +578,12 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
 // No body runs again. Where the module does not keep the error, whoever asks for it later gets what it had exported when it threw.
 void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
+    // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
+    // has compiled the code that asks for the file for a file that may load twice.
+    if (data(module).kind == ModuleKind::CommonJs && mayBeEvicted(module) && status(module) == ModuleStatus::Evaluating) [[unlikely]] {
+        evict(module);
+        return;
+    }
     if (data(module).keepsError())
         setFailed(module, error);
     else

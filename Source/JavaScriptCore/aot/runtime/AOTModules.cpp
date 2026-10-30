@@ -632,6 +632,9 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         case ModuleExportKind::Variable:
             if (!moduleExport.isReplaceable)
                 return false;
+            // `export { add } from "a-commonjs-package"` exports the variable that the name of the package is kept in, and the name stands in two more places.
+            if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
+                return tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value);
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
             return true;
         case ModuleExportKind::Namespace:
@@ -819,6 +822,22 @@ void Modules::loadEvictedFilesBelow(ModuleID root)
                 work.append(requests[index].targetModule());
         }
     }
+}
+
+// Asked where a test replaces an export, which few realms do: the list is made at the first one.
+auto Modules::syntheticExportKeptIn(SlotData variable) -> const SyntheticExportPlace*
+{
+    if (!m_syntheticExportsByVariable) {
+        m_syntheticExportsByVariable.emplace();
+        for (unsigned index = 0; index < m_table.size(); ++index) {
+            for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(ModuleID(index))) {
+                if (syntheticExport.hasVariable && syntheticExport.isReplaceable)
+                    m_syntheticExportsByVariable->add(syntheticExport.variable.encoded(), SyntheticExportPlace { ModuleID(index), syntheticExport.name });
+            }
+        }
+    }
+    auto found = m_syntheticExportsByVariable->find(variable.encoded());
+    return found == m_syntheticExportsByVariable->end() ? nullptr : &found->value;
 }
 
 // ES modules import a CommonJS file through its face.
@@ -1315,7 +1334,9 @@ bool Modules::hostAnswersInPlaceOf(ModuleID module, LoadByName way)
 {
     const ModuleData& replaced = data(module);
     bool isNative = replaced.kind == ModuleKind::Runtime;
-    if (!isNative && (replaced.kind != ModuleKind::RuntimeSource || !replaced.mayBeMocked()))
+    // `bun:wrap` is an ES module.
+    bool isCodeOfLibrary = replaced.kind == ModuleKind::RuntimeSource || (replaced.kind == ModuleKind::SourceText && replaced.isOfLibrary());
+    if (!isNative && (!isCodeOfLibrary || !replaced.mayBeMocked()))
         return false;
     String name = m_table.pathText(module);
     if (!host().replacesNativeModule || !host().replacesNativeModule(m_instance.globalObject, name))
@@ -3365,9 +3386,19 @@ void willMockModule(JSGlobalObject* realm, ModuleID moduleOfHost, JSObject* expo
         return;
     }
     // Compiled code calls the body of a CommonJS file itself, and asks for the status first.
-    if (ModuleStatus status = modules.status(module); status == ModuleStatus::Unlinked || status == ModuleStatus::Linked)
+    ModuleStatus status = modules.status(module);
+    bool hasRun = status != ModuleStatus::Unlinked && status != ModuleStatus::Linked;
+    if (!hasRun)
         modules.markEvaluated(module);
     modules.setCommonJSExports(module, exports);
+    modules.exportWhatMockNamesAlone(module, hasRun);
+}
+
+void didMockModule(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    if (Modules* modules = modulesOf(realm))
+        modules->answerRequireWithNamespaceOfMock(module);
 }
 
 bool hasESModuleMarker(JSCell* moduleNamespace)

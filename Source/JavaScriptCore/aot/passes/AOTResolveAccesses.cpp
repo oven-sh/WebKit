@@ -1871,10 +1871,12 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
             refuse(static_cast<LimitID>(*limitOfKnownRefusal));
             return;
         }
+        uint64_t unshareableEventCountBefore = context.types.unshareableEventCount();
         auto refuseWhereverItStands = [&](LimitID limit) {
             RELEASE_ASSERT(!limitOfKnownRefusal || *limitOfKnownRefusal == static_cast<uint32_t>(limit));
             refuse(limit);
-            if (content && !limitOfKnownRefusal)
+            RELEASE_ASSERT(!limitOfKnownRefusal || context.types.unshareableEventCount() == unshareableEventCountBefore);
+            if (content && !limitOfKnownRefusal && context.types.unshareableEventCount() == unshareableEventCountBefore)
                 cache->refusedContents.add(*content, static_cast<uint32_t>(limit));
         };
         if (std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, access)) {

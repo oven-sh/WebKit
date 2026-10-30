@@ -88,7 +88,12 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             ModuleID exporter = requiredName.exporterModule();
             // A file that has no face and captures nothing is asked for `default` alone, which it has until its error is dropped.
             if (data(exporter).kind == ModuleKind::CommonJs && !data(exporter).capturesExports()) {
-                if (!ensureLoaded(exporter).didDropError)
+                bool isExported = !ensureLoaded(exporter).didDropError;
+                if (ensureLoaded(exporter).exportsWhatMockNamesAlone) {
+                    isExported = hasCapturedExport(exporter, identifier(requiredName.name));
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+                if (isExported)
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
@@ -104,7 +109,7 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
                 if (requiredName.mayBeAbsent)
                     continue;
                 // A CommonJS file has `default` from the start, and loses it with its other names.
-                if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError)
+                if (isCommonJSFileOrFace(exporter) && identifier(requiredName.name) == m_instance.vm->propertyNames->defaultKeyword && !ensureLoaded(exporter).didDropError && !ensureLoaded(fileOf(exporter)).didDropError && !ensureLoaded(exporter).exportsWhatMockNamesAlone)
                     continue;
                 RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
@@ -745,7 +750,7 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
         return;
     LoadedModule& loaded = ensureLoaded(module);
     // The body threw, so the load that started it made no record of its own. The loader of `bun run` keeps the one of the link that came while the file ran.
-    if (loaded.didDropError)
+    if (loaded.didDropError || loaded.exportsWhatMockNamesAlone)
         return;
     loaded.capturedExports.set(*this, nullptr);
     loaded.deferredExportsSource.set(*this, nullptr);
@@ -761,6 +766,38 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
         loaded.namespaceObject.set(*this, nullptr);
     }
     captureExports(module);
+}
+
+void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
+{
+    ModuleID module = moduleWithExportsOf(file);
+    if (didCaptureExports(module) || namespaceIfCreated(module, ModulePhase::Evaluation))
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.capturedExports.set(*this, createTableOfExports());
+    loaded.exportsWhatMockNamesAlone = true;
+    ensureLoaded(file).answersRequireWithNamespaceOfMock = !hasRun;
+}
+
+void Modules::answerRequireWithNamespaceOfMock(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (data(file).kind != ModuleKind::CommonJs)
+        return;
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !std::exchange(loaded->answersRequireWithNamespaceOfMock, false))
+        return;
+    ModuleID module = moduleWithExportsOf(file);
+    JSValue marker = capturedValue(module, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue answer = marker && marker.toBoolean(m_instance.globalObject) ? capturedValue(module, vm.propertyNames->defaultKeyword) : JSValue();
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!answer) {
+        answer = moduleNamespace(module, ModulePhase::Evaluation);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    setCommonJSExports(file, answer);
 }
 
 // All importers of a file read one variable for a name. A module that is linked now finds what the registry has.
@@ -1007,18 +1044,18 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
                     continue;
                 const ModuleData& sourceData = data(source);
                 if (sourceData.capturesExports()) {
+                    // A spy or a mock replaces what the file exports, and the name behind the star is that binding: it is read where the file has it.
+                    Vector<Identifier, 8> names;
                     forEachCapturedExport(source, [&](const Identifier& name, JSValue value) {
-                        bool isExported = isExportedThroughStar(name);
-                        RETURN_IF_EXCEPTION(scope, void());
-                        if (!isExported)
-                            return;
                         if (!value) {
                             value = capturedValue(source, name);
                             RETURN_IF_EXCEPTION(scope, void());
                         }
                         if (value)
-                            result.append({ name, value });
+                            names.append(name);
                     });
+                    RETURN_IF_EXCEPTION(scope, { });
+                    appendLiveExports(source, names);
                 } else if (sourceData.isUncompiledCode()) {
                     JSObject* namespaceObject = uncompiledNamespace(source, ModulePhase::Evaluation);
                     RETURN_IF_EXCEPTION(scope, { });

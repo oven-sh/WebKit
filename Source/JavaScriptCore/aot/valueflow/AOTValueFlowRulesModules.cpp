@@ -746,6 +746,11 @@ void evaluateModule(ValueFlowRuleContext& context, ModuleID first)
         const Module& module = program.at(id);
         if (moduleHasCode(program, module)) {
             context.reach(module.body);
+            // Modules::didThrowInBody(): a CommonJS file whose body throws is out of require.cache, as behind a delete.
+            if (module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeEvicted)) {
+                raiseHostFlag(context, ValueFlowHostNode::UnseenCopiesOfFilesMayRun);
+                enterLoaderOfHost(context);
+            }
             continue;
         }
         if (visited.set(id.index()))

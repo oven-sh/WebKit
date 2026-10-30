@@ -643,7 +643,9 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     HeatGraph graphOfClasses;
     HeatGraph graph = buildHeatGraph(program, callGraph, flow, *summariesFromFlow, build, references, keptWeights, madeWeights, &graphOfClasses);
     times.didFinish("buildHeatGraph"_s);
-    const bool estimatesTwice = graphOfClasses.numberOfFunctions();
+    // Where the host runs files that the build has not seen, they call what has escaped as the first file of an executable would, not once for each event. The whole library
+    // is in such a build, and some handler in it may call any value: what the files call would all come with events, none of it cold and, short of a loop in a loop, none hot.
+    const bool estimatesTwice = graphOfClasses.numberOfFunctions() && !flow.hostRunsFilesOutsideImage();
     Vector<double> ranks;
     Vector<double> placesInOrder;
     // Which of two layouts has more objects is asked of code that is not hot as well.

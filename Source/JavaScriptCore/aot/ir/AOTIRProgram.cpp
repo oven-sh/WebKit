@@ -744,7 +744,7 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
 
 bool importMayAnswerWithMock(const Module& module)
 {
-    return module.runtimeModule && module.flags.contains(ModuleFlags::MayBeMocked);
+    return (module.runtimeModule || module.flags.contains(ModuleFlags::IsBundlerHelper)) && module.flags.contains(ModuleFlags::MayBeMocked);
 }
 
 bool requireMayAnswerWithMock(const Program& program, const Module& module)

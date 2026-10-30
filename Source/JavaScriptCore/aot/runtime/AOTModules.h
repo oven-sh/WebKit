@@ -139,6 +139,11 @@ public:
     std::optional<bool> tryReplaceExportInImageBelow(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceExportOfUncompiledModule(ModuleID external, UniquedStringImpl* name, JSValue);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
+    struct SyntheticExportPlace {
+        ModuleID module;
+        uint32_t name;
+    };
+    const SyntheticExportPlace* syntheticExportKeptIn(SlotData variable);
     bool mayBeMocked(ModuleID) const;
     ModuleID moduleWithExportsOf(ModuleID) const;
     void willMock(ModuleID);
@@ -295,6 +300,8 @@ public:
     void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
     void captureExportsAgain(ModuleID);
+    void exportWhatMockNamesAlone(ModuleID file, bool hasRun);
+    void answerRequireWithNamespaceOfMock(ModuleID file);
     // The start of the module is on the stack only to run the files that the module imports.
     bool isRunningFilesOf(ModuleID root) const { return m_rootWhoseFilesRun == root; }
     bool stopLoadingBehindFile(ModuleID file);
@@ -424,6 +431,8 @@ private:
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
         bool didDropError { false };
+        bool exportsWhatMockNamesAlone { false };
+        bool answersRequireWithNamespaceOfMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
         bool wasReachedBySecondLoad { false };
         bool isBeingLoadedByLoader { false };
@@ -637,6 +646,7 @@ private:
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     Box<MockedModules> m_mocks;
     unsigned m_numberOfMockedSets { 0 };
+    std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOutByMocks;
     BitVector m_evictedFiles;
     // Of the realm. A module of this image may import the file.

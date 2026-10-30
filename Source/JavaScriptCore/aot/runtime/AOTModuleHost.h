@@ -195,6 +195,7 @@ JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
+JS_EXPORT_PRIVATE void didMockModule(JSGlobalObject*, ModuleID);
 // Stores one export of the mock. A name that the module does not export is passed over.
 JS_EXPORT_PRIVATE void mockExport(JSGlobalObject*, ModuleID, UniquedStringImpl* name, JSValue);
 JS_EXPORT_PRIVATE bool hasESModuleMarker(JSCell* moduleNamespace);
