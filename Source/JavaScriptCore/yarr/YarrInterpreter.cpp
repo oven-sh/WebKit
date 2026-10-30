@@ -3657,18 +3657,25 @@ static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, u
     CRASH();
 }
 
-NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult* resultIfWanted)
+NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult* result)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, interpret);
     SuperSamplerScope superSamplerScope(false);
     if (Options::validateRegExpFlatProgram()) [[unlikely]]
         validateRequiredTexts(bytecode, input, start);
-    JSRegExpResult unwantedResult { JSRegExpResult::NoMatch };
-    JSRegExpResult& result = resultIfWanted ? *resultIfWanted : unwantedResult;
-    if (bytecode->m_flatProgram) [[unlikely]]
-        return interpretFlatProgram(bytecode, input, start, output, result);
-    unsigned remainingTurns { 0 };
-    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
+    if (bytecode->m_flatProgram) [[unlikely]] {
+        JSRegExpResult unwantedResult { JSRegExpResult::NoMatch };
+        return interpretFlatProgram(bytecode, input, start, output, result ? *result : unwantedResult);
+    }
+    auto run = [&](auto&& interpreter) ALWAYS_INLINE_LAMBDA {
+        unsigned matchStart = interpreter.interpret();
+        if (result) [[unlikely]]
+            *result = interpreter.result();
+        return matchStart;
+    };
+    if (input.is8Bit())
+        return run(Interpreter<Latin1Character>(bytecode, output, input.span8(), start));
+    return run(Interpreter<char16_t>(bytecode, output, input.span16(), start));
 }
 
 // These should be the same for both char16_t & Latin1Character.
