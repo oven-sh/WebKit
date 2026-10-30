@@ -884,7 +884,7 @@ public:
         : m_vm(*instance.vm)
         , m_realm(instance.globalObject)
         , m_tables(instance.tables())
-        , m_reflectThrows(admitsReplacedBuiltins(instance))
+        , m_isTestRun(admitsReplacedBuiltins(instance))
         , m_cells(instance.state ? instance.state->builtinCells.get() : nullptr)
         , m_builtinsToLock(builtinsToLock)
         , m_lockedWithoutCells(lockedWithoutCells)
@@ -956,10 +956,8 @@ private:
     {
         Vector<Identifier, 2> openedNames = namesOpenedOn(id);
         bool isWholeObject = table.at(id).flags.contains(BuiltinFlag::IsLockedObject);
-        bool isOpenedByTests = !openedNames.isEmpty() || std::ranges::any_of(m_tables.unlockedBuiltinMembers(), [&](uint32_t member) {
-            return table.at(BuiltinID(member & ~ProgramTables::unlockedBuiltinMember)).holder == id;
-        });
-        if (isWholeObject && !isOpenedByTests) {
+        // A test may ask whether Object.prototype can be extended. Locked by its names it answers as in plain Bun, and takes as little.
+        if (isWholeObject && !m_isTestRun) {
             lockObject(m_vm, id, object);
             if (m_cells)
                 m_cells->didLockEveryPropertyOf(object);
@@ -971,7 +969,7 @@ private:
         // A holder may only lie on the path to what is locked.
         if (!hasFixedNames && !tellsOfWrites)
             return;
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_reflectThrows, openedNames.span()).get())) [[likely]]
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span()).get())) [[likely]]
             return;
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);
@@ -981,7 +979,7 @@ private:
     VM& m_vm;
     JSGlobalObject* m_realm;
     const ProgramTables& m_tables;
-    const bool m_reflectThrows;
+    const bool m_isTestRun;
     BuiltinCells* m_cells;
     const BitVector& m_builtinsToLock;
     BitVector* m_lockedWithoutCells;

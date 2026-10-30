@@ -20,7 +20,7 @@ inline bool unseenCodeCanRun(const ValueFlowSolution& solution) { return isRaise
 inline bool unseenCodeChangesRealm(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::UnseenCodeChangesRealm); }
 inline bool unseenCodeHasLoader(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::UnseenCodeHasLoader); }
 inline bool filesOfProgramAreLoadedByName(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::ModulesAreRequiredByName) || isRaised(solution, ValueFlowHostNode::ModulesAreImportedByName); }
-inline bool modulesAreLoadedByName(const ValueFlowSolution& solution) { return filesOfProgramAreLoadedByName(solution) || isRaised(solution, ValueFlowHostNode::LibraryModulesAreRequiredByName); }
+inline bool modulesAreLoadedByName(const ValueFlowSolution& solution) { return filesOfProgramAreLoadedByName(solution) || isRaised(solution, ValueFlowHostNode::LibraryModulesAreRequiredByName) || isRaised(solution, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames); }
 Vector<FunctionID> functionsHeldButNotCalled(const ValueFlowSolution&);
 
 } } } // namespace JSC::AOT::Typed

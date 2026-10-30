@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTKnownClosures.h"
+#include "AOTPrimitiveKeyTexts.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowHeapTables.h"
@@ -817,26 +818,71 @@ static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span
     return !package.empty() && context.refusedCode().codeOutsideImage && !context.universe().builtinTables().heap().holdsModuleOfPackage(package);
 }
 
-static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+// "node:" and "bun:" stand in front of names of the library alone.
+static bool hasSchemeOfLibrary(std::span<const uint8_t> name)
+{
+    return spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) || spanHasPrefix(name, byteCast<uint8_t>("bun:"_span));
+}
+
+ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, FunctionID load, ValueID written, const ValueFlowOperand& name)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowHeapTables& tables = universe.builtinTables().heap();
+    ModulesThatNamesFind found;
+    bool isSpelledOtherwise = false;
+    auto add = [&](std::span<const uint8_t> text) {
+        if (ModuleID module = tables.libraryModuleNamed(text))
+            found.libraryModules.append(module);
+        else if (hasSchemeOfLibrary(text) || isNameOfPackageOutsideImage(context, text))
+            isSpelledOtherwise = true;
+        else
+            found.fileOfProgram = true;
+    };
+    // "sys" is node:util. Only the front end knows that, and it lists the module that a text of the program stands for.
+    auto finish = [&] {
+        if (isSpelledOtherwise)
+            found.libraryModules = Vector<ModuleID, 16>(tables.libraryModulesThatTextsStandFor());
+        return found;
+    };
+    // A text that is no key of the program is any string to the values.
+    const Function& function = program.at(load);
+    if (const Value& definition = function.at(definitionThroughSameValues(function, written)); definition.opcode == Opcode::String) {
+        add(program.string(definition.string()));
+        return finish();
+    }
+    context.forEachMember(context.valueOf(name), [&](ValueFlowObjectID member) {
+        if (found.fileOfProgram)
+            return;
+        if (universe.kindOf(member) == ValueFlowObjectKind::Key) {
+            const PropertyKey& key = program.at(universe.keyOf(member));
+            if (key.kind == PropertyKeyKind::Text)
+                add(program.string(key.text));
+            else
+                found.fileOfProgram = true;
+            return;
+        }
+        // `for (const name of names) await import(name)`: to the values a step of an iteration may answer undefined. No module of the library is spelled so.
+        auto text = std::ranges::find_if(primitiveKeyTexts, [&](const PrimitiveKeyText& entry) {
+            return member == ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(entry.primitive));
+        });
+        found.fileOfProgram = text == std::end(primitiveKeyTexts) || !isNameOfPackageOutsideImage(context, byteCast<uint8_t>(text->text.span()));
+    });
+    return finish();
+}
+
+void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load)
+{
+    if (isWrittenInProgram(context.program().at(load)))
+        raiseHostFlag(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames);
+}
+
+static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
     constexpr size_t indexOfName = 2;
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
-        return false;
-    const Program& program = context.program();
-    const ValueFlowUniverse& universe = context.universe();
-    auto isSuchName = [&](StringID text) {
-        return universe.builtinTables().heap().isNameOfLibraryModule(program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
-    };
-    // A text that is no key of the program is any string to the values.
-    const Function& function = program.at(call.function);
-    if (const Value& name = function.at(definitionThroughSameValues(function, function.at(call.site).operand(indexOfName))); name.opcode == Opcode::String)
-        return isSuchName(name.string());
-    bool passesOnlyThose = true;
-    context.forEachMember(context.valueOf(context.operandsOf(call)[indexOfName]), [&](ValueFlowObjectID name) {
-        const PropertyKey* key = universe.kindOf(name) == ValueFlowObjectKind::Key ? &program.at(universe.keyOf(name)) : nullptr;
-        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isSuchName(key->text);
-    });
-    return passesOnlyThose;
+        return { .fileOfProgram = true };
+    return modulesThatNamesFind(context, call.function, context.program().at(call.function).at(call.site).operand(indexOfName), context.operandsOf(call)[indexOfName]);
 }
 
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
@@ -860,10 +906,14 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
         if (!cause)
             return;
-        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesThatNoFileOfProgramAnswersTo(statement, context)))
-            handLibraryModulesTo(context, statement.result);
-        else
-            raiseEvent(context, builtin, *cause, statement.result);
+        if (!loadsModulesByName(*cause))
+            return raiseEvent(context, builtin, *cause, statement.result);
+        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context);
+        if (found.fileOfProgram)
+            return loadsOnlyLibraryModules(builtin) ? handLibraryModulesTo(context, statement.result) : raiseEvent(context, builtin, *cause, statement.result);
+        noteLoadUnderSpelledNames(context, statement.function);
+        for (ModuleID module : found.libraryModules)
+            requireModule(statement, context, module);
     });
 }
 
@@ -1222,8 +1272,11 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
     bool areRequired = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
     bool areImported = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
     bool libraryIsRequired = isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
-    if (!areRequired && !areImported && !libraryIsRequired)
+    if (!areRequired && !areImported && !libraryIsRequired) {
+        if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames))
+            enterLoaderOfHost(context);
         return;
+    }
 
     const ValueFlowProgramNodes& nodes = context.nodes();
     forEachModuleLoadableByName(context, [&](ModuleID id, bool isOfProgram) {

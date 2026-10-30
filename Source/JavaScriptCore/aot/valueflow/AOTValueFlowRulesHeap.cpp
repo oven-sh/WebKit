@@ -674,7 +674,7 @@ void HeapRule::noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receiver
 
 void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, const ValueFlowOperand& value)
 {
-    ClimbingSet receivers = receiversOfWrite(object);
+    ClimbingSet receivers = receiversOfWrite(object, key);
     noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     if (part != HeapPropertyPart::Setter)
         noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
@@ -772,10 +772,11 @@ void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, con
 }
 
 // Beside the unknown object a built-in object is shown until it escapes, and only listed from then on. Whether it is still to escape shows once all else is at rest.
-ClimbingSet HeapRule::receiversOfWrite(const ValueFlowOperand& object)
+// A write of the library under a key nobody knows hits every member, so there the unknown object may also be still to come.
+ClimbingSet HeapRule::receiversOfWrite(const ValueFlowOperand& object, const HeapKey& key)
 {
     ClimbingSet receivers = m_context.valueOf(object);
-    if (!object.node || !mayBeUnknownObject(receivers) || !m_context.meet(receivers, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_universe.placeholdersAlone()))))
+    if (!object.node || (!mayBeUnknownObject(receivers) && (key.keyClass != HeapKeyClass::Unknown || isInProgramCode())) || !m_context.meet(receivers, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_universe.placeholdersAlone()))))
         return receivers;
     if (isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
         return receivers;
@@ -911,7 +912,7 @@ ValueFlowNodeID HeapRule::exportsOfHoldersIn(const ValueFlowOperand& object)
 void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const ValueFlowOperand& value)
 {
     askProxiesByTheirTrap(key, BuiltinNames::set, { }, &value);
-    ClimbingSet receivers = receiversOfWrite(object);
+    ClimbingSet receivers = receiversOfWrite(object, key);
     m_context.openProxiesAmong(receivers);
     noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
@@ -962,7 +963,7 @@ void HeapRule::noteDeletedMembers(ClimbingSet receivers, const HeapKey& key)
 void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
 {
     askProxiesByTheirTrap(key, BuiltinNames::deleteProperty, { });
-    ClimbingSet receivers = receiversOfWrite(object);
+    ClimbingSet receivers = receiversOfWrite(object, key);
     m_context.openProxiesAmong(receivers);
     noteWrittenMembers(receivers, key);
     noteMembersLookedForBeforeChange(receivers, key, true);

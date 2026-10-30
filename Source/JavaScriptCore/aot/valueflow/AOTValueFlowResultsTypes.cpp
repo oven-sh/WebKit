@@ -1944,6 +1944,12 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         const Field& field = layout.fields[index];
         FieldFlow& flow = update.fields[index].flow;
         if (flow.location.writers != WriterState::AllKnown) {
+            // The type was read off the stores that name the field. A value that does not fit would leave the slot for good, and with it every guarded read of the object would fail.
+            bool isStoredByLoopOverNames = id.index() < contents.fieldsStoredUnderNamesOfEnumerations.size() && contents.fieldsStoredUnderNamesOfEnumerations[id.index()].get(index);
+            if (isStoredByLoopOverNames && !field.declared.site && !field.flags.contains(FieldFlags::IsInherited) && program.at(field.declared.written()).isJavaScriptValue()) {
+                update.fields[index].position.type = TypeTable::anything;
+                continue;
+            }
             const Type& asRead = program.at(field.declared.written());
             ValueSetID primitivesInside = inputs.universe().membersSurelyInside(maker, program, field.declared.written());
             if (asRead.primitives & Primitive::Integer && contents.storedNumbers[id.index()][index].integers.isSubsetOf(asRead.integers))

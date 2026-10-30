@@ -59,6 +59,13 @@ FieldAccessID Placement::findFieldAccess(PropertyKeyID key, LayoutSetID receiver
     return position ? FieldAccessID(*position) : FieldAccessID();
 }
 
+uint32_t Placement::closureNumberOf(FunctionID entrypoint) const
+{
+    ClosureFunctionRange range = m_functions.closureFunctions;
+    RELEASE_ASSERT(entrypoint.index() >= range.first.index() && entrypoint.index() < range.end.index());
+    return entrypoint.index() - range.first.index();
+}
+
 std::optional<uint32_t> Placement::moduleBuiltinCellOffset(BuiltinID builtin, ModuleID module) const
 {
     auto& cells = m_statics.moduleBuiltinCells;

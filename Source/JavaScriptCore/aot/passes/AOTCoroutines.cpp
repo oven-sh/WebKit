@@ -1872,6 +1872,19 @@ struct HeapFramePlan {
     Vector<YieldInFrame, 4> yields;
     Vector<uint32_t> wordOf;
     uint32_t numberOfWords { 1 };
+    // Where whoever starts the generator fills the frame himself: the entry parameter of the body that each word takes at the initial yield.
+    struct WordAtStart {
+        uint32_t word;
+        uint32_t parameter;
+    };
+    Vector<WordAtStart, 8> wordsAtStart;
+    bool isStartedByCallers { false };
+};
+
+struct StartOfGenerator {
+    ValueID call;
+    uint32_t plan { 0 };
+    bool isRunning { false };
 };
 
 } // anonymous namespace
@@ -1982,6 +1995,37 @@ static void findWordsToClear(HeapFramePlan& plan, const Function& function, Func
     }
 }
 
+// The body asks at its entry whether it is running and suspends at once if it is not. Whoever calls it can do that himself where the frame takes nothing there but what he passes:
+// then the function that resumes is the only one, and what runs up to the first yield is not there twice.
+static bool findWordsAtStart(HeapFramePlan& plan, const Function& function, FunctionAnalyses& analyses)
+{
+    const Terminator& entry = function.at(entryBlock).terminator;
+    if (entry.kind != TerminatorKind::Branch)
+        return false;
+    const Value& test = function.at(entry.conditionOperand());
+    if (test.opcode != Opcode::IsGeneratorRunning || test.generatorOperand() != plan.generator)
+        return false;
+
+    // A new frame has the resume index 0.
+    const YieldInFrame& initial = plan.yields[0];
+    BlockID block = initial.point.block;
+    if (block != entry.notTaken().block || !entry.notTaken().arguments.isEmpty() || analyses.cfg().predecessors(block).size() != 1 || function.at(block).handler)
+        return false;
+    for (ValueID id : function.at(block).values.span().first(initial.point.index)) {
+        if (!isRematerializable(function.at(id)))
+            return false;
+    }
+    for (auto list : { initial.stored.span(), initial.heldOnly.span() }) {
+        for (ValueID id : list) {
+            ValueLocation location = analyses.useLists().locationOf(id);
+            if (location.placement != ValuePlacement::Parameter || location.block != entryBlock)
+                return false;
+            plan.wordsAtStart.append({ plan.wordOf[id.index()], location.index });
+        }
+    }
+    return true;
+}
+
 static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context, FunctionID id)
 {
     const Program& program = context.program;
@@ -2067,6 +2111,7 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
     if (plan.numberOfWords > maxWordsOfHeapFrame)
         return std::nullopt;
     findWordsToClear(plan, function, analyses);
+    plan.isStartedByCallers = findWordsAtStart(plan, function, analyses);
     return plan;
 }
 
@@ -2367,6 +2412,71 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
     runner.runSchedule(FunctionSchedule::Simplify, context.program, inputs, context.id, function, arenas);
 }
 
+// Only whoever has made the generator knows its state: it runs from MarkGeneratorRunning on.
+static std::optional<bool> isRunningAtStart(const Function& function, BlockID block, uint32_t indexOfCall, ValueID generator)
+{
+    auto objectOf = [&](ValueID id) { return sameObjectThroughCasts(function, id).valueInFrontOfFacts(); };
+    ValueID object = objectOf(generator);
+    if (function.at(object).opcode != Opcode::NewGenerator)
+        return std::nullopt;
+    auto marks = [&](ValueID id) { return function.at(id).opcode == Opcode::MarkGeneratorRunning && objectOf(function.at(id).generatorOperand()) == object; };
+    const BlockValues& values = function.at(block).values;
+    for (uint32_t index = indexOfCall; index--;) {
+        if (marks(values[index]))
+            return true;
+        if (values[index] == object)
+            return false;
+    }
+    for (const Block& other : function.blocks) {
+        if (std::ranges::any_of(other.values, marks))
+            return std::nullopt;
+    }
+    return false;
+}
+
+static void startGeneratorsInCaller(const AnalysisContext& context, TaskArenas& arenas, Function& function, std::span<const StartOfGenerator> starts, std::span<const HeapFramePlan> plans)
+{
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(analyses.context(), function, arenas.types, &analyses);
+    for (const StartOfGenerator& start : starts) {
+        const HeapFramePlan& plan = plans[start.plan];
+        ProgramPoint point = analyses.useLists().pointOf(start.call);
+        Vector<ValueID, 8> arguments(function.at(start.call).argumentsOperands());
+        ValueID generator = arguments.last();
+        builder.setOrigin(function.at(start.call).origin());
+
+        Value allocation = IRBuilder::make(Opcode::NewHeapFrame, { generator });
+        allocation.setFunction(plan.resume);
+        allocation.setNumberOfWords(plan.numberOfWords);
+        ValueID frame = builder.insertBefore(point, WTF::move(allocation));
+        auto put = [&](uint32_t word, ValueID value) {
+            Value store = IRBuilder::make(Opcode::PutHeapFrameWord, { frame, value });
+            store.setIndex(word);
+            builder.insertBefore(point, WTF::move(store));
+        };
+        put(wordOfGenerator, generator);
+        for (auto [word, parameter] : plan.wordsAtStart)
+            put(word, arguments[parameter]);
+        Value suspend = IRBuilder::make(Opcode::SuspendInHeapFrame, { generator, frame });
+        suspend.setResumeIndex(0);
+        suspend.setIsFirstRun(true);
+        suspend.setStaysRunning(start.isRunning);
+        builder.insertBefore(point, WTF::move(suspend));
+        if (!start.isRunning) {
+            becomeUndefined(function, start.call);
+            continue;
+        }
+
+        // The first step: as if the generator had been resumed behind its initial yield.
+        ValueID mode = builder.insertBefore(point, makeInteger(static_cast<int64_t>(ResumeMode::Next)));
+        ValueID sent = builder.insertBefore(point, IRBuilder::make(Opcode::Undefined));
+        Value& call = function.edit(start.call, ValueEdit::Definition);
+        call.setFunction(plan.resume);
+        call.setArgumentsOperands(std::initializer_list<ValueID> { frame, mode, sent });
+    }
+    builder.applyInsertions();
+}
+
 void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     BuildContext& build = runner.build();
@@ -2402,8 +2512,75 @@ void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& 
     editFunctionsInParallel(editor, build, ids.span(), resumes.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         HeapFramePlan& plan = plans[index];
         buildResumeFunction(AnalysisContext { build, program, &inputs.flow, &inputs.effects, plan.resume }, arenas, function, plan, runner, inputs);
-        rewriteBody(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, arenas, function, plan, runner, inputs);
+        // A body that its callers no longer call goes. A call that stays finds it as it was, which works beside the other form.
+        if (!plan.isStartedByCallers)
+            rewriteBody(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, arenas, function, plan, runner, inputs);
     });
+
+    constexpr uint32_t noPlan = UINT32_MAX;
+    Vector<uint32_t> planOfBody(FillWith { }, program.functions.size(), noPlan);
+    bool hasBodyStartedByCallers = false;
+    for (uint32_t index = 0; index < plans.size(); ++index) {
+        if (!plans[index].isStartedByCallers)
+            continue;
+        planOfBody[plans[index].body.index()] = index;
+        hasBodyStartedByCallers = true;
+    }
+    if (!hasBodyStartedByCallers)
+        return;
+
+    auto planOfCall = [&](const Value& value) {
+        return value.opcode == Opcode::CallDirect ? planOfBody[value.function().index()] : noPlan;
+    };
+    Vector<uint32_t> callers = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        return std::ranges::any_of(program.functions[index].blocks, [&](const Block& block) {
+            return std::ranges::any_of(block.values, [&](ValueID id) { return planOfCall(program.functions[index].at(id)) != noPlan; });
+        });
+    });
+    Vector<Vector<StartOfGenerator, 2>> startsOfCaller(callers.size());
+    BitVector hasCallThatStays(plans.size());
+    for (uint32_t position = 0; position < callers.size(); ++position) {
+        const Function& caller = program.functions[callers[position]];
+        for (uint32_t blockIndex = 0; blockIndex < caller.blocks.size(); ++blockIndex) {
+            const BlockValues& values = caller.blocks[blockIndex].values;
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                const Value& call = caller.at(values[index]);
+                uint32_t plan = planOfCall(call);
+                if (plan == noPlan)
+                    continue;
+                std::optional<bool> isRunning = call.isTailCall ? std::nullopt : isRunningAtStart(caller, BlockID(blockIndex), index, call.argumentsOperands().back());
+                if (isRunning)
+                    startsOfCaller[position].append({ values[index], plan, *isRunning });
+                else
+                    hasCallThatStays.quickSet(plan);
+            }
+        }
+    }
+
+    // The ramp names the function that runs for it.
+    Vector<FunctionID> edited = callers.map([](uint32_t index) { return FunctionID(index); });
+    Vector<uint32_t> planOfRamp(FillWith { }, program.functions.size(), noPlan);
+    for (uint32_t index = 0; index < plans.size(); ++index) {
+        if (!plans[index].isStartedByCallers || hasCallThatStays.quickGet(index))
+            continue;
+        FunctionID ramp = coroutineOfBody(program.at(plans[index].body)).ramp;
+        planOfRamp[ramp.index()] = index;
+        if (!edited.contains(ramp)) {
+            edited.append(ramp);
+            startsOfCaller.append({ });
+        }
+    }
+    editFunctionsInParallel(editor, build, edited.span(), [&](unsigned position, FunctionID id, Function& function, TaskArenas& arenas) {
+        if (!startsOfCaller[position].isEmpty())
+            startGeneratorsInCaller(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, arenas, function, startsOfCaller[position].span(), plans.span());
+        if (uint32_t plan = planOfRamp[id.index()]; plan != noPlan)
+            function.creator = program.at(plans[plan].resume).creator.as<CreatorRecord::Coroutine>();
+    });
+    // The run time may enter the body of any coroutine, so nothing else finds out that nobody enters these.
+    for (uint32_t index = 0; index < plans.size(); ++index) {
+        if (plans[index].isStartedByCallers && !hasCallThatStays.quickGet(index))
+            editor.removeBody(plans[index].body);
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

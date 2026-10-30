@@ -27,6 +27,7 @@ static_assert(SourceLocation { } == noSourceLocation, "A default-constructed rec
 static auto sortKeyOf(const FlowIndirectCall& call) { return std::tuple(call.caller, call.site, call.callee, call.kind); }
 static auto sortKeyOf(const FlowBoundFunctionUse& use) { return std::tuple(use.target, use.numberOfBoundArguments); }
 static auto sortKeyOf(const FlowBoundFunctionAtSite& bound) { return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments); }
+static auto sortKeyOf(const FlowClosureStoredUnderKey& stored) { return std::tuple(stored.key, stored.function); }
 static auto sortKeyOf(const FlowProxiesSeenAtSite& seen) { return seen.site; }
 static auto sortKeyOf(const FlowSinkOperand& operand) { return std::tuple(operand.call, operand.operandIndex); }
 static auto sortKeyOf(const FlowTypedResultCall& record) { return record.call; }
@@ -65,6 +66,7 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
+    RELEASE_ASSERT(isStrictlyAscending(tables.sites.closuresStoredUnderKeys));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.dataNodes));
 
     RELEASE_ASSERT(isStrictlyAscending(tables.builtins.locations));
@@ -215,6 +217,12 @@ Expected<std::span<const FlowBoundFunctionAtSite>> FlowResults::boundFunctionsSe
         return std::pair(bound.site, bound.use);
     });
     return std::span<const FlowBoundFunctionAtSite>(first, end);
+}
+
+Expected<std::span<const FlowClosureStoredUnderKey>> FlowResults::closuresSeenStoredUnder(PropertyKeyID key) const
+{
+    auto [first, end] = std::ranges::equal_range(m_tables.sites.closuresStoredUnderKeys, key, { }, &FlowClosureStoredUnderKey::key);
+    return std::span<const FlowClosureStoredUnderKey>(first, end);
 }
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const

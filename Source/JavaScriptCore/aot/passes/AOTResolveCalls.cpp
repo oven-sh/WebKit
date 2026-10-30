@@ -148,6 +148,21 @@ static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& co
     return closures;
 }
 
+// `table[type]` in a copy of a function whose caller spells the type.
+static PropertyKeyID keyThatCalleeWasReadUnder(FunctionPassContext& context, ValueID callee)
+{
+    const Value& read = context.function.at(context.analyses.identityOf(callee));
+    if (read.opcode == Opcode::PropGet && !read.isFreeName())
+        return read.key();
+    if (read.opcode != Opcode::ElemGet)
+        return { };
+    ConstantKey key = constantKeyOf(context.program, context.program.typeOf(context.function, read.operand(OperandIndex::ElemGet::property)));
+    if (key.kind != ConstantKeyKind::Text)
+        return key.symbol;
+    // Flow has made a key of every text that it has followed.
+    return context.program.types.find({ .kind = PropertyKeyKind::Text, .text = key.text }).value_or(PropertyKeyID());
+}
+
 // Also expects the bound function where flow saw the result of one kind of bind reach the call.
 // It stops expecting the bind's target and every function that an earlier test has ruled out: `this.m = this.m.bind(this)` hides the method behind the result.
 static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
@@ -166,6 +181,18 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
             context.planAsksAboutPlace = true;
             result.expect(WTF::move(closures));
             result.arriveOnWaysOfTheirOwn = true;
+            return result;
+        }
+    }
+    // What was stored under this one key says more than a declared type, which lists what lies under any key.
+    if (PropertyKeyID key = keyThatCalleeWasReadUnder(context, result.value)) {
+        std::span<const FlowClosureStoredUnderKey> stored = flow.closuresSeenStoredUnder(key).predicted();
+        if (!stored.empty()) {
+            context.planAsksAboutPlace = true;
+            FunctionList callees;
+            for (const FlowClosureStoredUnderKey& entry : stored)
+                callees.add(entry.function);
+            result.expect(WTF::move(callees));
             return result;
         }
     }
@@ -1434,6 +1461,11 @@ struct CallResolver {
                     content.add(bound.target.index());
                     content.add(bound.numberOfBoundArguments);
                 }
+                PropertyKeyID key = keyThatCalleeWasReadUnder(context, value.calleeOperand());
+                std::span<const FlowClosureStoredUnderKey> stored = key ? flow.closuresSeenStoredUnder(key).predicted() : std::span<const FlowClosureStoredUnderKey>();
+                content.add(static_cast<uint32_t>(stored.size()));
+                for (const FlowClosureStoredUnderKey& entry : stored)
+                    content.add(entry.function.index());
             }
             // The plan follows from what the ways to the call bring.
             if (!findClosuresArrivingOnWaysOfTheirOwn(context, value.calleeOperand()).isEmpty())

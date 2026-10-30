@@ -384,6 +384,67 @@ struct PlacesOfProperties {
 
 }
 
+// An object that has nothing but fields: every key of its order lies in its slot, and the program holds the names. One walk, with no list in between.
+static Result readFieldsCallingGetters(JSGlobalObject* globalObject, Object& typed, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, const GetterWalkHooks& hooks)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    State& state = typed.state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    const LayoutData& layout = typed.layout();
+    if (hooks.refusesProtoName && layouts.field(vm, layout, vm.propertyNames->underscoreProto.impl()))
+        return Result::NeedsGenericPath;
+    std::span<const FieldData> fields = layout.fields();
+    // A getter may make a new order, which may move the table of orders.
+    Vector<uint16_t, 32> order;
+    typed.forEachFieldInKeyOrder(state, [&](uint16_t index) {
+        order.append(index);
+    });
+    PlacesOfProperties places(typed);
+    bool isAsListed = true;
+    for (bool wantsSymbols : { false, true }) {
+        if (wantsSymbols && !layout.hasFieldsWithSymbolKeys)
+            break;
+        for (uint16_t index : order) {
+            const FieldData& field = fields[index];
+            if (field.isPrivate() || !(wantsSymbols ? layouts.hasSymbolKey(field) : layouts.hasStringKey(field)))
+                continue;
+            UniquedStringImpl* name = layouts.nameOf(vm, field);
+            if (hooks.isLeftOut && (*hooks.isLeftOut)(name))
+                continue;
+            JSValue value;
+            if (isAsListed) {
+                if (typed.attributesOf(field) & PropertyAttribute::DontEnum)
+                    continue;
+                value = typed.read(field);
+                ASSERT(value);
+                if (field.isAccessor()) {
+                    if (hooks.willRunCode)
+                        (*hooks.willRunCode)();
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    value = uncheckedDowncast<GetterSetter>(value)->callGetter(globalObject, &typed);
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    isAsListed = places.areStill(typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
+                }
+            } else {
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                PropertySlot slot(&typed, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool has = Object::getOwnPropertySlot(&typed, globalObject, PropertyName(name), slot);
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                    continue;
+                value = slot.getValue(globalObject, PropertyName(name));
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+            }
+            names.append(name);
+            values.appendWithCrashOnOverflow(value);
+        }
+    }
+    return Result::Completed;
+}
+
 Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks hooks)
 {
     VM& vm = globalObject->vm();
@@ -391,6 +452,8 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
     Object* typed = compiledObjectOrNull(object);
     if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
         return Result::NeedsGenericPath;
+    if (!typed->hasExtraProperties())
+        RELEASE_AND_RETURN(scope, readFieldsCallingGetters(globalObject, *typed, names, values, hooks));
     JSObject* extra = typed->extraProperties();
     if (extra && (extra->type() != FinalObjectType || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties()))
         return Result::NeedsGenericPath;
@@ -704,6 +767,9 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         values.appendWithCrashOnOverflow(own.value);
         return IterationStatus::Continue;
     }, Elements::AreLeftOut);
+    // A walk that runs no code takes no getter.
+    if (result == Result::NeedsGenericPath)
+        return tryAssignCallingGetters(target.structure()->realm(), &target, source);
     if (result != Result::Completed || !wouldPerformFastPut(vm, &target))
         return false;
     JSObject* holder = objectHoldingIndexedProperties(source);

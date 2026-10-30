@@ -112,6 +112,17 @@ inline bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context) { return is
 void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext&, ValueFlowNodeID exportsThatProgramHasTaken);
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
+// What a load finds goes by what its name may be.
+struct ModulesThatNamesFind {
+    // Some name may be that of a file of the program, or nobody knows the names.
+    bool fileOfProgram { false };
+    Vector<ModuleID, 16> libraryModules;
+};
+// `written` is the name as the function of the load writes it.
+ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext&, FunctionID load, ValueID written, const ValueFlowOperand& name);
+// The run time takes the names all the same: it needs its loader, and what is said about the program counts every module of the library that answers to a name as loaded.
+void noteLoadUnderSpelledNames(ValueFlowRuleContext&, FunctionID load);
+void requireModule(const ValueFlowStatement&, ValueFlowRuleContext&, ModuleID);
 bool mayAnswerToName(const Program&, ModuleID);
 // A file that is no entry point is found by name only where the program itself loads files by name.
 bool answersOnlyToLoadsOfProgram(const Program&, ModuleID);

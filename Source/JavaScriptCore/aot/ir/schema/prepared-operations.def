@@ -146,7 +146,7 @@ operation NewHeapFrame (generator: Object/inspects, function: Function(Dispatch)
 operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type) -> declared(valueType) ; reads(InternalFields)
 operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) -> none ; writes(InternalFields)
 operation GetResumeIndex (frame: Any/inspects) -> natural(integer) ; reads(InternalFields)
-operation SuspendInHeapFrame (generator: Object/inspects, frame: Any/inspects, resumeIndex: UInt32) [isFirstRun] -> none ; writes(InternalFields)
+operation SuspendInHeapFrame (generator: Object/inspects, frame: Any/inspects, resumeIndex: UInt32) [isFirstRun staysRunning] -> none ; writes(InternalFields)
 operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
 operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame
 operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...: Any/retains+runs(Thenable)) -> allocation(Promise<contents>) ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = PromiseAll ; replaces = CallBuiltin

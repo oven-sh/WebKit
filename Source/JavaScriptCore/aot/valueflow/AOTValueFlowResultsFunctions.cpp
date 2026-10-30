@@ -1002,6 +1002,74 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
     return result;
 }
 
+// `on("close", listener)` stores under a parameter, and `emit("close")` calls what it reads under one. Flow follows the first once for each key that its callers spell, so it knows what lies under "close".
+// The call in the second has one stamp for all keys. A copy of it in a caller that spells the key asks here.
+static Vector<FlowClosureStoredUnderKey> findClosuresStoredUnderKeys(const ValueFlowResultInputs& inputs)
+{
+    const ValueFlowSolver& solver = inputs.solver();
+    const ValueFlowInstancedFunctions* instanced = solver.input().instancedFunctions;
+    if (!instanced || instanced->isEmpty())
+        return { };
+    const ValueFlowUniverse& universe = inputs.universe();
+    BitVector isSpelled(inputs.program.types.numberOfPropertyKeys());
+    for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
+        std::optional<ValueFlowNodeID> markers = instanced->find(FunctionID(index)) && inputs.isReached(FunctionID(index)) ? solver.findMadeNode(ValueFlowNodeKey::markersOf(FunctionID(index))) : std::nullopt;
+        if (!markers)
+            continue;
+        inputs.sets().forEachMember(solver.possibleValuesOf(*markers), [&](ValueFlowObjectID marker) {
+            if (universe.kindOf(marker) == ValueFlowObjectKind::Key)
+                isSpelled.set(universe.keyOf(marker).index());
+        });
+    }
+    if (isSpelled.isEmpty())
+        return { };
+
+    // A call tests for no more.
+    AOT_THRESHOLD(unsigned, mostClosuresUnderKey, 2);
+    struct Stored {
+        uint32_t key;
+        // None: something that nobody knows, or more than a call tests for.
+        FunctionID function;
+    };
+    uint32_t firstMadeNode = solver.input().numberOfNodes;
+    ValueSetMakers makers(inputs);
+    Vector<Stored> stored = collectWithMakers<Stored>(inputs, makers, solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position, ValueSetMaker& maker, Vector<Stored>& found) {
+        ValueFlowNodeID node(firstMadeNode + position);
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
+        if (key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Property || !isSpelled.get(key->name().payload))
+            return;
+        // Which closures stand listed beside the unknown object hangs on the order of the rules.
+        ValueSetID value = solver.seenValuesOf(node);
+        if (ValueSets::isComplement(value) || inputs.sets().contains(value, ValueFlowUniverse::unknownObject())) {
+            found.append({ key->name().payload, { } });
+            return;
+        }
+        unsigned number = 0;
+        inputs.sets().forEachMember(maker.intersect(value, universe.closures()), [&](ValueFlowObjectID closure) {
+            if (++number <= mostClosuresUnderKey + 1)
+                found.append({ key->name().payload, universe.closureFunction(closure) });
+        });
+    });
+    AOT::sort(stored, { }, [](const Stored& entry) {
+        return std::pair(entry.key, entry.function);
+    });
+    Vector<FlowClosureStoredUnderKey> result;
+    for (size_t first = 0; first < stored.size();) {
+        size_t end = first;
+        size_t sizeBefore = result.size();
+        bool isKnown = true;
+        for (; end < stored.size() && stored[end].key == stored[first].key; ++end) {
+            isKnown &= stored[end].function && inputs.build.isEnabled(FlowResultKind::CalleeSets, stored[end].function.index());
+            if (isKnown && (result.size() == sizeBefore || result.last().function != stored[end].function))
+                result.append({ PropertyKeyID(stored[end].key), stored[end].function });
+        }
+        if (!isKnown || result.size() - sizeBefore > mostClosuresUnderKey)
+            result.shrink(sizeBefore);
+        first = end;
+    }
+    return result;
+}
+
 void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& calls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -1026,6 +1094,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
 
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
+    tables.sites.closuresStoredUnderKeys = findClosuresStoredUnderKeys(inputs);
 
     BitVector isNamedByTable(numberOfFunctions);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {

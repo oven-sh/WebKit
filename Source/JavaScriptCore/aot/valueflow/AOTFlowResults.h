@@ -72,6 +72,14 @@ struct FlowBoundFunctionAtSite {
     friend bool operator==(const FlowBoundFunctionAtSite&, const FlowBoundFunctionAtSite&) = default;
 };
 
+// `on("close", listener)`: a function that stores under a key that is its parameter was followed for this key, and a closure of this function was stored under it.
+struct FlowClosureStoredUnderKey {
+    PropertyKeyID key;
+    FunctionID function;
+
+    friend bool operator==(const FlowClosureStoredUnderKey&, const FlowClosureStoredUnderKey&) = default;
+};
+
 struct FlowSiteLoss {
     UnprovenCause cause { UnprovenCause::Unknown };
     LimitID limit { LimitID::None };
@@ -213,6 +221,8 @@ struct FlowSiteTables {
     Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
+    // Sorted by key and function. A key under which more was stored than a call tests for has no entry.
+    Vector<FlowClosureStoredUnderKey> closuresStoredUnderKeys;
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
     BitVector sitesOfObjectsThatNeverChange;
@@ -418,6 +428,8 @@ public:
     // What was stamped on the access, for a pass that meets the access after the stamp is gone. No answer: flow says nothing. No set: no object that was seen to arrive has the name of the access.
     std::optional<LayoutSetID> receiversSeenAt(AccessSiteID) const;
     Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
+    // For `table[key](..)` in a copy of a function whose caller spells the key: flow has looked at the function with every key at once.
+    Expected<std::span<const FlowClosureStoredUnderKey>> closuresSeenStoredUnder(PropertyKeyID) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
     std::span<const LayoutID> typedResultLayouts(AccessSiteID call) const LIFETIME_BOUND;

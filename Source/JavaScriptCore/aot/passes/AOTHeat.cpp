@@ -958,6 +958,14 @@ Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext& context, BlockID bl
     return (frequencies.frequencyOf(block) > 1.0).predicted() ? HeatClass::Hot : HeatClass::Warm;
 }
 
+Expected<HeatClass> heatClassOfLoopAt(FunctionPassContext& context, BlockID block)
+{
+    Expected<HeatClass> heatClass = heatClassOf(context, block);
+    if (context.build.recordedOptions().heat() != HeatOverride::None || heatClass.predicted() != HeatClass::Warm)
+        return heatClass;
+    return context.inputs.heat.classOf(context.program, context.id, context.analyses.blockFrequencies().frequencyOf(block).predicted() * frequencyConstants.iterationsPerLoop);
+}
+
 Expected<bool> isExpectedToRun(FunctionPassContext& context, const NaturalLoop& loop)
 {
     return context.analyses.blockFrequencies().classOf(loop.header()).predicted() == BlockFrequency::Normal && !isCold(heatClassOf(context, loop.header())).predicted();

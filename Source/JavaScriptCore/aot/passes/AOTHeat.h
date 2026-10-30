@@ -167,6 +167,8 @@ Expected<bool> isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 Expected<HeatClass> heatClassOf(FunctionPassContext&, BlockID);
 // Reads nothing outside the function: hot in a loop, warm elsewhere, cold on the way to a throw.
 Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext&, BlockID);
+// Of what a loop at the block would run.
+Expected<HeatClass> heatClassOfLoopAt(FunctionPassContext&, BlockID);
 Expected<bool> isExpectedToRun(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed

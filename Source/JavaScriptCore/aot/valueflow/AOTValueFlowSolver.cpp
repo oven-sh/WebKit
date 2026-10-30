@@ -266,13 +266,11 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     , m_graph(loops, m_makers.span())
 {
     m_numberOfUsers.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
-    m_askerThatKeepsNothingAwake.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_partsOfMadeNodes.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_madeNodesOfNode.reserveCapacity(5 * static_cast<size_t>(m_input.numberOfNodes) / 2);
     m_readersOfNode.reserveCapacity(7 * static_cast<size_t>(m_input.numberOfNodes) / 2);
     m_seenByReadersOfNode.reserveCapacity(7 * static_cast<size_t>(m_input.numberOfNodes) / 2);
     m_listenersOfNode.reserveCapacity(7 * static_cast<size_t>(m_input.numberOfNodes) / 2);
-    m_madeStatements.reserveCapacity(m_input.statements.size() / 2);
     m_madeNodesOfStatement.reserveCapacity(m_input.statements.size() / 2);
     m_fewestSlotsOfIndexOfMadeNodes = std::max<size_t>(64, roundUpToPowerOfTwo(2 * static_cast<size_t>(m_input.numberOfNodes) / numberOfIndicesOfMadeNodes));
 
@@ -857,7 +855,8 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
                 if (isAtRest(statement))
                     continue;
                 ++thread.numberOfDueStatementsTaken;
-                const ValueFlowStatement& statementToRun = statementAt(statement);
+                ValueFlowStatement statementMadeByRule;
+                const ValueFlowStatement& statementToRun = isMadeByRule(statement) ? (statementMadeByRule = statementMadeByRuleAt(statement)) : m_input.statements[statement.index()];
                 if (ValueFlowNodeID awaited = nodeAwaitedBy(statement, statementToRun)) {
                     ++thread.numberOfDueStatementsThatWait;
                     m_hasStatementOfBodyRun.set(statement.index());
@@ -1170,7 +1169,6 @@ public:
     Vector<uint32_t> keys;
     Vector<MadeNodes> madeNodes;
     uint32_t numberOfNodes { 0 };
-    Vector<MadeStatement> madeStatements;
     Vector<uint32_t> madeNodesOfStatement;
     Vector<uint32_t> parts;
     Vector<ValueFlowEdge> edges;
@@ -1234,14 +1232,9 @@ private:
         parts.append(numbersOfParts);
     }
 
-    void makeStatement(uint32_t number, ValueFlowStatementKind kind, ValueFlowNodeID result, ValueFlowNodeID thrown)
+    void makeStatement(uint32_t number)
     {
-        ValueFlowStatement statement;
-        statement.kind = kind;
-        statement.result = result;
-        statement.thrown = thrown;
-        newAt(number).statement = ValueFlowStatementID(m_firstStatement + madeStatements.size());
-        madeStatements.append(MadeStatement { statement, newAt(number).key });
+        newAt(number).statement = ValueFlowStatementID(m_firstStatement + madeNodesOfStatement.size());
         madeNodesOfStatement.append(number);
     }
 
@@ -1289,21 +1282,19 @@ private:
             for (ValueSetID part : m_setsOfParts)
                 wishes.append(Wish { number, ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, part, key.name()) });
             if (m_setsOfParts.isEmpty())
-                makeStatement(number, ValueFlowStatementKind::Lookup, first, { });
+                makeStatement(number);
             break;
         case ValueFlowMadeNodeKind::CallGroup: {
             m_setsOfParts.shrink(0);
             m_maker->appendParts(key.set, m_setsOfParts);
             for (ValueSetID part : m_setsOfParts)
                 wishes.append(Wish { number, ValueFlowNodeKey::callGroup(part, key.callKind(), key.markerOfCallGroup()) });
-            if (m_setsOfParts.isEmpty()) {
-                ValueFlowCallGroup group = callGroupAt(first);
-                makeStatement(number, ValueFlowStatementKind::CallGroup, group.result, group.thrown);
-            }
+            if (m_setsOfParts.isEmpty())
+                makeStatement(number);
             break;
         }
         case ValueFlowMadeNodeKind::Hub:
-            makeStatement(number, ValueFlowStatementKind::Behavior, first, { });
+            makeStatement(number);
             break;
         case ValueFlowMadeNodeKind::Masked:
             masked.append(Masked { number, key.maskKind() == ValueFlowMaskKind::Plain ? ValueSetID() : m_solver.familyObjectsOf(key.set, *m_maker) });
@@ -1532,7 +1523,7 @@ private:
 void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>> makers, std::span<KeyToMake> keys)
 {
     uint32_t firstMadeNodes = m_madeNodes.size();
-    uint32_t firstStatement = m_madeStatements.size();
+    uint32_t firstStatement = m_madeNodesOfStatement.size();
     uint32_t firstPart = m_partsOfMadeNodes.size();
     size_t firstEdge = m_edgesOfRound.size();
     size_t firstReadToLink = m_readToLink.size();
@@ -1542,7 +1533,7 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
         maker->before = total;
         total.madeNodes += maker->madeNodes.size();
         total.nodes += maker->numberOfNodes;
-        total.statements += maker->madeStatements.size();
+        total.statements += maker->madeNodesOfStatement.size();
         total.parts += maker->parts.size();
         total.edges += maker->edges.size();
         total.readToLink += maker->readToLink.size();
@@ -1553,9 +1544,7 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
     m_numberOfNodesMade += total.nodes;
     m_madeNodes.makeRoomToFill(total.madeNodes);
     growAndFill(m_numberOfUsers, m_madeNodes.size(), 0u);
-    m_askerThatKeepsNothingAwake.makeRoomToFill(total.madeNodes);
     m_madeNodesOfNode.makeRoomToFill(total.nodes);
-    m_madeStatements.makeRoomToFill(total.statements);
     growBy(m_madeNodesOfStatement, total.statements);
     growBy(m_partsOfMadeNodes, total.parts);
     growBy(m_edgesOfRound, total.edges);
@@ -1577,19 +1566,13 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
             for (unsigned offset = 0; offset < made.key.numberOfNodes(); ++offset)
                 m_madeNodesOfNode[made.first.index() + offset - m_input.numberOfNodes] = number;
             m_madeNodes[number] = made;
-            m_askerThatKeepsNothingAwake[number] = made.staysAtRest ? everyAsker : made.statement.index();
             uint32_t hash = made.key.hash();
             IndexOfMadeNodes& madeNodes = indexOfMadeNodesWith(hash);
             Locker locker { madeNodes.lock };
             madeNodes.add(tableOfMadeNodesWith(hash), hash, number, m_fewestSlotsOfIndexOfMadeNodes);
         }
-        for (size_t position = 0; position < maker.madeStatements.size(); ++position) {
-            MadeStatement made = maker.madeStatements[position];
-            made.statement.result = maker.nodeMovedUp(made.statement.result);
-            made.statement.thrown = maker.nodeMovedUp(made.statement.thrown);
-            m_madeStatements[firstStatement + maker.before.statements + position] = made;
+        for (size_t position = 0; position < maker.madeNodesOfStatement.size(); ++position)
             m_madeNodesOfStatement[firstStatement + maker.before.statements + position] = maker.madeNodesMovedUp(maker.madeNodesOfStatement[position]);
-        }
         for (size_t position = 0; position < maker.parts.size(); ++position)
             m_partsOfMadeNodes[firstPart + maker.before.parts + position] = maker.madeNodesMovedUp(maker.parts[position]);
         for (size_t position = 0; position < maker.edges.size(); ++position)
@@ -1786,6 +1769,16 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
         }
     });
     m_stepTimes.didFinish("rules: made: parts and their edges"_s);
+}
+
+ValueFlowStatement ValueFlowSolver::statementMadeByRuleAt(ValueFlowStatementID statement) const
+{
+    uint32_t madeNodes = m_madeNodesOfStatement[statement.index() - m_input.statements.size()];
+    if (madeNodes != noSolverIndex) [[likely]]
+        return statementMadeWith(m_madeNodes[madeNodes]);
+    ValueFlowStatement escape;
+    escape.kind = ValueFlowStatementKind::Escape;
+    return escape;
 }
 
 ValueFlowStatement ValueFlowSolver::statementMadeWith(const MadeNodes& made)
@@ -2171,7 +2164,7 @@ void ValueFlowSolver::runStatementsWokenBy(Thread& thread)
             continue;
         made.hasStatementRunWhereMade = true;
         thread.context.begin(made.statement);
-        m_rule(statementAt(made.statement), thread.context);
+        m_rule(statementMadeWith(made), thread.context);
         thread.context.end();
         ++log.numberOfRunsWhereMade;
         runStatementsMadeBy(thread);
@@ -2315,9 +2308,7 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
     uint32_t statements = m_nextStatement.load(std::memory_order_relaxed) - numberOfStatements();
     m_graph.addNodes(m_nextNode.load(std::memory_order_relaxed) - m_graph.numberOfNodes());
     growAndFill(m_numberOfUsers, m_madeNodes.size(), 0u);
-    growAndFill(m_askerThatKeepsNothingAwake, m_madeNodes.size(), everyAsker);
     growAndFill(m_madeNodesOfNode, m_graph.numberOfNodes() - m_input.numberOfNodes, noSolverIndex);
-    m_madeStatements.makeRoomToFill(statements);
     growBy(m_madeNodesOfStatement, statements);
     growByDoubling(m_isDue, numberOfStatements());
     growAndFill(m_rememberedByStatement, numberOfStatements(), ValueSetID());
@@ -2335,12 +2326,8 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
             share.nodes += key.numberOfNodes();
             for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset)
                 m_madeNodesOfNode[made.first.index() + offset - m_input.numberOfNodes] = number;
-            m_askerThatKeepsNothingAwake[number] = made.staysAtRest ? everyAsker : made.statement.index();
-            if (made.statement) {
-                size_t position = made.statement.index() - m_input.statements.size();
-                m_madeStatements[position] = MadeStatement { statementMadeWith(made), key };
-                m_madeNodesOfStatement[position] = number;
-            }
+            if (made.statement)
+                m_madeNodesOfStatement[made.statement.index() - m_input.statements.size()] = number;
             made.isOfThisTurn = key.kind == ValueFlowMadeNodeKind::Masked;
             if (made.staysAtRest) {
                 m_graph.putToRest(made.first, key.numberOfNodes());
@@ -2487,7 +2474,6 @@ void ValueFlowSolver::fillNumbersThatNobodyGave()
             nodes.append(first + offset);
     }
     growAndFill(m_numberOfUsers, m_madeNodes.size(), 0u);
-    growAndFill(m_askerThatKeepsNothingAwake, m_madeNodes.size(), everyAsker);
     growAndFill(m_madeNodesOfNode, m_graph.numberOfNodes() - m_input.numberOfNodes, noSolverIndex);
     for (size_t index = 0; index < records.size(); ++index) {
         MadeNodes made { ValueFlowNodeKey::constant(ValueSets::nothing), ValueFlowNodeID(nodes[index]), { } };
@@ -3485,7 +3471,7 @@ void ValueFlowSolver::countRunsAndEdges()
                 nextWatchedLast += isAskedLast;
                 thread.partsWatchedOfShard[watchShardOf(node, within)].append({ node, within, run.statement, isAskedLast });
             }
-            const ValueFlowStatement& statement = statementAt(run.statement);
+            ValueFlowStatement statement = copyOfStatementAt(run.statement);
             unsigned index = statement.kind == ValueFlowStatementKind::Operation ? static_cast<unsigned>(statement.opcode) : numberOfOpcodes + static_cast<unsigned>(statement.kind);
             RunsAndEdges& row = counts.runsAndEdges[index];
             ++row.runs;
@@ -6382,7 +6368,7 @@ void ValueFlowSolver::report()
         return;
     BuildContext& build = *m_input.build;
     for (size_t index : m_statementsWithMembersNotToldApart) {
-        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         build.gaveUp(LimitID::MaxValueFlowMembersToldApart, Subject { .function = statement.function, .value = statement.site });
     }
     build.statistics().count(hitsOf(LimitID::MaxValueFlowSetMembers), m_counters.nodesSaturated);
@@ -6465,9 +6451,6 @@ void ValueFlowSolver::solve()
         makeStatementsDue(m_input.ranges[body].statement, m_input.ranges[body].statementLeavingBody);
     reach(numberOfBodies - 1, { });
     if (m_input.escaped) {
-        ValueFlowStatement statement;
-        statement.kind = ValueFlowStatementKind::Escape;
-        m_madeStatements.append(MadeStatement { statement, { } });
         m_madeNodesOfStatement.append(noSolverIndex);
         growByDoubling(m_isDue, numberOfStatements());
         makeDue(ValueFlowStatementID(numberOfStatements() - 1));
@@ -6650,7 +6633,7 @@ void ValueFlowSolver::solve()
         m_stepTimes.didFinish("behind the rounds: unknown sources, beside the release of the solving state"_s);
         m_stepTimes.dump();
         if (m_stepTimes.isOn) {
-            dataLogLn("AOT flow statements | ", numberOfStatements(), " | of them made by rules ", m_madeStatements.size());
+            dataLogLn("AOT flow statements | ", numberOfStatements(), " | of them made by rules ", m_madeNodesOfStatement.size());
             forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode opcode, const RunsAndEdges& row) {
                 dataLogLn("AOT flow runs | ", kind == ValueFlowStatementKind::Operation ? nameOf(opcode) : "kind"_s, " ", static_cast<unsigned>(kind), " | runs ", row.runs, " | added nothing ", row.runsThatAddedNothing, " | connections ", row.connections, " | edges logged ", row.edgesLogged);
             });
@@ -6660,6 +6643,12 @@ void ValueFlowSolver::solve()
         for (const Vector<ValueSetID>& cells : nodes.cells.values())
             m_counters.namesWithSeveralCells += cells.size() > 1;
     }
+    m_statementsMadeByRules.grow(m_madeNodesOfStatement.size());
+    constexpr size_t statementsPerShare = 1 << 14;
+    forEachIndexInParallel(m_loops, (m_statementsMadeByRules.size() + statementsPerShare - 1) / statementsPerShare, [&](unsigned share) {
+        for (size_t index = share * statementsPerShare; index < std::min(m_statementsMadeByRules.size(), (share + 1) * statementsPerShare); ++index)
+            m_statementsMadeByRules[index] = statementMadeByRuleAt(ValueFlowStatementID(static_cast<uint32_t>(m_input.statements.size() + index)));
+    });
     findUnknownSources([&] {
         report();
         m_graph.releaseSolvingState(m_input.isAskedHowValuesCame || m_input.remembersWhoLoggedEachEdge ? ValueFlowGraph::Predecessors::AreKept : ValueFlowGraph::Predecessors::AreReleased);
@@ -6758,7 +6747,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     for (uint32_t index = 0; index < readersOfStatement.size(); ++index) {
         if (!readersOfStatement[index])
             continue;
-        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         Row& row = rows.add(static_cast<uint32_t>(statement.kind) << 16 | static_cast<uint32_t>(statement.opcode), Row { }).iterator->value;
         ++row.statements;
         row.readers += readersOfStatement[index];
@@ -6770,7 +6759,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     }
     std::sort(byReaders.begin(), byReaders.end(), [&](uint32_t left, uint32_t right) { return readersOfStatement[left] > readersOfStatement[right]; });
     for (uint32_t index : byReaders.span().first(std::min<size_t>(byReaders.size(), 24))) {
-        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         dataLogLn("AOT flow readers of one statement | ", readersOfStatement[index], " | kind ", static_cast<unsigned>(statement.kind), " | opcode ", nameOf(statement.opcode), " | function ", statement.function.index());
     }
     // Which kinds of nodes the statements read, and for a lookup under which kind of name and of how many receivers.
@@ -6785,7 +6774,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     using ByNode = std::array<uint64_t, kindsOfNodes>;
     HashMap<uint32_t, std::array<ByNode, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> readersByNode;
     auto noteReader = [&](ValueFlowStatementID reader, ValueFlowNodeID node, bool isWatch) {
-        const ValueFlowStatement& statement = statementAt(reader);
+        ValueFlowStatement statement = copyOfStatementAt(reader);
         ++readersByNode.add(static_cast<uint32_t>(statement.kind) << 16 | static_cast<uint32_t>(statement.opcode), std::array<ByNode, 2> { }).iterator->value[isWatch][kindOfNode(node)];
     };
     for (uint32_t index = 0; index < m_readersOfNode.size(); ++index) {
@@ -6829,7 +6818,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
     for (uint32_t index = 0; index < m_usesOfStatement.size(); ++index) {
         if (m_usesOfStatement[index] == noSolverIndex)
             continue;
-        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         ByNode& row = usesByRecord.add(static_cast<uint32_t>(statement.kind) << 16 | static_cast<uint32_t>(statement.opcode), ByNode { }).iterator->value;
         recordsOfStatement.shrink(0);
         forEachRecordAskedForBy(index, [&](uint32_t madeNodes) {
@@ -7040,13 +7029,11 @@ void ValueFlowSolver::dumpBytesByTable() const
 
     bytes.addList("records: made nodes"_s, m_madeNodes);
     bytes.addList("records: number of users"_s, m_numberOfUsers);
-    bytes.addList("records: asker that keeps nothing awake"_s, m_askerThatKeepsNothingAwake);
     for (const IndexOfMadeNodes& index : m_madeNodesByKey) {
         for (IndexOfMadeNodes::Table table : index.tables)
             bytes.add("records: index by key"_s, 0, table.numberOfSlots() * sizeof(IndexOfMadeNodes::Slot));
         bytes.add("records: index by key"_s, index.size * sizeof(IndexOfMadeNodes::Slot), 0);
     }
-    bytes.addList("records: made statements"_s, m_madeStatements);
     bytes.addList("records: record of node"_s, m_madeNodesOfNode);
     bytes.addList("records: parts"_s, m_partsOfMadeNodes);
     bytes.addList("records: record of statement"_s, m_madeNodesOfStatement);

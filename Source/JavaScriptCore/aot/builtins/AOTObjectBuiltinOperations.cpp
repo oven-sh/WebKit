@@ -465,13 +465,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
-    if (Object* record = compiledObjectOrNull(object)) {
-        if ((!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from))
-            OPERATION_RETURN(scope, true);
-        bool didAssign = PropertyWalk::tryAssignCallingGetters(globalObject, object, from);
-        OPERATION_RETURN_IF_EXCEPTION(scope, true);
-        OPERATION_RETURN(scope, didAssign);
-    }
+    if (Object* record = compiledObjectOrNull(object))
+        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);

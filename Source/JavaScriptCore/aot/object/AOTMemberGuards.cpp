@@ -1306,6 +1306,8 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
 
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
+    if (watchpointsOf(m_state).hasNoGuardLeft(layout))
+        return;
     std::optional<FunctionID> defined = functionOf(function);
     bool isNamedByClosureTable = defined && m_state.objects->closures.hasCellFor(*defined);
     if (!isNamedByClosureTable && holdsFromStart(layout) && !layout.classData().subclassesOffset && m_classSidesByHolder.contains(holder)) {

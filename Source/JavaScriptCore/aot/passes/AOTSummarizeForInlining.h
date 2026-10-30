@@ -109,6 +109,17 @@ struct InliningSummary {
     BitVector blocksBoundToFrame;
     BitVector calledParameters;
     BitVector parametersCalledInCycles;
+    // In a loop that stands in a loop.
+    BitVector parametersCalledInNestedLoops;
+    // sort() calls no comparator: it hands the comparator to the function that compares. The parameters of library code that reach a called parameter
+    // by calls that are made whenever the function runs, and where each is handed on.
+    struct ForwardedParameter {
+        uint32_t entryParameter { 0 };
+        FunctionID callee;
+        uint32_t calleeParameter { 0 };
+    };
+    BitVector forwardedParameters;
+    Vector<ForwardedParameter, 0> forwards;
     BitVector iteratedParameters;
     Vector<ParameterCondition, 2> conditions;
     Vector<ParameterSwitch, 0> switches;

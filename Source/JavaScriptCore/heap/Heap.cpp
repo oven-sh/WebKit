@@ -2128,6 +2128,13 @@ NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
     collectInMutatorThread();
 }
 
+// Kept out of line so waitForCollector's frame has no rarely written slots. When the mutator runs the collection itself it does so
+// below that frame and never parks, and the conservative scan would keep whatever stale pointers the slots hold alive.
+static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, unsigned expected)
+{
+    ParkingLot::compareAndPark(&worldState, expected);
+}
+
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
@@ -2170,7 +2177,7 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         }
         
         // If mutatorWaitingBit is still set then we want to wait.
-        ParkingLot::compareAndPark(&m_worldState, oldState | mutatorWaitingBit);
+        parkWhileWorldStateIs(m_worldState, oldState | mutatorWaitingBit);
     }
 }
 
@@ -2256,7 +2263,8 @@ bool Heap::relinquishConn(unsigned oldState)
     return true;
 }
 
-void Heap::finishRelinquishingConn()
+// Out of line for the same reason: its Locker would be two more such slots.
+NEVER_INLINE void Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
     

@@ -390,12 +390,9 @@ public:
     const AddedByGeneralRules& addedByGeneralRules() const LIFETIME_BOUND { return m_addedByGeneralRules; }
 
     const ValueFlowSolverInput& input() const LIFETIME_BOUND { return m_input; }
-    uint32_t numberOfStatements() const { return m_input.statements.size() + m_madeStatements.size(); }
-    const ValueFlowStatement& statementAt(ValueFlowStatementID statement) const LIFETIME_BOUND
-    {
-        size_t index = statement.index();
-        return index < m_input.statements.size() ? m_input.statements[index] : m_madeStatements[index - m_input.statements.size()].statement;
-    }
+    uint32_t numberOfStatements() const { return m_input.statements.size() + m_madeNodesOfStatement.size(); }
+    // A statement made by a rule follows from its record. While the rounds run none is kept; behind them they are laid out, so that whoever reads the results is handed one that stays where it is.
+    const ValueFlowStatement& statementAt(ValueFlowStatementID statement) const LIFETIME_BOUND { return isMadeByRule(statement) ? m_statementsMadeByRules[statement.index() - m_input.statements.size()] : m_input.statements[statement.index()]; }
 
     ValueFlowReachWitness reachedBy(FunctionID function) const { return m_reachedBy[function.index()]; }
     Vector<ValueFlowNodeID> explain(ValueFlowNodeID, ValueFlowObjectID member) const;
@@ -433,7 +430,12 @@ public:
     }
 
     bool isMadeByRule(ValueFlowStatementID statement) const { return statement.index() >= m_input.statements.size(); }
-    const ValueFlowNodeKey& keyOf(ValueFlowStatementID statement) const LIFETIME_BOUND { return m_madeStatements[statement.index() - m_input.statements.size()].key; }
+    const ValueFlowNodeKey& keyOf(ValueFlowStatementID statement) const LIFETIME_BOUND
+    {
+        static constexpr ValueFlowNodeKey keyOfStatementWithoutRecord;
+        uint32_t madeNodes = m_madeNodesOfStatement[statement.index() - m_input.statements.size()];
+        return madeNodes != UINT32_MAX ? m_madeNodes[madeNodes].key : keyOfStatementWithoutRecord;
+    }
     bool mayBeComputedKey(ValueFlowName) const;
     bool isFoundUnderComputedKey(ValueFlowName) const;
     bool isAtRest(ValueFlowStatementID) const;
@@ -504,17 +506,7 @@ private:
         uint32_t numberOfParts { 0 };
     };
 
-    static constexpr uint32_t everyAsker = UINT32_MAX - 1;
-    bool keepsAwake(ValueFlowStatementID asker, uint32_t madeNodes) const
-    {
-        uint32_t askerThatKeepsNothingAwake = m_askerThatKeepsNothingAwake[madeNodes];
-        return askerThatKeepsNothingAwake != everyAsker && askerThatKeepsNothingAwake != asker.index();
-    }
-
-    struct MadeStatement {
-        ValueFlowStatement statement;
-        ValueFlowNodeKey key;
-    };
+    bool keepsAwake(ValueFlowStatementID asker, uint32_t madeNodes) const { return !m_madeNodes[madeNodes].staysAtRest && m_madeNodes[madeNodes].statement != asker; }
 
     // The records that a statement asked for stand side by side, the latest first. The last of them has this bit.
     static constexpr uint32_t isLastUse = 1u << 31;
@@ -686,6 +678,9 @@ private:
     std::optional<uint32_t> makeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     void takeWhatRulesHaveMade();
     static ValueFlowStatement statementMadeWith(const MadeNodes&);
+    ValueFlowStatement statementMadeByRuleAt(ValueFlowStatementID) const;
+    ValueFlowStatement copyOfStatementAt(ValueFlowStatementID statement) const { return isMadeByRule(statement) ? statementMadeByRuleAt(statement) : m_input.statements[statement.index()]; }
+    Vector<ValueFlowStatement> m_statementsMadeByRules;
     void runStatementsMadeBy(Thread&);
     void runStatementsWokenBy(Thread&);
     bool isRecordAtRest(uint32_t madeNodes) const { return madeNodes < m_numberOfUsers.size() && !m_numberOfUsers[madeNodes]; }
@@ -803,7 +798,6 @@ private:
     mutable std::atomic<uint32_t> m_nextStatement { 0 };
     alignas(64) uint32_t m_numberOfNodesMade { 0 };
     ListWithRoomToFill<uint32_t> m_numberOfUsers;
-    ListWithRoomToFill<uint32_t> m_askerThatKeepsNothingAwake;
     struct alignas(64) IndexOfMadeNodes {
         using Slot = std::atomic<uint64_t>;
 
@@ -859,7 +853,6 @@ private:
     alignas(64) mutable std::array<std::atomic<IndexOfMadeNodes::Table>, numberOfIndicesOfMadeNodes> m_tablesOfMadeNodes { };
     mutable std::array<IndexOfMadeNodes, numberOfIndicesOfMadeNodes> m_madeNodesByKey;
     size_t m_fewestSlotsOfIndexOfMadeNodes { 64 };
-    ListWithRoomToFill<MadeStatement> m_madeStatements;
     ListWithRoomToFill<uint32_t> m_madeNodesOfNode;
     Vector<uint32_t> m_partsOfMadeNodes;
     using LatestNodes = std::array<uint32_t, 4>;

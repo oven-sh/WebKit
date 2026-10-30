@@ -208,7 +208,10 @@ public:
     bool mayAnswerToName(ModuleID module) const { return m_mayAnswerToName.quickGet(module.index()); }
     // Whether the path of a module that may answer to a name, or what stands in it behind a folder node_modules, begins with the text.
     bool holdsModuleOfPackage(std::span<const uint8_t> package) const;
-    bool isNameOfLibraryModule(std::span<const uint8_t> name) const;
+    // The module of the library whose path is the name, with or without "node:" in front.
+    ModuleID libraryModuleNamed(std::span<const uint8_t> name) const;
+    // The modules of the library that some text of the program stands for, by the front end: it knows every spelling.
+    std::span<const ModuleID> libraryModulesThatTextsStandFor() const LIFETIME_BOUND { return m_libraryModulesThatTextsStandFor.span(); }
 
     std::span<const ValueFlowClassOfEntries> classesOfEntries() const LIFETIME_BOUND { return m_classesOfEntries.span(); }
     std::span<const ValueFlowClassOfEntries> classesOfHostWithEntries() const LIFETIME_BOUND { return m_classesOfHostWithEntries.span(); }
@@ -321,6 +324,7 @@ private:
     struct RestOfPath {
         StringID path;
         uint32_t start { 0 };
+        ModuleID module;
     };
     std::span<const uint8_t> textOf(RestOfPath rest) const { return m_program.string(rest.path).subspan(rest.start); }
     const RestOfPath* findFirstNotBefore(const Vector<RestOfPath>&, std::span<const uint8_t> text) const;
@@ -328,6 +332,7 @@ private:
     BitVector m_mayAnswerToName;
     Vector<RestOfPath> m_whereNamesOfPackagesBegin;
     Vector<RestOfPath> m_namesOfLibraryModules;
+    Vector<ModuleID> m_libraryModulesThatTextsStandFor;
     BitVector m_keysStoredUnderOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;

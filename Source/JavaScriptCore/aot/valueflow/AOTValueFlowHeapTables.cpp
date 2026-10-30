@@ -534,16 +534,17 @@ void ValueFlowHeapTables::listWherePackagesAreNamedInPaths()
         m_mayAnswerToName.quickSet(index);
         StringID path = m_program.modules[index].path;
         std::span<const uint8_t> text = m_program.string(path);
-        m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0 });
+        m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0, ModuleID(index) });
         if (const Module& module = m_program.modules[index]; module.runtimeModule && (!module.body || isAskedOfHostByName(module))) {
-            m_namesOfLibraryModules.append(RestOfPath { path, 0 });
+            m_libraryModulesThatTextsStandFor.append(ModuleID(index));
+            m_namesOfLibraryModules.append(RestOfPath { path, 0, ModuleID(index) });
             if (spanHasPrefix(text, std::span(prefixOfLibrary)))
-                m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()) });
+                m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()), ModuleID(index) });
         }
         for (size_t start = 0; start + folder.size() < text.size(); ++start) {
             uint8_t separator = text[start + folder.size()];
             if ((separator == '/' || separator == '\\') && spanHasPrefix(text.subspan(start), std::span(folder)))
-                m_whereNamesOfPackagesBegin.append(RestOfPath { path, static_cast<uint32_t>(start + folder.size() + 1) });
+                m_whereNamesOfPackagesBegin.append(RestOfPath { path, static_cast<uint32_t>(start + folder.size() + 1), ModuleID(index) });
         }
     }
     for (Vector<RestOfPath>* list : { &m_whereNamesOfPackagesBegin, &m_namesOfLibraryModules }) {
@@ -569,10 +570,10 @@ bool ValueFlowHeapTables::holdsModuleOfPackage(std::span<const uint8_t> package)
     return found && spanHasPrefix(textOf(*found), package);
 }
 
-bool ValueFlowHeapTables::isNameOfLibraryModule(std::span<const uint8_t> name) const
+ModuleID ValueFlowHeapTables::libraryModuleNamed(std::span<const uint8_t> name) const
 {
     const RestOfPath* found = findFirstNotBefore(m_namesOfLibraryModules, name);
-    return found && equalSpans(textOf(*found), name);
+    return found && equalSpans(textOf(*found), name) ? found->module : ModuleID();
 }
 
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)

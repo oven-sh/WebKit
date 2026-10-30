@@ -88,6 +88,7 @@ JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned
 void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);
 Presence testIntegrity(JSObject*, Integrity);
+// Calls the getters of a compiled source, which may throw.
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
 // Object.assign(target, source) of a compiled source with a getter, in the steps of the language. False before anything has run.
 bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source);

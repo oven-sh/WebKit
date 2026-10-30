@@ -657,6 +657,13 @@ static void findDifferenceOfParameters(const Function& function, InliningSummary
     summary.differenceCalls = WTF::move(calls);
 }
 
+// But for a way out that is not expected to be taken.
+static bool isMadeWheneverFunctionRuns(FunctionAnalyses& analyses, BlockID blockOfCall)
+{
+    AOT_THRESHOLD(double, minFrequency, 0.9);
+    return analyses.blockFrequencies().frequencyOf(blockOfCall).predicted() >= minFrequency;
+}
+
 InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
@@ -999,6 +1006,24 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         return !objectUse.uses.containsAll(callingUses) || declaredUsesAt(objectUse.use).containsAny(callingUses);
     };
 
+    auto forwardAt = [&](const Use& use) -> std::optional<std::pair<FunctionID, uint32_t>> {
+        if (use.kind != Use::Kind::Operand)
+            return std::nullopt;
+        const Value& user = function.at(use.user);
+        if (user.opcode == Opcode::CallDirect)
+            return std::pair { user.function(), use.operandIndex };
+        if (user.opcode != Opcode::Call || use.operandIndex < OperandIndex::Call::arguments)
+            return std::nullopt;
+        const Type& called = program.typeOf(function, user.operand(OperandIndex::Call::callee));
+        FunctionID callee = called.singleFunction();
+        if (!callee || called.mayBeUndefinedOrNull())
+            return std::nullopt;
+        uint32_t argument = use.operandIndex - OperandIndex::Call::arguments;
+        if (argument >= program.at(callee).numberOfPositionalParameters())
+            return std::nullopt;
+        return std::pair { callee, program.at(callee).firstParameterIndex() + argument };
+    };
+
     auto findCalledAndIteratedParameters = [&] {
         auto& entryParameters = function.at(entryBlock).parameters;
         auto mayBeFunction = [&](ValueID parameter) {
@@ -1038,12 +1063,24 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 summary.iteratedParameters.set(i);
             if (!mayBeCalled)
                 continue;
+            if (isLibraryCode(program, function)) {
+                for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+                    auto forward = forwardAt(objectUse.use);
+                    if (forward && isMadeWheneverFunctionRuns(analyses, objectUse.use.block))
+                        summary.forwards.append({ i, forward->first, forward->second });
+                }
+            }
             for (const ObjectUse& objectUse : escape.usesOf(*object)) {
                 if (!isCalledAt(objectUse))
                     continue;
                 summary.calledParameters.set(i);
-                if (cycles->isInCycle(objectUse.use.block) || isRepeatedBuiltinCallback(objectUse.use)) {
-                    summary.parametersCalledInCycles.set(i);
+                if (!cycles->isInCycle(objectUse.use.block) && !isRepeatedBuiltinCallback(objectUse.use))
+                    continue;
+                summary.parametersCalledInCycles.set(i);
+                const NaturalLoops& loops = analyses.naturalLoops();
+                const NaturalLoop* loop = loops.innerMostLoopOf(objectUse.use.block);
+                if (loop && loops.innerMostOuterLoop(*loop)) {
+                    summary.parametersCalledInNestedLoops.set(i);
                     break;
                 }
             }
@@ -1196,6 +1233,23 @@ InliningSummaries summarizeForInlining(const Program& program, const CallGraph& 
         }
     }
 
+    Vector<uint32_t> forwarding = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
+        return !summaries[index].forwards.isEmpty();
+    });
+    for (bool hasChanged = true; std::exchange(hasChanged, false);) {
+        for (uint32_t index : forwarding) {
+            InliningSummary& summary = summaries[index];
+            for (const InliningSummary::ForwardedParameter& forward : summary.forwards) {
+                const InliningSummary& callee = summaries[forward.callee.index()];
+                if (!callee.calledParameters.get(forward.calleeParameter) && !callee.forwardedParameters.get(forward.calleeParameter))
+                    continue;
+                hasChanged |= !summary.forwardedParameters.set(forward.entryParameter);
+                if (callee.parametersCalledInNestedLoops.get(forward.calleeParameter))
+                    hasChanged |= !summary.parametersCalledInNestedLoops.set(forward.entryParameter);
+            }
+        }
+    }
+
     // A function that hands its parameters on is what its callees are. The callees are few and lie one or two calls deep.
     Vector<uint32_t> handingOn = findIndicesInParallel(loops, summaries.size(), [&](unsigned index) {
         return !summaries[index].differenceCalls.isEmpty();
@@ -1286,6 +1340,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
         out.print(summary.hasBareReturn ? " bareReturn" : "", summary.isWrapper ? " wrapper" : "", contains(id) && returnsFreshAggregate(program, id) ? " returnsFreshAggregate" : "");
         dumpIndices(out, " called=["_s, ""_s, summary.calledParameters);
         dumpIndices(out, " calledInCycles=["_s, ""_s, summary.parametersCalledInCycles);
+        dumpIndices(out, " calledInNestedLoops=["_s, ""_s, summary.parametersCalledInNestedLoops);
+        dumpIndices(out, " handedOn=["_s, ""_s, summary.forwardedParameters);
         dumpIndices(out, " iterated=["_s, ""_s, summary.iteratedParameters);
         for (const ParameterCondition& condition : summary.conditions) {
             out.print(" condition(v", condition.condition.index(), " p", condition.entryParameter, " true=", condition.onlyIfTrue.bytes, " false=", condition.onlyIfFalse.bytes, ")");
@@ -2923,54 +2979,109 @@ static FunctionID sortWithoutCallsFor(FunctionPassContext& context, const Value&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static PassOutcome callCalleeVersions(FunctionPassContext& context, std::span<const InlineSite> sites)
+struct ChosenCalleeVersion {
+    DerivedFunctionKey key;
+    // The callee calls no function that it is handed: it hands the function to a callee of its own.
+    bool onlyHandsOn { false };
+};
+
+static std::optional<ChosenCalleeVersion> chooseCalleeVersion(FunctionPassContext& context, const InlineSite& site)
 {
     const Program& program = context.program;
+    const Function& caller = context.function;
+    const Value& call = caller.at(site.call);
+    const Function& callee = program.at(call.function());
+    BitVector parameters = site.summary->calledParameters;
+    parameters.merge(site.summary->forwardedParameters);
+    for (size_t index : parameters) {
+        if (index >= call.numberOfOperands())
+            break;
+        uint32_t entryParameter = static_cast<uint32_t>(index);
+        const Type& passed = program.typeOf(caller, call.operand(entryParameter));
+        FunctionID argument = passed.singleFunction();
+        BuiltinID builtinArgument = singleBuiltinFunction(program, passed);
+        if ((!argument && !builtinArgument) || ProvisionalFunctions::contains(argument) || !canHaveCalleeVersion(program, call.function(), entryParameter))
+            continue;
+        if (context.exceeds(LimitID::MaxValuesInCalleeVersion, callee.values.size(), site.call))
+            break;
+        // The type of the parameter lists the functions that it is seen to receive, and each may get a copy of the callee.
+        auto wouldHaveTooManyCopies = [&] {
+            const Type& parameter = program.typeOf(callee, callee.at(entryBlock).parameters[entryParameter]);
+            return context.exceeds(LimitID::MaxBytesOfCalleeVersions, uint64_t { parameter.functions.size() } * site.summary->codeBytes, site.call);
+        };
+        bool mayBeNullish = passed.mayBeUndefinedOrNull();
+        bool sharesCopy = isLibraryCode(program, callee) || isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
+        // What a copy saves are the calls of the function, and the call is most of what a short function costs. At a hot site a callee that makes them in a loop
+        // makes them as often as a loop in hot code runs. So does one that makes them in a loop in a loop where a loop at the site would be hot.
+        AOT_THRESHOLD(uint32_t, maxBytesOfShortFunction, 100);
+        bool isShortFunction = argument && inliningSummaryOf(context, argument).codeBytes <= maxBytesOfShortFunction;
+        auto callsOfShortFunctionAreHot = [&] {
+            return isShortFunction && site.summary->parametersCalledInNestedLoops.get(index) && isHot(heatClassOfLoopAt(context, site.block)).predicted();
+        };
+        // A copy that was made for a function hands it on to copies for it.
+        bool continuesCopy = argument && calleeVersionIsFor(caller, argument) && isMadeWheneverFunctionRuns(context.analyses, site.block);
+        // All who pass one built-in function share the copy for it, and few built-in functions are passed at all.
+        bool isForCalleeAlone = builtinArgument || ((isHot(heatClassOf(context, site.block)).predicted() || !sharesCopy || continuesCopy || callsOfShortFunctionAreHot()) && !wouldHaveTooManyCopies());
+        // A callee that only hands the function on gains nothing itself: its copy is the price of the copy below it. To know that it hands on some function is worth none, and a long function little.
+        AOT_THRESHOLD(uint32_t, maxBytesOfCopyThatHandsOn, 256);
+        bool onlyHandsOn = !site.summary->calledParameters.get(index);
+        if (onlyHandsOn && (!isForCalleeAlone || !isShortFunction || site.summary->codeBytes > maxBytesOfCopyThatHandsOn))
+            continue;
+        return ChosenCalleeVersion {
+            !isForCalleeAlone ? calleeVersionKeyForAnyFunction(call.function(), entryParameter, mayBeNullish)
+                : argument ? calleeVersionKey(call.function(), entryParameter, argument, mayBeNullish)
+                : calleeVersionKeyForBuiltin(call.function(), entryParameter, builtinArgument, mayBeNullish),
+            onlyHandsOn,
+        };
+    }
+    return std::nullopt;
+}
+
+static PassOutcome callCalleeVersions(FunctionPassContext& context, std::span<const InlineSite> sites)
+{
     Function& caller = context.function;
     PassOutcome outcome = PassOutcome::Unchanged;
     for (const InlineSite& site : sites) {
         InlineDecision decision = site.verdict.decision;
         if (decision == InlineDecision::Inline || decision == InlineDecision::Barrier || decision == InlineDecision::SignatureMismatch)
             continue;
-        const Value& call = caller.at(site.call);
-        if (FunctionID sort = sortWithoutCallsFor(context, call)) {
+        if (FunctionID sort = sortWithoutCallsFor(context, caller.at(site.call))) {
             caller.edit(site.call, ValueEdit::Definition).setFunction(sort);
             outcome = PassOutcome::Changed;
             continue;
         }
-        const Function& callee = program.at(call.function());
-        for (size_t index : site.summary->calledParameters) {
-            if (index >= call.numberOfOperands())
-                break;
-            uint32_t entryParameter = static_cast<uint32_t>(index);
-            const Type& passed = program.typeOf(caller, call.operand(entryParameter));
-            FunctionID argument = passed.singleFunction();
-            BuiltinID builtinArgument = singleBuiltinFunction(program, passed);
-            if ((!argument && !builtinArgument) || ProvisionalFunctions::contains(argument) || !canHaveCalleeVersion(program, call.function(), entryParameter))
-                continue;
-            if (context.exceeds(LimitID::MaxValuesInCalleeVersion, callee.values.size(), site.call))
-                break;
-            // The type of the parameter lists the functions that it is seen to receive, and each may get a copy of the callee.
-            auto wouldHaveTooManyCopies = [&] {
-                const Type& parameter = program.typeOf(callee, callee.at(entryBlock).parameters[entryParameter]);
-                return context.exceeds(LimitID::MaxBytesOfCalleeVersions, uint64_t { parameter.functions.size() } * site.summary->codeBytes, site.call);
-            };
-            bool mayBeNullish = passed.mayBeUndefinedOrNull();
-            bool sharesCopy = isLibraryCode(program, callee) || isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
-            // All who pass one built-in function share the copy for it, and few built-in functions are passed at all.
-            bool isForCalleeAlone = builtinArgument || ((isHot(heatClassOf(context, site.block)).predicted() || !sharesCopy) && !wouldHaveTooManyCopies());
-            caller.edit(site.call, ValueEdit::Definition).setFunction(context.derivedFunction(!isForCalleeAlone
-                ? calleeVersionKeyForAnyFunction(call.function(), entryParameter, mayBeNullish)
-                : argument ? calleeVersionKey(call.function(), entryParameter, argument, mayBeNullish)
-                : calleeVersionKeyForBuiltin(call.function(), entryParameter, builtinArgument, mayBeNullish)));
-            outcome = PassOutcome::Changed;
-            break;
-        }
+        std::optional<ChosenCalleeVersion> version = chooseCalleeVersion(context, site);
+        if (!version)
+            continue;
+        Value& call = caller.edit(site.call, ValueEdit::Definition);
+        call.setFunction(context.derivedFunction(version->key));
+        // Copied into the caller it would make its calls there.
+        if (version->onlyHandsOn)
+            call.setIsNeverInlined(true);
+        outcome = PassOutcome::Changed;
     }
     // The call names another function. Its operands and its place are as they were.
     if (outcome == PassOutcome::Changed)
         context.analyses.invalidate(valueAnalyses - analysesThatReadNoTypes);
     return outcome;
+}
+
+// In its caller a function that only hands a function on makes the same calls with the same operands: the caller grows and saves one call.
+// Where it pays, a copy of it for that function takes the call.
+static bool onlyHandsOnFunction(FunctionPassContext& context, const InlineSite& site)
+{
+    const Value& call = context.function.at(site.call);
+    if (site.summary->forwardedParameters.isEmpty() || arrayMethodCallOf(context.program, context.function, site.call))
+        return false;
+    for (size_t index : site.summary->forwardedParameters) {
+        if (index >= call.numberOfOperands())
+            break;
+        uint32_t entryParameter = static_cast<uint32_t>(index);
+        FunctionID argument = context.program.typeOf(context.function, call.operand(entryParameter)).singleFunction();
+        if (argument && !site.summary->calledParameters.get(index) && !ProvisionalFunctions::contains(argument) && canHaveCalleeVersion(context.program, call.function(), entryParameter))
+            return true;
+    }
+    return false;
 }
 
 static void copyAcceptedSites(FunctionPassContext& context, IRBuilder& builder, std::span<const InlineSite> sites)
@@ -3014,6 +3125,10 @@ PassOutcome inlineCalls(FunctionPassContext& context)
             site.summary = &inliningSummaryOf(context, caller.at(site.call).function());
             InlineDecision legality = canInline(context, *site.summary, site.call);
             site.verdict = legality != InlineDecision::Unknown ? InlineVerdict { .decision = legality } : computeInlineVerdict(context, *site.summary, site.block, site.call);
+        }
+        for (InlineSite& site : sites) {
+            if (isAccepted(site) && onlyHandsOnFunction(context, site))
+                site.verdict.decision = InlineDecision::CostExceedsBenefit;
         }
         spendCallerBudget(context, sites);
 

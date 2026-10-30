@@ -467,6 +467,8 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueSetID>> storedInAppendedFields;
     Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
     Vector<BitVector> appendedFieldsWithUnknownValues;
+    // `for (var name in defaults) options[name] = ..` where the layout of options has a field under one of the names: what the loop stores there is not what the stores under the name say.
+    Vector<BitVector> fieldsStoredUnderNamesOfEnumerations;
 };
 
 class ValueFlowNodesAskedFor {

@@ -282,14 +282,20 @@ static void printPassContext(PrintStream& out, FunctionPassContext& pass)
 
 static void runFunctionPassesCommand(TestCommandContext& context)
 {
-    Vector<PassID> passes;
+    // `behind-rounds` in front of a name: that pass runs as at a step behind the rounds of its schedule.
+    Vector<std::pair<PassID, bool>> passes;
+    bool isBehindRounds = false;
     for (const String& word : context.arguments) {
+        if (word == "behind-rounds"_s) {
+            isBehindRounds = true;
+            continue;
+        }
         std::optional<PassID> pass = passNamed(word);
         if (!pass || descriptorOf(*pass).scope != PassScope::Function || descriptorOf(*pass).derivesFunctions) {
             context.out.println("error: function-passes takes the names of function passes that derive no functions, not ", word);
             return;
         }
-        passes.append(*pass);
+        passes.append({ *pass, std::exchange(isBehindRounds, false) });
     }
     if (passes.isEmpty()) {
         context.out.println("error: function-passes takes the names of function passes");
@@ -313,8 +319,10 @@ static void runFunctionPassesCommand(TestCommandContext& context)
         FunctionID id(index);
         FunctionAnalyses analyses(AnalysisContext { context.build, program, &inputs.flow, &inputs.effects, id }, function);
         FunctionPassContext pass { program, inputs, id, function, analyses, arenas.types, arenas.strings, context.build };
-        for (PassID passID : passes) {
+        for (auto [passID, runsBehindRounds] : passes) {
+            pass.isBehindRounds = runsBehindRounds;
             PassOutcome outcome = runner.runFunctionPass(passID, pass);
+            pass.isBehindRounds = false;
             context.out.println("f", index, " ", nameOf(passID), ": ", outcome == PassOutcome::Changed ? "Changed"_s : "Unchanged"_s);
         }
     }

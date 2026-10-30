@@ -419,11 +419,16 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
     output.diagnostics = context.takeDiagnostics();
     if (context.options().logging.logsPhaseTimes) [[unlikely]] {
         context.statistics().dumpPassTimes(WTF::dataFile());
-        // What stands beside a limit that stops a build.
+        // What stands beside a limit that stops a build. The names are written out: nameOf(StatisticID) would keep the names of all statistics in an executable that has no other use for them.
         Vector<uint64_t> counted = context.statistics().values();
+        static constexpr std::pair<ASCIILiteral, StatisticID> sizes[] = {
+            { "functions emitted"_s, StatisticID::ImageFunctionsEmitted }, { "code bytes"_s, StatisticID::CodeBytesEmitted }, { "table bytes"_s, StatisticID::TableBytesEmitted },
+            { "program table bytes"_s, StatisticID::ProgramTableBytesEmitted }, { "text bytes"_s, StatisticID::TextBytesEmitted }, { "identifiers"_s, StatisticID::IdentifiersNumbered },
+            { "string constants"_s, StatisticID::StringConstantsNumbered }, { "literal strings"_s, StatisticID::LiteralStringsNumbered }, { "shapes"_s, StatisticID::Shapes }, { "call sites"_s, StatisticID::CallSitesEmitted },
+        };
         dataLog("AOT size of the image:");
-        for (StatisticID id : { StatisticID::ImageFunctionsEmitted, StatisticID::CodeBytesEmitted, StatisticID::TableBytesEmitted, StatisticID::ProgramTableBytesEmitted, StatisticID::TextBytesEmitted, StatisticID::IdentifiersNumbered, StatisticID::StringConstantsNumbered, StatisticID::LiteralStringsNumbered, StatisticID::Shapes, StatisticID::CallSitesEmitted })
-            dataLog(" | ", nameOf(id), " ", counted[static_cast<unsigned>(id)]);
+        for (auto [name, id] : sizes)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
         dataLogLn();
     }
     output.statistics = context.takeStatistics();

@@ -1,0 +1,76 @@
+# A slow path that comes back knows nothing of what it brings, so the merge point asks again. The way that read a slot knows: it gets a copy of the block, in which the test
+# folds, and the slow path keeps the block and with it the test. Only at the step behind the rounds, in hot code, for a rare slow path, and where the block holds nothing but the test.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: function-passes behind-rounds ThreadJumps
+# RUN(ROUNDS): function-passes ThreadJumps
+# LOSS: MaxInlineHeadBytes
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="rareWayKeepsTheTest" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2() frequency=Rare:
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = RequireObjectCoercible v3 name="length"
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[copy]](v0)
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b3(v3: anything ~ undefined|null|string) frequency=Rare:
+# CHECK: [[copy]](
+# CHECK-NEXT: = RequireObjectCoercible
+# CHECK-NEXT: = TypeTest
+# ROUNDS: b1():
+# ROUNDS-NEXT: Jump -> next b3(v0)
+}
+
+function f1 name="unlikelyWayShares" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2() frequency=Unlikely:
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = RequireObjectCoercible v3 name="length"
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3(v1)
+}
+
+function f2 name="blockThatDoesMoreShares" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}, {type=i32}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2() frequency=Rare:
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = BitAnd v3, v3
+    v6 = RequireObjectCoercible v4 name="length"
+    v7 = TypeTest v6 testedType=string
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8):
+    Return v8
+  b5():
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: Jump -> next b3(v1)
+}

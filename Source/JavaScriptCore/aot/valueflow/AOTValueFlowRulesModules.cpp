@@ -932,7 +932,7 @@ static void followModuleObjectsOfRequire(ValueFlowRuleContext& context, ModuleID
         context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, parent));
 }
 
-static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
 {
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
@@ -978,6 +978,22 @@ static ValueFlowNodeID reasonOfPromiseAt(const ValueFlowStatement& statement, Va
 {
     ValueFlowObjectID promise = context.universe().siteObject(statement);
     return promise ? context.written(only(context, promise), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseReason.index() }) : ValueFlowProgramNodes::escaped();
+}
+
+static void importModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+{
+    noteRequest(context, statement.function, module);
+    evaluateModule(context, module);
+    context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
+    connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
+    connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
+    if (context.program().at(module).flags.contains(ModuleFlags::MayBeEvicted))
+        context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
+}
+
+static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const Value& load)
+{
+    return modulesThatNamesFind(context, statement.function, load.specifierOperand(), context.operandsOf(statement)[0]);
 }
 
 // `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().
@@ -1059,19 +1075,10 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         return;
     case Opcode::ImportModule: {
         escapeOperands(statement, context);
-        auto import = [&](ModuleID module) {
-            noteRequest(context, statement.function, module);
-            evaluateModule(context, module);
-            context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
-            connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
-            connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
-            if (program.at(module).flags.contains(ModuleFlags::MayBeEvicted))
-                context.add(settledValueOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
-        };
-        import(operation.module());
+        importModule(statement, context, operation.module());
         if (!context.operandsOf(statement).empty()) {
             for (ModuleID form : formsInImage(program, operation.module()))
-                import(form);
+                importModule(statement, context, form);
         }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
@@ -1096,14 +1103,24 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         return;
     case Opcode::ImportDynamic:
         escapeOperands(statement, context);
-        loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); found.fileOfProgram)
+            loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
+        else {
+            noteLoadUnderSpelledNames(context, statement.function);
+            for (ModuleID module : found.libraryModules)
+                importModule(statement, context, module);
+        }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
     case Opcode::RequireDynamic:
         escapeOperands(statement, context);
         if (program.at(operation.referrer()).exportsVariable)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, context.universe().objectOf(Builtins::ModuleObject, operation.referrer())));
-        if (statement.result)
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.fileOfProgram) {
+            noteLoadUnderSpelledNames(context, statement.function);
+            for (ModuleID module : found.libraryModules)
+                requireModule(statement, context, module);
+        } else if (statement.result)
             loadByUnknownName(statement, context, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
         else if (isWrittenInProgram(program.at(statement.function)))
             letModulesBeLoadedByName(context, ValueFlowHostNode::RequiredValuesLoadedByName);

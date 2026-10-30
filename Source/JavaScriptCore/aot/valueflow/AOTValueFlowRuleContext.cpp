@@ -172,7 +172,7 @@ void ValueFlowRuleContext::end()
     });
 }
 
-FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
+FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.copyOfStatementAt(m_statement).function; }
 // `if (!$isProxyObject(x)) use(x);`: the rules see x as the test lets it through. What the results read stays as it is: a mask there is a claim about the value, not about one use of it.
 std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement)
 {

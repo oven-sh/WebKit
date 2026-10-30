@@ -1644,20 +1644,22 @@ struct FieldResults {
     }
 
     // `for (var name in defaults) options[name] = ..`: the store names what the enumerated objects list. A prediction: whatever else the enumeration shows is stored as a name that no field has.
-    // Only for an object that the program names a field of. `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied.
+    // `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied. So an object that the program names no field of
+    // gets the names only where flow holds every object that is enumerated, and nothing lists the names of the object itself.
     void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, const Function& function, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
     {
         namespace At = OperandIndex;
         const Value& name = function.at(definitionThroughTests(function, function.at(store.site).operand(At::ElemSet::property)));
         if (name.opcode != Opcode::ResultAt || name.index() != static_cast<uint32_t>(ForInStepResult::Key) || function.at(name.resultsOperand()).opcode != Opcode::ForInStep)
             return;
-        auto layoutsFollowedTo = [&](const ValueFlowOperand& operand) {
+        auto layoutsIn = [&](ValueSetID set, bool& everyObjectHasLayout) {
             Vector<LayoutID, 4> layouts;
-            ValueSetID seen = inputs.seenValuesOf(maker, operand);
-            if (seen == ValueSets::nothing || ValueSets::isComplement(seen))
+            everyObjectHasLayout = set != ValueSets::nothing && !ValueSets::isComplement(set);
+            if (!everyObjectHasLayout)
                 return layouts;
-            sets.forEachMemberInLine(seen, [&](ValueFlowObjectID object) {
+            sets.forEachMemberInLine(set, [&](ValueFlowObjectID object) {
                 LayoutID layout = inputs.universe().layoutOf(object);
+                everyObjectHasLayout &= layout || !inputs.universe().isObject(object);
                 if (layout && layouts.size() <= mostLayouts && !layouts.contains(layout))
                     layouts.append(layout);
             });
@@ -1665,19 +1667,24 @@ struct FieldResults {
                 layouts.clear();
             return layouts;
         };
-        Vector<LayoutID, 4> targets = layoutsFollowedTo(inputs.bodies().operandsOf(store)[At::ElemSet::object]);
-        targets.removeAllMatching([&](LayoutID target) {
-            return program.at(target).fields.isEmpty() || program.at(target).has(LayoutFlags::IsWrittenUnderDictionaryType);
-        });
+        bool ignored;
+        Vector<LayoutID, 4> targets = layoutsIn(inputs.seenValuesOf(maker, inputs.bodies().operandsOf(store)[At::ElemSet::object]), ignored);
         if (targets.isEmpty())
             return;
         for (const ValueFlowStatement& step : inputs.bodies().statementsOf(body)) {
             if (step.kind != ValueFlowStatementKind::Operation || step.opcode != Opcode::ForInStep || step.site != name.resultsOperand())
                 continue;
-            for (LayoutID enumerated : layoutsFollowedTo(inputs.bodies().operandsOf(step)[At::ForInStep::object])) {
-                for (const Field& field : program.at(enumerated).fields) {
-                    if (field.key && program.at(field.key).kind == PropertyKeyKind::Text && !field.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand })) {
-                        for (LayoutID target : targets)
+            const ValueFlowOperand& enumerated = inputs.bodies().operandsOf(step)[At::ForInStep::object];
+            bool holdsEveryObject;
+            layoutsIn(inputs.possibleValuesOf(maker, enumerated), holdsEveryObject);
+            for (LayoutID source : layoutsIn(inputs.seenValuesOf(maker, enumerated), ignored)) {
+                for (const Field& field : program.at(source).fields) {
+                    if (!field.key || program.at(field.key).kind != PropertyKeyKind::Text || field.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand }))
+                        continue;
+                    for (LayoutID target : targets) {
+                        bool isNamedByProgram = !program.at(target).fields.isEmpty() && !program.at(target).has(LayoutFlags::IsWrittenUnderDictionaryType);
+                        // A dictionary is spread and enumerated faster than fields that came late.
+                        if (isNamedByProgram || (holdsEveryObject && !uses.mayBeEnumerated(layoutsOfObjects.objectsWith(target))))
                             functor(target, field.key);
                     }
                 }
@@ -1697,7 +1704,7 @@ struct FieldResults {
         return false;
     }
 
-    KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByOutsideCreators) const
+    KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByOutsideCreators, Vector<BitVector>& fieldsStoredUnderNamesOfEnumerations) const
     {
         ValueSetMakers makers(inputs);
         KeysByLayout keysByLayout(numberOfLayouts);
@@ -1789,7 +1796,12 @@ struct FieldResults {
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
             }
         }
+        fieldsStoredUnderNamesOfEnumerations = Vector<BitVector>(numberOfLayouts);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
+            for (PropertyKeyID key : keysOfEnumerationsCopied[index]) {
+                if (std::optional<uint32_t> field = program.layouts[index].findField(key))
+                    fieldsStoredUnderNamesOfEnumerations[index].set(*field);
+            }
             forEachOnProvenChain(application, LayoutID(index), [&](LayoutID current) {
                 fieldCountsAsAnalyzed[index] += program.at(current).fields.size();
             });
@@ -2452,7 +2464,7 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
             results.layoutsDirectlyBelow[base.index()].append(LayoutID(index));
     }
     KeysByLayout keysFilledByOutsideCreators;
-    KeysByLayout appendedKeys = results.chooseAppendedKeys(keysFilledByOutsideCreators);
+    KeysByLayout appendedKeys = results.chooseAppendedKeys(keysFilledByOutsideCreators, contents.fieldsStoredUnderNamesOfEnumerations);
     times.didFinish("fields: appended keys chosen"_s);
     results.appendFields(appendedKeys, keysFilledByOutsideCreators, contents);
     times.didFinish("fields: fields appended"_s);

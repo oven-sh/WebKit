@@ -314,6 +314,12 @@ void SavedFrameEmitter::generateSuspendInHeapFrame(const ValueContext& value)
 {
     CellPointer generator = in<CellPointer>(value->generatorOperand());
     LValue frame = in<Boxed>(value->frameOperand()).value();
+    // Whoever takes the first step has filled a new frame, whose resume index is 0, and enters the function at once.
+    if (value->staysRunning()) {
+        RELEASE_ASSERT(!value->resumeIndex());
+        emitter<BarrierEmitter>().barrier(value, CellPointer(frame));
+        return;
+    }
     const B3::AbstractHeap& words = m_heaps.entire(AbstractHeap::InternalFields);
     m_out.store64(m_out.constInt64(value->resumeIndex()), m_out.address(words, frame, SavedFrame::offsetOfResumeIndex()));
     LValue suspended = m_out.constInt32(static_cast<int32_t>(Generator::State::SuspendedAtYield));

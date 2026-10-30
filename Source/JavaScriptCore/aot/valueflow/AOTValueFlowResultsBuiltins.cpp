@@ -1076,7 +1076,7 @@ struct WriteByTests {
 } // anonymous namespace
 
 // The locked members that a write may reach, and the names that it may add to an object which takes none, as far as a test run can do without those locks. By values, so through helpers and tables of names too.
-// One too many costs a test where it is used. One that is missed refuses the write when it comes.
+// One too many costs a test where it is used, and a build that starts over. One that is missed refuses the write when it comes.
 static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFlowUsesOfLibraryCode& result)
 {
     const Program& program = inputs.program;
@@ -1116,7 +1116,12 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
     auto noteUnderKeys = [&](ValueSetMaker& maker, ValueSetID receivers, ValueSetID keys, Vector<WriteByTests>& found) {
         if (ValueSets::isComplement(keys))
             return;
-        sets.forEachMember(maker.intersect(keys, universe.keys()), [&](ValueFlowObjectID key) {
+        // Several objects under several keys: a helper, or a loop over a table, where every object meets every key. Nearly all of those pairs are never written.
+        // The front end reads the pairs where they are spelled: resolve/replaced_members.rs in Bun.
+        keys = maker.intersect(keys, universe.keys());
+        if (sets.size(receivers) > 1 && sets.size(keys) > 1)
+            return;
+        sets.forEachMember(keys, [&](ValueFlowObjectID key) {
             if (universe.kindOf(key) == ValueFlowObjectKind::Key)
                 note(maker, receivers, universe.keyOf(key), found);
         });
@@ -1128,7 +1133,8 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
 
     ValueSetMakers makers(inputs);
     Vector<WriteByTests> writes = collectWithMakers<WriteByTests>(inputs, makers, program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<WriteByTests>& found) {
-        if (!inputs.isReached(FunctionID(function)))
+        // Bun's own code replaces nothing for a test.
+        if (!inputs.isReached(FunctionID(function)) || isLibraryCode(program, program.functions[function]))
             return;
         for (const ValueFlowStatement& statement : bodies.statementsOf(function)) {
             if (statement.kind != ValueFlowStatementKind::Operation || !statement.site || !operationsWritingProperties.contains(statement.opcode))
@@ -1151,6 +1157,8 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
         return std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfOperand);
     });
     forEachBuiltinApplication(inputs, heap, writers, holders, [&](const ValueFlowBuiltinApplication& application) {
+        if (application.function && isLibraryCode(program, program.at(application.function)))
+            return;
         for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
             if (overload.mode != application.mode())
                 continue;

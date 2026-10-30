@@ -373,11 +373,7 @@ public:
     uint32_t closureCellNumber(FunctionID id) const { return id.index() < m_functions.closureCellNumbers.size() ? m_functions.closureCellNumbers[id.index()] : 0; }
     ClosureFunctionRange closureFunctions() const { return m_functions.closureFunctions; }
     // What closure words, requests for closures and the stubs have for a function that closures are made of.
-    uint32_t closureNumberOf(FunctionID entrypoint) const
-    {
-        RELEASE_ASSERT(entrypoint.index() >= m_functions.closureFunctions.first.index() && entrypoint.index() < m_functions.closureFunctions.end.index());
-        return entrypoint.index() - m_functions.closureFunctions.first.index();
-    }
+    JS_EXPORT_PRIVATE uint32_t closureNumberOf(FunctionID entrypoint) const;
     // ProgramTables::closureFormsOf().
     std::span<const FunctionID> closureFormsBySource() const { return m_functions.closureFormsBySource.span(); }
 

@@ -501,8 +501,7 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    // A text that ends in `)` is the whole call, with the arguments that the compiler could quote.
-    String source = name.isNull() ? String() : name.endsWith(')') ? name.toString() : tryMakeString(name, "()"_s);
+    String source = name.isNull() ? String() : tryMakeString(name, "()"_s);
     return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
 }
 

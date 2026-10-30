@@ -368,6 +368,8 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ResolveAccesses),
     // Where the rounds above were cut short by their limit, ResolveCalls still finds calls to resolve here, and makes of a call with a spread what only ExpandIteration removes.
     ScheduleStep::run(ExpandIteration),
+    // No test is placed and nothing is sunk any more, so a copy of a join costs one more round of cleaning up and no copy of what lies below it.
+    ScheduleStep::runBehindRounds(ThreadJumps),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(RemoveDeadCountedLoops),
@@ -1815,7 +1817,7 @@ bool Pipeline::checkNumberOfFunctions()
     return false;
 }
 
-// How far the program is from the limits that stop a build, and from 2 GB in one Vector.
+// How far the program is from the limits that stop a build.
 void Pipeline::logSizeOfProgram() const
 {
     std::array<uint64_t, numberOfEnumerators<FunctionRole>> all { };
@@ -1824,14 +1826,28 @@ void Pipeline::logSizeOfProgram() const
         ++all[static_cast<size_t>(function.role)];
         withBody[static_cast<size_t>(function.role)] += function.hasBody();
     }
-    dataLog("AOT size of the program: functions ", m_program.functions.size(), " of ", sizeof(Function), " bytes | strings ", m_program.strings.size(), " | layouts ", m_program.layouts.size(), " of ", sizeof(Layout), " bytes | variables ", m_program.variables.size(), " | modules ", m_program.modules.size(), " | data ", m_program.data.size(), " | allocations ", m_output->placement->numberOfAllocations());
+    auto log = [](ASCIILiteral what, uint64_t count) {
+        dataLog(" | ", what, " ", count);
+    };
     ClosureFunctionRange closures = m_output->placement->closureFunctions();
-    if (closures.first)
-        dataLog(" | closure functions ", closures.first.index(), " to ", closures.end.index());
+    dataLog("AOT size of the program:");
+    log("functions"_s, m_program.functions.size());
+    log("first closure function"_s, closures.first.index());
+    log("end of closure functions"_s, closures.end.index());
+    log("strings"_s, m_program.strings.size());
+    log("layouts"_s, m_program.layouts.size());
+    log("variables"_s, m_program.variables.size());
+    log("modules"_s, m_program.modules.size());
+    log("data"_s, m_program.data.size());
+    log("allocations"_s, m_output->placement->numberOfAllocations());
     dataLogLn();
     for (size_t role = 0; role < all.size(); ++role) {
-        if (all[role])
-            dataLogLn("AOT size of the program: ", nameOf(static_cast<FunctionRole>(role)), " ", all[role], " | with a body ", withBody[role]);
+        if (!all[role])
+            continue;
+        dataLog("AOT size of the program:");
+        log(nameOf(static_cast<FunctionRole>(role)), all[role]);
+        log("with a body"_s, withBody[role]);
+        dataLogLn();
     }
 }
 

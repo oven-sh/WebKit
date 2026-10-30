@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTHeat.h"
 #include "AOTKnownValue.h"
 #include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
@@ -28,6 +29,9 @@
 #include <wtf/IndexSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+// A copy saves a test each time the join is passed, and gives the passes behind it the function to clean up once more.
+static constexpr HeatClass leastHeatOfJoinsCopiedBesideSlowPaths = HeatClass::Hot;
 
 static bool hasRedirectableEdges(TerminatorKind kind)
 {
@@ -670,7 +674,31 @@ struct EdgeThreader : Rewrite {
         return finish();
     }
 
+    // The parameter whose type a test at the end of the block asks for. `p = p.next; p.m`: what refuses null and undefined may stand between the two.
+    struct TestedParameter {
+        ValueID parameter;
+        bool isNeverNullish { false };
+    };
+    TestedParameter parameterTestedBy(const Block& block, const Value& test) const
+    {
+        ValueID tested = test.valueOperand();
+        if (block.parameters.contains(tested))
+            return { tested };
+        if (context.isBehindRounds && at(tested).opcode == Opcode::RequireObjectCoercible && block.values.contains(tested) && block.parameters.contains(at(tested).valueOperand()))
+            return { at(tested).valueOperand(), true };
+        return { };
+    }
+
+    bool decidesTypeTest(const Block& block, const Value& test, Edge edge) const
+    {
+        TestedParameter tested = parameterTestedBy(block, test);
+        const Type& passed = typeOf(substituteParameter(block, tested.parameter, targetOf(function, edge).arguments));
+        return evaluateTypeTest(program, tested.isNeverNullish ? passed.withoutNullish() : passed, context.types.at(test.testedType())) != KnownBoolean::Unknown;
+    }
+
     // What an edge passes decides the test, but the block does more than test: it reads a variable that the code below uses, or may throw. No edge can skip that, and a copy of it costs less than the test and the merge.
+    // A slow path that comes back knows nothing of what it passes. It keeps the block, and with it the test, which the other edges no longer pay for.
+    // Only behind the rounds: PlaceTypeTests would copy the code below the join once more for the type that the copy knows.
     PassOutcome copySmallJoins()
     {
         bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
@@ -688,7 +716,7 @@ struct EdgeThreader : Rewrite {
                 && !std::ranges::all_of(block.values, [&](ValueID value) { return analyses.isRemovableWhenUnused(value); })
                 && std::ranges::all_of(block.values, [&](ValueID value) { return std::ranges::all_of(analyses.useLists().usesOf(value), [&](const Use& use) { return use.block == id; }); });
             const Value& test = at(condition);
-            bool testsParameter = block.terminator.kind == TerminatorKind::Branch && test.opcode == Opcode::TypeTest && block.values.contains(condition) && block.parameters.contains(test.valueOperand());
+            bool testsParameter = block.terminator.kind == TerminatorKind::Branch && test.opcode == Opcode::TypeTest && block.values.contains(condition) && parameterTestedBy(block, test).parameter;
             if (!choosesByParameter && !testsParameter)
                 return false;
             size_t numberOfCopies = cfg.incomingEdges(id).size() - 1;
@@ -696,23 +724,49 @@ struct EdgeThreader : Rewrite {
                 return false;
             if (RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) != CloneCheck::CanClone)
                 return false;
-            return std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
+            // The copy then folds to nothing, or to the refusal of null and undefined.
+            bool holdsTestAlone = testsParameter && block.values.size() == (parameterTestedBy(block, test).isNeverNullish ? 2 : 1);
+            bool someEdgeDecides = false;
+            bool everyEdgeDecidesOrIsSeldomTaken = std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
                 if (!canRedirect(edge))
                     return false;
-                const Arguments& passed = targetOf(function, edge).arguments;
                 if (choosesByParameter)
-                    return decidedTargetOf(block.terminator, knownValueOf(program, function, substituteParameter(block, condition, passed))).has_value();
-                return evaluateTypeTest(program, typeOf(substituteParameter(block, test.valueOperand(), passed)), context.types.at(test.testedType())) != KnownBoolean::Unknown;
+                    return decidedTargetOf(block.terminator, knownValueOf(program, function, substituteParameter(block, condition, targetOf(function, edge).arguments))).has_value();
+                if (!decidesTypeTest(block, test, edge))
+                    return context.isBehindRounds && holdsTestAlone && at(edge.from).frequency.predicted() == BlockFrequency::Rare && heatClassOf(context, id).predicted() >= leastHeatOfJoinsCopiedBesideSlowPaths;
+                someEdgeDecides = true;
+                return true;
             });
+            return everyEdgeDecidesOrIsSeldomTaken && (choosesByParameter || someEdgeDecides);
         });
         if (!hasCandidates)
             return PassOutcome::Unchanged;
 
-        // The last edge keeps the block.
+        // The edges that decide nothing keep the block. Where every edge decides, the last one keeps it.
         Vector<Edge, 8> decidedEdges;
-        for (BlockID candidate : candidates)
-            decidedEdges.append(incomingEdges[candidate].span().first(incomingEdges[candidate].size() - 1));
-        return giveCopiesTo(decidedEdges.span());
+        Vector<std::pair<BlockID, Expected<BlockFrequency>>, 4> blocksKeptBySlowPaths;
+        for (BlockID candidate : candidates) {
+            const Block& block = at(candidate);
+            const Value& test = at(valueTestedBy(block.terminator));
+            std::span<const Edge> edges = incomingEdges[candidate].span();
+            bool choosesByParameter = block.parameters.contains(valueTestedBy(block.terminator));
+            size_t before = decidedEdges.size();
+            Expected<BlockFrequency> frequencyOfRest = BlockFrequency::Rare;
+            for (Edge edge : edges) {
+                if (choosesByParameter || decidesTypeTest(block, test, edge))
+                    decidedEdges.append(edge);
+                else if (isRarerThan(frequencyOfRest, at(edge.from).frequency).predicted())
+                    frequencyOfRest = at(edge.from).frequency;
+            }
+            if (decidedEdges.size() - before == edges.size())
+                decidedEdges.removeLast();
+            else
+                blocksKeptBySlowPaths.append({ candidate, frequencyOfRest });
+        }
+        PassOutcome result = giveCopiesTo(decidedEdges.span());
+        for (auto [block, frequency] : blocksKeptBySlowPaths)
+            builder().function().edit(block, BlockEdit::Rest).frequency = frequency;
+        return result;
     }
 
     static bool leadsToOneBlock(const Terminator& choice)
@@ -896,6 +950,15 @@ struct EdgeThreader : Rewrite {
 
 PassOutcome threadJumps(FunctionPassContext& context)
 {
+    // The rounds have left nothing for the other phases.
+    if (context.isBehindRounds) {
+        if (context.inputs.heat.of(context.program, context.id).predicted() < leastHeatOfJoinsCopiedBesideSlowPaths)
+            return PassOutcome::Unchanged;
+        PassOutcome outcome = EdgeThreader(context).copySmallJoins();
+        if (outcome == PassOutcome::Changed)
+            context.keptAnalyses = allAnalyses;
+        return outcome;
+    }
     PassOutcome outcome = EdgeThreader(context).threadBranchesOnParameters();
     outcome |= EdgeThreader(context).threadDecidedBranches();
     EdgeThreader joinCopier(context);

@@ -55,6 +55,9 @@ static Type typeOfBuiltinEntry(const TypingContext& context, BuiltinID builtin)
     const BuiltinTable& builtins = context.program.builtins();
     if (compiledModuleWithObject(context.program, builtins.canonicalID(builtin)))
         return Type::object();
+    // `o[s]` with `s = Symbol.iterator` is a read by name, as `o[Symbol.iterator]` is.
+    if (BuiltinName symbol = builtins.nameOfSymbol(builtin))
+        return Type::symbolLiteral(context.program.keyOf(symbol));
     if (builtins.at(builtin).kind != BuiltinKind::DataProperty)
         return typeOfBuiltinConstant(builtins, builtin);
 

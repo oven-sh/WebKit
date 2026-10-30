@@ -293,7 +293,9 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (AOT::PropertyWalk::tryAssign(vm, target, source))
+        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (didAssign)
             return;
     }
 #endif

@@ -416,10 +416,11 @@ enum class ValueFlowHostNode : uint8_t {
     HoldersOfLibraryExportsThatProgramWrites,
     HoldersOfClassesThatAppliedRowsName,
     MembersStoredByNameThroughPlaceholders,
+    LibraryModulesAreLoadedUnderSpelledNames,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 77;
-static_assert(static_cast<unsigned>(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders) + 1 == numberOfValueFlowHostNodes);
+inline constexpr unsigned numberOfValueFlowHostNodes = 78;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:

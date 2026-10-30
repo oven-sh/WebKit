@@ -541,7 +541,7 @@ static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context)
     Vector<ProgramPoint, 2> points;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         // Where a test has failed the object is made and linked.
-        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
+        if (function.at(block).frequency.predicted() != BlockFrequency::Normal)
             continue;
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 1; index < values.size(); ++index) {
@@ -582,7 +582,7 @@ static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context)
         }
         analyses.didChangeControlFlow();
         for (BlockID block : analyses.cfg().reversePostOrder()) {
-            if (copy.at(block).frequency.predicted() == BlockFrequency::Rare)
+            if (copy.at(block).frequency.predicted() != BlockFrequency::Normal)
                 continue;
             for (ValueID id : copy.at(block).values) {
                 if (copy.at(id).opcode == Opcode::NewObject)

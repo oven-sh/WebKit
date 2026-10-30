@@ -137,6 +137,13 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         out.print(" "_s, bound.numberOfBoundArguments);
         printer.endLine();
     }
+    for (const FlowClosureStoredUnderKey& stored : sites.closuresStoredUnderKeys) {
+        beginLine("closure-stored-under-key"_s);
+        printer.print(stored.key);
+        out.print(" "_s);
+        printer.print(stored.function);
+        printer.endLine();
+    }
 
     for (uint32_t index = 0; index < wholeProgram.modules.size(); ++index) {
         if (wholeProgram.modules[index] == ModuleFlow { })

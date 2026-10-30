@@ -612,8 +612,8 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // None of the ways that run no code takes a getter.
-    if (source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
+    // None of the ways that run no code takes a getter. A copy of all that the source holds has tried two of them by now; one that leaves names out asks further on.
+    if (!run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
         JSObject* copy = constructEmptyObject(globalObject);
         ExcludedKeys excluded;
         excluded.collect(instance, globalObject, run, excludedKeys);

@@ -182,7 +182,7 @@ private:
     HeapKey keyNamed(PropertyKeyID name) const { return !name ? unknownHeapKey : m_program.isIndexLike(name) ? indexHeapKey : HeapKey { HeapKeyClass::Name, name }; }
     HeapKeyReceivers receiversOfSymbolNobodyKnows(ClimbingSet keys, const HeapKeyUse&);
     ValueFlowOperand receiversUnder(const ValueFlowOperand& object, const HeapKey&);
-    ClimbingSet receiversOfWrite(const ValueFlowOperand& object);
+    ClimbingSet receiversOfWrite(const ValueFlowOperand& object, const HeapKey&);
     void forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>&, HeapKeyUse = { });
     void noteWhatMayLieUnderSymbolThatHostLooksFor(const HeapKey&, const ValueFlowOperand& stored);
     void noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receivers, const ValueFlowOperand& stored);
