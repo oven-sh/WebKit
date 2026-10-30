@@ -51,6 +51,7 @@
 #include "AirOptimizeBlockOrder.h"
 #include "AirOptimizePairedLoadStore.h"
 #include "AirPlanFrame.h"
+#include "AirReleaseDeadValues.h"
 #include "AirReportUsedRegisters.h"
 #include "AirResequenceMovesBeforePatches.h"
 #include "AirReuseConditionFlags.h"
@@ -201,6 +202,12 @@ static constexpr Step steps[] = {
         "allocateStackByGraphColoring"_s,
         always,
         [](Code& code, PipelineState& state) { state.stackColoring = allocateStackByGraphColoring(code); }
+    },
+
+    {
+        "releaseDeadValues"_s,
+        [](Code& code, const PipelineState&) { return code.proc().releasesDeadValues(); },
+        [](Code& code, PipelineState& state) { releaseDeadValues(code, state.stackColoring); }
     },
 
     {

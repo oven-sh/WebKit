@@ -224,8 +224,10 @@ struct RedundantReadElimination {
     // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
     BitVector m_isReplacedByValue { };
     BitVector m_isReplacedByUndefined { };
-    // A new read of the location is as informative as the value that the bit stands for. Empty if nothing suspends.
+    // A new read of the location is as informative as the value that the bit stands for. Empty if nothing suspends and nothing is caught.
     BitVector m_isAsWellReadAgain { };
+    // By handler block: in each block under the handler, the last call.
+    UncheckedKeyHashMap<uint32_t, Vector<ProgramPoint, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lastCallsUnderHandler { };
     Vector<uint32_t> m_bitsReplacedByValue { };
     // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
     UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesOnEdges { };
@@ -451,7 +453,7 @@ struct RedundantReadElimination {
 
     void findBitsAsWellReadAgain()
     {
-        if (!m_analyses.opcodesOfValues().intersects(opcodesThatMaySuspend))
+        if (!m_analyses.opcodesOfValues().intersects(opcodesThatMaySuspend) && !m_cfg.hasHandlers())
             return;
         m_isAsWellReadAgain.ensureSize(m_bits.size());
         for (const AccessClass& accessClass : m_classes) {
@@ -1183,6 +1185,56 @@ struct RedundantReadElimination {
         return !source.mayBeDeferredClosure && typeOf(source.valueAfter()).isSubsetOf(readType, m_program);
     }
 
+    std::span<const ProgramPoint> lastCallsUnder(BlockID handler)
+    {
+        return m_lastCallsUnderHandler.ensure(handler.index(), [&] {
+            Vector<ProgramPoint, 4> calls;
+            for (BlockID id : m_cfg.reversePostOrder()) {
+                const Block& block = m_function.at(id);
+                if (!block.handler || block.handler->block != handler)
+                    continue;
+                for (uint32_t index = block.values.size(); index--;) {
+                    if (effectRuleOf(m_function.at(block.values[index]).opcode) == EffectRule::Call) {
+                        calls.append({ id, index });
+                        break;
+                    }
+                }
+            }
+            return calls;
+        }).iterator->value.span();
+    }
+
+    bool isLiveAfter(ValueID value, ProgramPoint point)
+    {
+        const UseLists& useLists = m_analyses.useLists();
+        for (const Use& use : useLists.usesOf(value)) {
+            ProgramPoint pointOfUse = useLists.pointOf(use);
+            if (pointOfUse.block == point.block && pointOfUse.index > point.index)
+                return true;
+        }
+        bool isLive = false;
+        forEachOutgoingEdge(m_function, point.block, [&](Edge edge, const Target& target) {
+            isLive |= !edge.isHandlerEdge() && m_analyses.liveness().isLiveAtHead(value, target.block);
+        });
+        return isLive;
+    }
+
+    // The handler would be the only reader of the value behind some call under it. For that reader the value would stay in the frame or in a saved register
+    // across the call, and it stays there after the handler's last read, when the program may have dropped the object. The handler is cold: it reads the location again.
+    bool isKeptAcrossCallForHandlerAlone(const Access& source, const Access& read)
+    {
+        if (!m_cfg.hasHandlers() || source.isAbsent || !m_isAsWellReadAgain.quickGet(*source.bit) || !mayBeReference(typeOf(source.valueAfter())))
+            return false;
+        ValueID value = source.valueAfter();
+        for (BlockID block = read.point.block; block != source.point.block && block != m_cfg.root(); block = m_analyses.dominators().idom(block)) {
+            if (!m_function.at(block).isHandlerBlock() || m_analyses.liveness().isLiveAtHead(value, block))
+                continue;
+            if (std::ranges::any_of(lastCallsUnder(block), [&](ProgramPoint call) { return !isLiveAfter(value, call); }))
+                return true;
+        }
+        return false;
+    }
+
     const Access* findAvailableAccess(uint32_t readBit, std::span<const Word> available, NOESCAPE const Invocable<bool(const Access&)> auto& isSuitable) const
     {
         IndexRange bits = m_classes[m_bits[readBit].accessClass].bits.clippedTo(m_group);
@@ -1275,7 +1327,7 @@ struct RedundantReadElimination {
                     const Type& readType = typeOf(read.id);
                     bool readsAbsentAsUndefined = m_function.at(read.id).opcode == Opcode::GetSlotOrUndefined && (readType.primitives & Primitive::Undefined);
                     const Access* source = findAvailableAccess(action.bits.first, available.span(), [&](const Access& access) {
-                        return access.isAbsent ? readsAbsentAsUndefined : canForward(access, readType);
+                        return access.isAbsent ? readsAbsentAsUndefined : canForward(access, readType) && !isKeptAcrossCallForHandlerAlone(access, read);
                     });
                     if (source) {
                         m_replacements.append({ read.id, source->isAbsent ? ValueID() : source->valueAfter(), read.point });

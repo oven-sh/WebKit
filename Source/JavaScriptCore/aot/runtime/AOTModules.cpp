@@ -179,8 +179,9 @@ void Modules::evict(ModuleID module)
         return;
     m_evictedFiles.set(file.index());
     m_admitsCodeOutsideImage = true;
-    if (current != ModuleStatus::Evaluated || data(file).kind != ModuleKind::CommonJs)
+    if (data(file).kind != ModuleKind::CommonJs)
         return;
+    // A file that is still running keeps the mark when it ends.
     m_filesToLoadAgain.set(file.index());
     setStoredStatus(file, StoredModuleStatus::InRecord);
 }

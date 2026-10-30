@@ -2463,7 +2463,8 @@ struct CallResolver {
             if (!isOwnNewTarget && !(isSuperCall && isAlwaysClassAtOrBelow(program, typeOf(newTarget), construct.layout())))
                 return declined;
             arm.allocatedClass = isSuperCall ? findClassAllocatedBySuperCall(program, construct.layout()) : constructed;
-            if (!arm.allocatedClass)
+            // Flow may have seen a function arrive here that it follows no construction to. The run time makes the objects of a layout that has none.
+            if (!arm.allocatedClass || program.at(arm.allocatedClass).flow.allocation == AllocationState::NeverAllocated)
                 return declined;
         } else if (isOwnNewTarget && canTakeAllocatedThis(program, member)) {
             arm.allocatedClass = layoutAllocatedBy(program, member);

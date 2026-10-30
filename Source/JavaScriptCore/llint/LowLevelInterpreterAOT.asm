@@ -452,7 +452,8 @@ macro loadNameOfKey(key, uid, isNoName)
 end
 
 # The kinds that any object may have. t3: the object, t5: the instance, t0: the kind of the slot in entry. Leaves the value in t0.
-macro getFromHashedSlot(entry, slow, done)
+# Goes to callsCustomGetter with the AOT::CustomAccessorRecord in t0.
+macro getFromHashedSlot(entry, slow, callsCustomGetter, done)
     bbeq t0, constexpr AOT::Slot::Kind::Value, .value
     bbeq t0, constexpr AOT::Slot::Kind::Absent, .undefined
     bbeq t0, constexpr AOT::Slot::Kind::CustomGetter, .customGetter
@@ -460,15 +461,16 @@ macro getFromHashedSlot(entry, slow, done)
     loadq SlotPayload[entry], t0
     jmp done
 
-    # AOT::callCustomGetterAndReturn(), where the object holds what its getter answered before.
+    # AOT::callCustomGetterAndReturn(). The object may hold what its getter answered before.
 .customGetter:
     loadi SlotPayload[entry], t0
     lshiftp constexpr AOT::Interpreter::customAccessorRecordShift, t0
     addp InstanceCustomAccessors[t5], t0
-    loadi (constexpr (OBJECT_OFFSETOF(AOT::CustomAccessorRecord, offsetOfCachedValue)))[t0], t0
-    btiz t0, slow
-    loadq [t3, t0], t0
-    btqz t0, slow
+    loadi (constexpr (OBJECT_OFFSETOF(AOT::CustomAccessorRecord, offsetOfCachedValue)))[t0], t1
+    btiz t1, callsCustomGetter
+    loadq [t3, t1], t1
+    btqz t1, callsCustomGetter
+    move t1, t0
     jmp done
 
 .undefined:
@@ -493,7 +495,9 @@ macro getFromCompiledObject(slow, done)
     bbeq t0, constexpr AOT::Slot::Kind::Field, .field
     bbeq t0, constexpr AOT::Slot::Kind::ExtraProperty, .extraProperty
     bbeq t0, constexpr AOT::Slot::Kind::InheritedField, .inheritedField
-    getFromHashedSlot(t6, slow, done)
+    bbeq t0, constexpr AOT::Slot::Kind::FieldOrInherited, .field
+    bbeq t0, constexpr AOT::Slot::Kind::FieldOrInheritedField, .field
+    getFromHashedSlot(t6, slow, slow, done)
 
     # The value of a data property does not depend on the receiver, so the holder is asked for it as for a field of its own.
 .inheritedField:
@@ -507,8 +511,20 @@ macro getFromCompiledObject(slow, done)
     readField(t5, t1, t2, t0, .absentField, slow, done)
 
 .absentField:
+    bbeq SlotKind[t6], constexpr AOT::Slot::Kind::FieldOrInherited, .inherits
+    bbneq SlotKind[t6], constexpr AOT::Slot::Kind::Field, slow
     btbz SlotFlags[t6], constexpr AOT::Slot::absentIsUndefined, slow
     move ValueUndefined, t0
+    jmp done
+
+    # loadInheritedValueBySlot() in the stubs.
+.inherits:
+    btbnz SlotFlags[t6], constexpr AOT::Interpreter::flagsOfInheritedValuesLeftToSlowPath, slow
+    loadi SlotSecondPayloadWord[t6], t0
+    lshiftp constexpr AOT::cell32Shift, t0
+    addp InstanceCellCageBase[t5], t0
+    loadhsq SlotLocation[t6], t1
+    loadPropertyAtWordIndex(t0, t1, t0)
     jmp done
 
 .extraProperty:
@@ -646,7 +662,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     bbneq t0, constexpr AOT::Slot::Kind::Value, .readsHashedSlot
     btbnz SlotFlags[t6], constexpr AOT::Slot::isOwn, .slow
 .readsHashedSlot:
-    getFromHashedSlot(t6, .otherKind, .done)
+    getFromHashedSlot(t6, .otherKind, .callsCustomGetter, .done)
 
     # As in getFromCompiledObject(): the holder is asked as for a field of its own.
 .otherKind:
@@ -664,6 +680,17 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 
 .done:
     return(t0)
+
+    # t0: the AOT::CustomAccessorRecord, t3: the object.
+.callsCustomGetter:
+    move t0, a2
+    move t3, a3
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall4(_llint_slow_path_aot_call_custom_getter)
+    restoreStateAfterCCall()
+    dispatch()
 
 .slow:
     callSlowPath(_llint_slow_path_get_by_id)

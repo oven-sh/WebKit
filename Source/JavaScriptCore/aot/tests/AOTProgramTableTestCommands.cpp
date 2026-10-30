@@ -1045,6 +1045,10 @@ static void printConstants(const TablesContext& context)
     }
     for (uint32_t member : tables.constantBuiltinMembers())
         RecordLine(context, "constantBuiltinMember"_s).field("member"_s, BuiltinID(member));
+    for (uint32_t member : tables.unlockedBuiltinMembers())
+        RecordLine(context, "unlockedBuiltinMember"_s).field("member"_s, BuiltinID(member & ~ProgramTables::unlockedBuiltinMember));
+    for (size_t index = 0; index + 1 < tables.openedNames().size(); index += 2)
+        RecordLine(context, "openedName"_s).field("holder"_s, BuiltinID(tables.openedNames()[index] & ~ProgramTables::openedName)).string("name"_s, tables.openedNames()[index + 1] & ~ProgramTables::openedName);
     auto bigIntConstants = tables.bigIntConstants();
     for (uint32_t number = 0; number < bigIntConstants.size(); ++number)
         RecordLine(context, "bigInt"_s, number).string("digits"_s, bigIntConstants[number]);

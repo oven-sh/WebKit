@@ -65,6 +65,8 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey named(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowName name) { return { kind, static_cast<uint8_t>(name.kind), name.payload, set }; }
     // What it answers is only called on the object that it was asked of.
     static ValueFlowNodeKey lookupForCall(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Lookup, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isForCall), name.payload, set }; }
+    // An edge stays in the graph when the statement that logged it asks for something else. So this read shares no node with the read of the same objects that a statement has connected whole.
+    static ValueFlowNodeKey readOfWhatLetsInUnseenCode(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Read, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isOfWhatLetsInUnseenCode), name.payload, set }; }
     static ValueFlowNodeKey underKind(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowNameKind nameKind) { return { kind, static_cast<uint8_t>(nameKind), 0, set }; }
     static ValueFlowNodeKey callGroup(ValueSetID callees, ValueFlowCallKind kind, ValueFlowObjectID marker = { }) { return { ValueFlowMadeNodeKind::CallGroup, static_cast<uint8_t>(kind), marker ? marker.index() + 1 : 0, callees }; }
     static ValueFlowNodeKey instance(ValueFlowNodeID node, ValueSetID markerAlone) { return { ValueFlowMadeNodeKind::Instance, 0, node.index(), markerAlone }; }
@@ -80,6 +82,7 @@ struct ValueFlowNodeKey {
 
     ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail & ~isForCall), payload }; }
     bool isLookupForCall() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isForCall); }
+    bool readsOnlyWhatLetsInUnseenCode() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOfWhatLetsInUnseenCode); }
     ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }
     ValueFlowObjectID markerOfCallGroup() const { return payload ? ValueFlowObjectID(payload - 1) : ValueFlowObjectID(); }
     bool isInstanceOfNode() const { return kind == ValueFlowMadeNodeKind::Instance && !detail; }
@@ -101,6 +104,7 @@ struct ValueFlowNodeKey {
 
     static constexpr unsigned numberOfNodesOfCallGroup = 6 + numberOfGroupedArguments;
     static constexpr uint8_t isForCall = 0x80;
+    static constexpr uint8_t isOfWhatLetsInUnseenCode = isForCall;
 
     ValueFlowMadeNodeKind kind { ValueFlowMadeNodeKind::Constant };
     uint8_t detail { 0 };

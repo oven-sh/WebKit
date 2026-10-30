@@ -972,6 +972,7 @@ private:
             return setConstant(id, constantOf({ ValueFlowObjectKind::Key, value.key().index(), { } }));
         case Opcode::Parameter:
         case Opcode::LoopHint:
+        case Opcode::ReleaseHint:
         case Opcode::InitialYield:
         case Opcode::ReadScope:
         case Opcode::ReportMismatch:

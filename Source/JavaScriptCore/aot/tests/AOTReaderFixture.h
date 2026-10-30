@@ -93,6 +93,8 @@ entry module=m0 hostReads=[{exportName="a"}]
 runtimefunction id=PromiseConstructorPromise function=f5
 runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f6
 webassemblymodule module=m0 bytes="\x00asm"
+replaceablebuiltin member=MathMin
+openedname holder=ObjectPrototype name="added"
 )IR"_s;
 
 // A constructor function whose objects get a layout by their tag.

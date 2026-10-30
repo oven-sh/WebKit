@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTable.h"
 #include "AOTExpected.h"
 #include "AOTIRForm.h"
 #include "AOTIRFunction.h"
@@ -44,6 +45,10 @@ class SharedFieldTypes;
 class Program final {
     WTF_MAKE_TZONE_ALLOCATED(Program);
     WTF_MAKE_NONCOPYABLE(Program);
+
+    // In front of `types`, which refers to it.
+    BuiltinTableOfBuild m_tableOfBuild;
+
 public:
     explicit Program(const BuiltinTable&);
     ~Program();
@@ -59,6 +64,19 @@ public:
     void setBuiltinsThatMayBeTrimmed(BitVector&& builtins) { m_builtinsThatMayBeTrimmed = WTF::move(builtins); }
     bool isBeingReplaced(FunctionID id) const { return m_functionsBeingReplaced && m_functionsBeingReplaced->get(id.index()); }
     const BuiltinTable& builtins() const { return m_builtins; }
+    // Once, when `replaceableBuiltins` and `openedNames` are whole and nothing has asked the table about a lock.
+    void unlockReplaceableBuiltins();
+    std::span<const BuiltinID> unlockedBuiltins() const LIFETIME_BOUND { return m_tableOfBuild.unlockedMembers(); }
+    bool isUnlocked(BuiltinID member) const { return std::ranges::binary_search(unlockedBuiltins(), member); }
+    // A test run adds a property of this name to the object, which takes no other new name.
+    bool isOpened(BuiltinID canonicalHolder, StringID name) const { return std::ranges::contains(openedNames, OpenedName { canonicalHolder, name }); }
+    bool isOpenedSomewhere(StringID name) const { return std::ranges::contains(openedNames, name, &OpenedName::name); }
+    // A row for a pristine operand leaves out the members that the general row of the function looks up on it: Array.prototype.toString joins a pristine array by itself.
+    // Where one of those names is unlocked only the general row says what the function does.
+    bool looksUpUnlockedName(BuiltinID function) const { return m_functionsLookingUpUnlockedNames.get(m_builtins.canonicalID(function).index()); }
+    // No row of the function says that it calls the member: `new Map(pairs)` and Map.prototype.set. So no row says what the function does.
+    bool callsUnlockedMemberThatNoRowNames(BuiltinID function) const { return m_functionsCallingUnlockedMembersThatNoRowNames.get(m_builtins.canonicalID(function).index()); }
+    bool passesByRowFor(BuiltinID function, BuiltinTypeID tested) const { return looksUpUnlockedName(function) && asksForPristineOperand(tested); }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
@@ -91,6 +109,8 @@ public:
     Vector<Entry> entries;
     Vector<RuntimeFunctionEntry> runtimeFunctions;
     Vector<WebAssemblyModule> webAssemblyModules;
+    Vector<ReplaceableBuiltin> replaceableBuiltins;
+    Vector<OpenedName> openedNames;
 
     Function& at(FunctionID id) { return functions[id.index()]; }
     const Function& at(FunctionID id) const { return ProvisionalFunctions::contains(id) ? m_provisionalFunctions->at(id) : functions[id.index()]; }
@@ -219,7 +239,11 @@ private:
         Vector<BuiltinName> registeredSymbolNames;
     };
 
+    bool asksForPristineOperand(BuiltinTypeID) const;
+
     const BuiltinTable& m_builtins;
+    BitVector m_functionsLookingUpUnlockedNames;
+    BitVector m_functionsCallingUnlockedMembersThatNoRowNames;
     IRForm m_form { IRForm::AsRead };
     bool m_hasGuardedReads { false };
     BitVector m_builtinsThatMayBeTrimmed;

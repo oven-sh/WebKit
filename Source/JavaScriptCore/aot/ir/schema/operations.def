@@ -79,7 +79,7 @@ operation TryReExportFields (target: Any/inspects+definesName, source: Any/retai
 operation SetFunctionName (function: Callable/inspects+definesName, computedKey: PropertyKey/inspects, methodKind: MethodKind) -> none ; reads(NamedProperties, StringStorage) writes(NamedProperties, StringStorage, RuntimeState) throws collects ; runtime = SetFunctionName ; flow = Copies ; flowRule = Heap
 operation SetLiteralPrototype (object: Object/inspects+changesPrototype, prototype: Any/retains(object)+becomesPrototype, engine replacedCallee?: Any/inspects, engine replacedThis?: Any/inspects) [| engine refusesOtherValues] -> none ; reads(PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, MemberGuards, Elements[Object], RuntimeState) throws collects ; runtime = SetLiteralPrototype ; flow = Copies ; flowRule = Heap
 operation CopyDataProperties (target: Object/inspects+assignsFrom(source), source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> none ; DefinesProperty ; interpreted = List ; runtime = CopyDataProperties ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
-operation CopyObject (source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> natural(object) ; DefinesProperty ; runtime = CopyObject ; flow = Allocates ; flowRule = Heap
+operation CopyObject (source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) [assigns] -> natural(object) ; DefinesProperty ; runtime = CopyObject ; flow = Allocates ; flowRule = Heap
 operation GetSuperBase (homeKind: HomeObjectKind, home: Object/inspects) -> natural(object | null) ; reads(PrototypeLinks) ; runtime = GetSuperBase ; flow = TableProves ; flowRule = Heap
 operation SuperGet (base: Any/inspects, receiver: Any/retains, computedKey?: Any/Converted, key?: PropertyKey, with AccessStamp) -> unknown ; unknownCode ; exactlyOneOf = key, computedKey ; accessClass = ByName ; runtime = SuperGet ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
 operation SuperSet (mode: ECMAMode, base: Any/inspects, receiver: Any/retains+storesByKey, value: Any/retains, computedKey?: Any/Converted, key?: PropertyKey, with AccessStamp) -> none ; unknownCode ; exactlyOneOf = key, computedKey ; accessClass = ByName ; runtime = SuperSet ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
@@ -148,6 +148,7 @@ operation CatchException () -> natural(Exception) ; UsesRuntime collects ; runti
 
 family Hint AsRead..Placed
 operation LoopHint () [| engine isVersioned replacesTailCalls throwsOwedError leavesOwedError] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
+operation ReleaseHint () -> none ; writes(ExternalState) ; boundTo = Function ; flow = TableProves ; flowsWithoutRule = true
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none ; canEndInteriorBlock = true ; canEndHeadBlock = true ; canEndBlockOfHead = true

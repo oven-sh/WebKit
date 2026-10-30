@@ -104,6 +104,8 @@ record TemplateString wire { cooked: String? raw: String }
 enum FunctionVisibility { Public Private PrivateRecursive }
 record RuntimeFunctionEntry wire { id: RuntimeFunction function: Function(Closure) visibility: FunctionVisibility }
 record WebAssemblyModule wire { module: Module(Target) bytes: Span<Byte> }
+record ReplaceableBuiltin wire { member: Builtin }
+record OpenedName wire { holder: Builtin name: String }
 
 enum ResumeMode { Next Throw Return }
 enum IteratorKind { Sync Async }
@@ -141,6 +143,8 @@ list entries : Entry as entry
 list hostReads : HostRead
 list runtimeFunctions : RuntimeFunctionEntry as runtimefunction sorted by id
 list webAssemblyModules : WebAssemblyModule as webassemblymodule
+list replaceableBuiltins : ReplaceableBuiltin as replaceablebuiltin sorted by member
+list openedNames : OpenedName as openedname
 
 enum BlockRole { Ordinary CatchHandler CleanupHandler IterationCleanup DisposalCleanup }
 enum BlockFrequency { Normal Unlikely | engine Rare }

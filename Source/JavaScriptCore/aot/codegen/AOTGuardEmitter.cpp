@@ -334,6 +334,19 @@ void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
     }
 }
 
+// A class without a rank has no word to compare with. What is made below the prototype is linked as it is built.
+void GuardEmitter::generateIsPrototypeOfClass(const ValueContext& value)
+{
+    std::optional<uint32_t> rank = m_placement.rankOfClass(declaredLayoutOf(m_program, value->layout()));
+    if (!rank) {
+        defineTest(value, boolean(false));
+        return;
+    }
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    ptrdiff_t offset = static_cast<ptrdiff_t>(*rank) * sizeof(void*);
+    defineTest(value, Condition(m_out.equal(in<CellPointer>(value->prototypeOperand()).value(), m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset)))));
+}
+
 void GuardEmitter::generateIsPristine(const ValueContext& value)
 {
     ValueID subject = value->valueOperand();

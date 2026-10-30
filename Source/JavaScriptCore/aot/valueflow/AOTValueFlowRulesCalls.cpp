@@ -41,9 +41,15 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
     if (key) {
         ClimbingSet all = context.valueOf(context.operandsOf(statement)[1]);
         receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
-        context.forEachMemberInLine(context.restrict(all, universe.anyPrimitive()), [&](ValueFlowObjectID kindOfPrimitive) {
-            receivers.groups.append(context.maker().of(kindOfPrimitive));
-        });
+        // The object nobody knows is a receiver of every callee, so which kind of primitive finds which callee adds nothing. Told apart, each kind costs a lookup under every name that is called on such a value.
+        if (context.contains(all, ValueFlowUniverse::unknownObject())) {
+            if (ValueSetID primitives = context.withMembersOf(ValueSets::nothing, context.restrict(all, universe.anyPrimitive())); primitives != ValueSets::nothing)
+                receivers.groups.append(primitives);
+        } else {
+            context.forEachMemberInLine(context.restrict(all, universe.anyPrimitive()), [&](ValueFlowObjectID kindOfPrimitive) {
+                receivers.groups.append(context.maker().of(kindOfPrimitive));
+            });
+        }
         for (ValueSetID group : receivers.groups)
             answers.append(context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver)));
         // A text or a symbol that is known finds what any of its kind finds.

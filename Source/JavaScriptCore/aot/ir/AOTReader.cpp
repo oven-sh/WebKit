@@ -34,9 +34,26 @@ bool Reader::run()
 {
     return readHeader()
         && readNamesAndFamilies()
+        && readReplaceableBuiltins()
         && readTypes()
         && readListsLayoutsAndFunctions()
         && finishProgram();
+}
+
+// Before anything asks the table about a lock, and while one thread reads.
+bool Reader::readReplaceableBuiltins()
+{
+    auto& members = m_program.replaceableBuiltins;
+    if (!readList(m_sections.replaceableBuiltins, members) || !readList(m_sections.openedNames, m_program.openedNames))
+        return false;
+    for (size_t index = 1; index < members.size(); ++index) {
+        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
+        checker.requireAscending(members[index - 1].member, members[index].member);
+        if (auto failure = checker.takeFailure())
+            return report(*failure);
+    }
+    m_program.unlockReplaceableBuiltins();
+    return true;
 }
 
 bool Reader::readNamesAndFamilies()

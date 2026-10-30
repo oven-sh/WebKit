@@ -158,6 +158,12 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
     , m_kind(program.at(key).kind)
     , m_isIndexLike(program.isIndexLike(key))
 {
+    if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
+        return;
+    for (const OpenedName& opened : program.openedNames) {
+        if (opened.name == program.at(key).text)
+            m_holdersOpenedForKey.append(opened.holder);
+    }
 }
 
 BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
@@ -167,6 +173,8 @@ BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
 
 bool MembersUnderKey::isClosedKey(BuiltinID holder) const
 {
+    if (m_holdersOpenedForKey.contains(holder)) [[unlikely]]
+        return false;
     if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
         return true;
     if (m_isIndexLike)

@@ -1312,9 +1312,15 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         }
     }
     
+#if USE(BUN_JSC_ADDITIONS)
+    // Allocate before DeferGC: when the Structure heap is at its limit, this allocation has to be able to trigger a GC.
+    Structure* transition = Structure::create(vm, structure, deferred);
+    DeferGC deferGC(vm);
+#else
     DeferGC deferGC(vm);
     
     Structure* transition = Structure::create(vm, structure, deferred);
+#endif
     countStructureMade(vm, transitionKind == TransitionKind::BecomePrototype ? "Structure:becomes_a_prototype"_s : changesIndexingType(transitionKind) ? "Structure:another_indexing_type"_s : "Structure:no_property_changes"_s);
     transition->setTransitionKind(transitionKind);
     transition->m_blob.setIndexingModeIncludingHistory(indexingModeIncludingHistory);

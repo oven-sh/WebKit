@@ -233,6 +233,11 @@ void checkPlacesInSymbolTable(SymbolTable&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
+// For an object that holds no answer of an earlier call.
+JSValue callCustomGetter(const CustomAccessorRecord&, JSCell* base, const Identifier&);
+
+// Of a FieldOrInherited slot, where the slot of the field is empty.
+inline constexpr uint8_t flagsOfInheritedValuesLeftToSlowPath = Slot::inheritsGetter | Slot::emptySlotMayBeUndefined;
 
 inline constexpr ptrdiff_t offsetOfPromiseAllocator = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].allocator);
 inline constexpr ptrdiff_t offsetOfPromiseHeader = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header);

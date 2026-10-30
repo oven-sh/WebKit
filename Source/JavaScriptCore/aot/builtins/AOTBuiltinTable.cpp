@@ -549,6 +549,122 @@ bool BuiltinTable::isLocationOfLockedObject(BuiltinID id) const
     return holder && at(holder).flags.contains(BuiltinFlag::IsLockedObject);
 }
 
+// What the language, an iterator's user or a call reads without a lookup that compiled code could test.
+static bool isReadWithoutLookup(const BuiltinTable& table, BuiltinName name)
+{
+    if (table.isSymbolName(name) || table.isClosedOnHostFunctions(name) || name == BuiltinNames::next || name == BuiltinNames::returnKeyword || name == BuiltinNames::throwKeyword)
+        return true;
+    for (Protocol protocol : allMembersOf<Protocol>) {
+        if (std::ranges::contains(table.keysReadBy(protocol), name))
+            return true;
+    }
+    return false;
+}
+
+bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
+{
+    const Builtin& member = at(id);
+    if (member.mutability != BuiltinMutability::AlwaysLocked || member.scope != BuiltinScope::Realm || !member.holder || !member.name)
+        return false;
+    if (member.flags.containsAny({ BuiltinFlag::IsOwnPropertyOfInstances, BuiltinFlag::IsCompilerHelper, BuiltinFlag::IsDefaultExport }))
+        return false;
+    switch (member.kind) {
+    case BuiltinKind::Function:
+    case BuiltinKind::Method:
+    case BuiltinKind::Accessor:
+        break;
+    case BuiltinKind::Constructor:
+        // `globalThis.Set = Fake`. Under any other holder it is the `constructor` of a prototype object.
+        if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
+            return false;
+        break;
+    case BuiltinKind::Namespace:
+    case BuiltinKind::Prototype:
+    case BuiltinKind::DataProperty:
+    case BuiltinKind::Constant:
+    case BuiltinKind::NativeBinding:
+        return false;
+    }
+    return !isReadWithoutLookup(*this, member.name);
+}
+
+bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) const
+{
+    const Builtin& object = at(holder);
+    if (!object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) || object.flags.contains(BuiltinFlag::IsGlobalObject) || object.scope != BuiltinScope::Realm)
+        return false;
+    if (!name)
+        return true;
+    // A key that is `undefined`, `null`, `true` or `false` is looked up under its text.
+    constexpr std::array textsOfPrimitiveKeys { "undefined"_s, "null"_s, "true"_s, "false"_s };
+    if (isReadWithoutLookup(*this, name) || findOwnMember(holder, name))
+        return false;
+    return std::ranges::none_of(textsOfPrimitiveKeys, [&](ASCIILiteral text) {
+        return equalSpans(textOf(name), byteCast<uint8_t>(text.span()));
+    });
+}
+
+BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
+    : m_data(table.m_data)
+    , m_table(m_data)
+{
+}
+
+// As Function.prototype is locked: each member by its name, closed to every other text and to the symbols of the language.
+void BuiltinTableOfBuild::lockByNames(BuiltinID wholeObject)
+{
+    wholeObject = m_table.canonicalID(wholeObject);
+    if (!m_builtins[wholeObject.index()].flags.contains(BuiltinFlag::IsLockedObject))
+        return;
+    for (uint32_t index = 0; index < m_builtins.size(); ++index) {
+        Builtin& entry = m_builtins[index];
+        if (BuiltinID(index) != wholeObject && entry.sameObjectAs != wholeObject)
+            continue;
+        if (entry.flags.contains(BuiltinFlag::IsLockedObject))
+            entry.flags.add({ BuiltinFlag::HasLockedMembers, BuiltinFlag::IsClosedToOtherNames });
+        entry.flags.remove(BuiltinFlag::IsLockedObject);
+    }
+    m_lockedObjects.removeFirst(wholeObject);
+
+    Vector<BuiltinName> symbols;
+    for (uint32_t index = 0; index < m_table.nameCount(); ++index) {
+        if (m_table.isSymbolName(BuiltinName(index)) && !m_table.findOwnMember(wholeObject, BuiltinName(index)))
+            symbols.append(BuiltinName(index));
+    }
+    m_closedSymbols.append(WTF::move(symbols));
+    size_t position = std::ranges::lower_bound(m_closedKeys, wholeObject, { }, &BuiltinClosedKeys::holder) - m_closedKeys.begin();
+    RELEASE_ASSERT(position == m_closedKeys.size() || m_closedKeys[position].holder != wholeObject);
+    m_closedKeys.insert(position, BuiltinClosedKeys { wholeObject, m_closedSymbols.last().span(), { } });
+}
+
+void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames)
+{
+    RELEASE_ASSERT(m_builtins.isEmpty());
+    for (BuiltinID member : members) {
+        if (m_table.contains(member) && m_table.canBeReplacedInTestRuns(member))
+            m_unlockedMembers.append(member);
+    }
+    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty())
+        return;
+    m_builtins = Vector<Builtin>(m_data.builtins);
+    m_lockedObjects = Vector<BuiltinID>(m_data.runtime.lockedObjects);
+    m_closedKeys = Vector<BuiltinClosedKeys>(m_data.runtime.closedKeys);
+    for (BuiltinID member : m_data.runtime.lockedMembers) {
+        if (!std::ranges::binary_search(m_unlockedMembers, member))
+            m_lockedMembers.append(member);
+    }
+    for (BuiltinID member : m_unlockedMembers) {
+        m_builtins[member.index()].mutability = BuiltinMutability::ConstantUnlessWritten;
+        lockByNames(m_builtins[member.index()].holder);
+    }
+    for (BuiltinID holder : holdersOfNewNames)
+        lockByNames(holder);
+    m_data.builtins = m_builtins.span();
+    m_data.runtime.lockedMembers = m_lockedMembers.span();
+    m_data.runtime.lockedObjects = m_lockedObjects.span();
+    m_data.runtime.closedKeys = m_closedKeys.span();
+}
+
 std::span<const BuiltinName> BuiltinTable::closedKeysOf(BuiltinID holder) const
 {
     const BuiltinClosedKeys* found = findRecord(m_data.runtime.closedKeys, &BuiltinClosedKeys::holder, holder);

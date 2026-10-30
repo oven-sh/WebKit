@@ -125,6 +125,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::FoldConstantRegExps, { .opcodes = { Opcode::CallBuiltin } } },
     { PassID::ShareRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
+    { PassID::KeepStringsJoinedInLoops, { .opcodes = joinsOfStrings }, { { .opcodes = { Opcode::LoopHint } } } },
     { PassID::InsertObjectCoercibleChecks, { .opcodes = objectCoercibleCheckOpcodes } },
     { PassID::EliminateTailRecursion, { .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::ResolveAwaitedCalls, { .opcodes = { Opcode::AwaitBySavingFrame, Opcode::PromiseAllOfElements } } },

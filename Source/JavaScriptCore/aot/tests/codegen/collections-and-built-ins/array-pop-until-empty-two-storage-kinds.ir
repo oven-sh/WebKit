@@ -16,7 +16,7 @@
 # RUN(CALLS): lower-to-b3 optimized loops f1
 # REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 not-windows unsanitized-code
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls
 # RUN(ARM64): lower-to-air loops f1
 # REQUIRES(ARM64): arm64 not-windows unsanitized-code
 

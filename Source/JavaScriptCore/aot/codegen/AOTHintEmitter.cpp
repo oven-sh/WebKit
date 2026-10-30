@@ -93,6 +93,23 @@ void HintEmitter::generateLoopHint(const ValueContext& value)
     emitPoll(value);
 }
 
+// `x = null` stores to no place that the collector reads: the object stays in whatever register or stack slot held it until something else is put there.
+void HintEmitter::generateReleaseHint(const ValueContext&)
+{
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->effects.writesLocalState = true;
+    patchpoint->setReleasesDeadValues(true);
+    generator().procedure().setReleasesDeadValues(true);
+    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        RegisterSet registers = params.value()->registersToRelease();
+        registers.exclude(params.usedRegisters());
+        registers.forEach([&](Reg reg) {
+            jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
+        });
+    });
+}
+
 void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
 {
     RELEASE_ASSERT(hasFaultingLoopPolls);

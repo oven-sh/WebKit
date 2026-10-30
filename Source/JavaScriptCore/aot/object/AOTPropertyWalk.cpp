@@ -350,7 +350,41 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
 }
 
-Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+bool hasGetterToCall(JSObject* object)
+{
+    const Object& typed = *uncheckedDowncast<Object>(object);
+    if (!typed.compiledStructure().isCopiedByWords() && std::ranges::any_of(typed.layout().fields(), &FieldData::isAccessor))
+        return true;
+    return typed.hasExtraProperties() && typed.extraProperties()->structure()->hasAnyKindOfGetterSetterProperties();
+}
+
+namespace {
+
+// What says where the properties of a compiled object lie. A dictionary changes without a new Structure.
+struct PlacesOfProperties {
+    explicit PlacesOfProperties(const Object& object)
+        : structure(object.structureID())
+        , orderWord(object.orderWord())
+        , extra(object.extraProperties())
+        , structureOfExtra(extra ? extra->structureID() : StructureID())
+    {
+    }
+
+    bool areStill(const Object& object) const
+    {
+        JSObject* now = object.extraProperties();
+        return object.structureID() == structure && object.orderWord() == orderWord && now == extra && (!now || (now->structureID() == structureOfExtra && !now->structure()->isDictionary()));
+    }
+
+    StructureID structure;
+    uint32_t orderWord;
+    JSObject* extra;
+    StructureID structureOfExtra;
+};
+
+}
+
+Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks hooks)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -358,7 +392,7 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
     if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
         return Result::NeedsGenericPath;
     JSObject* extra = typed->extraProperties();
-    if (extra && !extraPropertiesAreWalkedDirectly(extra, Elements::NeedGenericPath))
+    if (extra && (extra->type() != FinalObjectType || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties()))
         return Result::NeedsGenericPath;
     State& state = typed->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
@@ -369,24 +403,45 @@ Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* o
         std::span<const FieldData> fields = typed->layout().fields();
         typed->forEachFieldInKeyOrder(state, [&](uint16_t index) {
             const FieldData& field = fields[index];
-            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed->read(field))
+            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed->isInSlot(field))
                 ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed->attributesOf(field) });
         });
     }
-    for (const OrderedKey& key : ordered)
-        heldNames.append(key.name);
-    // A getter may change the object in any way: what follows it is asked for by name.
+    if (hooks.refusesProtoName && std::ranges::contains(ordered, vm.propertyNames->underscoreProto.impl(), &OrderedKey::name))
+        return Result::NeedsGenericPath;
+    // The program holds the name of a field.
+    for (const OrderedKey& key : ordered) {
+        if (!key.field)
+            heldNames.append(key.name);
+    }
+    // A getter may change the object in any way. Where it has moved something, what follows is asked for by name.
+    PlacesOfProperties places(*typed);
     bool isAsListed = true;
     for (bool wantsSymbols : { false, true }) {
+        if (wantsSymbols && !extra && !typed->layout().hasFieldsWithSymbolKeys)
+            break;
         for (const OrderedKey& key : ordered) {
-            if (key.name->isSymbol() != wantsSymbols || PropertyName(key.name).isPrivateName())
+            if (key.name->isSymbol() != wantsSymbols || (wantsSymbols && PropertyName(key.name).isPrivateName()) || (hooks.isLeftOut && (*hooks.isLeftOut)(key.name)))
                 continue;
             JSValue value;
-            if (isAsListed && !(key.attributes & PropertyAttribute::Accessor)) {
+            if (isAsListed && !(key.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
                 if (key.attributes & PropertyAttribute::DontEnum)
                     continue;
                 value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+            } else if (isAsListed && key.attributes & PropertyAttribute::Accessor) {
+                if (key.attributes & PropertyAttribute::DontEnum)
+                    continue;
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                JSValue accessor = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+                value = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                isAsListed = places.areStill(*typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
             } else {
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
                 PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
                 bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, PropertyName(key.name), slot);
                 RETURN_IF_EXCEPTION(scope, Result::Stopped);
@@ -681,6 +736,67 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
             return true;
     }
     return storePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+}
+
+static bool takesStoresWithoutCode(VM& vm, JSObject* target)
+{
+    if (isCompiledObject(target))
+        return wouldPerformFastPut(vm, target);
+    auto* ordinary = dynamicDowncast<JSFinalObject>(target);
+    return ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
+}
+
+static void storeInOrder(JSGlobalObject* globalObject, JSObject* target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (takesStoresWithoutCode(vm, target)) {
+        Object* record = compiledObjectOrNull(target);
+        if (!record) {
+            target->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+            return;
+        }
+        if (storePropertiesInOrder(vm, *record, names.mutableSpan(), { values.data(), values.size() }))
+            return;
+    }
+    for (size_t index = 0; index < names.size(); ++index) {
+        PutPropertySlot slot(target, true);
+        target->putInline(globalObject, PropertyName(names[index]), values.at(index), slot);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+bool tryAssignCallingGetters(JSGlobalObject* globalObject, JSObject* target, JSObject* source)
+{
+    VM& vm = globalObject->vm();
+    if (source == target || !isCompiledObject(source) || !hasGetterToCall(source) || !takesStoresWithoutCode(vm, target))
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<UniquedStringImpl>, 32> heldNames;
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    // A getter may look at the target, so it finds there what stands in front of it.
+    auto storeWhatIsRead = [&] {
+        if (names.isEmpty())
+            return;
+        storeInOrder(globalObject, target, names, values);
+        names.shrink(0);
+        values.clear();
+    };
+    ScopedLambda<void()> willRunCode = storeWhatIsRead;
+    // A store that runs code may change what the source holds.
+    auto takesStores = [&] {
+        return takesStoresWithoutCode(vm, target);
+    };
+    ScopedLambda<bool()> mayReadAhead = takesStores;
+    // A store under __proto__ goes to the setter on Object.prototype and gives the target other objects above it.
+    Result result = readOwnPropertiesCallingGetters(globalObject, source, heldNames, names, values, { .willRunCode = &willRunCode, .mayReadAhead = &mayReadAhead, .refusesProtoName = true });
+    RETURN_IF_EXCEPTION(scope, true);
+    if (result != Result::Completed)
+        return false;
+    scope.release();
+    storeWhatIsRead();
+    return true;
 }
 
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)

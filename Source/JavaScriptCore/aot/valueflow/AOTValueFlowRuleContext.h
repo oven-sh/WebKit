@@ -170,7 +170,8 @@ public:
     ValueSetMaker& maker() { return m_maker; }
 
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowCellName cell) { return readWhatWasWritten(objects, static_cast<ValueFlowName>(cell)); }
-    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowName);
+    enum class ReadUse : bool { Any, OnlyWhatLetsInUnseenCode };
+    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowName, ReadUse = ReadUse::Any);
     ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowCellName) = delete;
     // The value of that node if an earlier turn made it. The statement does not ask for the node, so a change of the value does not run it again.
     std::optional<ClimbingSet> peekAtWhatWasWritten(ClimbingSet objects, ValueFlowName);

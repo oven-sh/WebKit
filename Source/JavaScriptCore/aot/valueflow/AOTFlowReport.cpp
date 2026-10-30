@@ -277,7 +277,7 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
     return records;
 }
 
-FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord> builtinUses, std::span<const RuntimeFunctionID> libraryFunctionsLacked, std::span<const VariableID> exportsThatSpiesReplace)
+FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord> builtinUses, std::span<const RuntimeFunctionID> libraryFunctionsLacked, std::span<const VariableID> exportsThatSpiesReplace, std::span<const BuiltinID> builtinsThatTestsReplace, std::span<const FlowAddedName> namesThatTestsAdd)
 {
     FlowReport report;
     report.unseenCode = Vector<Wire::UnseenCodeRecord>(unseenCode);
@@ -287,17 +287,23 @@ FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unsee
         report.libraryFunctionsLacked.append(Wire::LackedFunctionRecord { .function = function.index() });
     for (VariableID variable : exportsThatSpiesReplace)
         report.exportsThatSpiesReplace.append(Wire::ReplacedExportRecord { .variable = variable.index() });
+    for (BuiltinID member : builtinsThatTestsReplace)
+        report.builtinsThatTestsReplace.append(Wire::ReplacedBuiltinRecord { .member = member.index() });
+    for (const FlowAddedName& added : namesThatTestsAdd) {
+        report.namesThatTestsAdd.append(Wire::AddedNameRecord { .holder = added.holder.index(), .name = { static_cast<uint32_t>(report.textOfNamesThatTestsAdd.size()), static_cast<uint32_t>(added.name.size()) } });
+        report.textOfNamesThatTestsAdd.append(added.name.span());
+    }
     return report;
 }
 
 FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
 {
     if (flow.hasResults())
-        return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace());
+        return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace(), flow.builtinsThatTestsReplace(), flow.namesThatTestsAdd());
     Vector<Wire::UnseenCodeRecord> unseenCode(flow.unseenCode());
     if (unseenCode.isEmpty())
         unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
-    return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace());
+    return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked(), flow.exportsThatSpiesReplace(), flow.builtinsThatTestsReplace(), flow.namesThatTestsAdd());
 }
 
 FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)

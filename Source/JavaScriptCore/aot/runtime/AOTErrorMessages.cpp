@@ -461,13 +461,21 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, Str
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
 {
-    return createNotAnObjectError(globalObject, base, member.isSymbol() || member.isPrivateName() ? StringView() : StringView(member.impl()));
+    if (member.isPrivateName())
+        return createNotAnObjectError(globalObject, base, StringView());
+    if (!member.isSymbol())
+        return createNotAnObjectError(globalObject, base, StringView(member.impl()));
+    String source;
+    if (String description = describe(globalObject, base); !description.isNull())
+        source = tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s);
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
 {
     String source;
-    if (key.isInt32() || key.isString()) {
+    // To describe an object would name its class, which says nothing of the key it would become.
+    if (key && !key.isObject()) {
         // A key made by concatenation is a rope. This is a throw, so flatten it; running out of memory just loses the quote.
         if (key.isString() && asString(key)->isRope()) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -493,7 +501,8 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString(name, "()"_s);
+    // A text that ends in `)` is the whole call, with the arguments that the compiler could quote.
+    String source = name.isNull() ? String() : name.endsWith(')') ? name.toString() : tryMakeString(name, "()"_s);
     return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
 }
 

@@ -711,6 +711,9 @@ void HeapRule::readMember(BuiltinID member, ModuleID module, ValueFlowNodeID res
     if (m_tables.letsInUnseenCode(member) && !isOperationOfFunction())
         return;
     use(member, BuiltinUse::Read);
+    // Whatever a test has put there, also a test that this build does not see.
+    if (m_program.isUnlocked(member))
+        add(result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
     if (m_builtins.canonicalID(member) == Builtins::ModuleObjectExports) {
         if (!module)
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
@@ -1617,8 +1620,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
             ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));
             ClimbingSet writable = m_context.restrict(listed, ValueSets::complement(holdersWithLockedLocationUnder(key)));
-            if (ValueFlowNodeID written = holdsAnything(writable) ? readWhereWritten(writable, value) : ValueFlowNodeID())
-                connect(m_context.masked(written, m_tables.objectsThatLetInUnseenCode()), result);
+            if (holdsAnything(writable) && (!m_asksWithoutNodes || m_context.mayFindSomethingWritten(writable, value.kind)))
+                connect(m_context.readWhatWasWritten(writable, value, ValueFlowRuleContext::ReadUse::OnlyWhatLetsInUnseenCode), result);
         }
     }
     if (chain.holdsUnknownObject) {

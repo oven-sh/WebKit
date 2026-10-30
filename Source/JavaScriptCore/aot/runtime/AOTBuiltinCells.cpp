@@ -106,10 +106,11 @@ BuiltinCells::BuiltinCells(State& state)
     m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
 }
 
-static bool isImmutableLocation(const BuiltinTable& table, std::span<const uint32_t> constantMembers, BuiltinID builtin)
+static bool isImmutableLocation(const BuiltinTable& table, const ProgramTables& tables, BuiltinID builtin)
 {
     if (table.at(builtin).mutability == BuiltinMutability::AlwaysLocked)
-        return true;
+        return !ProgramTables::isUnlocked(tables.unlockedBuiltinMembers(), builtin.index());
+    std::span<const uint32_t> constantMembers = tables.constantBuiltinMembers();
     auto holderAndID = [&](BuiltinID id) {
         return std::pair { table.at(id).holder, id };
     };
@@ -349,7 +350,7 @@ JSCell* BuiltinCells::cell(uint32_t number)
     if (JSCell* filledDuringLookup = m_cells[number])
         return filledDuringLookup;
 
-    bool isImmutable = isImmutableLocation(table, m_tables.constantBuiltinMembers(), key->builtin());
+    bool isImmutable = isImmutableLocation(table, m_tables, key->builtin());
     if (!found) {
         // Compiled code tests what it has looked up against the cell of a built-in that the realm may lack, and reads through it only behind the test.
         if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin) && !table.has(BuiltinMark::MayBeAbsent, key->builtin())) {
@@ -692,7 +693,7 @@ static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
     namesOfLockedObjects().set(object, id);
 }
 
-void didRefuseChange(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RefusedChange change)
+void didRejectWrite(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RejectedWrite change)
 {
     if (!refusedChangeListener) [[likely]]
         return;
@@ -710,18 +711,18 @@ void didRefuseChange(JSGlobalObject* realm, JSObject* object, UniquedStringImpl*
         return id == Builtins::GlobalThis ? String(keyOrNull) : makeString(holder, '.', StringView(keyOrNull));
     };
     switch (change) {
-    case RefusedChange::Store:
+    case RejectedWrite::Store:
         return refusedChangeListener(realm, makeString("Cannot assign to "_s, member()));
-    case RefusedChange::Definition:
+    case RejectedWrite::Definition:
         return refusedChangeListener(realm, makeString("Cannot define "_s, member()));
-    case RefusedChange::Deletion:
+    case RejectedWrite::Deletion:
         return refusedChangeListener(realm, makeString("Cannot delete "_s, member()));
-    case RefusedChange::Prototype:
+    case RejectedWrite::Prototype:
         return refusedChangeListener(realm, makeString("Cannot change the prototype of "_s, holder));
     }
 }
 
-String messageOfRefusalByLockedObject(JSGlobalObject*, JSObject* object, UniquedStringImpl* key, RefusedChange change)
+String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedStringImpl* key, RejectedWrite change)
 {
     JSGlobalObject* realm = object->realm();
     Instance* instance = realm ? Instance::of(realm) : nullptr;
@@ -734,7 +735,19 @@ String messageOfRefusalByLockedObject(JSGlobalObject*, JSObject* object, Uniqued
     if (!id)
         return { };
     String member = memberOfLockedBuiltin(id, key);
-    return change == RefusedChange::Deletion ? deletionFromLockedBuiltinMessage(member) : assignmentToLockedBuiltinMessage(member);
+    return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(member) : assignmentToLockedBuiltinMessage(member);
+}
+
+static bool admitsReplacedBuiltins(const Instance& instance)
+{
+    return hasFlag(instance.options().admitted(), AdmittedCode::ReplacedBuiltins);
+}
+
+bool reflectThrowsOnLockedProperty(JSObject* lockedObject)
+{
+    JSGlobalObject* realm = lockedObject->realm();
+    Instance* instance = realm ? Instance::of(realm) : nullptr;
+    return instance && admitsReplacedBuiltins(*instance);
 }
 
 // Every realm of the VM, with an instance or without: text that is evaluated in any of them reaches the objects of the program.
@@ -871,6 +884,7 @@ public:
         : m_vm(*instance.vm)
         , m_realm(instance.globalObject)
         , m_tables(instance.tables())
+        , m_reflectThrows(admitsReplacedBuiltins(instance))
         , m_cells(instance.state ? instance.state->builtinCells.get() : nullptr)
         , m_builtinsToLock(builtinsToLock)
         , m_lockedWithoutCells(lockedWithoutCells)
@@ -927,21 +941,37 @@ private:
         return m_cells->didLock(id, object);
     }
 
+    Vector<Identifier, 2> namesOpenedOn(BuiltinID id) const
+    {
+        Vector<Identifier, 2> names;
+        std::span<const uint32_t> openedNames = m_tables.openedNames();
+        for (size_t index = 0; index + 1 < openedNames.size(); index += 2) {
+            if (openedNames[index] == (id.index() | ProgramTables::openedName))
+                names.append(Identifier::fromString(m_vm, m_vm.aotState().image->text().view(StringID(openedNames[index + 1] & ~ProgramTables::openedName)).toString()));
+        }
+        return names;
+    }
+
     void makeImmutable(const BuiltinTable& table, BuiltinID id, JSObject* object)
     {
-        if (table.at(id).flags.contains(BuiltinFlag::IsLockedObject)) {
+        Vector<Identifier, 2> openedNames = namesOpenedOn(id);
+        bool isWholeObject = table.at(id).flags.contains(BuiltinFlag::IsLockedObject);
+        bool isOpenedByTests = !openedNames.isEmpty() || std::ranges::any_of(m_tables.unlockedBuiltinMembers(), [&](uint32_t member) {
+            return table.at(BuiltinID(member & ~ProgramTables::unlockedBuiltinMember)).holder == id;
+        });
+        if (isWholeObject && !isOpenedByTests) {
             lockObject(m_vm, id, object);
             if (m_cells)
                 m_cells->didLockEveryPropertyOf(object);
             return;
         }
         std::span<const uint32_t> constantMembers = constantMembersOf(table, m_tables, id);
-        bool hasFixedNames = hasMemberLockedByTable(table, id) || !constantMembers.empty();
+        bool hasFixedNames = isWholeObject || hasMemberLockedByTable(table, id) || !constantMembers.empty();
         bool tellsOfWrites = m_cells && m_cells->holdersThatTellOfWrites().get(id.index());
         // A holder may only lie on the path to what is locked.
         if (!hasFixedNames && !tellsOfWrites)
             return;
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells).get())) [[likely]]
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_reflectThrows, openedNames.span()).get())) [[likely]]
             return;
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);
@@ -951,6 +981,7 @@ private:
     VM& m_vm;
     JSGlobalObject* m_realm;
     const ProgramTables& m_tables;
+    const bool m_reflectThrows;
     BuiltinCells* m_cells;
     const BitVector& m_builtinsToLock;
     BitVector* m_lockedWithoutCells;

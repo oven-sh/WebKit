@@ -250,6 +250,13 @@ public:
     void setNumberOfFrameWordsToClearAtFirstSuspension(unsigned numberOfWords) { m_numberOfFrameWordsToClearAtFirstSuspension = numberOfWords; }
     unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return m_numberOfFrameWordsToClearAtFirstSuspension; }
 
+    // The program lets go of an object here. Air clears what this function has written, reads no more and would leave as it is across a later call:
+    // stack slots by stores behind this, and the generator clears those of registersToRelease() that are not in use.
+    void setReleasesDeadValues(bool releasesDeadValues) { m_releasesDeadValues = releasesDeadValues; }
+    bool releasesDeadValues() const { return m_releasesDeadValues; }
+    void setRegistersToRelease(const RegisterSet& registers) { m_registersToRelease = registers; }
+    const RegisterSet& registersToRelease() const { return m_registersToRelease; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -340,6 +347,7 @@ private:
     RefPtr<StackmapGenerator> m_generator;
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
+    RegisterSet m_registersToRelease;
     std::optional<BitVector> m_frameWordsDeadAcrossSuspension;
     unsigned m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
@@ -349,6 +357,7 @@ private:
     bool m_needsFrameRecord { false };
     bool m_isSuspension { false };
     bool m_sharesLatePath { false };
+    bool m_releasesDeadValues { false };
 };
 
 } } // namespace JSC::B3

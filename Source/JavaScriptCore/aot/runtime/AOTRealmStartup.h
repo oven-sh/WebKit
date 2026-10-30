@@ -23,7 +23,7 @@ class VM;
 
 namespace AOT {
 
-enum class RefusedChange : uint8_t;
+enum class RejectedWrite : uint8_t;
 struct Instance;
 
 bool runsCompiledProgram(JSGlobalObject*);
@@ -32,8 +32,10 @@ JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
 JS_EXPORT_PRIVATE void lockBuiltinsOfTable(JSGlobalObject*);
 using RefusedChangeListener = void (*)(JSGlobalObject*, const String& refusal);
 JS_EXPORT_PRIVATE void setRefusedChangeListener(RefusedChangeListener);
-void didRefuseChange(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RefusedChange);
-String messageOfRefusalByLockedObject(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RefusedChange);
+void didRejectWrite(JSGlobalObject*, JSObject*, UniquedStringImpl* keyOrNull, RejectedWrite);
+String lockedObjectErrorMessage(JSGlobalObject*, JSObject*, UniquedStringImpl* key, RejectedWrite);
+// In a test run a refusal is an error for everybody: a test that takes it for a replacement that was made goes on to measure nothing.
+bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
 JS_EXPORT_PRIVATE ASCIILiteral evaluationRefusedMessage();
 void refuseEvaluationUnlessAdmitted(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);

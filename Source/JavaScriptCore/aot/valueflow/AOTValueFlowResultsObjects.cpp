@@ -15,6 +15,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
+#include "AOTValueFlowResultsFieldsInternal.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
 #include "AOTWrittenFunction.h"
@@ -244,10 +245,38 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
         bool isUnsolved = isUnsolvedCode(inputs, tables, allocation.function);
         objects.add(layout, isUnsolved ? allObjectMutations : OptionSet<ObjectMutation> { }, isUnsolved);
     }
+    BitVector layoutsWithLayoutsBelow(program.layouts.size());
+    for (const Layout& layout : program.layouts) {
+        if (layout.base)
+            layoutsWithLayoutsBelow.quickSet(layout.base.index());
+    }
+    ValueFlowHeapView heapOfCallGroups(inputs);
+    // A function that always answers with an object of its own leaves no instance in any set, and is constructed all the same.
+    std::optional<ValueSetID> constructed;
+    auto isConstructedByProgram = [&](FunctionID function) {
+        if (!constructed) {
+            UnionOfSets callees;
+            for (ValueFlowNodeID first : heapOfCallGroups.index().firstNodesOfCallGroups()) {
+                const ValueFlowNodeKey& key = *inputs.solver().keyOfMadeNode(first);
+                if (key.callKind() == ValueFlowCallKind::Construct)
+                    callees.add(key.set);
+            }
+            constructed = callees.take(heapOfCallGroups.maker());
+        }
+        return sets.contains(*constructed, universe.closureOf(function));
+    };
+    // `function NullObject() {}` that only code out of run-time text constructs: the compiler knows no name of its objects, so a layout would hold none of them in a slot. The run time makes ordinary objects.
+    auto hasNothingToKeepInSlots = [&](uint32_t index) {
+        const Layout& layout = program.layouts[index];
+        return layout.has(LayoutFlags::IsConstructorFunction) && layout.fields.isEmpty() && !layout.base && layout.supertypes.isEmpty() && !layoutsWithLayoutsBelow.quickGet(index)
+            && !layoutsWithInstances.quickGet(index) && !program.at(layout.constructor).has(FunctionFlags::HasThis) && !isConstructedByProgram(layout.constructor);
+    };
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
         bool isUnsolved = constructor && isUnsolvedCode(inputs, tables, constructor);
         if (!constructor || (!isUnsolved && !inputs.isReached(constructor)))
+            continue;
+        if (!isUnsolved && hasNothingToKeepInSlots(index))
             continue;
         if (isUnsolved)
             objects.add(LayoutID(index), allObjectMutations, true);

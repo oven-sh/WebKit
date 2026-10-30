@@ -98,6 +98,7 @@ static constexpr OpcodeSet opcodesWithoutCode = castsThatProveNothing | OpcodeSe
     Opcode::Results,
     Opcode::ResultAt,
     Opcode::LoopHint,
+    Opcode::ReleaseHint,
     Opcode::AssumeType,
     Opcode::FinishObject,
     Opcode::AllGuards,

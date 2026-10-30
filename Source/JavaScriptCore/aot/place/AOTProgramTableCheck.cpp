@@ -242,13 +242,22 @@ static void checkSortedTables(const TableCheck& check)
     check.expect(check.tables.eagerBuiltinCells().empty() || check.tables.eagerBuiltinCells().back() < check.tables.builtinCells().size(), ProgramTableRule::TableOutOfBounds);
 
     const BuiltinTable& builtins = check.program.builtins();
-    bool everyMemberExists = std::ranges::all_of(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
-        return builtins.contains(BuiltinID(member));
+    std::span<const uint32_t> openedNames = check.tables.openedNames();
+    bool everyMemberExists = std::ranges::all_of(check.tables.constantAndUnlockedBuiltinMembers().first(check.tables.numberOfWordsBelow(ProgramTables::openedName)), [&](uint32_t member) {
+        return builtins.contains(BuiltinID(member & ~ProgramTables::unlockedBuiltinMember));
     });
-    if (check.expect(everyMemberExists, ProgramTableRule::TableOutOfBounds)) {
+    bool everyOpenedNameExists = !(openedNames.size() % 2);
+    for (size_t index = 0; everyOpenedNameExists && index < openedNames.size(); index += 2)
+        everyOpenedNameExists = builtins.contains(BuiltinID(openedNames[index] & ~ProgramTables::openedName)) && (openedNames[index + 1] & ~ProgramTables::openedName) < check.program.strings.size();
+    if (check.expect(everyMemberExists && everyOpenedNameExists, ProgramTableRule::TableOutOfBounds)) {
         checkAscending(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
             return std::pair { builtins.at(BuiltinID(member)).holder, BuiltinID(member) };
         });
+        check.expect(isStrictlyAscending(check.tables.unlockedBuiltinMembers(), std::identity { }), ProgramTableRule::TableNotSorted);
+        // Compiled code takes the one kind for constants and tests the other.
+        check.expect(std::ranges::none_of(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
+            return ProgramTables::isUnlocked(check.tables.unlockedBuiltinMembers(), member);
+        }), ProgramTableRule::TableOutOfBounds);
     }
     checkModuleTables(check);
 }

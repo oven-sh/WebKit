@@ -102,7 +102,9 @@ public:
     virtual void willWrite(BuiltinID member, UniquedStringImpl* key) = 0;
 };
 
-JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr);
+// unlockedMembers: ProgramTables::unlockedBuiltinMembers(). openedNames: those of ProgramTables::openedNames() that are opened on the holder.
+// A wholly locked object gets these names where a test run opens some of it: everything but what the two lists say stays closed.
+JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { });
 
 } // namespace AOT
 } // namespace JSC

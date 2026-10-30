@@ -52,6 +52,7 @@ runtime NewDictionary : JSCell* (uint32_t inlineCapacity) ; RuntimeAllocates
 runtime NewFromData, NewSetFromData, NewMapFromData : JSCell* (uint32_t request) ; RuntimeAllocates throws
 runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime CopyObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
+runtime AssignToNewObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime TryPutProperties : size_t (SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects

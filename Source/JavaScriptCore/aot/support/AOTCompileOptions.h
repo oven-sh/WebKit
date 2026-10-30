@@ -184,7 +184,9 @@ struct CompileOptions {
     bool collectsDeclines() const { return hasFlag(reports, ReportSet::Declines); }
     bool collectsAllocationRemarks() const { return hasFlag(reports, ReportSet::Allocations); }
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.
-    bool admitsUnseenCode() const { return recorded.admitted() != AdmittedCode { }; }
+    bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
+    // A test run: what a test replaces on a built-in object is unlocked, and the build is told of what it still finds locked.
+    bool admitsReplacedBuiltins() const { return hasFlag(recorded.admitted(), AdmittedCode::ReplacedBuiltins); }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }

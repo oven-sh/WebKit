@@ -120,6 +120,7 @@ private:
     };
 
     bool readHeader();
+    bool readReplaceableBuiltins();
     bool readNamesAndFamilies();
     bool readStrings();
     bool readPropertyKeys();

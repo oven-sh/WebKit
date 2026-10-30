@@ -162,7 +162,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
         if (!set.listsEveryLayout() || set.written().isEmpty())
-            return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
+            return InternalError { .kind = InternalErrorKind::InvalidType, .count = id.index() };
         for (LayoutID member : set.written()) {
             if (!member || program.at(member).isEnvironment())
                 return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = member, .count = id.index() };
@@ -174,7 +174,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     Type canonical = type;
     canonical.canonicalize();
     if (canonical != type)
-        return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
+        return InternalError { .kind = InternalErrorKind::InvalidType, .count = id.index() };
     return std::nullopt;
 }
 
@@ -482,6 +482,8 @@ void ProgramVerifier::verifyIDs()
     verifyList(m_program.entries);
     verifyList(m_program.runtimeFunctions);
     verifyList(m_program.webAssemblyModules);
+    verifyList(m_program.replaceableBuiltins);
+    verifyList(m_program.openedNames);
 
     const TypeTable& types = m_program.types;
     verifyRecords(types.numberOfPropertyKeys(), [&](unsigned index) -> const PropertyKey& { return types.at(PropertyKeyID(index)); }, inRecord);

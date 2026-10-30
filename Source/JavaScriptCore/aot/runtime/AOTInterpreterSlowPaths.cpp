@@ -105,8 +105,7 @@ static JSValue callCustomGetter(Instance& instance, const Slot& slot, JSCell* ba
         if (JSValue cachedValue = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(reinterpret_cast<const uint8_t*>(base) + record.offsetOfCachedValue)))
             return cachedValue;
     }
-    JSCell* thisCell = record.slotBase ? record.slotBase : base;
-    return JSValue::decode(std::bit_cast<GetValueFunc>(record.function)(record.globalObject, JSValue::encode(thisCell), ident));
+    return Interpreter::callCustomGetter(record, base, ident);
 }
 
 // Empty where the slot does not say what the value is, and after an exception.
@@ -240,6 +239,12 @@ static UniquedStringImpl* nameOfKey(JSValue key)
 }
 
 namespace Interpreter {
+
+JSValue callCustomGetter(const CustomAccessorRecord& record, JSCell* base, const Identifier& ident)
+{
+    JSCell* thisCell = record.slotBase ? record.slotBase : base;
+    return JSValue::decode(std::bit_cast<GetValueFunc>(record.function)(record.globalObject, JSValue::encode(thisCell), ident));
+}
 
 static std::optional<JSValue> tryGetByName(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {

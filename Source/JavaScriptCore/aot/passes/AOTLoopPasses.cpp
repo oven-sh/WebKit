@@ -22,9 +22,11 @@
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
+#include "AOTObservableOperations.h"
 #include "AOTOperatorForms.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
+#include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -1303,6 +1305,204 @@ static unsigned markStepsOfKeyPreservingLoops(FunctionPassContext& context)
         ++numberOfMarkedSteps;
     }
     return numberOfMarkedSteps;
+}
+
+namespace {
+
+struct JoinKeptInLoop {
+    BlockID block;
+    ValueID join;
+    Edge entry;
+    // What stands in the block for the join alone, in the order of the block.
+    Vector<ValueID, 2> madeForJoin;
+};
+
+} // namespace
+
+static constexpr OpcodeSet textsOfValuesThemselves = joinsOfStrings | OpcodeSet { Opcode::ToString };
+
+static bool makesTextWithoutRunningCode(FunctionPassContext& context, ValueID id)
+{
+    const Value& value = context.function.at(id);
+    if (!textsOfValuesThemselves.contains(value.opcode) || !context.program.at(value.type).isAnyString())
+        return false;
+    Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+    return !effects.mayRunOtherCode() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsWhoseWritesNobodySees);
+}
+
+// The outermost loop around the join that changes none of its parts, if the first iteration that joins them can hand the string on to the later ones.
+static std::optional<Edge> findEntryOfLoopThatKeepsJoin(FunctionPassContext& context, const Vector<BlockID>& definingBlock, BlockID block, const Value& join)
+{
+    const Function& function = context.function;
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    AOT_THRESHOLD(unsigned, mostStepsToPartFromOutside, 6);
+    auto isSameInEveryIteration = [&](auto& self, ValueID part, const NaturalLoop& loop, unsigned stepsLeft) -> bool {
+        BlockID definedIn = definingBlock[part.index()];
+        if (!definedIn)
+            return false;
+        const Value& value = function.at(part);
+        if (!loops.belongsTo(definedIn, loop) || isRematerializable(value))
+            return true;
+        if (!stepsLeft)
+            return false;
+        if (isCast(value.opcode))
+            return self(self, value.operand(0), loop, stepsLeft - 1);
+        if (!makesTextWithoutRunningCode(context, part))
+            return false;
+        bool hasSameOperands = true;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            hasSameOperands = hasSameOperands && self(self, operand, loop, stepsLeft - 1);
+        });
+        return hasSameOperands;
+    };
+    auto canCarry = [&](const NaturalLoop& loop) {
+        if (function.at(loop.header()).isHandlerBlock() || isClosedOnlyByWaysBack(context.analyses, loop).predicted())
+            return false;
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            if (context.analyses.effectsOfTerminator(loop.at(i)).onAnyEdge().maySuspend)
+                return false;
+            for (ValueID id : function.at(loop.at(i)).values) {
+                if (context.analyses.effectsOf(id).onAnyEdge().maySuspend)
+                    return false;
+            }
+        }
+        return true;
+    };
+    std::optional<Edge> found;
+    for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop)) {
+        bool hasSameParts = true;
+        join.forEachOperand([&](ValueID part, uint32_t) {
+            hasSameParts = hasSameParts && isSameInEveryIteration(isSameInEveryIteration, part, *loop, mostStepsToPartFromOutside);
+        });
+        std::optional<Edge> entry = hasSameParts && canCarry(*loop) ? loops.findSingleEntry(*loop) : std::nullopt;
+        if (!entry || entry->isHandlerEdge())
+            break;
+        found = entry;
+    }
+    return found;
+}
+
+static Vector<JoinKeptInLoop, 4> findJoinsToKeepInLoops(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    Vector<JoinKeptInLoop, 4> joins;
+    Vector<BlockID> definingBlock;
+    BitVector isMadeForJoin;
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        const NaturalLoop* loop = loops.innerMostLoopOf(blockID);
+        if (!loop || isRarerThan(frequencies.classOf(blockID), frequencies.classOf(loop->header())).predicted())
+            continue;
+        const BlockValues& values = function.at(blockID).values;
+        for (uint32_t index = values.size(); index--;) {
+            ValueID id = values[index];
+            if (!joinsOfStrings.contains(function.at(id).opcode) || isMadeForJoin.get(id.index()) || !makesTextWithoutRunningCode(context, id))
+                continue;
+            if (definingBlock.isEmpty()) {
+                definingBlock.fill(BlockID(), function.values.size());
+                for (BlockID definedIn : cfg.reversePostOrder()) {
+                    for (ValueID parameter : function.at(definedIn).parameters)
+                        definingBlock[parameter.index()] = definedIn;
+                    for (ValueID value : function.at(definedIn).values)
+                        definingBlock[value.index()] = definedIn;
+                }
+            }
+            std::optional<Edge> entry = findEntryOfLoopThatKeepsJoin(context, definingBlock, blockID, function.at(id));
+            if (!entry)
+                continue;
+            JoinKeptInLoop kept { blockID, id, *entry, { } };
+            // A text that only the join reads, and that nobody misses, is made where the join is.
+            auto takeAlong = [&](auto& self, ValueID user) -> void {
+                function.at(user).forEachOperand([&](ValueID part, uint32_t) {
+                    if (definingBlock[part.index()] != blockID || !makesTextWithoutRunningCode(context, part) || !context.analyses.isRemovableWhenUnused(part) || context.analyses.useLists().usesOf(part).size() != 1)
+                        return;
+                    isMadeForJoin.set(part.index());
+                    kept.madeForJoin.append(part);
+                    self(self, part);
+                });
+            };
+            takeAlong(takeAlong, id);
+            joins.append(WTF::move(kept));
+        }
+    }
+    return joins;
+}
+
+// `for (const key of keys) if (key.startsWith(`${path}.`)) ..`: every iteration would join the same string and flatten it. The first one that gets there joins it, where it stands, so
+// whatever the join throws it throws where it did, and a loop that never gets there joins nothing.
+PassOutcome keepStringsJoinedInLoops(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasCycle())
+        return PassOutcome::Unchanged;
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<JoinKeptInLoop, 4> joins = findJoinsToKeepInLoops(context);
+    if (joins.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // A test is typed from the definition it names, before SSARepair picks the one that reaches it: the parameter of a block in front of the loop has the type of all of them.
+    // The blocks in front come first: a cut takes the edges of its block along.
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<std::pair<Edge, BlockID>, 2> blocksInFront;
+    Vector<std::pair<ValueID, ValueID>, 4> variables;
+    auto heldTypeOf = [&](const JoinKeptInLoop& kept) {
+        return context.types.intern(program.at(function.at(kept.join).type).withPrimitives(Primitive::Absent));
+    };
+    for (const JoinKeptInLoop& kept : joins) {
+        builder.setOrigin(function.at(kept.join).origin());
+        auto known = std::ranges::find(blocksInFront, kept.entry, &std::pair<Edge, BlockID>::first);
+        if (known == blocksInFront.end()) {
+            blocksInFront.append({ kept.entry, builder.splitEdge(kept.entry) });
+            known = &blocksInFront.last();
+        }
+        ValueID nothing = builder.addDetached(IRBuilder::make(Opcode::Absent));
+        function.edit(kept.entry.from).values.append(nothing);
+        context.analyses.didChangeValues();
+        variables.append({ builder.addParameter(known->second, heldTypeOf(kept)), ValueID() });
+        builder.appendArgument(kept.entry, nothing);
+    }
+
+    // Of the joins of a block the last one is cut out first, so each is still in the block where it was found.
+    for (size_t position = 0; position < joins.size(); ++position) {
+        const JoinKeptInLoop& kept = joins[position];
+        Value join = function.at(kept.join);
+        TypeID heldType = heldTypeOf(kept);
+        BlockValues madeForJoin;
+        if (!kept.madeForJoin.isEmpty()) {
+            BlockValues remaining;
+            for (ValueID id : function.at(kept.block).values)
+                (kept.madeForJoin.contains(id) ? madeForJoin : remaining).append(id);
+            function.edit(kept.block).values = WTF::move(remaining);
+            context.analyses.didChangeValues();
+        }
+
+        explainOperationThatGoes(function, kept.join, InPlaceOfOperation::ItsExpansion);
+        Expected<BlockFrequency> frequency = function.at(kept.block).frequency;
+        IRBuilder::Expansion expansion = builder.beginExpansion({ kept.block, static_cast<uint32_t>(function.at(kept.block).values.find(kept.join)) });
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(variables[position].first, TypeTable::absent), 0, BlockFrequency::Rare, frequency);
+        if (!madeForJoin.isEmpty()) {
+            function.edit(branch.taken).values.appendVector(madeForJoin);
+            context.analyses.didChangeValues();
+        }
+        builder.endExpansion(expansion, builder.append(WTF::move(join)));
+        builder.moveToEndOf(branch.notTaken);
+        builder.endExpansion(expansion, branch.provenOnNotTaken);
+
+        Value held = IRBuilder::make(Opcode::Upcast, { expansion.results.first() });
+        held.setCastType(heldType);
+        variables[position].second = builder.insertBefore(ProgramPoint::atHeadOf(expansion.continuation), WTF::move(held));
+        builder.applyInsertions();
+    }
+
+    context.analyses.didChangeControlFlow();
+    SSARepair repair(builder, context.analyses);
+    for (auto [heldAtEntry, heldBehindJoin] : variables)
+        repair.addDefinition(repair.addVariable(heldAtEntry), heldBehindJoin);
+    repair.run();
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
 }
 
 PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)

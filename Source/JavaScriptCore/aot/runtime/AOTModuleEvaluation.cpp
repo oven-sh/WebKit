@@ -2698,14 +2698,25 @@ bool Modules::isHeldForImport(ModuleID target) const
 JSValue Modules::loadEvictedFile(ModuleID file)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    // The file may take itself out of require.cache again while it loads.
+    bool storesExports = m_filesToLoadAgain.get(file.index());
+    bool storesStatus = storesExports && !recordIfExists(file);
+    m_filesToLoadAgain.clear(file.index());
+    if (storesStatus)
+        setStoredStatus(file, StoredModuleStatus::Evaluating);
     JSValue value = requireSpecifier(pathString(file), file, true);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (m_filesToLoadAgain.get(file.index())) {
-        m_filesToLoadAgain.clear(file.index());
-        setValue(file, value);
-        if (!recordIfExists(file))
-            setStoredStatus(file, StoredModuleStatus::Evaluated);
+    if (scope.exception()) [[unlikely]] {
+        // A load that throws leaves nothing in the cache, and the next require() tries again.
+        if (storesExports) {
+            m_filesToLoadAgain.set(file.index());
+            setStoredStatus(file, StoredModuleStatus::InRecord);
+        }
+        return { };
     }
+    if (storesExports)
+        setValue(file, value);
+    if (storesStatus)
+        setStoredStatus(file, StoredModuleStatus::Evaluated);
     return value;
 }
 

@@ -335,8 +335,11 @@ void ObjectInterpreter::executeCast(ValueID id)
         return;
     }
 
-    if (function().at(id).opcode == Opcode::AssumeType)
+    if (function().at(id).opcode == Opcode::AssumeType) {
         stateOf(object)->assume(function().at(id).provenType());
+        // `L|ArrayIterator<pristine>` is proven of the result of a helper. Of the iterator that says more than either type alone.
+        assumeTypeOfAlias(object, function().at(id).type);
+    }
     if (!m_sinking.decisions().holdsCells(id)) {
         bind(id, object);
         return;
@@ -1203,6 +1206,9 @@ bool ObjectInterpreter::fitsType(VirtualObjectID object, TypeID type) const
     const ObjectState* state = stateOf(object);
     RELEASE_ASSERT(state);
     if (isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type))
+        return true;
+    // Every edge into a join passes a value of the parameter's type. What was assumed on one edge is lost where another passes a constant.
+    if (m_sinking.at(object).isJoin && isWithin(program(), typeOfCell(m_sinking, object), type))
         return true;
     // What was assumed about a result that may be absent holds, without null and undefined, for one that is present.
     const VirtualFamily& family = m_sinking.familyOf(object);
@@ -3088,16 +3094,21 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
     if (m_enteredEdge.edge && m_enteredEdge.edge->edge.isHandlerEdge())
         return cell;
 
-    for (TypeID assumedType : state.assumedTypes) {
+    auto assume = [&](TypeID assumedType) {
         const Type& type = program().typeOf(function(), cell);
         if (type.isSubsetOf(program().at(assumedType), program()))
-            continue;
+            return;
         if (!type.castTo(program().at(assumedType), cursor().builder().types()).isSubsetOf(type, program()))
-            continue;
+            return;
         if (m_sinking.context().build.validates() && function().at(cell).opcode != Opcode::Parameter)
             cursor().emit(makeValidateType(cell, assumedType));
         cell = cursor().emit(makeAssumeType(cell, Proven::byConstruction(assumedType)));
-    }
+    };
+    for (TypeID assumedType : state.assumedTypes)
+        assume(assumedType);
+    // fitsType() lets a join count as what its parameter says.
+    if (m_sinking.at(object).isJoin)
+        assume(typeOfCell(m_sinking, object));
     return cell;
 }
 

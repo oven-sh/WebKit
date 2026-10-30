@@ -72,6 +72,8 @@ v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByVal
 // AOTStubsObjectCopy.cpp
 v(CopyObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyObjectFrontEnd)
 AOT_STUB_FRONT_END(CopyObject, CopyObjectFrontEnd)
+v(AssignToNewObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AssignToNewObjectFrontEnd)
+AOT_STUB_FRONT_END(AssignToNewObject, AssignToNewObjectFrontEnd)
 
 // AOTStubsFieldCreation.cpp
 v(DidCreateField, CalledByCode, (One, OneOutOfLine, Run), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, OrderWords, ShapeWords, AllocatorState, RuntimeState) | writes(ObjectFields, OrderWords, AllocatorState), DidCreateField)

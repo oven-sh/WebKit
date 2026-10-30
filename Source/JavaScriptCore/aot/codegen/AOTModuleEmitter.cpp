@@ -181,8 +181,17 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 
 void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
+    ModuleID module = value->module();
     LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
-    m_out.store32As8(evaluated, statusOf(value->module()));
+    if (!m_program.at(module).flags.contains(ModuleFlags::MayBeEvicted)) {
+        m_out.store32As8(evaluated, statusOf(module));
+        return;
+    }
+    // The file may have taken itself out of require.cache while it ran. The mark of that stays, and the next require() asks the run time.
+    Word32 status(m_out.load8ZeroExt32(statusOf(module)));
+    ifElse(equal(status, word32(static_cast<int32_t>(StoredModuleStatus::InRecord))), [] { }, [&] {
+        m_out.store32As8(evaluated, statusOf(module));
+    });
 }
 
 // Whatever queues a job calls the run time, so the words of the queue are run-time state.

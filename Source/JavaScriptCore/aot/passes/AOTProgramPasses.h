@@ -128,6 +128,8 @@ inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opc
 inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 // Whether a value is truthy and whether two values are strictly equal never changes, and neither test runs code of the program.
 inline constexpr OpcodeSet testsOfValuesThemselves { Opcode::ToBoolean, Opcode::StrictEq };
+// A string has no identity, so one that is joined from the same parts again may as well be the same string.
+inline constexpr OpcodeSet joinsOfStrings { Opcode::Add, Opcode::Strcat };
 inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };

@@ -55,6 +55,9 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
     if (holdsNamedBun(source))
         add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
+    // A copy of a copy of the named Bun is a copy of it too.
+    if (ValueFlowNodeID sourcesOfSources = readWhereWritten(known(sources), copiedFromName); sourcesOfSources && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), sourcesOfSources))
+        add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
     if (mayBeUnknownObject(sources)) {
         add(m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows), known(targets));
         runGettersOnObjectsNobodyKnows(m_context);

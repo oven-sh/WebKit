@@ -11,6 +11,7 @@
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
+#include "AOTValueFlowNumberLists.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
 #include "AOTVector.h"
@@ -438,47 +439,31 @@ public:
     bool isAtRest(ValueFlowStatementID) const;
     void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const auto& functor) const
     {
-        if (statement.index() >= m_firstUseOfStatement.size())
-            return;
-        for (uint32_t use = m_firstUseOfStatement[statement.index()]; use != UINT32_MAX; use = m_uses[use].next) {
-            const MadeNodes& madeNodes = m_madeNodes[m_uses[use].madeNodes];
+        forEachRecordAskedForBy(statement.index(), [&](uint32_t index) {
+            const MadeNodes& madeNodes = m_madeNodes[index];
             if constexpr (Invocable<decltype(functor), void(const ValueFlowNodeKey&, ValueFlowStatementID, ValueFlowNodeID)>)
                 functor(madeNodes.key, madeNodes.statement, madeNodes.first);
             else
                 functor(madeNodes.key, madeNodes.statement);
-        }
+        });
     }
 
     void forEachMadeNodeAskedForByStatements(uint32_t first, uint32_t end, NOESCAPE const Invocable<void(uint32_t statement)> auto& beginStatement, NOESCAPE const Invocable<void(uint32_t indexOfMadeNodes, const ValueFlowNodeKey&, ValueFlowStatementID)> auto& functor) const
     {
         constexpr uint32_t listsSideBySide = 16;
-        uint32_t endOfLists = std::min<uint32_t>(end, m_firstUseOfStatement.size());
-        std::array<uint32_t, listsSideBySide> use;
         std::array<Vector<uint32_t, 32>, listsSideBySide> found;
         for (uint32_t base = first; base < end; base += listsSideBySide) {
             uint32_t count = std::min(listsSideBySide, end - base);
-            uint32_t numberUnfinished = 0;
+            for (uint32_t list = 0; list < count; ++list) {
+                if (base + list < m_usesOfStatement.size() && m_usesOfStatement[base + list] != UINT32_MAX)
+                    __builtin_prefetch(&m_uses[m_usesOfStatement[base + list]]);
+            }
             for (uint32_t list = 0; list < count; ++list) {
                 found[list].shrink(0);
-                use[list] = base + list < endOfLists ? m_firstUseOfStatement[base + list] : UINT32_MAX;
-                if (use[list] == UINT32_MAX)
-                    continue;
-                ++numberUnfinished;
-                __builtin_prefetch(&m_uses[use[list]]);
-            }
-            while (numberUnfinished) {
-                for (uint32_t list = 0; list < count; ++list) {
-                    if (use[list] == UINT32_MAX)
-                        continue;
-                    const Use& current = m_uses[use[list]];
-                    found[list].append(current.madeNodes);
-                    __builtin_prefetch(&m_madeNodes[current.madeNodes]);
-                    use[list] = current.next;
-                    if (use[list] == UINT32_MAX)
-                        --numberUnfinished;
-                    else
-                        __builtin_prefetch(&m_uses[use[list]]);
-                }
+                forEachRecordAskedForBy(base + list, [&](uint32_t index) {
+                    found[list].append(index);
+                    __builtin_prefetch(&m_madeNodes[index]);
+                });
             }
             for (uint32_t list = 0; list < count; ++list) {
                 beginStatement(base + list);
@@ -517,7 +502,6 @@ private:
         uint8_t rank { 0 };
         uint32_t firstPart { 0 };
         uint32_t numberOfParts { 0 };
-        uint32_t firstUseOfParts { UINT32_MAX };
     };
 
     static constexpr uint32_t everyAsker = UINT32_MAX - 1;
@@ -532,10 +516,30 @@ private:
         ValueFlowNodeKey key;
     };
 
-    struct Use {
-        uint32_t madeNodes { 0 };
-        uint32_t next { UINT32_MAX };
-    };
+    // The records that a statement asked for stand side by side, the latest first. The last of them has this bit.
+    static constexpr uint32_t isLastUse = 1u << 31;
+    bool anyUseIn(uint32_t list, NOESCAPE const Invocable<bool(uint32_t madeNodes)> auto& functor) const
+    {
+        if (list == UINT32_MAX)
+            return false;
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        for (const uint32_t* use = &m_uses[list];; ++use) {
+            if (functor(*use & ~isLastUse))
+                return true;
+            if (*use & isLastUse)
+                return false;
+        }
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    }
+    void forEachUseIn(uint32_t list, NOESCAPE const Invocable<void(uint32_t madeNodes)> auto& functor) const
+    {
+        anyUseIn(list, [&](uint32_t madeNodes) {
+            functor(madeNodes);
+            return false;
+        });
+    }
+    uint32_t usesOf(uint32_t statement) const { return statement < m_usesOfStatement.size() ? m_usesOfStatement[statement] : UINT32_MAX; }
+    void forEachRecordAskedForBy(uint32_t statement, NOESCAPE const Invocable<void(uint32_t madeNodes)> auto& functor) const { forEachUseIn(usesOf(statement), functor); }
 
     struct Reader {
         ValueFlowStatementID statement;
@@ -605,7 +609,7 @@ private:
             return false;
         const WatchShard& shard = m_watchShards[watchShardOf(node, within)];
         const uint32_t* watch = shard.watchOfPart.find(static_cast<uint64_t>(node.index()) << 32 | within.index());
-        return watch && shard.knownWatchers.contains(*watch, statement.index());
+        return watch && shard.isReaderOf(*watch, statement);
     }
     uint32_t numberOfName(ValueFlowName name) const
     {
@@ -628,17 +632,27 @@ private:
             return false;
         return !m_hasStatementOfBodyRun.get(statement.index()) || (m_statementsWait && m_nextStatementWaiting[statement.index()] == hasWaitedAndNotRun);
     }
-    void prefetchWhetherKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const
+    // Three steps, each for what the one before has brought: the name of the node's list, its first words, the place of the statement in it.
+    uint32_t readersOf(ValueFlowNodeID node) const { return node.index() < m_readersOfNode.size() ? m_readersOfNode[node.index()] : 0; }
+    void prefetchReadersOf(ValueFlowNodeID node) const
     {
-        if (!ValueFlowRoundLog::isNumberedByLog(node))
-            m_readerShards[readerShardOf(node)].known.prefetch(node.index(), statement.index());
+        if (node.index() < m_readersOfNode.size())
+            __builtin_prefetch(&m_readersOfNode[node.index()]);
     }
+    void prefetchFirstReadersOf(ValueFlowNodeID node) const { m_readerShards[readerShardOf(node)].readersOfNodes.prefetch(readersOf(node)); }
+    void prefetchWhetherKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const { m_readerShards[readerShardOf(node)].readersOfNodes.prefetchPlaceOf(readersOf(node), statement.index()); }
     void prefetchWhetherKnownToWaitForSomethingIn(ValueFlowNodeID node, ValueFlowStatementID statement) const
     {
         if (!ValueFlowRoundLog::isNumberedByLog(node))
             m_readerShards[readerShardOf(node)].knownToWaitForSomething.prefetch(node.index(), statement.index());
     }
-    bool isKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const { return !ValueFlowRoundLog::isNumberedByLog(node) && m_readerShards[readerShardOf(node)].known.contains(node.index(), statement.index()); }
+    bool isKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const { return m_readerShards[readerShardOf(node)].readersOfNodes.contains(readersOf(node), statement.index()); }
+    void forEachReaderOf(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowStatementID)> auto& functor) const
+    {
+        m_readerShards[readerShardOf(node)].readersOfNodes.forEach(m_readersOfNode[node.index()], [&](uint32_t statement) {
+            functor(ValueFlowStatementID(statement));
+        });
+    }
     ValueSetID valueForReadersOf(ValueFlowNodeID, ValueSetMaker&) const;
     ValueSetID valueShownTo(ValueFlowStatementID, ValueFlowNodeID) const;
     ValueSetID familyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
@@ -696,17 +710,35 @@ private:
     void noteReaders(unsigned shard, ValueSetMaker&);
     size_t numberOfReaders() const;
     void noteNodesAskedFor();
+    // A list of up to 32 uses takes as many words as it has uses. A longer one takes the next power of two or three quarters of it.
+    // A list that was given back holds the position of the next free one of its size in its first word.
     struct UsesOfThread {
-        size_t nextFree { 0 };
-        size_t endOfFree { 0 };
+        static constexpr uint32_t mostUsesWithoutSpareRoom = 32;
+        static constexpr unsigned numberOfSizes = mostUsesWithoutSpareRoom + 1 + 2 * (32 - 5);
+        static uint64_t roomFor(uint32_t count)
+        {
+            if (count <= mostUsesWithoutSpareRoom)
+                return count;
+            uint64_t powerOfTwo = std::bit_ceil(static_cast<uint64_t>(count));
+            return count <= powerOfTwo / 4 * 3 ? powerOfTwo / 4 * 3 : powerOfTwo;
+        }
+        static unsigned sizeOf(uint64_t room)
+        {
+            if (room <= mostUsesWithoutSpareRoom)
+                return room;
+            return mostUsesWithoutSpareRoom + 1 + 2 * (std::bit_width(room) - 6) - std::has_single_bit(room);
+        }
+
+        UsesOfThread() { firstFree.fill(UINT32_MAX); }
+
+        std::array<uint32_t, numberOfSizes> firstFree;
         size_t nextFresh { 0 };
         size_t endOfFresh { 0 };
     };
-    uint32_t takeUse(UsesOfThread&);
-    void letThreadsTakeUses();
-    void takeBackUsesOfThreads();
+    uint32_t takeUses(UsesOfThread&, uint32_t count);
+    void giveBackRoomOfUses(UsesOfThread&, uint32_t list, uint64_t room);
+    void giveBackUses(UsesOfThread& uses, uint32_t list, uint32_t count) { giveBackRoomOfUses(uses, list, UsesOfThread::roomFor(count)); }
     Vector<UsesOfThread> m_usesOfThreads;
-    std::atomic<size_t> m_numberOfFreeUsesLeft { 0 };
     template<typename T> void growAndFill(ListWithRoomToFill<T>&, size_t size, T value);
     void takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& madeNodes);
     void letGoOf(Vector<uint32_t>&& listsOfUses);
@@ -843,9 +875,8 @@ private:
     uint64_t mostObjectsListedByMember() const;
     bool isListedByMember(ValueSetID) const;
     Vector<uint32_t> m_madeNodesOfStatement;
-    ListWithRoomToFill<uint32_t> m_firstUseOfStatement;
-    ListThatStaysInPlace<Use> m_uses;
-    Vector<uint32_t> m_freeUses;
+    ListWithRoomToFill<uint32_t> m_usesOfStatement;
+    ListThatStaysInPlace<uint32_t> m_uses;
     uint32_t m_numberOfNodesBeforeRound { 0 };
     uint32_t m_turnsOfRound { 0 };
 
@@ -920,7 +951,7 @@ private:
     mutable Lock m_lockOfDueLast;
     mutable Vector<ValueFlowStatementID> m_dueLast;
 
-    ListWithRoomToFill<uint32_t> m_firstReaderOfNode;
+    ListWithRoomToFill<uint32_t> m_readersOfNode;
     ListWithRoomToFill<ValueSetID> m_seenByReadersOfNode;
     enum ListenerOfNode : uint8_t {
         WaitsForNodeToHoldSomething = 1 << 0,
@@ -941,8 +972,8 @@ private:
         ValueFlowStatementID statement;
     };
     struct ReaderShard {
-        Vector<Reader> readers;
-        ValueFlowPairSet known;
+        ValueFlowNumberLists readersOfNodes;
+        Vector<Reader> readersWaitingForSomething;
         ValueFlowPairSet knownToWaitForSomething;
         HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstReaderWaitingForSomething;
     };
@@ -951,8 +982,8 @@ private:
     std::array<ReaderShard, numberOfReaderShards> m_readerShards;
     struct Watch {
         ValueSetID within;
-        uint32_t firstReader { UINT32_MAX };
-        uint32_t firstReaderAskingLast { UINT32_MAX };
+        uint32_t readers { 0 };
+        uint32_t readersAskingLast { 0 };
         uint32_t watchedNode { 0 };
     };
     struct WatchedNode {
@@ -974,10 +1005,11 @@ private:
     static constexpr unsigned numberOfRangesOfMembers = 16;
     static constexpr unsigned rangeOfMember(uint32_t member) { return member / 1024 % numberOfRangesOfMembers; }
     struct WatchShard {
-        Vector<Reader> readers;
+        bool isReaderOf(uint32_t watch, ValueFlowStatementID statement) const { return readersOfWatches.contains(watches[watch].readers, statement.index()) || readersOfWatches.contains(watches[watch].readersAskingLast, statement.index()); }
+
+        ValueFlowNumberLists readersOfWatches;
         Vector<Watch> watches;
         ValueFlowNumbersByKey watchOfPart;
-        ValueFlowPairSet knownWatchers;
         Vector<WatchedNode> watchedNodes;
         HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> watchedNodeOfNode;
         ValueFlowNumbersByKey firstWatchOfMember;
@@ -1052,10 +1084,6 @@ private:
     Vector<Name> m_names;
     std::array<KindOfNames, mostKindsOfNames> m_kindsOfNames;
     HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberOfName;
-    struct ChainedNode {
-        ValueFlowNodeID node;
-        uint32_t next { UINT32_MAX };
-    };
     static constexpr unsigned numberOfLinkShardsOfNames = 64;
     static constexpr unsigned numberOfLinkShardsOfKinds = 8;
     static constexpr unsigned numberOfLinkShards = numberOfLinkShardsOfNames + numberOfLinkShardsOfKinds;
@@ -1071,8 +1099,8 @@ private:
         VeryMany,
     };
     struct NodesOfMembers {
-        ValueFlowNumbersByKey first;
-        Vector<ChainedNode> chained;
+        ValueFlowNumbersByKey listOfMember;
+        ValueFlowNumberLists lists;
     };
     struct Linked {
         struct LongList {

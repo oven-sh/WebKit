@@ -45,9 +45,9 @@ namespace {
 class RefusalsOfHostFunctions final : public ImmutablePropertyNames::OutsideNames {
 public:
     bool contains(UniquedStringImpl*) const final { return false; }
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return messageOfNameRefusedOnBuiltinFunction(uid); }
-    String messageOfRefusedPrototype() const final { return messageOfPrototypeRefusedOnBuiltinFunction(); }
-    bool refusalAlwaysThrows() const final { return true; }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return messageOfNameRefusedOnBuiltinFunction(uid); }
+    String setPrototypeErrorMessage() const final { return messageOfPrototypeRefusedOnBuiltinFunction(); }
+    bool throwsInSloppyMode() const final { return true; }
 };
 
 } // anonymous namespace

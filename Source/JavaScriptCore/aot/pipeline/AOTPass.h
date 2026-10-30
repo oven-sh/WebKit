@@ -219,6 +219,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
     v(PlanCollectionCapacities, planCollectionCapacities) \
     v(FoldConstantRegExps, foldConstantRegExps) \
     v(ShareRegExpLiterals, shareRegExpLiterals) \
+    v(KeepStringsJoinedInLoops, keepStringsJoinedInLoops) \
     v(InsertObjectCoercibleChecks, insertObjectCoercibleChecks) \
     v(EliminateTailRecursion, eliminateTailRecursion) \
     v(ResolveAwaitedCalls, resolveAwaitedCalls) \

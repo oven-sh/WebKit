@@ -360,6 +360,10 @@ public:
     void setNeedsUsedRegisters(bool value) { m_needsUsedRegisters = value; }
     bool needsUsedRegisters() const { return m_needsUsedRegisters; }
 
+    // Some patchpoint says StackmapValue::releasesDeadValues().
+    void setReleasesDeadValues(bool value) { m_releasesDeadValues = value; }
+    bool releasesDeadValues() const { return m_releasesDeadValues; }
+
     JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE frameSize() const;
     JS_EXPORT_PRIVATE RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
 
@@ -488,6 +492,7 @@ private:
     bool m_hasCycle { false };
     bool m_areFrequenciesCurrent { false };
     bool m_needsUsedRegisters : 1 { true };
+    bool m_releasesDeadValues : 1 { false };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };
     bool m_shouldDumpIR : 1 { false };

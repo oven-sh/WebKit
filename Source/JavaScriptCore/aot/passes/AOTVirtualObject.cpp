@@ -249,13 +249,11 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
 
     const BuiltinOverload& overload = program.builtins().at(call.overload());
     if (makesArrayIterator(program, function, call)) {
-        // Each step moves the iterator on, and a handler takes one list of arguments from a whole block: what it would take for the position differs within the block.
-        if (isPassedToHandler(analyses, description.allocation))
-            return unsupported(VirtualObjectSupport::HasNoPartsForm);
         description.kind = VirtualObjectKind::ArrayIterator;
         return supported(description);
     }
     if (makesCollectionIterator(program, function, call)) {
+        // Each step moves the iterator on, and a handler takes one list of arguments from a whole block: what it would take for the position differs within the block.
         if (isPassedToHandler(analyses, description.allocation))
             return unsupported(VirtualObjectSupport::HasNoPartsForm);
         description.kind = VirtualObjectKind::CollectionIterator;

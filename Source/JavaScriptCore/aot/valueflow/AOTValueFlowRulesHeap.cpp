@@ -534,7 +534,8 @@ void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, boo
     if (!m_context.meet(receivers, m_tables.builtinObjectsAndPlaceholders()))
         return;
     ValueSetID counted = areOnlyListed ? m_tables.holdersOfMembersThatHostMakes() : m_universe.builtinObjects();
-    if (ClimbingSet written = m_context.restrict(known(receivers), counted); holdsAnything(written))
+    // A receiver shows a built-in object until the unknown object covers it. Whether it still does shows once all else is at rest.
+    if (ClimbingSet written = m_context.restrict(known(receivers), counted); holdsAnything(written) && isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
         add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite), written);
 
     ValueSetID holders = key.keyClass == HeapKeyClass::Index ? ValueSets::nothing : holdersWithMemberUnder(key);
@@ -673,7 +674,7 @@ void HeapRule::noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receiver
 
 void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, const ValueFlowOperand& value)
 {
-    ClimbingSet receivers = m_context.valueOf(object);
+    ClimbingSet receivers = receiversOfWrite(object);
     noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     if (part != HeapPropertyPart::Setter)
         noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
@@ -768,6 +769,17 @@ void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, con
     if (mayBeAccessorNobodyKnows(setters))
         receiver.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chainFrom(start, key).start, key, HeapPropertyPart::Setter);
     callAccessors(setters, ValueFlowCallKind::Set, receiver, &value, { });
+}
+
+// Beside the unknown object a built-in object is shown until it escapes, and only listed from then on. Whether it is still to escape shows once all else is at rest.
+ClimbingSet HeapRule::receiversOfWrite(const ValueFlowOperand& object)
+{
+    ClimbingSet receivers = m_context.valueOf(object);
+    if (!object.node || !mayBeUnknownObject(receivers) || !m_context.meet(receivers, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_universe.placeholdersAlone()))))
+        return receivers;
+    if (isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+        return receivers;
+    return m_context.restrict(receivers, m_context.maker().unite(ValueSets::complement(m_universe.builtinObjects()), m_universe.placeholdersAlone()));
 }
 
 ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
@@ -899,7 +911,7 @@ ValueFlowNodeID HeapRule::exportsOfHoldersIn(const ValueFlowOperand& object)
 void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const ValueFlowOperand& value)
 {
     askProxiesByTheirTrap(key, BuiltinNames::set, { }, &value);
-    ClimbingSet receivers = m_context.valueOf(object);
+    ClimbingSet receivers = receiversOfWrite(object);
     m_context.openProxiesAmong(receivers);
     noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
@@ -917,6 +929,12 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     noteClosuresThatMayBeRenamed(object, key, receivers);
     markStore(receivers, key);
+    // Where the definition that the field has its form from has not run, the store creates an ordinary property, which the slot of the field does not hold.
+    if (key.keyClass == HeapKeyClass::Name) {
+        ValueSetID mayLackProperty = m_context.maker().intersect(m_tables.objectsDeclaringFieldThatNoStoreCreates(key.name), ValueSets::complement(m_tables.holdersThatAnswerUnder(key.name)));
+        if (ClimbingSet created = m_context.restrict(receivers, mayLackProperty); holdsAnything(created))
+            markRedefinition(created, key);
+    }
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
         callSettersOfReceivers(start, key, value);
     });
@@ -944,7 +962,7 @@ void HeapRule::noteDeletedMembers(ClimbingSet receivers, const HeapKey& key)
 void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
 {
     askProxiesByTheirTrap(key, BuiltinNames::deleteProperty, { });
-    ClimbingSet receivers = m_context.valueOf(object);
+    ClimbingSet receivers = receiversOfWrite(object);
     m_context.openProxiesAmong(receivers);
     noteWrittenMembers(receivers, key);
     noteMembersLookedForBeforeChange(receivers, key, true);
@@ -1216,7 +1234,7 @@ void HeapRule::runOperation()
         const ValueFlowOperand& source = operand(At::CopyObject::source);
         ValueSetID site = m_context.maker().of(m_universe.siteObject(m_statement));
         add(m_context.written(ClimbingSet(site), prototypeLinkName), only(m_universe.objectOf(Builtins::ObjectPrototype)));
-        copyProperties({ { }, site, { } }, source, CopiedProperties::AreDefinedAsValues);
+        copyProperties({ { }, site, { } }, source, operation().assigns() ? CopiedProperties::AreAssigned : CopiedProperties::AreDefinedAsValues);
         add(m_statement.result, site);
         if (!operation().excludedKeys().empty() || !operation().excludedOperands().empty())
             return;

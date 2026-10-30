@@ -994,6 +994,10 @@ public:
     BuiltinID namespaceOf(RuntimeModuleID id) const { return at(id).namespaceObject; }
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
     bool isLocationOfLockedObject(BuiltinID) const;
+    // A locked member that a test run may unlock: a function or an accessor under a name that neither the language nor a call reads by itself.
+    JS_EXPORT_PRIVATE bool canBeReplacedInTestRuns(BuiltinID) const;
+    // An object that takes no new names, and a text that a test run may open on it. No name: a text that the table does not have.
+    JS_EXPORT_PRIVATE bool canTakeNameInTestRuns(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
     // Of the engine or of the host. A realm that locks its built-ins gives every native function one structure, which keeps the prototype.
     bool isNativeFunction(BuiltinID) const;
@@ -1072,9 +1076,35 @@ public:
     JS_EXPORT_PRIVATE JSValue describeFeatureUsesForTesting(JSGlobalObject*, BuiltinPlatform) const;
 
 private:
+    friend class BuiltinTableOfBuild;
+
     void appendComponent(StringBuilder&, BuiltinName) const;
 
     const BuiltinTableData& m_data;
+};
+
+// The table as one build sees it. In a test run the members that the tests replace are ConstantUnlessWritten, as Date.now is everywhere.
+class BuiltinTableOfBuild {
+    WTF_MAKE_NONCOPYABLE(BuiltinTableOfBuild);
+public:
+    explicit BuiltinTableOfBuild(const BuiltinTable&);
+
+    const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
+    // `members` ascend. Leaves out what canBeReplacedInTestRuns() refuses. `holdersOfNewNames`: the objects that get a name of their own opened, which the caller keeps.
+    void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
+    std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
+
+private:
+    void lockByNames(BuiltinID wholeObject);
+
+    BuiltinTableData m_data;
+    Vector<Builtin> m_builtins;
+    Vector<BuiltinID> m_lockedMembers;
+    Vector<BuiltinID> m_lockedObjects;
+    Vector<BuiltinClosedKeys> m_closedKeys;
+    Vector<Vector<BuiltinName>> m_closedSymbols;
+    Vector<BuiltinID> m_unlockedMembers;
+    BuiltinTable m_table;
 };
 
 JSType toJSType(CheckedJSType);

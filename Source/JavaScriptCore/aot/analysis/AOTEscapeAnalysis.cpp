@@ -713,8 +713,11 @@ bool EscapeAnalysis::isOnlyOperandHolding(ObjectID object, const Use& use) const
 EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) const
 {
     ValueSetID id = m_setOfValue[value.index()];
-    if (!id)
-        return { m_noObjects, true, false };
+    if (!id) {
+        // The function that resumes a generator reads the words of the frame before it stores any, and returns behind its stores: what a word holds an earlier run has put there.
+        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts()).opcode == Opcode::GetHeapFrameWord;
+        return { m_noObjects, true, isWordOfOwnFrame };
+    }
     const StoredSet& set = m_sets[id.index()];
     return { set.holdsEntryParameter ? set.allocationsBesideEntryParameters : set.objects, set.mayBeUntracked || set.holdsEntryParameter, !set.mayBeUntracked && !set.holdsSuperConstructResult };
 }

@@ -169,6 +169,21 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
+    // One table: first the members that start-up locks, then those of the table's locks that a test run leaves open, each with the first bit.
+    // Then the names that a test run opens on objects which take no other new name: two words a name, the object and the number of the string, each with both bits.
+    // An executable has the first kind only.
+    static constexpr uint32_t unlockedBuiltinMember = 1u << 31;
+    static constexpr uint32_t openedName = 3u << 30;
+    size_t numberOfWordsBelow(uint32_t mark) const
+    {
+        std::span<const uint32_t> members = constantAndUnlockedBuiltinMembers();
+        return std::ranges::lower_bound(members, mark) - members.begin();
+    }
+    std::span<const uint32_t> constantBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
+    std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
+    static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }
+
     uint32_t constructorOfAllocation(uint32_t number) const
     {
         if (!allocations()[number].isConstructed)
@@ -263,13 +278,14 @@ struct ProgramTables {
         uint8_t length = functionLengths()[function - closureFunctions.first];
         return length == countsAreListed ? largeCountsOf(function).length() : length;
     }
-    CaptureCounts captureCountsOf(uint32_t function) const
+    CaptureCounts captureCountsOfClosureNumber(uint32_t number) const
     {
-        uint8_t counts = closureCaptureCounts()[function - closureFunctions.first];
+        uint8_t counts = closureCaptureCounts()[number];
         if (counts == countsAreListed) [[unlikely]]
-            return largeCountsOf(function).captureCounts;
+            return largeCountsOf(closureFunctions.first + number).captureCounts;
         return CaptureCounts::decode(counts);
     }
+    CaptureCounts captureCountsOf(uint32_t function) const { return captureCountsOfClosureNumber(function - closureFunctions.first); }
     size_t numberOfFunctions() const { return functionRecordNumbers().size(); }
     const FunctionRecordData& recordOfFunction(uint32_t function) const
     {

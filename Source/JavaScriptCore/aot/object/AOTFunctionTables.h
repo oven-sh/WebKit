@@ -41,9 +41,12 @@ ALWAYS_INLINE const ProgramTables& programTables()
     return Image::current()->programTables();
 }
 
-ALWAYS_INLINE uint32_t closureNumberOf(FunctionID function) { return programTables().closureNumberOf(function.index()); }
-ALWAYS_INLINE FunctionID closureFunctionWithNumber(uint32_t number) { return FunctionID(programTables().closureFunctionWithNumber(number)); }
-ALWAYS_INLINE FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionWithNumber(ClosureWord::closureNumberOf(word)); }
+// A closure says its closure number. What the collector and the calls ask of it goes by that number. Whoever wants the function asks the tables once more, out of line.
+JS_EXPORT_PRIVATE uint32_t closureNumberOf(FunctionID);
+JS_EXPORT_PRIVATE FunctionID closureFunctionWithNumber(uint32_t);
+inline FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionWithNumber(ClosureWord::closureNumberOf(word)); }
+ALWAYS_INLINE FunctionKindData kindOfClosureNumber(uint32_t number) { return programTables().closureFunctionKinds()[number]; }
+ALWAYS_INLINE CaptureCounts captureCountsOfClosureNumber(uint32_t number) { return programTables().captureCountsOfClosureNumber(number); }
 
 ALWAYS_INLINE FunctionKindData functionKindData(FunctionID function)
 {

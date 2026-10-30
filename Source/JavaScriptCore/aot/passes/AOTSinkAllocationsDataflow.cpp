@@ -1329,16 +1329,17 @@ void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& b
         m_sinking.didEnterJoin(join, source);
     if (binding.kind == IncomingBinding::Kind::Other)
         m_sinking.abandon(join);
+    bool isOfOtherFamily = source && m_sinking.at(source).family != m_sinking.at(join).family;
+    bool entersAsCell = isOfOtherFamily || m_sinking.decisions().isBuiltAtHead(outgoing.target, join);
     if (source) {
         const ObjectState& sourceState = *stateOf(source);
         TypeID joinType = function().at(m_sinking.at(join).definition).type;
-        bool canCastCell = !outgoing.edge.isHandlerEdge() && (sourceState.isCell() || !sourceState.hasCell());
+        // The edge to a handler has no room for a cast. An object that arrives unbuilt needs none: whoever builds the join casts the cell.
+        bool canCastCell = outgoing.edge.isHandlerEdge() ? !entersAsCell && !sourceState.hasCell() : sourceState.isCell() || !sourceState.hasCell();
         if (!(canCastCell ? fitsType(source, joinType) : fitsTypeWithoutCasts(source, joinType)))
             m_sinking.abandon(join);
     }
 
-    bool isOfOtherFamily = source && m_sinking.at(source).family != m_sinking.at(join).family;
-    bool entersAsCell = isOfOtherFamily || m_sinking.decisions().isBuiltAtHead(outgoing.target, join);
     if (source && !entersAsCell) {
         m_enteredEdge.consumedSources.append(ConsumedSource { source, join });
         return;

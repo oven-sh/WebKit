@@ -87,6 +87,10 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         for (size_t first = m_firstNodeReadOfRun; first < endOfNodesRead; first += mostAtOnce) {
             size_t end = std::min(endOfNodesRead, first + mostAtOnce);
             for (size_t index = first; index < end; ++index)
+                m_solver.prefetchReadersOf(m_log.nodesRead[index]);
+            for (size_t index = first; index < end; ++index)
+                m_solver.prefetchFirstReadersOf(m_log.nodesRead[index]);
+            for (size_t index = first; index < end; ++index)
                 m_solver.prefetchWhetherKnownReader(m_log.nodesRead[index], m_statement);
             if (first == m_firstNodeReadOfRun) {
                 for (size_t index = m_firstNodeAskedWhetherEmptyOfRun; index < std::min(endOfNodesAskedWhetherEmpty, m_firstNodeAskedWhetherEmptyOfRun + mostAtOnce); ++index)
@@ -636,7 +640,7 @@ NEVER_INLINE ClimbingSet ValueFlowRuleContext::objectsThatMayHoldSomethingUnder(
     return m_solver.mayBeComputedKey(name) ? unite(*holders, valueWithin(objects, writtenUnderUnknownKey())) : *holders;
 }
 
-ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, ValueFlowName name)
+ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, ValueFlowName name, ReadUse use)
 {
     AOT_THRESHOLD(uint32_t, mostObjectsReadWhole, 8);
     ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
@@ -644,7 +648,7 @@ ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, Va
         objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
-    return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
+    return nodeFor(use == ReadUse::OnlyWhatLetsInUnseenCode ? ValueFlowNodeKey::readOfWhatLetsInUnseenCode(objects.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
 std::optional<ClimbingSet> ValueFlowRuleContext::peekAtWhatWasWritten(ClimbingSet objects, ValueFlowName name)

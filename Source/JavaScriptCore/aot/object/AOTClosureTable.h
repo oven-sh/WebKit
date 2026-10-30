@@ -28,7 +28,8 @@ public:
     static Structure* realmClosureStructure(VM&, JSGlobalObject*, unsigned index);
     Structure* closureStructure(VM&, unsigned index);
     Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, functionKindData(function).closureStructure); }
-    Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
+    Structure* slimClosureStructure(FunctionKindData kind) { return m_slimClosureStructures[kind.slimClosureKind()]; }
+    Structure* slimClosureStructure(VM&, FunctionID function) { return slimClosureStructure(functionKindData(function)); }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
     JSCell* untakenNameProperty() const { return m_untakenNameProperty; }

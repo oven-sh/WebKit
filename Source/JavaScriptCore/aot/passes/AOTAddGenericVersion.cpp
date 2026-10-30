@@ -1999,6 +1999,14 @@ static BlockID emitCallOfGenericVersion(IRBuilder& builder, FunctionID genericVe
     return block;
 }
 
+// The callers are compiled by the row that the function has now. The text of the generic version says more than the code that the call stands for.
+static BlockID emitCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder, FunctionID genericVersion)
+{
+    if (!pass.function.effectsBeforeRestart && pass.inputs.effects.contains(pass.id))
+        pass.function.effectsBeforeRestart = std::make_shared<const EffectsOnEdges>(pass.inputs.effects.of(pass.id).onCall());
+    return emitCallOfGenericVersion(builder, genericVersion);
+}
+
 static BlockID findCallOfGenericVersion(FunctionPassContext& pass, FunctionID genericVersion)
 {
     const Function& function = pass.function;
@@ -2127,7 +2135,7 @@ BlockID ensureCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder
 {
     if (BlockID restart = findCallOfGenericVersion(pass, genericVersion))
         return restart;
-    return emitCallOfGenericVersion(builder, genericVersion);
+    return emitCallOfGenericVersion(pass, builder, genericVersion);
 }
 
 // A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
@@ -2148,7 +2156,7 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
         if (failingEdges.isEmpty())
             break;
         if (!restart)
-            restart = emitCallOfGenericVersion(builder, genericVersion);
+            restart = emitCallOfGenericVersion(pass, builder, genericVersion);
         for (Edge edge : failingEdges)
             builder.redirectEdge(edge, Target { restart, { }, { } });
         builder.emptyUnreachableBlocks();

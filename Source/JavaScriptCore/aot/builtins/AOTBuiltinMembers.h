@@ -70,6 +70,8 @@ public:
     BuiltinID findOwnMember(BuiltinID holder) const;
     bool isClosedKey(BuiltinID holder) const;
     bool isLockedLocation(BuiltinID holder) const;
+    // The objects that take no new name but this one: Program::openedNames.
+    std::span<const BuiltinID> holdersOpenedForKey() const LIFETIME_BOUND { return m_holdersOpenedForKey.span(); }
 
     static constexpr unsigned numberOfClasses = 256;
     unsigned classOfKey() const;
@@ -80,6 +82,7 @@ private:
     BuiltinName m_name;
     PropertyKeyKind m_kind;
     bool m_isIndexLike;
+    Vector<BuiltinID, 2> m_holdersOpenedForKey;
 };
 
 LocationProof locationProofOf(const BuiltinLookupContext&, BuiltinID member);

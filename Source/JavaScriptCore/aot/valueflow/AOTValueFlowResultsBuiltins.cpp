@@ -734,7 +734,8 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         BuiltinID member(index);
         bool isEnabled = inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, index);
         BuiltinID canonical = builtins.canonicalID(member);
-        if (isEnabled && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
+        bool takesNameFromTests = std::ranges::contains(program.openedNames, canonical, &OpenedName::holder);
+        if (isEnabled && !takesNameFromTests && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
             tables.intactHolders.quickSet(index);
         const Builtin& entry = builtins.at(member);
         if (!entry.holder || !entry.name)
@@ -744,10 +745,12 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         bool isStoredThroughUnknownReceiver = canLockAtStartUp(builtins, member) && inputs.sets().contains(storedByName, inputs.universe().objectOf(canonical));
         // First the choice, which the image carries out. Then the claim, which rests on the record of the choice.
         Writers withoutLocks = holders.writersOfMemberWithoutLocks(member);
-        if (isEnabled && !isStoredThroughUnknownReceiver && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
+        // The run time leaves it open for the tests, whether or not a write was followed to it.
+        bool isUnlocked = program.isUnlocked(member);
+        if (isEnabled && !isStoredThroughUnknownReceiver && !isUnlocked && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
         BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
-        if (isStoredThroughUnknownReceiver)
+        if (isStoredThroughUnknownReceiver || isUnlocked)
             claim = unknownLocation(UnprovenCause::UnknownWriter);
         tables.constantMembers.quickSet(index, claim.state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member));
         if (!uses.isEmpty())
@@ -1052,6 +1055,125 @@ static void recordPlaces(const ValueFlowResultInputs& inputs, FlowResultTables& 
     recordPlacesOfUnseenCode(builtins, places, tables.wholeProgram.loadsOfMachineCode);
 }
 
+static constexpr OpcodeSet operationsWritingProperties { Opcode::PropSet, Opcode::PropDefine, Opcode::PropDelete, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete, Opcode::DefineGetter, Opcode::DefineSetter };
+
+static bool writesUnderKeyOfOperand(const BuiltinPropertyAction& action)
+{
+    return writesUnderKey(action.kind) && action.key.kind == BuiltinKeyKind::Operand;
+}
+
+namespace {
+
+struct WriteByTests {
+    BuiltinID member;
+    // Or a new name on an object that takes none.
+    BuiltinID holder;
+    StringID name;
+
+    friend auto operator<=>(const WriteByTests&, const WriteByTests&) = default;
+};
+
+} // anonymous namespace
+
+// The locked members that a write may reach, and the names that it may add to an object which takes none, as far as a test run can do without those locks. By values, so through helpers and tables of names too.
+// One too many costs a test where it is used. One that is missed refuses the write when it comes.
+static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFlowUsesOfLibraryCode& result)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueFlowBodies& bodies = inputs.bodies();
+    const ValueSets& sets = inputs.sets();
+
+    ValueFlowHeapView heap(inputs);
+    Vector<ValueFlowObjectID, 32> objectsOfHolders;
+    BitVector isHolder(builtins.builtinCount());
+    auto addHolder = [&](BuiltinID holder) {
+        if (!isHolder.quickSet(builtins.canonicalID(holder).index()))
+            universe.appendObjectsOf(builtins.canonicalID(holder), objectsOfHolders);
+    };
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (builtins.canBeReplacedInTestRuns(BuiltinID(index)))
+            addHolder(builtins.at(BuiltinID(index)).holder);
+        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }))
+            addHolder(BuiltinID(index));
+    }
+    ValueSetID holders = heap.maker().of(objectsOfHolders.span());
+
+    auto note = [&](ValueSetMaker& maker, ValueSetID receivers, PropertyKeyID key, Vector<WriteByTests>& found) {
+        sets.forEachMember(maker.intersect(receivers, holders), [&](ValueFlowObjectID object) {
+            BuiltinID holder = builtins.canonicalID(universe.builtinOf(object));
+            if (BuiltinID member = findOwnMember(program, holder, key)) {
+                if (builtins.canBeReplacedInTestRuns(member))
+                    found.append({ member, { }, { } });
+                return;
+            }
+            const PropertyKey& name = program.at(key);
+            if (name.kind == PropertyKeyKind::Text && !program.isIndexLike(key) && builtins.canTakeNameInTestRuns(holder, program.builtinNameOf(key)) && !program.isOpened(holder, name.text))
+                found.append({ { }, holder, name.text });
+        });
+    };
+    auto noteUnderKeys = [&](ValueSetMaker& maker, ValueSetID receivers, ValueSetID keys, Vector<WriteByTests>& found) {
+        if (ValueSets::isComplement(keys))
+            return;
+        sets.forEachMember(maker.intersect(keys, universe.keys()), [&](ValueFlowObjectID key) {
+            if (universe.kindOf(key) == ValueFlowObjectKind::Key)
+                note(maker, receivers, universe.keyOf(key), found);
+        });
+    };
+    // A receiver that may be anything names no holder.
+    auto mayBeHolder = [&](ValueSetID receivers) {
+        return !ValueSets::isComplement(receivers) && sets.meet(receivers, holders);
+    };
+
+    ValueSetMakers makers(inputs);
+    Vector<WriteByTests> writes = collectWithMakers<WriteByTests>(inputs, makers, program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<WriteByTests>& found) {
+        if (!inputs.isReached(FunctionID(function)))
+            return;
+        for (const ValueFlowStatement& statement : bodies.statementsOf(function)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || !statement.site || !operationsWritingProperties.contains(statement.opcode))
+                continue;
+            std::optional<unsigned> object = OperandPosition::object(statement.opcode);
+            std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
+            ValueSetID receivers = object ? inputs.possibleValuesOf(maker, operands[*object]) : ValueSets::nothing;
+            if (!mayBeHolder(receivers))
+                continue;
+            const Value& operation = program.at(statement.function).at(statement.site);
+            std::optional<unsigned> computedKey = computedKeyOfWrite(operation);
+            if (computedKey)
+                noteUnderKeys(maker, receivers, inputs.possibleValuesOf(maker, operands[*computedKey]), found);
+            else
+                note(maker, receivers, operation.key(), found);
+        }
+    });
+
+    BitVector writers = builtinsWithOverload(builtins, [](const BuiltinOverload& overload) {
+        return std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfOperand);
+    });
+    forEachBuiltinApplication(inputs, heap, writers, holders, [&](const ValueFlowBuiltinApplication& application) {
+        for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
+            if (overload.mode != application.mode())
+                continue;
+            for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
+                if (!writesUnderKeyOfOperand(action))
+                    continue;
+                ValueSetID receivers = application.valueAt(action.object, heap.maker());
+                if (mayBeHolder(receivers))
+                    noteUnderKeys(heap.maker(), receivers, application.valueAt(*action.key.operand, heap.maker()), writes);
+            }
+        }
+    });
+
+    AOT::sort(writes);
+    removeRepeatedElements(writes);
+    for (const WriteByTests& write : writes) {
+        if (write.member)
+            result.builtinsThatTestsReplace.append(write.member);
+        else
+            result.namesThatTestsAdd.append({ write.holder, Vector<uint8_t>(program.string(write.name)) });
+    }
+}
+
 ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs& inputs)
 {
     ValueFlowUsesOfLibraryCode found;
@@ -1062,7 +1184,16 @@ ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs& in
     }
     for (size_t function : inputs.solver().libraryFunctionsLacked())
         found.libraryFunctionsLacked.append(RuntimeFunctionID(static_cast<uint32_t>(function)));
-    found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputs);
+    if (!inputs.build.options().admitsReplacedBuiltins()) {
+        found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputs);
+        return found;
+    }
+    // Both walk the calls of built-in functions.
+    ValueFlowHeapIndex index(inputs);
+    ValueFlowResultInputs inputsWithIndex = inputs;
+    inputsWithIndex.heapIndex = &index;
+    found.exportsThatSpiesReplace = collectExportsThatSpiesReplace(inputsWithIndex);
+    collectWhatTestsReplace(inputsWithIndex, found);
     return found;
 }
 
@@ -1094,6 +1225,8 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     tables.builtins.workerEntries = collectWorkerEntries(inputs, heap);
     tables.builtins.workerStartWithoutName = findWorkerStartWithoutName(inputs);
     tables.builtins.exportsThatSpiesReplace = WTF::move(usesOfLibraryCode.exportsThatSpiesReplace);
+    tables.builtins.builtinsThatTestsReplace = WTF::move(usesOfLibraryCode.builtinsThatTestsReplace);
+    tables.builtins.namesThatTestsAdd = WTF::move(usesOfLibraryCode.namesThatTestsAdd);
     times.didFinish("built-ins: statics, features, locales"_s);
     if (hasFlag(inputs.build.options().reports, ReportSet::Flow)) {
         recordPlaces(inputs, tables);

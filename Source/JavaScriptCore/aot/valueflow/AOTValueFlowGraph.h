@@ -10,6 +10,7 @@
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowLog.h"
+#include "AOTValueFlowNumberLists.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <array>
@@ -56,7 +57,7 @@ public:
     void forEachSuccessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
-        forEachOther(m_successors[node.index()], [&](uint32_t successor) {
+        forEachSuccessor(node.index(), [&](uint32_t successor) {
             functor(ValueFlowNodeID(successor));
         });
     }
@@ -68,7 +69,7 @@ public:
                 functor(ValueFlowNodeID(m_predecessorsInRows[index]));
             return;
         }
-        forEachOther(m_predecessors[node.index()], [&](uint32_t predecessor) {
+        forEachPredecessor(node.index(), [&](uint32_t predecessor) {
             functor(ValueFlowNodeID(predecessor));
         });
     }
@@ -118,16 +119,10 @@ public:
             if (edge.to.index() >= m_numberOfNodes)
                 return false;
             willUse(edge.to.index());
-            const Links& predecessors = m_predecessors[edge.to.index()];
-            if (predecessors.count > mostPredecessorsScanned)
-                return m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.contains(edge);
-            return predecessors.contains(edge.from.index());
+            return m_shards[shardOf(edge.to.index())]->predecessors.contains(m_predecessors[edge.to.index()], edge.from.index());
         }
         willUse(edge.from.index());
-        const Links& successors = m_successors[edge.from.index()];
-        if (successors.count > mostSuccessorsScanned)
-            return m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.contains(edge);
-        return successors.contains(edge.to.index());
+        return m_shards[shardOf(edge.from.index())]->successors.contains(m_successors[edge.from.index()], edge.to.index());
     }
 
     ALWAYS_INLINE void prefetchLinksThatHold(ValueFlowEdge edge) const
@@ -147,16 +142,10 @@ public:
         uint32_t node = isOutOfConstant ? to : from;
         uint32_t other = isOutOfConstant ? from : to;
         willUse(node);
-        const Links& links = isOutOfConstant ? m_predecessors[node] : m_successors[node];
-        if (links.count <= 2)
-            return (links.count && links.two[0] == other) || (links.count == 2 && links.two[1] == other) ? EdgeLookup::Present : EdgeLookup::Absent;
-        static_assert(mostPredecessorsScanned == mostSuccessorsScanned);
-        if (links.count <= mostSuccessorsScanned)
-            __builtin_prefetch(links.block);
-        else if (isOutOfConstant)
-            m_shards[shardOf(node)]->edgesOutOfConstantsIntoNodesWithManyPredecessors.prefetch(edge);
-        else
-            m_shards[shardOf(node)]->edgesOfNodesWithManySuccessors.prefetch(edge);
+        uint32_t list = isOutOfConstant ? m_predecessors[node] : m_successors[node];
+        if (ValueFlowNumberLists::isAllInName(list))
+            return ValueFlowNumberLists::nameHolds(list, other) ? EdgeLookup::Present : EdgeLookup::Absent;
+        (isOutOfConstant ? m_shards[shardOf(node)]->predecessors : m_shards[shardOf(node)]->successors).prefetch(list);
         return EdgeLookup::NeedsHasAdded;
     }
 
@@ -229,62 +218,6 @@ private:
         uint32_t firstArrivalPlusOne;
     };
 
-    struct Links {
-        const uint32_t* begin() const LIFETIME_BOUND { return count <= 2 ? two : block; }
-        ALWAYS_INLINE bool contains(uint32_t other) const
-        {
-            const uint32_t* others = begin();
-            for (uint32_t index = 0; index < count; ++index) {
-                if (others[index] == other)
-                    return true;
-            }
-            return false;
-        }
-
-        union {
-            uint32_t two[2];
-            uint32_t* block;
-        };
-        uint32_t count;
-        uint32_t older;
-    };
-
-    class Arena {
-        WTF_MAKE_NONCOPYABLE(Arena);
-    public:
-        Arena() = default;
-        ~Arena() { release(); }
-
-        uint32_t* allocate(uint32_t numberOfWords);
-        void free(uint32_t* block, uint32_t numberOfWords);
-        void release();
-        size_t memoryInBytes() const { return m_bytes; }
-
-    private:
-        std::array<uint32_t*, 32> m_free { };
-        uint32_t* m_next { nullptr };
-        uint32_t* m_end { nullptr };
-        Vector<void*> m_slabs;
-        size_t m_bytes { 0 };
-    };
-
-    class EdgeSet {
-    public:
-        bool add(ValueFlowEdge);
-        bool contains(ValueFlowEdge) const;
-        void prefetch(ValueFlowEdge) const;
-        size_t bytesInUse() const { return m_size * sizeof(uint64_t); }
-        size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
-
-    private:
-        static uint64_t keyOf(ValueFlowEdge edge) { return static_cast<uint64_t>(edge.from.index()) << 32 | edge.to.index(); }
-        size_t firstPositionOf(uint64_t key) const { return static_cast<size_t>(static_cast<UInt128>(key * 0x9e3779b97f4a7c15ull) * m_slots.span().size() >> 64); }
-        void grow();
-
-        MallocSpan<uint64_t> m_slots;
-        size_t m_size { 0 };
-    };
-
     struct Mask {
         ValueSetID admitted { ValueSets::anything };
         ValueSetID familyObjects;
@@ -316,18 +249,10 @@ private:
 
     struct Worker;
 
-    static void forEachOther(const Links& links, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
-    {
-        const uint32_t* others = links.begin();
-        for (uint32_t index = 0; index < links.older; ++index)
-            functor(others[index]);
-        for (uint32_t index = links.count; index-- > links.older;)
-            functor(others[index]);
-    }
+    void forEachSuccessor(uint32_t node, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { m_shards[shardOf(node)]->successors.forEach(m_successors[node], functor); }
+    void forEachPredecessor(uint32_t node, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { m_shards[shardOf(node)]->predecessors.forEach(m_predecessors[node], functor); }
 
     static constexpr uint32_t numberOfLowMembers = 64;
-    static constexpr uint32_t mostSuccessorsScanned = 8;
-    static constexpr uint32_t mostPredecessorsScanned = 8;
 
     static constexpr unsigned numberOfShards = 64;
     static constexpr unsigned shardOf(uint32_t node) { return node >> 6 & (numberOfShards - 1); }
@@ -348,19 +273,15 @@ private:
     struct alignas(128) Shard {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Shard);
 
-        Arena blocksOfSuccessors;
-        Arena blocksOfPredecessors;
-        EdgeSet edgesOfNodesWithManySuccessors;
-        EdgeSet edgesOutOfConstantsIntoNodesWithManyPredecessors;
+        // An edge out of a constant is kept with the predecessors of its target alone.
+        ValueFlowNumberLists successors;
+        ValueFlowNumberLists predecessors;
         Vector<ValueFlowEdge> listedEdgesOutOfConstants;
         Arrivals arrivals;
         std::array<std::array<Vector<Message>, numberOfShards>, 2> messages;
-        Vector<uint32_t> nodesWithRecentSuccessors;
-        Vector<uint32_t> nodesWithRecentPredecessors;
         Vector<std::pair<uint32_t, uint32_t>> placeholdersStopped;
     };
 
-    static void addLink(Arena&, Links&, uint32_t other);
     uint64_t lowMembersOf(ValueSetID, ValueSetMaker&) const;
     void pass(uint32_t node, uint32_t numberOfMask, uint64_t& low, uint64_t& lowInNoSet, ValueSetID& set, Worker&);
     void hold(uint32_t node, uint64_t low, ValueSetID value, Worker&);
@@ -387,7 +308,6 @@ private:
     bool addSuccessorIfAbsent(ValueFlowEdge);
     bool addEdgeOutOfConstantIfAbsent(ValueFlowEdge);
     bool addEdgeIfAbsent(ValueFlowEdge);
-    void willHaveManyPredecessors(Shard&, uint32_t node);
     void addPredecessor(Shard&, ValueFlowEdge);
     bool isConstant(uint32_t node) const { return m_isConstant[node / 64].load(std::memory_order_relaxed) >> node % 64 & 1; }
     unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
@@ -427,8 +347,8 @@ private:
     size_t m_capacity { 0 };
     ArrayByNode<Gate> m_gates;
     ArrayByNode<Row> m_rows;
-    ArrayByNode<Links> m_successors;
-    ArrayByNode<Links> m_predecessors;
+    ArrayByNode<uint32_t> m_successors;
+    ArrayByNode<uint32_t> m_predecessors;
     ArrayByNode<uint32_t> m_firstPredecessorInRows;
     ArrayByNode<uint32_t> m_predecessorsInRows;
     ArrayByNode<ValueSetID> m_value;
@@ -462,8 +382,6 @@ private:
 
     Vector<uint8_t> m_isNewEdge;
     size_t m_numberOfEdges { 0 };
-    size_t m_numberOfOlderEdges { 0 };
-    size_t m_numberOfRecentEdges { 0 };
     Vector<ValueFlowEdge> m_edgesNotInLists;
     Vector<ValueFlowEdge> m_edgesOfSolve;
     Vector<Vector<uint32_t>> m_indicesBySource;

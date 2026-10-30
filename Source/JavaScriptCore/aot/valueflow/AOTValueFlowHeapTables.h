@@ -189,6 +189,8 @@ public:
     // Filled when the record of such a name is made.
     const BitVector& featuresGuardingHostClassesWithMethodsCallingStartupLoads() const LIFETIME_BOUND { return m_featuresGuardingHostClassesWithMethodsCallingStartupLoads; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
+    // Their layout gives the field another form than a store gives a property that it creates.
+    ValueSetID objectsDeclaringFieldThatNoStoreCreates(PropertyKeyID key) const { return m_objectsDeclaringFieldThatNoStoreCreates[key.index()]; }
     ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return holdersUnder(key).thatAnswer; }
     ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return holdersUnder(key).thatMayLoseMember; }
     ValueSetID objectsStoredToAtCreationUnder(PropertyKeyID key) const { return holdersUnder(key).storedToAtCreation; }
@@ -265,6 +267,8 @@ private:
     ValueFlowMembersUnderKey describeMembersUnder(PropertyKeyID, BuiltinName, bool isPrivateName) const;
     ValueSetID findEntriesWithFeaturesOfHostClasses(ValueSetID prototypeObjects, BuiltinName) const;
     mutable BitVector m_featuresGuardingHostClassesWithMethodsCallingStartupLoads;
+    ValueSetID holdersOpenedFor(const MembersUnderKey&) const;
+    ValueSetID withoutHoldersOpenedFor(const MembersUnderKey&, ValueSetID holders) const;
     ValueSetID findLockedHolders(const MembersUnderKey&, BuiltinName, bool isPrivateName) const;
     const ValueFlowMembersOfHolder& describeMembersOf(BuiltinID holder) const LIFETIME_BOUND;
     std::span<const ValueFlowObjectID> objectsOf(BuiltinID canonicalHolder) const LIFETIME_BOUND;
@@ -302,6 +306,7 @@ private:
     Vector<uint32_t> m_endOfObjectsStoredToUnderKey;
     Vector<ValueFlowObjectID> m_objectsStoredToUnderKeys;
     Vector<ValueSetID> m_objectsDeclaringField;
+    Vector<ValueSetID> m_objectsDeclaringFieldThatNoStoreCreates;
     Vector<ModuleID> m_compiledModuleOfHolder;
     BitVector m_hasGetEntry;
     BitVector m_hasSetEntry;

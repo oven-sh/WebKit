@@ -104,6 +104,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsProtocols = false;
     bool printsNodesGivenMore = false;
     bool printsCells = false;
+    bool printsWrittenObjects = false;
     ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
@@ -124,6 +125,8 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsNodesGivenMore = true;
         else if (word == "cells"_s)
             printsCells = true;
+        else if (word == "written-objects"_s)
+            printsWrittenObjects = true;
         else if (word == "proofs"_s)
             coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
         else
@@ -211,6 +214,11 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             context.out.println(solution.sets().contains(run, object) ? "run " : "used ", program.builtins().tokenOf(universe.builtinOf(object)));
         });
     }
+    if (printsWrittenObjects) {
+        solution.sets().forEachMember(solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)), [&](ValueFlowObjectID object) {
+            context.out.println("written-object ", program.builtins().tokenOf(universe.builtinOf(object)));
+        });
+    }
     if (printsLibraryFunctionsLacked) {
         for (size_t function : solver.libraryFunctionsLacked())
             context.out.println("lacked ", function);
@@ -240,7 +248,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     }
     if (printsCells)
         context.out.println("names-with-several-cells ", counters.namesWithSeveralCells);
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells)
+    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsLibraryFunctionsLacked || printsProtocols || printsNodesGivenMore || printsCells || printsWrittenObjects)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);

@@ -285,6 +285,118 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
+// An edge out of a made node stays in the graph when the statement that logged it no longer asks for the node. Whoever keeps the node awake makes the edge deliver.
+// `shows` counts the edges that bring their target a member that no other edge brings it.
+static void printOutlivedEdges(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 24;
+    const ValueFlowSolver& solver = solution.solver();
+    BorrowedValueSetMaker borrowedMaker(solution.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
+    Vector<ValueFlowSolver::LoggedEdge> edges;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(logged.edge.from);
+        if (!key || !logged.statement || key->kind == ValueFlowMadeNodeKind::Constant || key->kind == ValueFlowMadeNodeKind::Marked || key->kind == ValueFlowMadeNodeKind::Instance || key->kind == ValueFlowMadeNodeKind::Hub)
+            continue;
+        edges.append(logged);
+    }
+    std::ranges::stable_sort(edges, { }, [](const ValueFlowSolver::LoggedEdge& logged) {
+        return logged.statement.index();
+    });
+    uint64_t outlived = 0;
+    uint64_t ofNodesAwake = 0;
+    uint64_t ofStatementsAtRest = 0;
+    uint64_t showing = 0;
+    unsigned printed = 0;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> askedFor;
+    ValueFlowStatementID statementOfSet;
+    for (const ValueFlowSolver::LoggedEdge& logged : edges) {
+        if (logged.statement != statementOfSet) {
+            statementOfSet = logged.statement;
+            askedFor.clear();
+            solver.forEachMadeNodeAskedForBy(logged.statement, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
+                askedFor.add(solver.indexOfMadeNodes(key));
+            });
+        }
+        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(logged.edge.from);
+        uint32_t record = solver.indexOfMadeNodes(key);
+        if (askedFor.contains(record) || solver.statementOfMadeNodesAt(record) == logged.statement)
+            continue;
+        ++outlived;
+        if (!solver.numberOfUsesOfMadeNodesAt(record))
+            continue;
+        ++ofNodesAwake;
+        bool isAtRest = solver.isAtRest(logged.statement);
+        ofStatementsAtRest += isAtRest;
+        ValueSetID fromOthers = ValueSets::nothing;
+        solver.graph().forEachPredecessor(logged.edge.to, [&](ValueFlowNodeID predecessor) {
+            if (predecessor != logged.edge.from)
+                fromOthers = maker.unite(fromOthers, solver.possibleValuesOf(predecessor));
+        });
+        ValueSetID alone = maker.intersect(maker.intersect(solver.possibleValuesOf(logged.edge.from), solver.possibleValuesOf(logged.edge.to)), ValueSets::complement(fromOthers));
+        if (alone == ValueSets::nothing)
+            continue;
+        ++showing;
+        if (++printed > numberOfEdgesPrinted)
+            continue;
+        out.print("round ", logged.round, isAtRest ? " at rest " : " ");
+        printNode(out, solution, logged.edge.from);
+        out.print(" -> ");
+        printNode(out, solution, logged.edge.to);
+        out.print(" alone brings ");
+        printValue(out, solution, alone);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+    out.println("outlived-edges ", outlived, " of ", edges.size(), " | out of nodes that are awake ", ofNodesAwake, " | of them logged by statements at rest ", ofStatementsAtRest, " | shows ", showing);
+
+    // A statement that once connected a node whole and now connects it through a mask asks for the node still: the mask cuts nothing.
+    uint64_t wholeAndMasked = 0;
+    uint64_t wholeFirst = 0;
+    HashMap<String, unsigned> wholeFirstBySort;
+    printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : edges) {
+        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(logged.edge.from);
+        if (key.kind != ValueFlowMadeNodeKind::Masked || !solver.keyOfMadeNode(key.maskedNode()))
+            continue;
+        const ValueFlowSolver::LoggedEdge* whole = solver.findLoggedEdge(ValueFlowEdge { key.maskedNode(), logged.edge.to });
+        if (!whole || whole->statement != logged.statement)
+            continue;
+        ++wholeAndMasked;
+        // A mask that widens to everything is no loss. One that comes behind the whole node is.
+        if (whole->round >= logged.round)
+            continue;
+        ++wholeFirst;
+        const ValueFlowStatement& statement = solver.statementAt(logged.statement);
+        StringPrintStream sort;
+        sort.print(nameOf(solver.keyOfMadeNode(key.maskedNode())->kind), " by ");
+        if (statement.kind == ValueFlowStatementKind::Operation)
+            sort.print(statement.opcode);
+        else
+            sort.print(nameOf(statement.kind));
+        wholeFirstBySort.add(sort.toString(), 0).iterator->value++;
+        if (++printed > numberOfEdgesPrinted)
+            continue;
+        out.print("whole in round ", whole->round, ", masked in round ", logged.round, " ");
+        printNode(out, solution, key.maskedNode());
+        out.print(" -> ");
+        printNode(out, solution, logged.edge.to);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+    Vector<std::pair<String, unsigned>> sorts;
+    for (auto& entry : wholeFirstBySort)
+        sorts.append({ entry.key, entry.value });
+    std::ranges::sort(sorts, [](const auto& first, const auto& second) {
+        return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
+    });
+    for (auto& [sort, count] : sorts)
+        out.println("whole first, then masked: ", count, " ", sort);
+    out.println("whole-and-masked ", wholeAndMasked, " | whole first ", wholeFirst);
+}
+
 static void printFirstCallsOfUnknownCallees(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr unsigned numberOfEdgesPrinted = 40;
@@ -1386,6 +1498,10 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
         }
         if (word == "first-escapes"_s) {
             printFirstEscapes(out, solution);
+            continue;
+        }
+        if (word == "outlived-edges"_s) {
+            printOutlivedEdges(out, solution);
             continue;
         }
         if (word == "first-unknown-calls"_s) {

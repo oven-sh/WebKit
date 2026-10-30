@@ -739,6 +739,9 @@ ALWAYS_INLINE StoredModuleStatus Modules::storedStatus(ModuleID module) const
 ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus status)
 {
     RELEASE_ASSERT(module.index() < m_storedStatuses.size());
+    // See evict().
+    if (status == StoredModuleStatus::Evaluated && m_filesToLoadAgain.get(module.index())) [[unlikely]]
+        return;
     m_storedStatuses[module.index()] = static_cast<uint8_t>(status);
 }
 

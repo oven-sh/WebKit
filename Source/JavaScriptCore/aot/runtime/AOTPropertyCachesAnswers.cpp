@@ -407,7 +407,8 @@ static int16_t wordOfInheritedField(JSCell* holder, UniquedStringImpl* uid)
         return 0;
     Object& object = *uncheckedDowncast<Object>(holder);
     const FieldData* field = object.fieldNamed(object.state(), uid);
-    if (!field)
+    // A very large program numbers more names than an entry of the table of fields can hold.
+    if (!field || !FieldTableEntry::hasColumn(field->name))
         return 0;
     FieldTableEntry entry = FieldTableEntry::forField(object.layout(), *field);
     switch (entry.form()) {

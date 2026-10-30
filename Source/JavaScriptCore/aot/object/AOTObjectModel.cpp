@@ -398,7 +398,7 @@ bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) co
 {
     // A member that holds one of many functions has a test for each of them.
     bool hasAskedForFunction = false;
-    std::optional<FunctionID> function;
+    std::optional<uint32_t> closureNumber;
     for (const RuntimeCellTest& test : type.cellTests()) {
         if (test.kind != CellTestKind::IsClosureOf) {
             if (cellPassesTest(test, cell))
@@ -406,8 +406,8 @@ bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) co
             continue;
         }
         if (!std::exchange(hasAskedForFunction, true))
-            function = functionOf(cell);
-        if (function == closureFunctionWithNumber(test.closureNumber()))
+            closureNumber = closureNumberOf(cell);
+        if (closureNumber == test.closureNumber())
             return true;
     }
     return false;
@@ -451,7 +451,7 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
         return cell == m_state.builtinCells->cell(test.builtinCellNumber());
     }
     case CellTestKind::IsClosureOf:
-        return functionOf(cell) == closureFunctionWithNumber(test.closureNumber());
+        return closureNumberOf(cell) == test.closureNumber();
     case CellTestKind::IsSymbol:
         // A symbol that nothing has made yet is the uid of no cell.
         return cell->isSymbol() && &asSymbol(cell)->uid() == m_state.instance.vm->aotState().identifiers->tryGetIdentifierConcurrently(test.symbolKeyNumber());

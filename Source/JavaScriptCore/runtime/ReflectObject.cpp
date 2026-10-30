@@ -285,7 +285,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDeleteProperty, (JSGlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     DeletePropertySlot slot;
-    slot.setAnswersRefusal();
+    slot.setIsReflectDeleteProperty();
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->deleteProperty(targetObject, globalObject, propertyName, slot))));
 }
 

@@ -513,7 +513,9 @@ StubSignature signatureOfCopyObjectFrontEnd(StubKey)
     return operationFrontEndSignature(4);
 }
 
-void generateCopyObjectFrontEnd(StubAssembler& jit)
+enum class CopiedBy : bool { Definitions, Stores };
+
+static void generateCopyObjectFrontEnd(StubAssembler& jit, CopiedBy copiedBy)
 {
     const GPRReg source = jit.operand(0);
     const GPRReg excludedRun = jit.clobberOperand(1);
@@ -619,6 +621,12 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
         jit.or64(word, header);
     };
 
+    // A store to a new object defines a property unless Object.prototype has a setter or a read-only property. No source that is copied here has elements or a name __proto__.
+    if (copiedBy == CopiedBy::Stores) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype)), structure);
+        loadStructure(jit, structure, structure);
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
+    }
     Jump isNotCell = jit.branchIfNotCell(source);
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
@@ -871,7 +879,22 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     jit.move(TrustedImm32(0), excludedRun);
     jit.move(TrustedImm32(0), count);
     callsOperation.link(&jit);
-    jit.tailCallOperation(Entry::RawCopyObject, OperationCall::FirstArgument::Instance);
+    jit.tailCallOperation(copiedBy == CopiedBy::Stores ? Entry::RawAssignToNewObject : Entry::RawCopyObject, OperationCall::FirstArgument::Instance);
+}
+
+void generateCopyObjectFrontEnd(StubAssembler& jit)
+{
+    generateCopyObjectFrontEnd(jit, CopiedBy::Definitions);
+}
+
+StubSignature signatureOfAssignToNewObjectFrontEnd(StubKey)
+{
+    return operationFrontEndSignature(4);
+}
+
+void generateAssignToNewObjectFrontEnd(StubAssembler& jit)
+{
+    generateCopyObjectFrontEnd(jit, CopiedBy::Stores);
 }
 
 } } // namespace JSC::AOT

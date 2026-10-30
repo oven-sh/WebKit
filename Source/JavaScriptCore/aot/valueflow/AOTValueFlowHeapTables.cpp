@@ -215,7 +215,18 @@ uint32_t ValueFlowHeapTables::findOrAddRecordOf(PropertyKeyID key) const
     if (!name) {
         if (isPrivateName)
             return recordOfEnginePrivateName;
-        return m_program.at(key).kind == PropertyKeyKind::Text ? recordOfText : recordOfOtherKey;
+        if (m_program.at(key).kind != PropertyKeyKind::Text)
+            return recordOfOtherKey;
+        if (!m_program.isOpenedSomewhere(m_program.at(key).text)) [[likely]]
+            return recordOfText;
+        // A text like every other, but for the objects that a test run opens for it.
+        ValueFlowMembersUnderKey members = m_membersUnderKey[recordOfText];
+        MembersUnderKey membersUnderKey(m_program, key);
+        members.holdersWithLockedLocation = withoutHoldersOpenedFor(membersUnderKey, members.holdersWithLockedLocation);
+        members.holdersOfUndeclaredProperties = m_maker.unite(members.holdersOfUndeclaredProperties, holdersOpenedFor(membersUnderKey));
+        RELEASE_ASSERT(m_membersUnderKey.size() < m_membersUnderKey.capacity());
+        m_membersUnderKey.append(members);
+        return static_cast<uint32_t>(m_membersUnderKey.size() - 1);
     }
     return (isPrivateName ? m_recordOfPrivateName : m_recordOfName).ensure(name.name.index(), [&] {
         RELEASE_ASSERT(m_membersUnderKey.size() < m_membersUnderKey.capacity());
@@ -257,6 +268,7 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
     // BuiltinTable::mismatches() compares: an object of the table that has such a method lists it.
     if (!isPrivateName && std::ranges::contains(builtins.namesOfHostMethodsCallingStartupLoads(), name))
         undeclared = m_maker.intersect(undeclared, openTo(Actor::NativeCode));
+    undeclared = m_maker.unite(undeclared, holdersOpenedFor(membersUnderKey));
     ValueSetID instancesThatKeepProperty = ValueSets::nothing;
     if (!isPrivateName) {
         Objects prototypes;
@@ -323,11 +335,26 @@ ValueSetID ValueFlowHeapTables::findEntriesWithFeaturesOfHostClasses(ValueSetID 
     return m_maker.of(entries.span());
 }
 
+// A test may have put anything there, also a test that this build does not see.
+ValueSetID ValueFlowHeapTables::holdersOpenedFor(const MembersUnderKey& membersUnderKey) const
+{
+    Objects opened;
+    for (BuiltinID holder : membersUnderKey.holdersOpenedForKey())
+        opened.append(objectsOf(holder));
+    return m_maker.of(opened.span());
+}
+
+ValueSetID ValueFlowHeapTables::withoutHoldersOpenedFor(const MembersUnderKey& membersUnderKey, ValueSetID holders) const
+{
+    return m_maker.intersect(holders, ValueSets::complement(holdersOpenedFor(membersUnderKey)));
+}
+
 ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& membersUnderKey, BuiltinName name, bool isPrivateName) const
 {
     Objects locked;
+    // What is opened for this key alone is taken out at the end: the answers of closed holders are kept for every key of a class.
     auto appendIfLocked = [&](BuiltinID holder, Objects& list) {
-        if (membersUnderKey.isLockedLocation(holder))
+        if (membersUnderKey.isLockedLocation(holder) || std::ranges::contains(membersUnderKey.holdersOpenedForKey(), holder))
             list.append(objectsOf(holder));
     };
     Vector<BuiltinID, 16> closedHoldersListingName;
@@ -368,7 +395,7 @@ ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& members
     ValueSetID result = m_maker.unite(m_maker.of(locked.span()), m_maker.intersect(others.locked, ValueSets::complement(m_maker.of(objectsListingName.span()))));
     if (!isPrivateName && m_program.builtins().isClosedOnHostFunctions(name))
         result = m_maker.unite(result, m_functionsOfEngine);
-    return result;
+    return withoutHoldersOpenedFor(membersUnderKey, result);
 }
 
 const ValueFlowMembersOfHolder& ValueFlowHeapTables::describeMembersOf(BuiltinID holder) const
@@ -893,6 +920,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_prototypeObjectsListingOwnPropertiesOfInstances = maker.of(prototypeObjectsListingOwnPropertiesOfInstances.span());
         m_prototypeObjectsOfClassesThatLayPropertiesOnInstances = maker.unite(maker.unite(m_prototypeObjectsListingOwnPropertiesOfInstances, m_prototypeObjectsOfClassesThatListNamesWithoutTypes), maker.unite(m_prototypeObjectsOfClassesThatListNoOwnNames, m_prototypesAboveNativeElements));
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, m_prototypeObjectsOfClassesThatListNamesWithoutTypes);
+        Objects holdersOfOpenedNames;
+        for (const OpenedName& opened : program.openedNames)
+            holdersOfOpenedNames.append(objectsOf(opened.holder));
+        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersOfUndeclaredPropertiesUnderAnyKey, maker.of(holdersOfOpenedNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
@@ -900,7 +931,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_functionsOfEngine = maker.of(functionsOfEngine.span());
         m_prototypeObjectsOfEntries = maker.of(prototypeObjectsOfEntries.span());
 
-        m_membersUnderKey.reserveInitialCapacity(numberOfRecordsOfUnnamedKeys + 2 * static_cast<size_t>(builtins.nameCount()));
+        m_membersUnderKey.reserveInitialCapacity(numberOfRecordsOfUnnamedKeys + 2 * static_cast<size_t>(builtins.nameCount()) + program.openedNames.size());
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
@@ -1067,6 +1098,15 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_objectsDeclaringField = Vector<ValueSetID>(numberOfKeys, [&](size_t key) {
             return maker.uniteAll(entriesOfKey(objectsDeclaringFields, endOfObjectsDeclaringField, key));
         });
+        m_objectsDeclaringFieldThatNoStoreCreates.fill(ValueSets::nothing, numberOfKeys);
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            for (const Field& field : program.layouts[index].fields) {
+                if (!field.key || field.form.isEmpty())
+                    continue;
+                ValueSetID& objects = m_objectsDeclaringFieldThatNoStoreCreates[field.key.index()];
+                objects = maker.unite(objects, maker.intersect(universe.objectsWith(LayoutID(index)), ValueSets::complement(universe.objectsThatMayBeAnything())));
+            }
+        }
     };
     runTasksInParallel(loops, {
         [&] {

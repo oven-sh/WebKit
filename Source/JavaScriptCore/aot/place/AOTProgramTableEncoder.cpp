@@ -981,6 +981,7 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
     Vector<FieldData> fields(FillWith { }, planned.numberOfRecordFields, FieldData { });
     layoutData.hasOnlyPlainSlots = true;
     layoutData.isCopiedByWords = true;
+    StringID underscoreProto = program.strings.find(byteCast<uint8_t>("__proto__"_span));
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
         const PlacedSlot& slot = planned.slots[index];
         if (!slot.indexInLayoutRecord)
@@ -1012,7 +1013,9 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
             RELEASE_ASSERT(environmentSlot.storage == SlotStorage::Inline && environmentSlot.representation == SlotRepresentation::Cell32);
             operands.append(environmentSlot.data().encoded());
         }
-        bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && data.slot.representation() != SlotRepresentation::DeferredClosure;
+        // A store under __proto__ changes the prototype, so a copy by stores looks at that name.
+        bool isNamedProto = underscoreProto && declaration.key && program.at(declaration.key).kind == PropertyKeyKind::Text && program.at(declaration.key).text == underscoreProto;
+        bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && data.slot.representation() != SlotRepresentation::DeferredClosure && !isNamedProto;
         layoutData.isCopiedByWords &= isCopiedByWords;
         layoutData.hasOnlyPlainSlots &= isCopiedByWords && !(data.flags & fieldIsStoredOnce);
         layoutData.hasFieldsWithSymbolKeys |= declaration.key && isSymbolKind(program.at(declaration.key).kind);
@@ -2890,7 +2893,14 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
         return;
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::builtinCells, encoder.placement.builtinCells(), &BuiltinCellKey::encoded);
     encoder.setTable(ProgramTableIndex::eagerBuiltinCells, encoder.placement.eagerBuiltinCells());
-    encoder.setTableFrom<uint32_t>(ProgramTableIndex::constantBuiltinMembers, constantBuiltinMembersToLock(encoder.program, encoder.flow), &BuiltinID::index);
+    Vector<uint32_t> members;
+    for (BuiltinID member : constantBuiltinMembersToLock(encoder.program, encoder.flow))
+        members.append(member.index());
+    for (BuiltinID member : encoder.program.unlockedBuiltins())
+        members.append(member.index() | ProgramTables::unlockedBuiltinMember);
+    for (const OpenedName& opened : encoder.program.openedNames)
+        members.appendList({ opened.holder.index() | ProgramTables::openedName, encoder.stringNumber(opened.name) | ProgramTables::openedName });
+    encoder.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, members);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::bigIntConstants, encoder.placement.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });

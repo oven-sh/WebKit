@@ -133,8 +133,7 @@ static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, J
     uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
     if (constructor == newTarget)
         return rememberedConstructor == constructorIsNewTarget;
-    std::optional<FunctionID> function = functionOf(constructor);
-    return function && rememberedConstructor == closureNumberOf(*function) && constructor->structure()->realm() == remembered->realm();
+    return closureNumberOf(constructor) == rememberedConstructor && constructor->structure()->realm() == remembered->realm();
 }
 
 JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constructor, JSObject* newTarget)

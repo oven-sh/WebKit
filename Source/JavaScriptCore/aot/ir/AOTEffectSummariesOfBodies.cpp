@@ -206,7 +206,7 @@ static bool isEmpty(const EffectDescription& description)
     return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
 }
 
-static FunctionID genericVersionEnteredWithOwnParameters(const Program& program, const Function& function)
+static FunctionID genericVersionThatBodyRestartsIn(const Program& program, const Function& function)
 {
     if (function.role != FunctionRole::Source || !function.derivation.source || function.blocks.isEmpty())
         return { };
@@ -223,7 +223,8 @@ static FunctionID genericVersionEnteredWithOwnParameters(const Program& program,
         if (block.values.size() != 1 || block.handler || block.terminator.kind != TerminatorKind::ReturnCall)
             return false;
         const Value& call = function.at(block.values[0]);
-        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && std::ranges::equal(call.variadicOperands(), parameters);
+        // A pass may have put another name of a parameter in its place: what RequireObjectCoercible hands on, a cast.
+        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && call.variadicOperands().size() == parameters.size();
     });
     return isEntered ? record->fallback : FunctionID();
 }
@@ -243,7 +244,7 @@ public:
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
         , m_readAs(readAs)
-        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
+        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionThatBodyRestartsIn(context.program, m_function) : FunctionID())
         , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
         , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
@@ -595,8 +596,7 @@ private:
         case ReadAs::Itself:
             return false;
         case ReadAs::ItselfAndCalleesByOperandTypes:
-            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall
-                && std::ranges::equal(operands, m_function.at(entryBlock).parameters.span());
+            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall;
         case ReadAs::GenericVersionGivenTypes:
             return callee.role == FunctionRole::OutlinedBody;
         case ReadAs::OutlinedBodyGivenTypes:
@@ -745,6 +745,13 @@ private:
             RELEASE_ASSERT(whole == description);
         }
         if (isReadWithOperandTypes(block, value)) [[unlikely]] {
+            // The generic version is the same function, entered before any effect with what this one was entered with: it does what the code did that stood here.
+            // Every rewrite of that code was checked to add no effect, so the row that the callers read still bounds it. The text of the generic version says more: it calls by name what is resolved here.
+            if (m_readAs == ReadAs::ItselfAndCalleesByOperandTypes && m_function.effectsBeforeRestart) {
+                addToExits(block, description.own.normal, description.own.handler);
+                addToExits(block, m_function.effectsBeforeRestart->normal, m_function.effectsBeforeRestart->handler);
+                return;
+            }
             summarizeCalleeWithOperandTypes(block, id, description);
             return;
         }

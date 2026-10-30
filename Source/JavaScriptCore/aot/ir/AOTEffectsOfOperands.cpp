@@ -514,16 +514,19 @@ static bool mayBeDescribedInMessage(const BuiltinTable& table, const OperandBeha
     return takesAnyObject || !admitsEveryObject(table, behavior.accepted, operand);
 }
 
-static void forEachOverloadCalledOn(const BuiltinTable& table, const Type& receivers, BuiltinDispatchTarget target, NOESCAPE const Invocable<void(BuiltinOverloadID)> auto& functor)
+static void forEachOverloadCalledOn(const Program& program, BuiltinID member, const Type& receivers, BuiltinDispatchTarget target, NOESCAPE const Invocable<void(BuiltinOverloadID)> auto& functor)
 {
     if (target.isOverload()) {
         functor(target.overload);
         return;
     }
 
+    const BuiltinTable& table = program.builtins();
     const BuiltinDispatchNode& node = table.at(target.node);
     for (const BuiltinDispatchBranch& branch : node.branches) {
-        forEachOverloadCalledOn(table, receivers, branch.target, functor);
+        if (program.passesByRowFor(member, branch.tested))
+            continue;
+        forEachOverloadCalledOn(program, member, receivers, branch.target, functor);
         if (node.operand.isReceiver() && admitsEveryObject(table, branch.tested, receivers))
             return;
     }
@@ -713,7 +716,7 @@ void ReachableValueWalk::describeCallOn(const Type& receivers, BuiltinID member)
     }
 
     m_membersBeingDescribed.append(member);
-    forEachOverloadCalledOn(table, receivers, *root, [&](BuiltinOverloadID overload) {
+    forEachOverloadCalledOn(m_program, member, receivers, *root, [&](BuiltinOverloadID overload) {
         describeOverloadOn(receivers, overload);
     });
     m_membersBeingDescribed.removeLast();

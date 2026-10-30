@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTErrorMessages.h"
 #include "AOTModuleHost.h"
+#include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "ArrayIteratorPrototype.h"
 #include "AsyncFunctionPrototype.h"
@@ -879,11 +880,13 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
         , m_constantMembers(constantMembers)
+        , m_unlockedMembers(unlockedMembers)
+        , m_reflectThrows(reflectThrows)
         , m_writes(writes)
     {
     }
@@ -900,15 +903,19 @@ public:
 
     bool contains(UniquedStringImpl* uid) const final
     {
+        // The strings of such an object are closed by Part::OtherStrings.
+        if (BuiltinTable::singleton().at(m_holder).flags.contains(BuiltinFlag::IsLockedObject))
+            return uid->isSymbol() && !static_cast<SymbolImpl*>(uid)->isPrivate();
         BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
         return name && isFixed(name);
     }
 
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    bool refusalAlwaysThrows() const final { return true; }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
+    bool throwsInSloppyMode() const final { return true; }
+    bool throwsFromReflect() const final { return m_reflectThrows; }
 
-    String messageOfRefusedPrototype() const final
+    String setPrototypeErrorMessage() const final
     {
         return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder));
     }
@@ -925,7 +932,7 @@ private:
         const Builtin& entry = table.at(member);
         if (m_holder == Builtins::GlobalThis && !BuiltinBindings::provides(entry.origin))
             return false;
-        if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
+        if (member == m_holder || (std::ranges::binary_search(table.lockedMembers(), member) && !ProgramTables::isUnlocked(m_unlockedMembers, member.index())))
             return true;
         if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
             return true;
@@ -936,12 +943,14 @@ private:
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
     std::span<const uint32_t> m_constantMembers;
+    std::span<const uint32_t> m_unlockedMembers;
+    bool m_reflectThrows;
     WritesToBuiltinMembers* m_writes;
 };
 
 } // anonymous namespace
 
-Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     OptionSet<ImmutablePropertyNames::Part> parts;
@@ -951,16 +960,19 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    if (table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames)) {
+    for (const Identifier& name : openedNames)
+        openStrings.add(name.impl());
+    if (table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {
         parts.add(ImmutablePropertyNames::Part::OtherStrings);
         for (BuiltinName name : table.openNamesOf(holder))
             openStrings.add(table.identifierOf(vm, name).impl());
         for (BuiltinID member : table.membersOf(holder)) {
-            if (table.at(member).mutability != BuiltinMutability::AlwaysLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+            bool isLocked = table.at(member).mutability == BuiltinMutability::AlwaysLocked && !ProgramTables::isUnlocked(unlockedMembers, member.index());
+            if (!isLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes)));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows)));
 }
 
 } // namespace JSC::AOT

@@ -533,6 +533,21 @@ static StringView nameOfCalleeAtCallSite(VM& vm)
     return nameOfCalleeAt(frames->callSite());
 }
 
+// `f.call` of `f.call(null, 1)`: a text that ends in `)` is a whole call. Counts parentheses as the engine's functionCallBase() does.
+static StringView calleeOfWrittenCall(StringView name)
+{
+    if (!name.endsWith(')'))
+        return name;
+    unsigned depth = 0;
+    for (unsigned index = name.length(); index--;) {
+        if (name[index] == ')')
+            ++depth;
+        else if (name[index] == '(' && !--depth)
+            return name.left(index);
+    }
+    return { };
+}
+
 // `f.apply(receiver, list)` and `f.call(receiver)` name `f.apply` and `f.call` where `f` refuses the call, as bytecode does, which calls `f` at that place.
 // The built-in function is a function of the library. Its frame stands above the place unless it has left by its tail call, and entered in any other way it names nothing.
 // Where the compiler has taken `.call` out of the place, the name there is that of the function that was entered, not of its receiver.
@@ -545,7 +560,7 @@ static StringView nameOfCalleeForwardedBy(auto& frames)
     ASCIILiteral member = BuiltinID(*builtin) == Builtins::FunctionPrototypeApply ? ".apply"_s : BuiltinID(*builtin) == Builtins::FunctionPrototypeCall ? ".call"_s : ""_s;
     frames->advanceToCallerMachineFrame();
     StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite(), CalleeAtSite::ReadFromReceiver);
-    return !member.isEmpty() && name.endsWith(member) ? name : StringView();
+    return !member.isEmpty() && calleeOfWrittenCall(name).endsWith(member) ? name : StringView();
 }
 
 static StringView nameOfForwardedCallee(VM& vm)

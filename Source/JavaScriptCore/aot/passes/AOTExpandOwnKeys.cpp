@@ -637,7 +637,12 @@ std::optional<OwnKeyWalkPlan> planOwnKeyWalk(FunctionPassContext& context, const
         const Layout& layout = context.program.at(arm.layout);
         if (layout.kind != LayoutKind::Record || arm.order.size() > maxFieldsCopiedByAllocation)
             return true;
+        // A store to the new object is a definition where Object.prototype does not have the name, as it has __proto__. It gets no new name: built-in objects are read-only.
+        bool assigns = context.function.at(site.value).assigns();
+        const BuiltinTable& builtins = context.program.builtins();
         return !std::ranges::all_of(arm.order, [&](uint32_t field) {
+            if (assigns && builtins.findOwnMember(Builtins::ObjectPrototype, context.program.strings.builtinName(context.program.at(layout.fields[field].key).text)))
+                return false;
             return isEnumerableStringField(context.program, layout.fields[field]) && isOrdinaryDataField(context.program, { arm.layout, field });
         });
     });

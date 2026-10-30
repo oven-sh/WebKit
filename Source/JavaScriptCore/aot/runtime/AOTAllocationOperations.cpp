@@ -86,7 +86,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
         return *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(cell) + offset);
     };
     if (ClosureRequest::isSlim(request)) {
-        cell = SlimClosure::createForCompiledCode(vm, objects.closures.slimClosureStructure(vm, closureFunctionWithNumber(ClosureRequest::closureNumberOf(request))), SlimClosure::allocationSize(ClosureRequest::countOf(request)));
+        cell = SlimClosure::createForCompiledCode(vm, objects.closures.slimClosureStructure(kindOfClosureNumber(ClosureRequest::closureNumberOf(request))), SlimClosure::allocationSize(ClosureRequest::countOf(request)));
         for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
             word(SlimClosure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
         WTF::storeStoreFence();
@@ -112,12 +112,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMoveClosureToHeap);
     const uint64_t* source = reinterpret_cast<const uint64_t*>(closureInFrame);
     uint64_t closureWord = source[SlimClosure::offsetOfWord() / sizeof(uint64_t)];
-    FunctionID function = functionOfClosureWord(closureWord);
-    unsigned count = captureCountsOf(function).captures;
+    uint32_t closureNumber = ClosureWord::closureNumberOf(closureWord);
+    unsigned count = captureCountsOfClosureNumber(closureNumber).captures;
     RELEASE_ASSERT(count <= ClosureRequest::maxSlimClosureCaptures);
     if (AllocationCounts::isEnabled()) [[unlikely]]
-        AllocationCounts::willAllocateClosure(*instance, ClosureWord::closureNumberOf(closureWord) | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift);
-    JSCell* cell = SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(vm, function), SlimClosure::allocationSize(count));
+        AllocationCounts::willAllocateClosure(*instance, closureNumber | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift);
+    JSCell* cell = SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(kindOfClosureNumber(closureNumber)), SlimClosure::allocationSize(count));
     uint64_t* target = reinterpret_cast<uint64_t*>(cell);
     for (unsigned slot = 0; slot < count; ++slot)
         target[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot] = source[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot];

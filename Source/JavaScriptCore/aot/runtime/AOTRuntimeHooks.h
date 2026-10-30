@@ -16,7 +16,7 @@ class PropertyName;
 
 namespace AOT {
 
-enum class RefusedChange : uint8_t { Store, Definition, Deletion, Prototype };
+enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 
@@ -27,9 +27,10 @@ namespace AOT::RuntimeHooks {
 
 using AOT::didCreateClass;
 using AOT::didCreateStaticProperty;
-using AOT::didRefuseChange;
+using AOT::didRejectWrite;
 // Null for an object that start-up has not locked.
-using AOT::messageOfRefusalByLockedObject;
+using AOT::lockedObjectErrorMessage;
+using AOT::reflectThrowsOnLockedProperty;
 using AOT::takeStaticPropertyMadeAhead;
 
 void willInitializeRealm(JSGlobalObject*);

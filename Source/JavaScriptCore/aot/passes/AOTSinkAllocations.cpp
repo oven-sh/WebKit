@@ -494,6 +494,114 @@ static PassOutcome removeLinksOfUnusedObjects(FunctionPassContext& context)
     return outcome;
 }
 
+// On a copy of a function nothing is counted, and no further copy is made.
+enum class SinkingRun : uint8_t { OfThePass, OnCopy };
+static PassOutcome sinkAllocations(FunctionPassContext&, SinkingRun);
+
+static void testPrototypeInFrontOfLink(IRBuilder& builder, Function& function, ProgramPoint point)
+{
+    Value link = function.at(function.at(point.block).values[point.index]);
+    LayoutID layout = function.at(link.objectOperand()).layout();
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    Value test = IRBuilder::make(Opcode::IsPrototypeOfClass, { link.prototypeOperand() });
+    test.setLayout(layout);
+    ValueID hasPrototypeOfClass = builder.append(WTF::move(test));
+    BlockID linked = builder.addBlock(BlockFrequency::Rare);
+    builder.emitBranch(hasPrototypeOfClass, Target { expansion.continuation }, Target { linked });
+    builder.moveToEndOf(linked);
+    builder.append(WTF::move(link));
+    builder.endExpansion(expansion, std::span<const ValueID>());
+}
+
+// What Object.create makes needs no link where it is handed the prototype of its class, which its Structure already says. Behind a test of that the object is one like any other and may sink; the link moves to the way where the test fails.
+// The ways meet again behind a link that writes the guards of the class, so an object that is made anyway would only lose by the test: it is put where a copy of the function says that the allocation goes.
+static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    OpcodeSet opcodes = context.analyses.opcodesOfValues();
+    if (!opcodes.contains(Opcode::SetLiteralPrototype) || !(opcodes.contains(Opcode::HasLayoutPrototype) || opcodes.contains(Opcode::AreMembersUnchanged)))
+        return PassOutcome::Unchanged;
+
+    // Until its accesses are resolved nothing asks about the prototype of the object or the guards of its class, and it cannot go.
+    BitVector layoutsAsked;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::HasLayoutPrototype) {
+                const Value& subject = function.at(context.analyses.identityOf(value.objectOperand()));
+                if (subject.opcode == Opcode::NewObject)
+                    layoutsAsked.set(subject.layout().index());
+            } else if (value.opcode == Opcode::AreMembersUnchanged) {
+                for (const MemberConditionRecord& condition : value.conditions())
+                    layoutsAsked.set(condition.layout.index());
+            }
+        }
+    }
+
+    Vector<ProgramPoint, 2> points;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        // Where a test has failed the object is made and linked.
+        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
+            continue;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 1; index < values.size(); ++index) {
+            const Value& link = function.at(values[index]);
+            if (link.opcode != Opcode::SetLiteralPrototype || link.replacedCalleeOperand() || link.replacedThisOperand() || link.objectOperand() != values[index - 1])
+                continue;
+            const Value& made = function.at(values[index - 1]);
+            if (made.opcode != Opcode::NewObject || made.prototypeOperand() || !layoutsAsked.get(made.layout().index()) || !context.program.at(made.layout()).has(LayoutFlags::IsOfCreatedObject))
+                continue;
+            const Type& prototype = context.program.typeOf(function, link.prototypeOperand());
+            if (prototype.hasObjects() && !prototype.primitives)
+                points.append(ProgramPoint { block, index });
+        }
+    }
+    if (points.isEmpty())
+        return PassOutcome::Unchanged;
+    // From the last to the first, so that a cut moves no point that is still to come.
+    AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
+        return a.block != b.block ? a.block > b.block : a.index > b.index;
+    });
+
+    // The pass itself says so: it gives the way behind a failed test a copy of what follows, which an analysis alone does not.
+    AOT_THRESHOLD(unsigned, maxRunsOnCopy, 4);
+    BitVector layoutsStillMade;
+    {
+        Function copy = function;
+        FunctionAnalyses analyses(context.analyses.context(), copy);
+        {
+            IRBuilder builder(context.analyses.context(), copy, context.types, &analyses);
+            for (ProgramPoint point : points)
+                testPrototypeInFrontOfLink(builder, copy, point);
+        }
+        FunctionPassContext onCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, context.build };
+        for (unsigned runs = 0; runs < maxRunsOnCopy; ++runs) {
+            analyses.didChangeControlFlow();
+            if (sinkAllocations(onCopy, SinkingRun::OnCopy) != PassOutcome::Changed)
+                break;
+        }
+        analyses.didChangeControlFlow();
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            if (copy.at(block).frequency.predicted() == BlockFrequency::Rare)
+                continue;
+            for (ValueID id : copy.at(block).values) {
+                if (copy.at(id).opcode == Opcode::NewObject)
+                    layoutsStillMade.set(copy.at(id).layout().index());
+            }
+        }
+    }
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (ProgramPoint point : points) {
+        if (layoutsStillMade.get(function.at(function.at(point.block).values[point.index - 1]).layout().index()))
+            continue;
+        testPrototypeInFrontOfLink(builder, function, point);
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
+}
+
 static PassOutcome declareListsOfNumbers(FunctionPassContext&);
 
 // `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No array iterator has a `return`.
@@ -529,12 +637,21 @@ static PassOutcome readAbsentMembersOfArrayIterators(FunctionPassContext& contex
 
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
+    return sinkAllocations(context, SinkingRun::OfThePass);
+}
+
+static PassOutcome sinkAllocations(FunctionPassContext& context, SinkingRun run)
+{
     AOT_THRESHOLD(unsigned, maxEdgeSplittingRounds, 3);
     constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
 
     if (!context.analyses.opcodesOfValues().intersects(allocations))
         return PassOutcome::Unchanged;
-    if ((removeLinksOfUnusedObjects(context) | declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
+    if (removeLinksOfUnusedObjects(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
+    if (run == SinkingRun::OfThePass && testPrototypesOfCreatedObjects(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
+    if ((declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
         return PassOutcome::Changed;
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
@@ -542,6 +659,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
     PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
     SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };
+    policy.recordsLosses = run == SinkingRun::OfThePass;
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = lent;
@@ -579,7 +697,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
         sinking.rewrite(builder);
         sinking.raiseFrequenciesBehindDecidedBranches();
         sinking.recordLosses();
-        sinking.countStatistics();
+        if (run == SinkingRun::OfThePass)
+            sinking.countStatistics();
         return PassOutcome::Changed;
     }
 

@@ -378,7 +378,7 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(requests, uint32_t) \
     v(builtinCells, uint32_t) \
     v(eagerBuiltinCells, uint32_t) \
-    v(constantBuiltinMembers, uint32_t) \
+    v(constantAndUnlockedBuiltinMembers, uint32_t) \
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 

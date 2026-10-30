@@ -774,6 +774,8 @@ private:
         ValueSetID stillTested = ValueSets::complement(m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Absent)));
         bool absenceIsStillTested = true;
         for (const BuiltinDispatchBranch& branch : node.branches) {
+            if (m_context.program().passesByRowFor(m_builtin, branch.tested))
+                continue;
             bool admitsAbsence = m_builtins.at(branch.tested).isAnything() || m_builtins.at(branch.tested).primitives.contains(BuiltinPrimitive::NotPassed);
             ValueSetID tested = m_context.maker().intersect(m_tables.maskOf(branch.tested), stillTested);
             if (node.operand == BuiltinOperand::receiver()) {
@@ -998,6 +1000,11 @@ private:
         const Builtin& entry = m_builtins.at(m_builtin);
         if (overload.isUndeclared() && entry.origin == BuiltinOrigin::Host && !entry.flags.contains(BuiltinFlag::IsCompilerHelper))
             letUndeclaredNativeCodeRun(m_context);
+        // What a test has put in the member's place gets the result and what the operands hold.
+        if (m_program.callsUnlockedMemberThatNoRowNames(m_builtin)) {
+            handToUndescribedNativeCode(BuiltinOperand::argumentsFrom(0));
+            m_context.add(escaped(), valueOfType(overload.result.type, m_resultObject));
+        }
     }
 
     void openProxiesWithTrap(ClimbingSet values, BuiltinName trap)
@@ -1845,7 +1852,8 @@ private:
         case BuiltinPlaceKind::Prototype: {
             ClimbingSet objects = withTargetsInPlaceOfProxies(objectsAt(*place.operand));
             ClimbingSet primitives = m_context.restrict(valueAt(*place.operand), ValueSets::complement(m_universe.objects()));
-            ClimbingSet above = objectsRightAbove(m_context, m_context.unite(known(objects), primitives));
+            // A link that unknown code may have written holds a value nobody knows. What stands above an object is an object or null.
+            ClimbingSet above = m_context.restrict(objectsRightAbove(m_context, m_context.unite(known(objects), primitives)), m_context.maker().unite(m_universe.objects(), m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Null))));
             functor(m_context.holding(above));
             if (m_context.meet(above, m_universe.sureInstancesOf(BuiltinClasses::Generator)) || m_context.meet(above, m_universe.sureInstancesOf(BuiltinClasses::AsyncGenerator)))
                 constant = m_context.maker().unite(constant, unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout));

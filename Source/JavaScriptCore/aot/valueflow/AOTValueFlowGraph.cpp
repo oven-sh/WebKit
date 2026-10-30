@@ -243,44 +243,6 @@ void ValueFlowGraph::ArrayByNode<T>::grow(size_t numberInUse, size_t capacity)
     m_capacity = capacity;
 }
 
-void ValueFlowGraph::Arena::release()
-{
-    for (void* slab : m_slabs)
-        fastFree(slab);
-    m_slabs.clear();
-    m_free = { };
-    m_next = nullptr;
-    m_end = nullptr;
-    m_bytes = 0;
-}
-
-uint32_t* ValueFlowGraph::Arena::allocate(uint32_t numberOfWords)
-{
-    uint32_t*& free = m_free[std::countr_zero(numberOfWords)];
-    if (free) {
-        uint32_t* block = free;
-        memcpy(&free, block, sizeof(free));
-        return block;
-    }
-    if (static_cast<size_t>(m_end - m_next) < numberOfWords) {
-        constexpr size_t smallestSlab = 16 * KB / sizeof(uint32_t);
-        constexpr size_t largestSlab = 2 * MB / sizeof(uint32_t);
-        size_t size = std::max<size_t>(numberOfWords, std::clamp(m_bytes / sizeof(uint32_t) / 2, smallestSlab, largestSlab));
-        m_next = static_cast<uint32_t*>(fastMalloc(size * sizeof(uint32_t)));
-        m_end = m_next + size;
-        m_slabs.append(m_next);
-        m_bytes += size * sizeof(uint32_t);
-    }
-    return std::exchange(m_next, m_next + numberOfWords);
-}
-
-void ValueFlowGraph::Arena::free(uint32_t* block, uint32_t numberOfWords)
-{
-    uint32_t*& free = m_free[std::countr_zero(numberOfWords)];
-    memcpy(block, &free, sizeof(free));
-    free = block;
-}
-
 ValueFlowGraph::ValueFlowGraph(const ParallelLoops& loops, Makers makers)
     : m_loops(loops)
     , m_makers(makers)
@@ -288,8 +250,7 @@ ValueFlowGraph::ValueFlowGraph(const ParallelLoops& loops, Makers makers)
     , m_team(Team::create(loops))
 {
     RELEASE_ASSERT(makers.size() >= loops.width());
-    static_assert(sizeof(Row) == sizeof(Links));
-    m_shiftFromNodeToPage = std::countr_zero(pageSize() / sizeof(Links));
+    m_shiftFromNodeToPage = std::countr_zero(pageSize() / sizeof(uint32_t));
     m_lowMembers = makers[0]->ofRange(ValueFlowObjectID(0u), ValueFlowObjectID(std::min(numberOfLowMembers, m_sets.sizeOfUniverse())));
     for (const std::unique_ptr<ValueSetMaker>& maker : makers)
         m_workers.append(makeUnique<Worker>(*maker));
@@ -344,7 +305,7 @@ NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
 #define MADV_POPULATE_WRITE 23
 #endif
     size_t firstNode = static_cast<size_t>(page) << m_shiftFromNodeToPage;
-    madvise(m_rows.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
+    madvise(m_rows.data() + firstNode, pageSize() * (sizeof(Row) / sizeof(uint32_t)), MADV_POPULATE_WRITE);
     madvise(m_successors.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
     madvise(m_predecessors.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
 #endif
@@ -374,24 +335,6 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
         m_masks.append(mask);
     }
     m_gates[node.index()].mask = *number;
-}
-
-ALWAYS_INLINE void ValueFlowGraph::addLink(Arena& arena, Links& links, uint32_t other)
-{
-    uint32_t count = links.count++;
-    if (count < 2) {
-        links.two[count] = other;
-        return;
-    }
-    uint32_t room = std::bit_ceil(count);
-    if (count == room) {
-        uint32_t* block = arena.allocate(2 * room);
-        memcpy(block, count <= 2 ? links.two : links.block, count * sizeof(uint32_t));
-        if (count > 2)
-            arena.free(links.block, room);
-        links.block = block;
-    }
-    links.block[count] = other;
 }
 
 uint64_t ValueFlowGraph::lowMembersOf(ValueSetID set, ValueSetMaker& maker) const
@@ -513,105 +456,23 @@ void ValueFlowGraph::wake(ValueFlowNodeID first, uint32_t count)
     }
 }
 
-bool ValueFlowGraph::EdgeSet::add(ValueFlowEdge edge)
-{
-    if ((m_size + 1) * 4 > m_slots.span().size() * 3)
-        grow();
-    uint64_t key = keyOf(edge);
-    size_t size = m_slots.span().size();
-    size_t position = firstPositionOf(key);
-    for (; m_slots[position]; position = position + 1 == size ? 0 : position + 1) {
-        if (m_slots[position] == key)
-            return false;
-    }
-    m_slots[position] = key;
-    ++m_size;
-    return true;
-}
-
-bool ValueFlowGraph::EdgeSet::contains(ValueFlowEdge edge) const
-{
-    if (!m_slots)
-        return false;
-    uint64_t key = keyOf(edge);
-    size_t size = m_slots.span().size();
-    for (size_t position = firstPositionOf(key); m_slots[position]; position = position + 1 == size ? 0 : position + 1) {
-        if (m_slots[position] == key)
-            return true;
-    }
-    return false;
-}
-
-void ValueFlowGraph::EdgeSet::prefetch(ValueFlowEdge edge) const
-{
-    if (m_slots)
-        __builtin_prefetch(&m_slots[firstPositionOf(keyOf(edge))]);
-}
-
-void ValueFlowGraph::EdgeSet::grow()
-{
-    size_t size = std::max<size_t>(m_slots.span().size() + m_slots.span().size() / 2, 1024);
-    MallocSpan<uint64_t> previous = std::exchange(m_slots, MallocSpan<uint64_t>::malloc(size * sizeof(uint64_t)));
-    zeroSpan(m_slots.mutableSpan());
-    for (uint64_t key : previous.span()) {
-        if (!key)
-            continue;
-        size_t position = firstPositionOf(key);
-        while (m_slots[position])
-            position = position + 1 == size ? 0 : position + 1;
-        m_slots[position] = key;
-    }
-}
-
 ALWAYS_INLINE bool ValueFlowGraph::addSuccessorIfAbsent(ValueFlowEdge edge)
 {
-    Shard& shard = *m_shards[shardOf(edge.from.index())];
     willUse(edge.from.index());
-    Links& successors = m_successors[edge.from.index()];
-    if (successors.count > mostSuccessorsScanned ? !shard.edgesOfNodesWithManySuccessors.add(edge) : successors.contains(edge.to.index()))
-        return false;
-    if (successors.count == mostSuccessorsScanned) {
-        for (uint32_t index = 0; index < successors.count; ++index)
-            shard.edgesOfNodesWithManySuccessors.add(ValueFlowEdge { edge.from, ValueFlowNodeID(successors.begin()[index]) });
-        shard.edgesOfNodesWithManySuccessors.add(edge);
-    }
-    if (successors.count == successors.older)
-        shard.nodesWithRecentSuccessors.append(edge.from.index());
-    addLink(shard.blocksOfSuccessors, successors, edge.to.index());
-    return true;
-}
-
-void ValueFlowGraph::willHaveManyPredecessors(Shard& shard, uint32_t node)
-{
-    const Links& predecessors = m_predecessors[node];
-    const uint32_t* others = predecessors.begin();
-    for (uint32_t index = 0; index < predecessors.count; ++index) {
-        if (isConstant(others[index]))
-            shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(ValueFlowEdge { ValueFlowNodeID(others[index]), ValueFlowNodeID(node) });
-    }
+    return m_shards[shardOf(edge.from.index())]->successors.add(m_successors[edge.from.index()], edge.to.index());
 }
 
 ALWAYS_INLINE void ValueFlowGraph::addPredecessor(Shard& shard, ValueFlowEdge edge)
 {
-    Links& predecessors = m_predecessors[edge.to.index()];
-    if (predecessors.count == mostPredecessorsScanned)
-        willHaveManyPredecessors(shard, edge.to.index());
-    if (predecessors.count == predecessors.older)
-        shard.nodesWithRecentPredecessors.append(edge.to.index());
-    addLink(shard.blocksOfPredecessors, predecessors, edge.from.index());
+    shard.predecessors.addWhatListLacks(m_predecessors[edge.to.index()], edge.from.index());
 }
 
 ALWAYS_INLINE bool ValueFlowGraph::addEdgeOutOfConstantIfAbsent(ValueFlowEdge edge)
 {
     Shard& shard = *m_shards[shardOf(edge.to.index())];
     willUse(edge.to.index());
-    const Links& predecessors = m_predecessors[edge.to.index()];
-    if (predecessors.count > mostPredecessorsScanned ? !shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(edge) : predecessors.contains(edge.from.index()))
+    if (!shard.predecessors.add(m_predecessors[edge.to.index()], edge.from.index()))
         return false;
-    bool willHaveMany = predecessors.count == mostPredecessorsScanned;
-    addPredecessor(shard, edge);
-    if (willHaveMany)
-        shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(edge);
     if (m_areEdgesOutOfConstantListed[edge.from.index() / 64].load(std::memory_order_relaxed) >> edge.from.index() % 64 & 1)
         shard.listedEdgesOutOfConstants.append(edge);
     return true;
@@ -694,7 +555,6 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
     m_numberOfEdges += edges.size();
     if (edges.empty())
         return;
-    m_numberOfRecentEdges += edges.size();
 
     constexpr size_t distance = 12;
     AOT_THRESHOLD(size_t, fewestEdgesForThreads, 4096);
@@ -783,18 +643,6 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
         for (Vector<ValueFlowEdge>& onlyToLink : m_edgesOnlyToLink)
             onlyToLink.shrink(0);
     }
-    if (m_numberOfRecentEdges * 2 <= m_numberOfOlderEdges)
-        return;
-    m_numberOfOlderEdges += std::exchange(m_numberOfRecentEdges, 0);
-    team.run(numberOfShards, [&](unsigned number, unsigned) {
-        Shard& shard = *m_shards[number];
-        for (uint32_t node : shard.nodesWithRecentSuccessors)
-            m_successors[node].older = m_successors[node].count;
-        for (uint32_t node : shard.nodesWithRecentPredecessors)
-            m_predecessors[node].older = m_predecessors[node].count;
-        shard.nodesWithRecentSuccessors.shrink(0);
-        shard.nodesWithRecentPredecessors.shrink(0);
-    });
 }
 
 void ValueFlowGraph::append(Covering&& covering)
@@ -1001,7 +849,7 @@ void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
         }
         uint32_t node = m_nodesWoken[index - m_found.size()];
         if (covering.isRetired.quickGet(node) && !isRetiredUnderNearerCovering(covering, node))
-            forEachOther(m_predecessors[node], connect);
+            forEachPredecessor(node, connect);
     });
 }
 
@@ -1029,7 +877,7 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(std::span<const ValueFlowE
     Vector<uint32_t, 16> toVisit;
     for (Covering& covering : m_coverings) {
         auto markPredecessorsOf = [&](uint32_t node) {
-            forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
+            forEachPredecessor(node, [&](uint32_t predecessor) {
                 if (isFollowedBackThrough(covering, predecessor) && !noteFlowIntoCovered(covering, predecessor))
                     toVisit.append(predecessor);
             });
@@ -1137,7 +985,7 @@ void ValueFlowGraph::connectPredecessorsOfNodesJustRetired()
         return;
     connectStraightToCoveredNodes(*m_team, mostJustRetired, [&](const Covering& covering, size_t index, const auto& connect) {
         if (index < covering.nodesJustRetired.size() && !isRetiredUnderNearerCovering(covering, covering.nodesJustRetired[index]))
-            forEachOther(m_predecessors[covering.nodesJustRetired[index]], connect);
+            forEachPredecessor(covering.nodesJustRetired[index], connect);
     });
     for (Covering& covering : m_coverings)
         covering.nodesJustRetired.shrink(0);
@@ -1248,8 +1096,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     if (!std::exchange(m_hasMoved[node], 1))
         worker.movedNodes.append(node);
 
-    const Links& successors = m_successors[node];
-    if (!successors.count)
+    if (!m_successors[node])
         return;
     AOT_THRESHOLD(uint32_t, fewestMembersToHandOnWhatIsNew, 16);
     bool handsOnAll = valueBefore == ValueSets::nothing || ValueSets::isComplement(value) || ValueSets::isComplement(valueBefore) || (after == ValueSets::nothing ? static_cast<uint32_t>(std::popcount(lowAfter)) : m_sets.size(after)) <= fewestMembersToHandOnWhatIsNew;
@@ -1260,8 +1107,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
         ValueSetID whatIsNew = maker.intersect(after, ValueSets::complement(valueBefore));
         message.set = (message.low && whatIsNew == worker.setOfLowMembers(message.low) ? ValueSets::nothing : whatIsNew).index();
     }
-    worker.edgesLookedAt += successors.count;
-    forEachOther(successors, [&](uint32_t successor) {
+    forEachSuccessor(node, [&](uint32_t successor) {
+        ++worker.edgesLookedAt;
         Gate target = m_gates[successor];
         if (target.flags & IgnoresArrivals)
             return;
@@ -1457,7 +1304,7 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
         for (uint32_t node : m_nodesWoken) {
             if (m_gates[node].flags & IgnoresArrivals)
                 continue;
-            forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
+            forEachPredecessor(node, [&](uint32_t predecessor) {
                 const Row& row = m_rows[predecessor];
                 if (row.low || row.set)
                     m_messages[m_parity].append(Message { node, row.set, row.low });
@@ -1570,7 +1417,7 @@ void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
     m_rows.release(*m_team);
     m_successors.release(*m_team);
     for (const std::unique_ptr<Shard>& shard : m_shards)
-        shard->blocksOfSuccessors.release();
+        shard->successors = { };
     m_keepsPredecessors = predecessors == Predecessors::AreKept;
     if (m_keepsPredecessors)
         layPredecessorsInRows();
@@ -1583,8 +1430,7 @@ void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
     m_hasMoved.release();
     giveUp(m_isNewEdge, m_edgesNotInLists, m_edgesOfSolve, m_indicesBySource, m_edgesByTarget, m_straightEdgesOfShare, m_straightEdges, m_messages, m_arrivals, m_nodesWoken, m_foundInShare, m_found, m_edgesThatLengthenFlow);
     for (const std::unique_ptr<Shard>& shard : m_shards) {
-        shard->blocksOfPredecessors.release();
-        giveUp(shard->edgesOfNodesWithManySuccessors, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors, shard->listedEdgesOutOfConstants, shard->arrivals, shard->messages, shard->nodesWithRecentSuccessors, shard->nodesWithRecentPredecessors);
+        giveUp(shard->predecessors, shard->listedEdgesOutOfConstants, shard->arrivals, shard->messages);
     }
     m_workers.clear();
 }
@@ -1601,7 +1447,9 @@ void ValueFlowGraph::layPredecessorsInRows()
     m_team->run(numberOfShares, [&](unsigned share, unsigned) {
         uint32_t numberInShare = 0;
         forEachNodeOfShare(share, [&](uint32_t node) {
-            numberInShare += m_predecessors[node].count;
+            forEachPredecessor(node, [&](uint32_t) {
+                ++numberInShare;
+            });
         });
         predecessorsBeforeShare[share] = numberInShare;
     });
@@ -1616,11 +1464,9 @@ void ValueFlowGraph::layPredecessorsInRows()
         uint32_t first = predecessorsBeforeShare[share];
         forEachNodeOfShare(share, [&](uint32_t node) {
             m_firstPredecessorInRows[node] = first;
-            uint32_t position = first;
-            forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
-                m_predecessorsInRows[position++] = predecessor;
+            forEachPredecessor(node, [&](uint32_t predecessor) {
+                m_predecessorsInRows[first++] = predecessor;
             });
-            first += m_predecessors[node].count;
         });
     });
 }
@@ -1631,26 +1477,16 @@ void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
     size_t numberOfNodes = m_numberOfNodes;
     bytes.add("graph: gates of nodes"_s, numberOfNodes * sizeof(Gate));
     bytes.add("graph: rows of nodes"_s, numberOfNodes * sizeof(Row));
-    bytes.add("graph: successors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
-    bytes.add("graph: predecessors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
+    bytes.add("graph: successors of nodes"_s, numberOfNodes * sizeof(uint32_t));
+    bytes.add("graph: predecessors of nodes"_s, numberOfNodes * sizeof(uint32_t));
     bytes.add("graph: values of nodes"_s, numberOfNodes * sizeof(ValueSetID));
     bytes.add("graph: bits of nodes"_s, (3 + 2 * m_coverings.size()) * (m_capacity / 8));
     bytes.addList("graph: masks"_s, m_masks);
-    size_t wordsOfSuccessors = 0;
-    size_t wordsOfPredecessors = 0;
-    for (uint32_t node = 0; node < m_numberOfNodes; ++node) {
-        wordsOfSuccessors += m_successors[node].count > 2 ? m_successors[node].count : 0;
-        wordsOfPredecessors += m_predecessors[node].count > 2 ? m_predecessors[node].count : 0;
-    }
-    bytes.add("graph: successors of nodes, blocks"_s, wordsOfSuccessors * sizeof(uint32_t), 0);
-    bytes.add("graph: predecessors of nodes, blocks"_s, wordsOfPredecessors * sizeof(uint32_t), 0);
     for (const std::unique_ptr<Worker>& worker : m_workers)
         bytes.addMap("graph: sets of low members"_s, worker->setsOfLowMembers);
     for (const std::unique_ptr<Shard>& shard : m_shards) {
-        bytes.add("graph: successors of nodes, blocks"_s, 0, shard->blocksOfSuccessors.memoryInBytes());
-        bytes.add("graph: predecessors of nodes, blocks"_s, 0, shard->blocksOfPredecessors.memoryInBytes());
-        bytes.add("graph: edges of nodes with many successors"_s, shard->edgesOfNodesWithManySuccessors.bytesInUse(), shard->edgesOfNodesWithManySuccessors.memoryInBytes());
-        bytes.add("graph: edges out of constants into nodes with many predecessors"_s, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.bytesInUse(), shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes());
+        bytes.add("graph: lists of successors"_s, shard->successors.bytesInUse(), shard->successors.memoryInBytes());
+        bytes.add("graph: lists of predecessors"_s, shard->predecessors.bytesInUse(), shard->predecessors.memoryInBytes());
         bytes.addList("graph: listed edges out of constants"_s, shard->listedEdgesOutOfConstants);
     }
     forEachListOfOneRound(*this, [&](ASCIILiteral table, const auto& list) {
@@ -1682,7 +1518,7 @@ void ValueFlowGraph::forEachListOfOneRound(auto& graph, NOESCAPE const auto& fun
     for (auto& worker : graph.m_workers)
         visit(waves, worker->movedNodes);
     for (auto& shard : graph.m_shards) {
-        visit(waves, shard->arrivals.nodes, shard->arrivals.list, shard->nodesWithRecentSuccessors, shard->nodesWithRecentPredecessors, shard->placeholdersStopped);
+        visit(waves, shard->arrivals.nodes, shard->arrivals.list, shard->placeholdersStopped);
         for (auto& messagesOfWave : shard->messages)
             visitEach(waves, messagesOfWave);
     }

@@ -225,6 +225,11 @@ void AccessEmitter::copyDataProperties(const ValueContext& value)
 void AccessEmitter::generateCopyObject(const ValueContext& value)
 {
     Boxed source = in<Boxed>(value->sourceOperand());
+    if (value->assigns()) {
+        ExcludedKeys excluded = excludedKeysOf(value);
+        define(value, callOperation<CellPointer>(value, RuntimeOperation::AssignToNewObject, { source, excluded.run, excluded.count, excluded.keys }, { .calledBuiltin = Builtins::ObjectAssign }));
+        return;
+    }
     auto copyByOperation = [&]() -> CellPointer {
         ExcludedKeys excluded = excludedKeysOf(value);
         return callOperation<CellPointer>(value, RuntimeOperation::CopyObject, { source, excluded.run, excluded.count, excluded.keys });

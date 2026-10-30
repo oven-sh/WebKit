@@ -82,43 +82,46 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
 const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
 
-// Who asks for the change: an operation of the language, which in sloppy code goes on in silence where it is refused, or somebody who takes false for an answer, as a function of Reflect does.
-enum class RefusalIs : uint8_t { ToldToOperation, Answered };
+// Where a rejected write to a locked property came from, which decides whether it throws.
+enum class WriteOrigin : uint8_t { Operator, Reflect, RejectedBySpec };
 
-struct RefusalOfOwner {
-    bool alwaysThrows { false };
+struct LockedPropertyPolicy {
+    bool throwsInSloppyMode { false };
     String message;
+    bool throwsFromReflect { false };
 };
 
-// An object whose every property is immutable has no list, and so no owner of one to ask.
-static RefusalOfOwner refusalOfOwner(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* uid, bool isDeletion)
+// An object with a list of immutable names carries its policy there. A fully immutable object has no list, so the AOT runtime is asked.
+static LockedPropertyPolicy lockedPropertyPolicy(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* uid, bool isDeletion)
 {
     if (ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames())
-        return { names->refusalAlwaysThrows(), isDeletion ? names->messageOfRefusedDeletion(uid) : names->messageOfRefusal(uid) };
+        return { names->throwsInSloppyMode(), isDeletion ? names->deleteErrorMessage(uid) : names->storeErrorMessage(uid), names->throwsFromReflect() };
 #if ENABLE(AOT)
-    String message = AOT::RuntimeHooks::messageOfRefusalByLockedObject(globalObject, object, uid, isDeletion ? AOT::RefusedChange::Deletion : AOT::RefusedChange::Store);
-    return { !message.isNull(), WTF::move(message) };
+    String message = AOT::RuntimeHooks::lockedObjectErrorMessage(globalObject, object, uid, isDeletion ? AOT::RejectedWrite::Deletion : AOT::RejectedWrite::Store);
+    bool isLocked = !message.isNull();
+    return { isLocked, WTF::move(message), isLocked && AOT::RuntimeHooks::reflectThrowsOnLockedProperty(object) };
 #else
     UNUSED_PARAM(globalObject);
     return { };
 #endif
 }
 
-static bool refuseChangeOfImmutableProperty(JSGlobalObject* globalObject, ThrowScope& scope, bool shouldThrow, RefusalIs refusalIs, JSObject* object, PropertyName propertyName, ASCIILiteral message)
+static bool rejectWriteToLockedProperty(JSGlobalObject* globalObject, ThrowScope& scope, bool shouldThrow, WriteOrigin origin, JSObject* object, PropertyName propertyName, ASCIILiteral message)
 {
 #if ENABLE(AOT)
-    AOT::RuntimeHooks::didRefuseChange(globalObject, object, propertyName.uid(), message == ReadonlyPropertyWriteError ? AOT::RefusedChange::Store : AOT::RefusedChange::Definition);
+    AOT::RuntimeHooks::didRejectWrite(globalObject, object, propertyName.uid(), message == ReadonlyPropertyWriteError ? AOT::RejectedWrite::Store : AOT::RejectedWrite::Definition);
 #endif
-    RefusalOfOwner refusal = refusalOfOwner(globalObject, object, propertyName.uid(), false);
-    if (!shouldThrow && (refusalIs == RefusalIs::Answered || !refusal.alwaysThrows))
+    LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, object, propertyName.uid(), false);
+    bool policyThrows = origin == WriteOrigin::Operator ? policy.throwsInSloppyMode : origin == WriteOrigin::Reflect && policy.throwsFromReflect;
+    if (!shouldThrow && !policyThrows)
         return false;
-    if (refusal.message.isNull())
+    if (policy.message.isNull())
         return typeError(globalObject, scope, true, message);
-    return typeError(globalObject, scope, true, refusal.message);
+    return typeError(globalObject, scope, true, policy.message);
 }
 
-// The language refuses a store that finds, on the object or above it, a property that is read-only or an accessor without a setter, whatever else stands in the way.
-static bool isStoreRefusedByLanguage(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+// OrdinarySet fails by itself when the lookup finds a read-only property or an accessor without a setter, on the object or on its prototype chain.
+static bool specRejectsStore(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -630,8 +633,10 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
         RETURN_IF_EXCEPTION(scope, false);
         if (holdsValue || changesNothingThroughSetterOfPrototype(vm, globalObject, this, propertyName, value))
             return true;
-        RefusalIs refusalIs = slot.context() == PutPropertySlot::ReflectSet || isStoreRefusedByLanguage(globalObject, this, propertyName) ? RefusalIs::Answered : RefusalIs::ToldToOperation;
-        return refuseChangeOfImmutableProperty(globalObject, scope, slot.isStrictMode(), refusalIs, this, propertyName, ReadonlyPropertyWriteError);
+        WriteOrigin origin = slot.context() == PutPropertySlot::ReflectSet ? WriteOrigin::Reflect : WriteOrigin::Operator;
+        if (specRejectsStore(globalObject, this, propertyName))
+            origin = WriteOrigin::RejectedBySpec;
+        return rejectWriteToLockedProperty(globalObject, scope, slot.isStrictMode(), origin, this, propertyName, ReadonlyPropertyWriteError);
     }
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
@@ -793,10 +798,11 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     scope.release();
     // The steps as the specification has them, in which the receiver's [[DefineOwnProperty]] decides: the shortcuts below put.
     if (receiver->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
-        // An owner whose refusal always throws is heard here as where the store begins at the receiver.
-        bool isTold = slot.isStrictMode()
-            || (slot.context() != PutPropertySlot::ReflectSet && refusalOfOwner(globalObject, receiver, propertyName.uid(), false).alwaysThrows && !isStoreRefusedByLanguage(globalObject, receiver, propertyName));
-        return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, isTold);
+        // Same policy as in putInlineSlow(), where the store starts at the receiver.
+        LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, receiver, propertyName.uid(), false);
+        bool shouldThrow = slot.isStrictMode()
+            || ((slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
+        return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, shouldThrow);
     }
 
     if (slot.isTaintedByOpaqueObject() || receiver->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) {
@@ -851,11 +857,11 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
 
     if (thisObject->structure()->hasImmutableIndexedProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        // Nothing says here who asks: Reflect.set() answers for such an object by itself.
+        // putByIndex() has no slot to tell the origin by. Reflect.set() handles such an object before it gets here.
         Identifier key = Identifier::from(vm, propertyName);
-        RefusalOfOwner refusal = refusalOfOwner(globalObject, thisObject, key.impl(), false);
-        if (refusal.alwaysThrows && !refusal.message.isNull())
-            return typeError(globalObject, scope, true, refusal.message);
+        LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, thisObject, key.impl(), false);
+        if (policy.throwsInSloppyMode && !policy.message.isNull())
+            return typeError(globalObject, scope, true, policy.message);
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     }
 
@@ -2046,12 +2052,12 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         if (this->getPrototypeDirect() == prototype)
             return true;
 #if ENABLE(AOT)
-        AOT::RuntimeHooks::didRefuseChange(globalObject, this, nullptr, AOT::RefusedChange::Prototype);
+        AOT::RuntimeHooks::didRejectWrite(globalObject, this, nullptr, AOT::RejectedWrite::Prototype);
 #endif
         ImmutablePropertyNames* names = this->structure()->listedImmutablePropertyNames();
-        String messageOfOwner = names && shouldThrowIfCantSet ? names->messageOfRefusedPrototype() : String();
-        if (!messageOfOwner.isNull())
-            return typeError(globalObject, scope, true, messageOfOwner);
+        String message = names && shouldThrowIfCantSet ? names->setPrototypeErrorMessage() : String();
+        if (!message.isNull())
+            return typeError(globalObject, scope, true, message);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
     }
 
@@ -2350,15 +2356,15 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
         if (!isRefused)
             return true;
 #if ENABLE(AOT)
-        AOT::RuntimeHooks::didRefuseChange(globalObject, thisObject, propertyName.uid(), AOT::RefusedChange::Deletion);
+        AOT::RuntimeHooks::didRejectWrite(globalObject, thisObject, propertyName.uid(), AOT::RejectedWrite::Deletion);
 #endif
-        // The language refuses the deletion of a property that reads as not configurable, and the operator says so in strict code alone.
-        if (slot.answersRefusal() || found.attributes() & PropertyAttribute::DontDelete)
+        // [[Delete]] fails by itself for a non-configurable property, and only strict mode code throws for that.
+        if (found.attributes() & PropertyAttribute::DontDelete)
             return false;
-        RefusalOfOwner refusal = refusalOfOwner(globalObject, thisObject, propertyName.uid(), true);
-        if (!refusal.alwaysThrows)
+        LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, thisObject, propertyName.uid(), true);
+        if (slot.isReflectDeleteProperty() ? !policy.throwsFromReflect : !policy.throwsInSloppyMode)
             return false;
-        return typeError(globalObject, scope, true, refusal.message.isNull() ? String(UnableToDeletePropertyError) : refusal.message);
+        return typeError(globalObject, scope, true, policy.message.isNull() ? String(UnableToDeletePropertyError) : policy.message);
     }
     
     if (std::optional<uint32_t> index = parseIndex(propertyName))
@@ -4368,11 +4374,11 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible) {
             if (object && object->structure()->hasImmutableProperties()) [[unlikely]]
-                return refuseChangeOfImmutableProperty(globalObject, scope, throwException, RefusalIs::Answered, object, propertyName, NonExtensibleObjectPropertyDefineError);
+                return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, NonExtensibleObjectPropertyDefineError);
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
         if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
-            return refuseChangeOfImmutableProperty(globalObject, scope, throwException, RefusalIs::Answered, object, propertyName, ImmutablePropertyDefineError);
+            return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4406,7 +4412,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!onlyRestricts)
-            return refuseChangeOfImmutableProperty(globalObject, scope, throwException, RefusalIs::Answered, object, propertyName, ImmutablePropertyDefineError);
+            return rejectWriteToLockedProperty(globalObject, scope, throwException, current.configurable() ? WriteOrigin::Reflect : WriteOrigin::RejectedBySpec, object, propertyName, ImmutablePropertyDefineError);
         restrictsImmutableProperty = true;
     }
 

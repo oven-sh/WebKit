@@ -1,0 +1,34 @@
+# const value = { locations: false, ranges: false }; const copy = {}; for (const key in value) copy[key] = value[key]; hand(copy); copy.locations
+# The program names no field of the copy, so it may hold other names each time it is made: it stays without fields.
+# RUN: valueflow-apply
+# CHECK-NOT: IsAddedLate
+
+layout L0 fields=[{key="locations" declared={type=anything} flags=[IsRequired]}, {key="ranges" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Boolean
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = ForInOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = ForInStep v5, v2
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v2, v9
+    ElemSet v4, v9, v10
+    Jump -> next b1()
+  b3():
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="hand" [isFreeName]
+    v14 = Call v13, -, v4
+    v15 = PropGet v4 key="locations"
+    Return v15
+}

@@ -54,7 +54,16 @@ JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const Scoped
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 // All enumerable own properties of a compiled object without elements, in order, getters called. NeedsGenericPath before anything has run; Stopped if a getter threw.
 // A getter may delete a name and collect, and the object may be all that holds the name. heldNames keeps what names points to.
-Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
+// willRunCode is told before code of the program runs: whoever stores what has been read so far does it there. Behind a getter mayReadAhead says whether several properties may still be read before the first of them is stored:
+// where it says no, willRunCode is told before each further read. A name that isLeftOut answers for is not read.
+struct GetterWalkHooks {
+    const ScopedLambda<void()>* willRunCode { nullptr };
+    const ScopedLambda<bool()>* mayReadAhead { nullptr };
+    const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut { nullptr };
+    bool refusesProtoName { false };
+};
+bool hasGetterToCall(JSObject* compiledObject);
+Result readOwnPropertiesCallingGetters(JSGlobalObject*, JSObject*, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks = { });
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
 // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field.
 JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject* function);
@@ -80,6 +89,8 @@ void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);
 Presence testIntegrity(JSObject*, Integrity);
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
+// Object.assign(target, source) of a compiled source with a getter, in the steps of the language. False before anything has run.
+bool tryAssignCallingGetters(JSGlobalObject*, JSObject* target, JSObject* source);
 // What canPerformFastPutInlineExcludingProto() and isStructureExtensible() would answer for the target if an ordinary object stood in the place of each compiled one, of the target and of those above it.
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);

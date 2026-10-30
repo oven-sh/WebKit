@@ -9,6 +9,9 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(IR): pipeline Select
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -76,12 +79,23 @@ function f1 name="largest" module=m0 flags=[IsChecked, HasExplicitName] length=1
     ReturnCall v5 casts=[{declared={type=number site=w6}}, {declared={type=number site=w2}}]
 }
 
-# `Math.max(...list)` is a call with a list of arguments: the function and its receiver are materialized, and the stub spreads the array and calls. It is a tail call. No loop over the elements is generated.
+# `Math.max(...list)` stands in tail position. Whatever the list holds, the built-in comes back to its caller, so the frame may stay and the elements are folded in place, in a loop for each storage.
+# A list too long for the stack goes to the call, which refuses it, and so does a list with a hole or with something else than numbers.
 # CHECK-LABEL: name="largest" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int64 b@[[math]] = Patchpoint({{*}}:Builtin)
-# CHECK-NEXT: Int64 b@[[max]] = Patchpoint({{*}}:Builtin)
-# CHECK: Int64 b@[[list]] = ArgumentReg(
-# CHECK: Patchpoint(b@[[list]]:Register({{*}}), b@[[max]]:Register({{*}}), b@[[math]]:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways
-# CHECK-NOT: BB#
+# CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], {{*}}Reads:JSArray_butterfly)
+# CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], {{*}}Reads:Butterfly_publicLength)
+# CHECK: Int32 b@[[fits]] = Below(b@{{*}}, $65536(b@{{*}}))
+# CHECK: Branch(b@[[fits]], Terminal)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK: Reads:indexedInt32Properties)
 # CHECK-LABEL: end of function
+# NONE-LABEL: name="largest" role=Source
+# NONE-NOT: :CallList)
+# NONE-NOT: :Builtin)
+# NONE-LABEL: end of function
+# IR-LABEL: name="largest"
+# IR: TryCallInline -, v0 inlineBuiltin=MathMaxOfArray {{*}} -> done b1(), miss b2()
+# IR: b2() frequency=Rare:
+# IR-NEXT: = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List

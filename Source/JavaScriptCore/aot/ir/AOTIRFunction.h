@@ -13,6 +13,7 @@
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include <memory>
 #include <optional>
 #include <utility>
 #include <wtf/OptionSet.h>
@@ -21,6 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class FunctionRemap;
 class ReasonsForOperationsThatWent;
+struct EffectsOnEdges;
 class StringRemap;
 class TypeRemap;
 
@@ -133,6 +135,8 @@ struct Function : FunctionRecord {
     Vector<ConstructionStart> constructionStarts;
     bool representationsAreChosen { false };
     bool bodyIsReleased { false };
+    // What a call of the function was summarized to do when RestartInGenericVersion first sent a failing test to the generic version. For the verifier: no code depends on it.
+    std::shared_ptr<const EffectsOnEdges> effectsBeforeRestart;
 
     bool has(FunctionFlags flag) const { return flags.contains(flag); }
     bool hasAny(OptionSet<FunctionFlags> set) const { return flags.containsAny(set); }

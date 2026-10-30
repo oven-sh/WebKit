@@ -243,6 +243,12 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::WebAssemblyModules:
         printLines(printer, list, program.webAssemblyModules);
         return;
+    case ProgramList::ReplaceableBuiltins:
+        printLines(printer, list, program.replaceableBuiltins);
+        return;
+    case ProgramList::OpenedNames:
+        printLines(printer, list, program.openedNames);
+        return;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:

@@ -29,10 +29,61 @@ namespace JSC { namespace AOT { namespace Typed {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Program);
 
 Program::Program(const BuiltinTable& builtins)
-    : types(builtins, this)
-    , m_builtins(builtins)
+    : m_tableOfBuild(builtins)
+    , types(m_tableOfBuild.table(), this)
+    , m_builtins(m_tableOfBuild.table())
     , m_familyTables(makeUnique<FamilyTables>(*this))
 {
+}
+
+void Program::unlockReplaceableBuiltins()
+{
+    Vector<BuiltinID> members;
+    for (const ReplaceableBuiltin& entry : replaceableBuiltins)
+        members.append(entry.member);
+    openedNames.removeAllMatching([&](OpenedName& opened) {
+        opened.holder = m_builtins.canonicalID(opened.holder);
+        return !m_builtins.canTakeNameInTestRuns(opened.holder, m_builtins.nameOf(strings[opened.name]));
+    });
+    Vector<BuiltinID> holdersOfNewNames;
+    for (const OpenedName& opened : openedNames)
+        holdersOfNewNames.append(opened.holder);
+    m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span());
+    if (unlockedBuiltins().empty())
+        return;
+
+    BitVector unlockedNames(m_builtins.nameCount());
+    for (BuiltinID member : unlockedBuiltins())
+        unlockedNames.quickSet(m_builtins.at(member).name.index());
+    auto looksUpUnlockedName = [&](const BuiltinParameter& parameter) {
+        auto isUnlocked = [&](BuiltinName name) {
+            return unlockedNames.quickGet(name.index());
+        };
+        return std::ranges::any_of(parameter.namedMembers, isUnlocked) || std::ranges::any_of(parameter.calledMembers, isUnlocked) || std::ranges::any_of(parameter.convertedMembers, isUnlocked);
+    };
+    const std::pair<BuiltinID, BuiltinID> constructorsAndWhatAddsTheirEntries[] = {
+        { Builtins::Map, Builtins::MapPrototypeSet }, { Builtins::Set, Builtins::SetPrototypeAdd },
+        { Builtins::WeakMap, Builtins::WeakMapPrototypeSet }, { Builtins::WeakSet, Builtins::WeakSetPrototypeAdd },
+    };
+    m_functionsCallingUnlockedMembersThatNoRowNames = BitVector(m_builtins.builtinCount());
+    for (auto [constructor, member] : constructorsAndWhatAddsTheirEntries) {
+        if (isUnlocked(member))
+            m_functionsCallingUnlockedMembersThatNoRowNames.quickSet(m_builtins.canonicalID(constructor).index());
+    }
+    m_functionsLookingUpUnlockedNames = BitVector(m_builtins.builtinCount());
+    for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(BuiltinID(index))) {
+            if ((overload.receiver && looksUpUnlockedName(*overload.receiver)) || std::ranges::any_of(overload.parameters, looksUpUnlockedName))
+                m_functionsLookingUpUnlockedNames.quickSet(m_builtins.canonicalID(BuiltinID(index)).index());
+        }
+    }
+}
+
+bool Program::asksForPristineOperand(BuiltinTypeID tested) const
+{
+    return std::ranges::any_of(m_builtins.at(tested).parts, [](const BuiltinTypePart& part) {
+        return !part.pristine.isEmpty();
+    });
 }
 
 Program::~Program() = default;

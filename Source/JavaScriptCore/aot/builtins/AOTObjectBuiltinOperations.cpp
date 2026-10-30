@@ -452,7 +452,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadsIteratorOfListUnseen, size_t,
     return !structure->hasAnyKindOfGetterSetterProperties() && structure->storedPrototype() == JSValue(globalObject->arrayPrototype()) && globalObject->isArrayPrototypeIteratorProtocolFastAndNonObservable();
 }
 
-// Object.assign(target, source) where it runs no code of the program: nothing the source has may call back, and nothing above the target may intercept a store. Otherwise the call of the built-in does it from the start.
+// Object.assign(target, source) where nothing above the target may intercept a store and the source is an object whose properties are read here, getters called. Otherwise nothing has run and the call of the built-in does it from the start.
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance* instance, JSCell* target, EncodedJSValue encodedSource))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectAssignWithoutCode);
@@ -465,8 +465,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
-    if (Object* record = compiledObjectOrNull(object))
-        OPERATION_RETURN(scope, (!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from));
+    if (Object* record = compiledObjectOrNull(object)) {
+        if ((!isCompiledObject(from) && record->structure()->realm() == globalObject && tryAssignOrdinaryObjectAsBefore(vm, *instance->state, *record, from)) || PropertyWalk::tryAssign(vm, object, from))
+            OPERATION_RETURN(scope, true);
+        bool didAssign = PropertyWalk::tryAssignCallingGetters(globalObject, object, from);
+        OPERATION_RETURN_IF_EXCEPTION(scope, true);
+        OPERATION_RETURN(scope, didAssign);
+    }
     JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
     if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
         OPERATION_RETURN(scope, false);
@@ -474,6 +479,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
     MarkedArgumentBuffer values;
     bool didAssign = objectAssignFast(globalObject, ordinary, from, names, values);
     OPERATION_RETURN_IF_EXCEPTION(scope, true);
+    if (!didAssign) {
+        didAssign = PropertyWalk::tryAssignCallingGetters(globalObject, ordinary, from);
+        OPERATION_RETURN_IF_EXCEPTION(scope, true);
+    }
     OPERATION_RETURN(scope, didAssign);
 }
 

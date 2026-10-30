@@ -2389,6 +2389,8 @@ static std::optional<ConstantCollectionKind> collectionKindOf(const Program& pro
 
     // A private literal of constants is iterated, and its entries are added, through locked prototypes.
     BuiltinID constructor = builtins.canonicalID(overload.builtin);
+    if (program.callsUnlockedMemberThatNoRowNames(constructor))
+        return std::nullopt;
     if (constructor == builtins.at(BuiltinClasses::Set).constructor)
         return ConstantCollectionKind::Set;
     if (constructor == builtins.at(BuiltinClasses::Map).constructor)

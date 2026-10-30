@@ -1530,6 +1530,17 @@ bool storePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*
     return putPropertiesInOrder<ExistingAttributes::AreKept>(vm, target, names, values);
 }
 
+// A dictionary has a Structure of its own, so no plan serves it, and its table keeps the places of the names it has lost. Flattened, a small one is copied like any other object.
+static NEVER_INLINE bool tryFlattenExtraProperties(VM& vm, JSObject* source)
+{
+    Object* compiled = compiledObjectOrNull(source);
+    JSObject* extra = compiled ? compiled->extraProperties() : nullptr;
+    if (!extra || !extra->structure()->isDictionary() || extra->structure()->hasBeenFlattenedBefore() || isCopiedAsDictionary(extra->structure()))
+        return false;
+    compiled->ensureStructureForExtraProperties(vm);
+    return !extra->structure()->isDictionary();
+}
+
 static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, bool defines)
 {
     if (target.orderWord() & orderWordIntegrityBits || source == &target)
@@ -1553,7 +1564,7 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
         plan = plans.planFor(vm, &target, extra, *assignmentSource);
     }
     if (!plan->isUsable)
-        return false;
+        return tryFlattenExtraProperties(vm, source) && tryAssignOrDefinePropertiesOf(vm, target, source, excludedNames, defines);
     assignByPlan(vm, target, state, *plan, extra, *assignmentSource);
     return true;
 }
@@ -1632,7 +1643,7 @@ bool tryDefinePropertiesOnOrdinaryObject(VM& vm, State& state, JSObject* target,
     DeferGC deferGC(vm);
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, target, nullptr, *assignmentSource);
     if (!plan->isUsable)
-        return false;
+        return tryFlattenExtraProperties(vm, source) && tryDefinePropertiesOnOrdinaryObject(vm, state, target, source, excludedNames);
     // Nothing of the target changes before every value is there. No collection runs, so the values need no roots.
     Vector<EncodedJSValue, 16> values;
     for (auto& store : plan->extraPropertyStores) {

@@ -1903,6 +1903,14 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_jfalse)
     AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
     return llint_slow_path_jfalse(callFrame, pc);
 }
+
+// llint_aot_op_get_by_id has found the accessor, so nothing is looked up again.
+extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetById>();
+    LLINT_RETURN(AOT::Interpreter::callCustomGetter(*record, base, codeBlock->identifier(bytecode.m_property)));
+}
 #endif
 
 LLINT_SLOW_PATH_DECL(slow_path_has_private_name)

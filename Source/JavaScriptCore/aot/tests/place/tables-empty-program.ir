@@ -69,7 +69,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: requests 1 4
 # CHECK-NEXT: builtinCells 0 0
 # CHECK-NEXT: eagerBuiltinCells 0 0
-# CHECK-NEXT: constantBuiltinMembers 0 0
+# CHECK-NEXT: constantAndUnlockedBuiltinMembers 0 0
 # CHECK-NEXT: globalBindings 0 0
 # CHECK-NEXT: entryPoints 1 4
 # CHECK-NEXT: modules 2 80

@@ -806,9 +806,11 @@ std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& i
     BitVector constructors(builtins.builtinCount());
     bool isAnyUsed = false;
     Vector<ValueFlowObjectID, 32> objects;
+    Vector<PropertyKeyID, 2> keysOfConstructors;
     for (size_t index : takingEntryPath) {
         BuiltinID constructor(static_cast<uint32_t>(index));
         constructors.quickSet(builtins.canonicalID(constructor).index());
+        keysOfConstructors.appendIfNotContains(program.keyOf(builtins.at(constructor).name));
         isAnyUsed |= !solver.usesOf(constructor).isEmpty();
         universe.appendObjectsOf(constructor, objects);
     }
@@ -846,6 +848,13 @@ std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& i
                     continue;
                 BuiltinID named = builtinBoundTo(program, function, operation.operand(0));
                 if (!named || !constructors.get(named.index()))
+                    found.append(witnessAt(function, FunctionID(index), statement.site));
+                continue;
+            }
+            // Nor does it know what `holder.Worker` reads where nobody knows the holder: the host may have handed back the global object or the module.
+            if (statement.opcode == Opcode::PropGet && keysOfConstructors.contains(operation.key())) {
+                ValueSetID holder = inputs.possibleValuesOf(maker, operands[*OperandPosition::object(statement.opcode)]);
+                if (ValueSets::isComplement(holder) || sets.contains(holder, ValueFlowUniverse::unknownObject()) || sets.contains(holder, ValueFlowUniverse::untrackedObject()))
                     found.append(witnessAt(function, FunctionID(index), statement.site));
                 continue;
             }

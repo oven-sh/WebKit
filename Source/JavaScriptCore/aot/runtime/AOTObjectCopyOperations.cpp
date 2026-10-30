@@ -249,19 +249,24 @@ struct CopiedProperties {
 
 }
 
-static bool tryStoreCopiedProperties(VM& vm, JSObject* target, CopiedProperties& copied)
+static bool tryStoreCopiedProperties(VM& vm, JSObject* target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     Structure* structure = target->structure();
     if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties()) {
-        for (UniquedStringImpl* name : copied.names) {
+        for (UniquedStringImpl* name : names) {
             unsigned attributes;
             if (isValidOffset(structure->get(vm, name, attributes)) && attributes)
                 return false;
         }
     }
-    if (!copied.names.isEmpty())
-        target->putOwnDataPropertyBatching(vm, copied.names.mutableSpan().data(), copied.values.data(), copied.names.size());
+    if (!names.isEmpty())
+        target->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
     return true;
+}
+
+static bool tryStoreCopiedProperties(VM& vm, JSObject* target, CopiedProperties& copied)
+{
+    return tryStoreCopiedProperties(vm, target, copied.names, copied.values);
 }
 
 static bool tryCopyDataProperties(VM&, JSObject* target, JSObject* source);
@@ -335,6 +340,8 @@ static NEVER_INLINE ASCIILiteral defineCollectedProperties(JSGlobalObject* globa
     bool hasIndex = std::ranges::any_of(copiedNames, [](UniquedStringImpl* name) {
         return !!parseIndex(PropertyName(name));
     });
+    if (!record && !hasIndex && takesPlainPropertiesDirectly(target->structure()) && !copiedNames.contains(vm.propertyNames->underscoreProto.impl()) && tryStoreCopiedProperties(vm, target, copiedNames, copiedValues))
+        return "read by lookups, put as a batch"_s;
     if (record && !hasIndex && !(record->orderWord() & orderWordIntegrityBits)) {
         definePropertiesInOrder(vm, *record, copiedNames.mutableSpan(), { copiedValues.data(), copiedValues.size() });
         RETURN_IF_EXCEPTION(scope, threw);
@@ -348,19 +355,25 @@ static NEVER_INLINE ASCIILiteral defineCollectedProperties(JSGlobalObject* globa
 }
 
 // None of the ways that run no code takes a getter, and each would walk the source to find that out.
-static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* from)
+static NEVER_INLINE std::optional<ASCIILiteral> tryCopyCallingGetters(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* from, const ExcludedKeys& excluded)
 {
-    Object* compiled = compiledObjectOrNull(from);
-    if (!std::ranges::any_of(compiled->layout().fields(), &FieldData::isAccessor))
+    if (!PropertyWalk::hasGetterToCall(from))
         return std::nullopt;
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<RefPtr<UniquedStringImpl>, 32> heldNames;
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
-    PropertyWalk::Result result = PropertyWalk::readOwnPropertiesCallingGetters(globalObject, from, heldNames, names, values);
+    auto isExcluded = [&](UniquedStringImpl* name) {
+        return excluded.contains(name);
+    };
+    ScopedLambda<bool(UniquedStringImpl*)> isLeftOut = isExcluded;
+    PropertyWalk::Result result = PropertyWalk::readOwnPropertiesCallingGetters(globalObject, from, heldNames, names, values, { .isLeftOut = excluded.isEmpty() ? nullptr : &isLeftOut });
     RETURN_IF_EXCEPTION(scope, "threw"_s);
     if (result != PropertyWalk::Result::Completed)
         return std::nullopt;
+    // The walk hands out no element.
+    if (!isCompiledObject(target) && takesPlainPropertiesDirectly(target->structure()) && !names.contains(vm.propertyNames->underscoreProto.impl()) && tryStoreCopiedProperties(vm, target, names, values))
+        return "getters called, put as a batch"_s;
     RELEASE_AND_RETURN(scope, defineCollectedProperties(globalObject, vm, target, compiledObjectOrNull(target), names, values));
 }
 
@@ -451,8 +464,8 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     if (takesPlainPropertiesDirectly(target->structure()) && tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names()))
         return "into an ordinary object, by a plan"_s;
-    if (isCompiledObject(from) && excluded.isEmpty()) {
-        std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, target, from);
+    if (isCompiledObject(from)) {
+        std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, target, from, excluded);
         RETURN_IF_EXCEPTION(scope, threw);
         if (way)
             return *way;
@@ -599,6 +612,20 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // None of the ways that run no code takes a getter.
+    if (source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
+        JSObject* copy = constructEmptyObject(globalObject);
+        ExcludedKeys excluded;
+        excluded.collect(instance, globalObject, run, excludedKeys);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        std::optional<ASCIILiteral> way = tryCopyCallingGetters(globalObject, vm, copy, asObject(source), excluded);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (way) {
+            if (Options::aotCountsPath()) [[unlikely]]
+                instance->state->objects->caches->assignmentPlans.noteCopy(*way);
+            return copy;
+        }
+    }
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject()) {
         JSObject* object = asObject(source);
         Structure* structure = object->structure();
@@ -615,6 +642,74 @@ static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObje
     excluded.collect(instance, globalObject, run, excludedKeys);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, (copyDataPropertiesExcluding(instance, globalObject, vm, copy, source, excluded), copy));
+}
+
+static bool hasNoGetterAndNoProto(JSObject* ordinary)
+{
+    Structure* structure = ordinary->structure();
+    return ordinary->type() == FinalObjectType && !structure->hasAnyKindOfGetterSetterProperties() && !structure->hasUnderscoreProtoPropertyExcludingOriginalProto()
+        && !ordinary->canHaveExistingOwnIndexedGetterSetterProperties() && !ordinary->hasNonReifiedStaticProperties();
+}
+
+// Object.assign({}, source) makes what { ...source } makes where a store to the new object is a definition all the way: nothing on Object.prototype intercepts one, the source has no name __proto__, and it runs no code that could change that.
+static bool isAssignedAsCopied(VM& vm, JSGlobalObject* globalObject, JSValue source)
+{
+    Structure* above = globalObject->objectPrototype()->structure();
+    if (above->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || above->mayInterceptIndexedAccesses())
+        return false;
+    if (!source.isObject())
+        return true;
+    Object* compiled = compiledObjectOrNull(source);
+    if (!compiled)
+        return hasNoGetterAndNoProto(asObject(source));
+    if (std::ranges::any_of(compiled->layout().fields(), &FieldData::isAccessor) || compiled->fieldNamed(compiled->state(), vm.propertyNames->underscoreProto.impl()))
+        return false;
+    JSObject* extra = compiled->extraProperties();
+    return !extra || hasNoGetterAndNoProto(extra);
+}
+
+static NEVER_INLINE JSObject* assignToNewObject(JSGlobalObject* globalObject, VM& vm, JSValue source)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFinalObject* target = constructEmptyObject(globalObject);
+    if (source.isUndefinedOrNull())
+        return target;
+    JSObject* from = source.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    bool didAssign = PropertyWalk::tryAssignCallingGetters(globalObject, target, from);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (didAssign)
+        return target;
+    if (target->canPerformFastPutInlineExcludingProto()) {
+        if (!from->staticPropertiesReified()) {
+            from->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        Vector<UniquedStringImpl*, 8> names;
+        MarkedArgumentBuffer values;
+        didAssign = objectAssignFast(globalObject, target, from, names, values);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (didAssign)
+            return target;
+    }
+    objectAssignGeneric(globalObject, vm, target, from);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return target;
+}
+
+static ALWAYS_INLINE JSObject* copyObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
+{
+    Object* compiled = !count && !excludedRun && source.isObject() ? compiledObjectOrNull(source) : nullptr;
+    if (compiled) {
+        if (JSObject* copy = tryCopyCompiledObject(instance, globalObject, vm, *compiled)) [[likely]]
+            return copy;
+    }
+    ExcludedRun run = excludedRunAt(instance, excludedRun);
+    if (!compiled && !count && source.isObject()) {
+        if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
+            return copy;
+    }
+    return copyObjectByNames(instance, globalObject, vm, source, run, { excludedKeys, count });
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
@@ -636,6 +731,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
     OPERATION_RETURN(scope, copy);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTAssignToNewObject, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAssignToNewObject);
+    JSValue source = JSValue::decode(encodedSource);
+    JSObject* made = isAssignedAsCopied(vm, globalObject, source) ? copyObject(instance, globalObject, vm, source, excludedRun, count, excludedKeys) : assignToNewObject(globalObject, vm, source);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, made);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Instance* instance, EncodedJSValue first, EncodedJSValue second))

@@ -54,9 +54,10 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
-    FunctionKindData kind() const { return functionKindData(function()); }
-    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
-    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_entry); }
+    FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     JSCell* environment() const { return numberOfReferences() ? std::bit_cast<JSCell*>(captures()[0]) : nullptr; }
     FunctionID function() const { return functionOfClosureWord(m_entry); }
     uint64_t entry() const { return m_entry; }

@@ -466,6 +466,12 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::WebAssemblyModules:
         parseLine<Wire::WebAssemblyModule, WebAssemblyModule>(*this, &Program::webAssemblyModules);
         break;
+    case ProgramList::ReplaceableBuiltins:
+        parseLine<Wire::ReplaceableBuiltin, ReplaceableBuiltin>(*this, &Program::replaceableBuiltins);
+        break;
+    case ProgramList::OpenedNames:
+        parseLine<Wire::OpenedName, OpenedName>(*this, &Program::openedNames);
+        break;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:

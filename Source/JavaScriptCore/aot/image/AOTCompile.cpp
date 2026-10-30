@@ -455,6 +455,9 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
                     report.builtinsUsed.span().data(), report.builtinsUsed.size(),
                     report.libraryFunctionsLacked.span().data(), report.libraryFunctionsLacked.size(),
                     report.exportsThatSpiesReplace.span().data(), report.exportsThatSpiesReplace.size(),
+                    report.builtinsThatTestsReplace.span().data(), report.builtinsThatTestsReplace.size(),
+                    report.namesThatTestsAdd.span().data(), report.namesThatTestsAdd.size(),
+                    report.textOfNamesThatTestsAdd.span().data(), report.textOfNamesThatTestsAdd.size(),
                 };
                 return owner.goesOnBehindFlowAnalysis(owner.owner, &findings);
             });

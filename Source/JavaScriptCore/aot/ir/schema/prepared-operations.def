@@ -21,6 +21,7 @@ operation HasArrayStorage (array: Array/inspects, arrayStorage: ArrayStorage) [i
 operation IsInBounds (array: Array/inspects, position: Integer/inspects) [| engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage) ; proves = InBounds
 operation IsElementPresent (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage) [keyIsIntegral | engine isFromProgram] -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; proves = InBounds ; relies = ArrayStorage ; guarded = array
 operation IsInsideView (view: Object/inspects, position: Number/inspects, typedArrayType: TypedArrayType) [keyIsIntegral] -> natural(boolean) ; reads(TypedArrayStorage) ; proves = InBounds
+operation IsPrototypeOfClass (prototype: Object/inspects, layout: Layout) -> natural(boolean) ; reads(MemberGuards) ; proves = PrototypeLinkUnchanged
 operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise
 operation AreMembersUnchanged (conditions: List<MemberConditionRecord>, from Placed guardBit?: GuardBit) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged
 operation HasKeyOrder (object: Layout/inspects, guard?: Guard/inspects, layout: Layout, fields: List<Field>, from Placed orderWord?: OrderWord) -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; guarded = object

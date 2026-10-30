@@ -111,6 +111,16 @@ static_assert(!FunctionTables::canConstruct(functionKindWith({ .callableKind = C
 static_assert(FunctionTables::executableKind(functionKindWith({ .takesNewTarget = true })) == FunctionTables::ExecutableKind::Constructible);
 static_assert(closureWordFlags(functionKindWith({ .takesNewTarget = true })) == ClosureWord::Flags { .takesNewTarget = true });
 
+uint32_t closureNumberOf(FunctionID function)
+{
+    return programTables().closureNumberOf(function.index());
+}
+
+FunctionID closureFunctionWithNumber(uint32_t number)
+{
+    return FunctionID(programTables().closureFunctionWithNumber(number));
+}
+
 unsigned functionLengthOf(FunctionID function)
 {
     const ProgramTables& tables = programTables();
@@ -778,18 +788,24 @@ JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
     return text;
 }
 
-std::optional<FunctionID> functionOf(const JSCell* cell)
+std::optional<uint32_t> closureNumberOf(const JSCell* cell)
 {
     switch (cell->type()) {
     case SlimClosureType:
-        return uncheckedDowncast<SlimClosure>(cell)->function();
+        return uncheckedDowncast<SlimClosure>(cell)->closureNumber();
     case SlimClosureWithPropertiesType:
-        return uncheckedDowncast<ReifiedSlimClosure>(cell)->function();
+        return uncheckedDowncast<ReifiedSlimClosure>(cell)->closureNumber();
     case CompiledClosureType:
-        return uncheckedDowncast<Closure>(cell)->function();
+        return uncheckedDowncast<Closure>(cell)->closureNumber();
     default:
         return std::nullopt;
     }
+}
+
+std::optional<FunctionID> functionOf(const JSCell* cell)
+{
+    std::optional<uint32_t> number = closureNumberOf(cell);
+    return number ? std::optional(closureFunctionWithNumber(*number)) : std::nullopt;
 }
 
 static FunctionID checkedFunctionOf(const JSCell* callee)

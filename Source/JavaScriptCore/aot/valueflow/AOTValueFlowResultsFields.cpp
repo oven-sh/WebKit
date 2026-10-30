@@ -13,6 +13,7 @@
 #include "AOTPropertyAccessInternal.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
+#include "AOTValueFlowRules.h"
 #include "AOTValueFlowTypedResults.h"
 #include <wtf/HashSet.h>
 
@@ -1642,6 +1643,48 @@ struct FieldResults {
         return ValueForms::formToPlanFor(forms);
     }
 
+    // `for (var name in defaults) options[name] = ..`: the store names what the enumerated objects list. A prediction: whatever else the enumeration shows is stored as a name that no field has.
+    // Only for an object that the program names a field of. `copy[key] = clone(value[key])` fills an object that holds other names each time, and flow follows few of the objects that are copied.
+    void forEachKeyOfEnumerationStoredUnder(ValueSetMaker& maker, const Function& function, uint32_t body, const ValueFlowStatement& store, size_t mostLayouts, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID)> auto& functor) const
+    {
+        namespace At = OperandIndex;
+        const Value& name = function.at(definitionThroughTests(function, function.at(store.site).operand(At::ElemSet::property)));
+        if (name.opcode != Opcode::ResultAt || name.index() != static_cast<uint32_t>(ForInStepResult::Key) || function.at(name.resultsOperand()).opcode != Opcode::ForInStep)
+            return;
+        auto layoutsFollowedTo = [&](const ValueFlowOperand& operand) {
+            Vector<LayoutID, 4> layouts;
+            ValueSetID seen = inputs.seenValuesOf(maker, operand);
+            if (seen == ValueSets::nothing || ValueSets::isComplement(seen))
+                return layouts;
+            sets.forEachMemberInLine(seen, [&](ValueFlowObjectID object) {
+                LayoutID layout = inputs.universe().layoutOf(object);
+                if (layout && layouts.size() <= mostLayouts && !layouts.contains(layout))
+                    layouts.append(layout);
+            });
+            if (layouts.size() > mostLayouts)
+                layouts.clear();
+            return layouts;
+        };
+        Vector<LayoutID, 4> targets = layoutsFollowedTo(inputs.bodies().operandsOf(store)[At::ElemSet::object]);
+        targets.removeAllMatching([&](LayoutID target) {
+            return program.at(target).fields.isEmpty() || program.at(target).has(LayoutFlags::IsWrittenUnderDictionaryType);
+        });
+        if (targets.isEmpty())
+            return;
+        for (const ValueFlowStatement& step : inputs.bodies().statementsOf(body)) {
+            if (step.kind != ValueFlowStatementKind::Operation || step.opcode != Opcode::ForInStep || step.site != name.resultsOperand())
+                continue;
+            for (LayoutID enumerated : layoutsFollowedTo(inputs.bodies().operandsOf(step)[At::ForInStep::object])) {
+                for (const Field& field : program.at(enumerated).fields) {
+                    if (field.key && program.at(field.key).kind == PropertyKeyKind::Text && !field.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsBrand })) {
+                        for (LayoutID target : targets)
+                            functor(target, field.key);
+                    }
+                }
+            }
+        }
+    }
+
     bool findsMemberOfClassUnder(LayoutID id, PropertyKeyID key) const
     {
         LayoutID current = declaredLayoutOf(program, id);
@@ -1674,6 +1717,8 @@ struct FieldResults {
         KeysByLayout keysNamedAtFollowedUsesOfGivenObjects(numberOfLayouts);
         KeysByLayout keysNamedOnlyByOutsideCreators(numberOfLayouts);
         KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
+        KeysByLayout keysOfEnumerationsCopied(numberOfLayouts);
+        AOT_THRESHOLD(size_t, mostLayoutsEnumerated, 2);
         // Every statement is processed independently, on all threads. The lists are sorted below, so the order in which keys arrive does not matter.
         struct KeyNamed {
             KeysByLayout* list;
@@ -1693,6 +1738,11 @@ struct FieldResults {
                     forEachKeyStoredOnArrivingInstances(makers.of(worker), program.functions[index], statement, [&](LayoutID layout, PropertyKeyID key, uint8_t forms) {
                         keysNamedInShare[share].append({ &keysGivenToInstancesSeen, layout, key, forms });
                     });
+                    if (statement.opcode == Opcode::ElemSet) {
+                        forEachKeyOfEnumerationStoredUnder(makers.of(worker), program.functions[index], index, statement, mostLayoutsEnumerated, [&](LayoutID layout, PropertyKeyID key) {
+                            keysNamedInShare[share].append({ &keysOfEnumerationsCopied, layout, key, 0 });
+                        });
+                    }
                     if (statement.opcode != Opcode::PropSet)
                         continue;
                     ValueFlowNodeID receiver = inputs.bodies().operandsOf(statement)[0].node;
@@ -1733,7 +1783,7 @@ struct FieldResults {
                     formsOfValuesSeenDefined.add(static_cast<uint64_t>(named.layout.index()) << 32 | named.key.index(), 0).iterator->value |= named.forms;
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedAtFollowedUsesOfGivenObjects, &keysGivenToInstancesSeen }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedAtFollowedUsesOfGivenObjects, &keysGivenToInstancesSeen, &keysOfEnumerationsCopied }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1749,6 +1799,7 @@ struct FieldResults {
             if (accessors.isEmpty() && program.layouts[index].has(LayoutFlags::IsOfCreatedObject) && application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
                 return;
             keysByLayout[index] = stores.keysNamedByStoresIntoKnownObjects(LayoutID(index));
+            uniteSortedKeys(keysByLayout[index], keysOfEnumerationsCopied[index]);
             // A literal says what it has. What a constructor makes is filled on by others.
             if (program.layouts[index].kind == LayoutKind::Instance)
                 uniteSortedKeys(keysByLayout[index], keysNamedBehindReads[index]);
