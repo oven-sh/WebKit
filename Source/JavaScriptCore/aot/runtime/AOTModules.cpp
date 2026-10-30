@@ -660,6 +660,9 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
         if (std::optional<ModuleID> face = m_table.faceOfFile(module); face && data(*face).capturesExports())
             RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase, shouldPreventExtensions));
     }
+    // A load by a name that the build does not follow comes to a face that captures nothing. The file has the names.
+    if (std::optional<ModuleID> file = m_table.fileBehindFace(module); file && !moduleData.capturesExports())
+        RELEASE_AND_RETURN(scope, moduleNamespace(*file, phase, shouldPreventExtensions));
 
     bool ranCode = false;
     if (status(module) == ModuleStatus::Unlinked) {

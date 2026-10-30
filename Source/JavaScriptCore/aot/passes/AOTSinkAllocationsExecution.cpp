@@ -1361,7 +1361,9 @@ void ObjectInterpreter::executeStore(ValueID id)
         return executeAccessOnCell(id, object);
     }
 
-    if (VirtualObjectID held = objectOf(stored); held && !canHold(object, *field, held)) {
+    // These two answer with what they store, and the answer is a cell.
+    bool answersWithStored = opcode == Opcode::PutInternalField || opcode == Opcode::PutCollectionIteratorTable;
+    if (VirtualObjectID held = objectOf(stored); held && (!canHold(object, *field, held) || answersWithStored)) {
         requireCell(stored, BuildCause { .reasons = EscapeReason::StoredInEscapingObject });
         if (!stateOf(object)->isVirtual())
             return executeAccessOnCell(id, object);
@@ -1370,7 +1372,7 @@ void ObjectInterpreter::executeStore(ValueID id)
     if (typeProvenByFlow && isRewriting())
         stored = cursor().emit(makeAssumeType(stored, Proven::byFlowOfPosition(typeProvenByFlow)));
     storeField(object, *field, stored);
-    if ((opcode == Opcode::PutInternalField || opcode == Opcode::PutCollectionIteratorTable) && isRewriting())
+    if (answersWithStored && isRewriting())
         replaceRead(id, resolve(stored));
     return didFoldStores(object, 1);
 }
@@ -1920,6 +1922,13 @@ void ObjectInterpreter::executeReturn(const Terminator& terminator)
         bool canStayVirtual = std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
             const VirtualShape& shape = family.at(variant.shape);
             return shape.kind != VirtualShapeKind::Fields || canBeBuiltByCaller(function(), family.descriptionOf(shape));
+        });
+        // An object held under some variants alone exists only on their paths, and its fields hold nothing on the others. Here, ahead of the switch on the tag, the paths have not parted.
+        canStayVirtual = canStayVirtual && std::ranges::all_of(stateOf(object)->heldObjects, [&](const HeldObject& entry) {
+            return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
+                const VirtualShape& shape = family.at(variant.shape);
+                return shape.kind == VirtualShapeKind::Fields && hasStored(shape, entry.field);
+            });
         });
         if (canStayVirtual) {
             Vector<VirtualObjectID, 4> objectsInFields;

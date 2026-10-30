@@ -1607,6 +1607,63 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// A read at the same place says whether the store runs no code, and what is above the closure has been asked.
+static bool isPlainStoreToMemberOfClosure(FunctionPassContext& context, const Value& store)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    Value read = IRBuilder::make(Opcode::PropGet, { store.objectOperand() });
+    read.setKey(store.key());
+    ProvenAccess storage;
+    const ProvenAccess& proven = provenAccessOf(program, function, read, storage);
+    if (!proven.isComplete || !proven.mayFindStoredValue || program.nameClassOf(store.key()) != NameClass::Ordinary)
+        return false;
+    return std::ranges::all_of(program.typeOf(function, store.objectOperand()).functions, [&](FunctionID closureFunction) {
+        return context.inputs.flow.closuresKeepTheirIntegrity(closureFunction);
+    });
+}
+
+// The captures of a closure never change: a closure made in this function hands out what it was made with.
+static PassOutcome readCapturesOfClosuresJustMade(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::GetCapture) || !context.analyses.opcodesOfValues().contains(Opcode::NewClosure))
+        return PassOutcome::Unchanged;
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<ProgramPoint, 4> forwarded;
+    ValueSubstitution substitution(function);
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID id = values[index];
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::GetCapture)
+                continue;
+            const Value& closure = function.at(sameObjectThroughCasts(function, value.closureOperand()).valueInFrontOfFacts());
+            if (closure.opcode != Opcode::NewClosure || closure.function() != value.function() || value.index() >= closure.capturesOperands().size())
+                continue;
+            ValueID captured = closure.capturesOperands()[value.index()];
+            if (!program.typeOf(function, captured).isSubsetOf(program.typeOf(function, id), program))
+                continue;
+            substitution.replace(id, captured);
+            forwarded.append({ block, index });
+        }
+    }
+    if (forwarded.isEmpty())
+        return PassOutcome::Unchanged;
+    substitution.apply(function, &context.analyses);
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (size_t next = 0; next < forwarded.size();) {
+        BlockID block = forwarded[next].block;
+        BitVector erased;
+        for (; next < forwarded.size() && forwarded[next].block == block; ++next)
+            erased.set(forwarded[next].index);
+        builder.eraseValues(block, erased);
+    }
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 // `count.n = count.n + 1; return count.n`. A read of a closure's member that runs no code finds what the store behind which it stands has stored, where the store is sure to take: nothing above the closure can have the name, and the closure stays extensible and writable.
 static PassOutcome forwardStoresToMembersOfClosures(FunctionPassContext& context)
 {
@@ -1630,11 +1687,6 @@ static PassOutcome forwardStoresToMembersOfClosures(FunctionPassContext& context
     auto rootOf = [&](ValueID id) {
         return sameObjectThroughCasts(function, id).valueInFrontOfFacts();
     };
-    auto takesStore = [&](const Type& receiver, PropertyKeyID key) {
-        return program.nameClassOf(key) == NameClass::Ordinary && std::ranges::all_of(receiver.functions, [&](FunctionID closureFunction) {
-            return context.inputs.flow.closuresKeepTheirIntegrity(closureFunction);
-        });
-    };
     Vector<StoredValues> atEnd(function.blocks.size());
     Vector<Forwarded, 4> forwarded;
     ValueSubstitution substitution(function);
@@ -1656,18 +1708,19 @@ static PassOutcome forwardStoresToMembersOfClosures(FunctionPassContext& context
                     continue;
                 }
             }
+            if (value.opcode == Opcode::PropSet && !value.isFreeName()) {
+                if (isPlainStoreToMemberOfClosure(context, value)) {
+                    // On a closure the store touches no other key.
+                    if (program.typeOf(function, value.objectOperand()).functions.isEmpty())
+                        stored.shrink(0);
+                    stored.removeAllMatching([&](const Stored& entry) { return entry.key == value.key(); });
+                    stored.append({ rootOf(value.objectOperand()), value.key(), value.valueOperand() });
+                    continue;
+                }
+            }
             Effects effects = context.analyses.effectsOf(id).onAnyEdge();
             if (effects.mayRunOtherCode() || !effects.writes.isEmpty())
                 stored.shrink(0);
-            if (value.opcode != Opcode::PropSet || value.isFreeName())
-                continue;
-            // A read at the same place says whether it runs no code, and what is above the closure has been asked.
-            Value read = IRBuilder::make(Opcode::PropGet, { value.objectOperand() });
-            read.setKey(value.key());
-            ProvenAccess storage;
-            const ProvenAccess& proven = provenAccessOf(program, function, read, storage);
-            if (proven.isComplete && proven.mayFindStoredValue && takesStore(program.typeOf(function, value.objectOperand()), value.key()))
-                stored.append({ rootOf(value.objectOperand()), value.key(), value.valueOperand() });
         }
         if (!context.analyses.effectsOfTerminator(block).onAnyEdge().writes.isEmpty())
             stored.shrink(0);
@@ -1953,7 +2006,85 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 
 } // anonymous namespace
 
-PassOutcome eliminateRedundantReads(FunctionPassContext& context)
+// Closures and the environments they share, made here, that only hold each other and are stored to: nothing can tell whether they were made.
+static PassOutcome removeClosuresNothingReads(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::NewClosure) || !context.analyses.opcodesOfValues().contains(Opcode::PropSet))
+        return PassOutcome::Unchanged;
+    Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    BitVector candidates(function.values.size());
+    Vector<ValueID, 8> made;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            // A closure with one object for its function hands that object to whoever reads it from elsewhere, a method above all: what is stored on it stays.
+            // A frame of a function that may be renamed shows the name of its object when the stack is read.
+            auto isFreshClosure = [&] {
+                if (value.isMadeOnDemand() || namesClosureOfTable(context.program, value))
+                    return false;
+                FunctionID callee = value.function();
+                return !context.inputs.flow.closuresMayBeRenamed(callee) && !context.program.at(callee).has(FunctionCapabilities::RecordsCallee) && !context.program.at(writtenFunctionOf(context.program, callee)).has(FunctionCapabilities::RecordsCallee);
+            };
+            bool isFresh = value.opcode == Opcode::NewObject || (value.opcode == Opcode::NewClosure && isFreshClosure());
+            if (isFresh) {
+                candidates.quickSet(id.index());
+                made.append(id);
+            }
+        }
+    }
+    auto isOnlyHeldOrStoredTo = [&](ValueID id) {
+        return std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(use.user);
+            switch (user.opcode) {
+            case Opcode::NewClosure:
+                return candidates.quickGet(use.user.index());
+            case Opcode::PutEnvironmentField:
+                return candidates.quickGet(user.environmentOperand().index());
+            case Opcode::PropSet:
+                return function.at(id).opcode == Opcode::NewClosure || use.operandIndex == OperandIndex::PropSet::value
+                    ? candidates.quickGet(user.objectOperand().index()) && function.at(user.objectOperand()).opcode == Opcode::NewClosure && !user.isFreeName() && isPlainStoreToMemberOfClosure(context, user)
+                    : false;
+            default:
+                return false;
+            }
+        });
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (ValueID id : made) {
+            if (candidates.quickGet(id.index()) && !isOnlyHeldOrStoredTo(id)) {
+                candidates.quickClear(id.index());
+                changed = true;
+            }
+        }
+    }
+    if (!std::ranges::any_of(made, [&](ValueID id) { return candidates.quickGet(id.index()) && function.at(id).opcode == Opcode::NewClosure; }))
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        BitVector erased;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            bool isErased = candidates.quickGet(values[index].index());
+            if (value.opcode == Opcode::PutEnvironmentField)
+                isErased = candidates.quickGet(value.environmentOperand().index());
+            if (value.opcode == Opcode::PropSet)
+                isErased = candidates.quickGet(value.objectOperand().index());
+            if (isErased)
+                erased.set(index);
+        }
+        if (!erased.isEmpty())
+            builder.eraseValues(block, erased);
+    }
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
+static PassOutcome eliminateReadsOnce(FunctionPassContext& context)
 {
     // First: reads and tests under one sum are then reads and tests under one key.
     PassOutcome outcome = dropRepeatedIntegerSums(context);
@@ -1966,6 +2097,20 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     outcome |= dropRepeatedInitializations(context);
     outcome |= forwardStoresToMembersOfClosures(context);
     return outcome;
+}
+
+PassOutcome eliminateRedundantReads(FunctionPassContext& context)
+{
+    PassOutcome outcome = eliminateReadsOnce(context);
+    // What a read forwards may be a closure just made, and what a capture hands out may be read again. A second run of this pass must find nothing.
+    while (true) {
+        PassOutcome closures = readCapturesOfClosuresJustMade(context);
+        closures |= removeClosuresNothingReads(context);
+        if (closures == PassOutcome::Unchanged)
+            return outcome;
+        outcome = PassOutcome::Changed;
+        eliminateReadsOnce(context);
+    }
 }
 
 namespace {

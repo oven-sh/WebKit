@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "AOTConversionEmitter.h"
 #include "AOTCollectionIntrinsicEmitter.h"
 
 #if ENABLE(AOT)
@@ -293,7 +294,7 @@ void CollectionIntrinsicEmitter::generatePutCollectionIteratorTable(const ValueC
     CellPointer iterator = in<CellPointer>(value->objectOperand());
     m_out.store64(stored, m_out.address(iterator.value(), m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSSetIterator::Field::Storage)]));
     barrierAfterStore(value, iterator, table, typeOf(value->valueOperand()));
-    define(value, table);
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, get(value->valueOperand()), typeOf(value->valueOperand()), value.representation()));
 }
 
 void CollectionIntrinsicEmitter::generateIsCollectionIteratorClosedMark(const ValueContext& value)

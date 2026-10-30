@@ -1223,6 +1223,12 @@ template<JSObject::SortMode mode, typename Functor>
 void JSObject::forEachOwnIndexedProperty(NOESCAPE const Functor& functor)
 {
     ASSERT(structure()->canPerformFastPropertyEnumerationCommon());
+    forEachOwnElement<mode>(functor);
+}
+
+template<JSObject::SortMode mode, typename Functor>
+void JSObject::forEachOwnElement(NOESCAPE const Functor& functor)
+{
     ASSERT(canHaveExistingOwnIndexedProperties() && !canHaveExistingOwnIndexedGetterSetterProperties());
 
     switch (indexingType()) {

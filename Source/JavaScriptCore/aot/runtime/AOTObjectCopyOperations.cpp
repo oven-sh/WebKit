@@ -396,7 +396,7 @@ static NEVER_INLINE std::optional<ASCIILiteral> tryCopyNamesThenElements(Instanc
             return "names at once, then a copy of the elements"_s;
         }
     }
-    holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
+    holder->forEachOwnElement<>([&](unsigned index, JSValue value) {
         if (!tryDefineElementOfCompiledObject(instance, &target, index, value))
             defineCopiedProperty(globalObject, &target, Identifier::from(vm, index), value);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);

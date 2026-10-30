@@ -584,6 +584,13 @@ static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& 
     ValueID rebuilt = builder.append(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)
         builder.append(makeStoreByName(stored, rebuilt));
+    // The call makes an iterator at its start. The worker may have stepped it.
+    for (const FieldValue& part : parts) {
+        if (part.field.kind == VirtualFieldKind::Position)
+            builder.append(IRBuilder::make(Opcode::PutInternalField, { rebuilt, part.value }));
+        else if (part.field.kind == VirtualFieldKind::Table)
+            builder.append(IRBuilder::make(Opcode::PutCollectionIteratorTable, { rebuilt, part.value }));
+    }
     builder.setOrigin(origin);
     return rebuilt;
 }

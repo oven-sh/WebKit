@@ -467,7 +467,16 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
 {
     String source;
-    if (key.isInt32() || (key.isString() && !asString(key)->isRope())) {
+    if (key.isInt32() || key.isString()) {
+        // A key made by concatenation is a rope. This is a throw, so flatten it; running out of memory just loses the quote.
+        if (key.isString() && asString(key)->isRope()) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+            asString(key)->value(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                scope.clearException();
+                return createNotAnObjectErrorQuoting(String(), globalObject, base);
+            }
+        }
         String description = describe(globalObject, base);
         String descriptionOfKey = describe(globalObject, key);
         if (!description.isNull() && !descriptionOfKey.isNull())

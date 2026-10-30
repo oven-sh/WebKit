@@ -873,15 +873,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* 
     return generator;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewHeapFrame, JSCell*, (Instance* instance, JSCell* generator, uint32_t numberOfWords, void* resumeAddress))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewHeapFrame, JSCell*, (Instance* instance, uint32_t numberOfWords, void* resumeAddress))
 {
-    constexpr Entry entry = Entry::operationAOTNewHeapFrame;
-    AOT_OPERATION_BEGIN(instance, entry);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewHeapFrame);
     DeferTerminationForAWhile deferTermination(vm);
-    Generator* owner = cellArgument<Generator>(generator, entry);
-    SavedFrame* saved = SavedFrame::createHeapFrame(vm, *instance, numberOfWords, resumeAddress);
-    owner->setSavedFrame(vm, saved);
-    return saved;
+    return SavedFrame::createHeapFrame(vm, *instance, numberOfWords, resumeAddress);
 }
 
 static CoroutineKind generatorKind(JSObject* generator, Entry entry)

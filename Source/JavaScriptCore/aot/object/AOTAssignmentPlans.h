@@ -466,6 +466,7 @@ bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<Uniq
 // Null unless the source is a dictionary of many plain properties. The copy has the prototype of the source.
 JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
 bool tryDefineFieldsLeavingElementsOut(VM&, Object& target, Object& source);
+bool tryAssignFieldsLeavingElementsOut(VM&, Object& target, Object& source);
 bool tryAssignOrdinaryObjectAsBefore(VM&, State&, Object& target, JSObject* source);
 // Null unless the source has plain properties and plain elements. The copy has the Structure of the source.
 JSFinalObject* tryCopyWithElements(VM&, JSObject* source);

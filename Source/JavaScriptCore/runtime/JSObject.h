@@ -179,6 +179,9 @@ public:
     enum class SortMode { Default, Ascending };
     template<SortMode mode = SortMode::Default, typename Functor>
     void forEachOwnIndexedProperty(NOESCAPE const Functor&);
+    // For a caller that reads the named properties another way: what they are does not matter here.
+    template<SortMode = SortMode::Default, typename Functor>
+    void forEachOwnElement(NOESCAPE const Functor&);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);

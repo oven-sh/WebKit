@@ -53,19 +53,24 @@ bool StoredCellLog::tryRemember(const JSCell* owner, JSCell* stored)
         if (size() >= length)
             return false;
         Locker locker { m_lock };
-        grow();
+        if (!tryGrow())
+            return false;
     }
     *m_cursor++ = stored;
     return true;
 }
 
-void StoredCellLog::grow()
+bool StoredCellLog::tryGrow()
 {
     size_t oldSize = size();
     size_t newCapacity = std::max(2 * oldSize, minCapacity);
-    m_begin = static_cast<JSCell**>(fastRealloc(m_begin, newCapacity * sizeof(JSCell*)));
+    void* newBegin;
+    if (!WTF::tryFastRealloc(m_begin, newCapacity * sizeof(JSCell*)).getValue(newBegin))
+        return false;
+    m_begin = static_cast<JSCell**>(newBegin);
     m_cursor = m_begin + oldSize;
     m_end = m_begin + newCapacity;
+    return true;
 }
 
 void StoredCellLog::visitAndReset(SlotVisitor& visitor)

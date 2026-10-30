@@ -42,6 +42,7 @@ constexpr StubKey stepAsyncGenerator(StepConsumer consumer) { return StubKey(Stu
 // What all forms of StepAsyncGenerator end in. One body, so that the frame of a generator's body has one return address whoever consumes it.
 constexpr StubKey runAsyncGeneratorStep() { return StubKey(StubFamily::RunAsyncGeneratorStep); }
 constexpr StubKey stepAsyncIteratorInEngine() { return StubKey(StubFamily::StepAsyncIteratorInEngine); }
+constexpr StubKey newHeapFrame() { return StubKey(StubFamily::NewHeapFrame); }
 constexpr StubKey newGenerator(NewGeneratorKind kind) { return StubKey(StubFamily::NewGenerator).withForm(static_cast<uint8_t>(kind)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));

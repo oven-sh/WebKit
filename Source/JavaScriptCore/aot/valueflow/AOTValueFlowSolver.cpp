@@ -3979,6 +3979,70 @@ private:
     Vector<Slot> m_slots;
 };
 
+// The kinds of objects in a block of a set, as a chain of kinds. Sets that grow share most of their blocks, so a set is not walked member by member each time it grows.
+class KindsOfBlocks {
+public:
+    static constexpr uint32_t noKinds = 0;
+    static constexpr uint32_t tooMany = UINT32_MAX;
+    AOT_THRESHOLD(size_t, numberOfSlots, 1 << 16);
+
+    KindsOfBlocks() { m_chains.append({ }); }
+
+    uint32_t add(uint32_t chain, uint32_t kind, size_t most)
+    {
+        if (chain == tooMany)
+            return tooMany;
+        for (uint32_t link = chain; link != noKinds; link = m_chains[link].rest) {
+            if (m_chains[link].kind == kind)
+                return chain;
+        }
+        if (m_chains[chain].size >= most)
+            return tooMany;
+        return m_longer.ensure(static_cast<uint64_t>(chain) << 32 | kind, [&] {
+            m_chains.append({ chain, kind, m_chains[chain].size + 1 });
+            return static_cast<uint32_t>(m_chains.size() - 1);
+        }).iterator->value;
+    }
+
+    uint32_t unite(uint32_t chain, uint32_t other, size_t most)
+    {
+        if (chain == other || other == noKinds)
+            return chain;
+        if (other == tooMany)
+            return tooMany;
+        if (chain == noKinds)
+            return other;
+        for (; other != noKinds && chain != tooMany; other = m_chains[other].rest)
+            chain = add(chain, m_chains[other].kind, most);
+        return chain;
+    }
+
+    uint32_t ofBlock(uint64_t block, NOESCAPE const Invocable<uint32_t()> auto& find)
+    {
+        if (m_slots.isEmpty())
+            m_slots.grow(numberOfSlots);
+        Slot& slot = m_slots[(block * 0x9e3779b97f4a7c15ull) >> 48];
+        if (slot.block != block)
+            slot = { block, find() };
+        return slot.chain;
+    }
+
+private:
+    struct Chain {
+        uint32_t rest { noKinds };
+        uint32_t kind { 0 };
+        uint32_t size { 0 };
+    };
+    struct Slot {
+        uint64_t block { UINT64_MAX };
+        uint32_t chain { noKinds };
+    };
+    static_assert(numberOfSlots == 1ull << (64 - 48));
+    Vector<Chain> m_chains;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_longer;
+    Vector<Slot> m_slots;
+};
+
 void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
 {
     if (!m_input.nodes || !m_input.universe)
@@ -4185,15 +4249,28 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         constexpr ValueSetID many = ValueSets::anything;
         AOT_THRESHOLD(size_t, mostKindsSeenAtNode, 64);
         Vector<AnswersAboutLatestValues<bool>> canValuesBeNamedPerWorker(m_makers.size());
+        Vector<KindsOfBlocks> kindsOfBlocksPerWorker(m_makers.size());
         auto canBeNamedForWorker = [&](unsigned worker, ValueSetID seen) {
             return canValuesBeNamedPerWorker[worker].ensure(seen, [&] {
-                Vector<uint32_t, mostKindsSeenAtNode + 1> kinds;
-                m_sets.forEachMemberInLine(seen, [&](ValueFlowObjectID object) {
-                    uint32_t kind = kindOfObject(object);
-                    if (kinds.size() <= mostKindsSeenAtNode && !kinds.contains(kind))
-                        kinds.append(kind);
+                KindsOfBlocks& kinds = kindsOfBlocksPerWorker[worker];
+                uint32_t chain = KindsOfBlocks::noKinds;
+                if (ValueSets::isComplement(seen)) {
+                    m_sets.forEachMemberInLine(seen, [&](ValueFlowObjectID object) {
+                        chain = kinds.add(chain, kindOfObject(object), mostKindsSeenAtNode);
+                    });
+                    return chain != KindsOfBlocks::tooMany;
+                }
+                m_sets.forEachBlock(seen, [&](uint64_t block) {
+                    uint32_t ofBlock = kinds.ofBlock(block, [&] {
+                        uint32_t found = KindsOfBlocks::noKinds;
+                        m_sets.forEachMemberOfBlock(block, [&](ValueFlowObjectID object) {
+                            found = kinds.add(found, kindOfObject(object), mostKindsSeenAtNode);
+                        });
+                        return found;
+                    });
+                    chain = kinds.unite(chain, ofBlock, mostKindsSeenAtNode);
                 });
-                return kinds.size() <= mostKindsSeenAtNode;
+                return chain != KindsOfBlocks::tooMany;
             });
         };
         auto canBeNamed = [&](ValueSetID seen) {

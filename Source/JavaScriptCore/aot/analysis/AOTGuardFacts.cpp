@@ -524,6 +524,14 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     return part->contentsAreProven && part->arrayStorage == user.arrayStorage();
 }
 
+static bool fillsListMadeAtItsLength(const Function& function, const Value& user)
+{
+    if (user.opcode != Opcode::PutArrayElement || !user.fillsNewList())
+        return false;
+    const Value& cast = function.at(user.arrayOperand());
+    return cast.opcode == Opcode::AssumeType && function.at(cast.valueOperand()).opcode == Opcode::NewArrayLike;
+}
+
 ProofSet proofsNeededFromGuard(const Program& program, const Function& function, const Value& user)
 {
     ProofSet needed;
@@ -541,6 +549,9 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
         if (proof == Proof::ArrayStorage && !namesArrayStorage(user))
             continue;
         if (proof == Proof::InBounds && !isInsideLength(user))
+            continue;
+        // The counted loop that made the list at its length and fills it from 0 has nothing to test: the checks of proofs test it where the store runs.
+        if (proof == Proof::InBounds && fillsListMadeAtItsLength(function, user))
             continue;
         if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
@@ -796,7 +807,7 @@ void forEachGuardOrigin(const Program& program, const Function& function, const 
 bool hasGuardForElementProofs(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, const Value& access)
 {
     bool needsStorage = namesArrayStorage(access);
-    bool needsPosition = isInsideLength(access);
+    bool needsPosition = isInsideLength(access) && !fillsListMadeAtItsLength(function, access);
     if (!needsStorage && !needsPosition)
         return true;
     const Type& type = program.typeOf(function, guardedOperandOf(access));

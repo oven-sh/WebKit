@@ -2857,6 +2857,9 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
                 continue;
             for (ValueID id : context.function.at(block).values) {
                 const Value& value = context.function.at(id);
+                // The test that a comparison of the program asks for takes the place of the test its access would make.
+                if (value.opcode == Opcode::IsInBounds && value.isFromProgram())
+                    continue;
                 if (value.inlineFrame)
                     bytes += estimatedCodeBytes(context.program, context.function, value);
             }

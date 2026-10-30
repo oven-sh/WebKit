@@ -494,6 +494,67 @@ static PassOutcome removeLinksOfUnusedObjects(FunctionPassContext& context)
     return outcome;
 }
 
+// What Object.create makes needs no link where it is handed the prototype of its class, which its Structure already says, and so it may sink. Past that test only what reads the guards of the class sees the object; on the other way the link makes the object, in front of them.
+static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    OpcodeSet opcodes = context.analyses.opcodesOfValues();
+    if (!opcodes.contains(Opcode::SetLiteralPrototype) || !(opcodes.contains(Opcode::HasLayoutPrototype) || opcodes.contains(Opcode::AreMembersUnchanged)))
+        return PassOutcome::Unchanged;
+
+    // Only an object that something asks about the prototype of, or the guards of its class, can get anything from the test.
+    BitVector asked;
+    BitVector layoutsAsked;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::HasLayoutPrototype)
+                asked.set(context.analyses.identityOf(value.objectOperand()).index());
+            else if (value.opcode == Opcode::AreMembersUnchanged) {
+                for (const MemberConditionRecord& condition : value.conditions())
+                    layoutsAsked.set(condition.layout.index());
+            }
+        }
+    }
+
+    Vector<ProgramPoint, 2> points;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 1; index < values.size(); ++index) {
+            const Value& link = function.at(values[index]);
+            if (link.opcode != Opcode::SetLiteralPrototype || link.replacedCalleeOperand() || link.replacedThisOperand() || link.objectOperand() != values[index - 1])
+                continue;
+            const Value& made = function.at(values[index - 1]);
+            if (made.opcode != Opcode::NewObject || made.prototypeOperand() || !context.program.at(made.layout()).has(LayoutFlags::IsOfCreatedObject))
+                continue;
+            if (!asked.get(values[index - 1].index()) && !layoutsAsked.get(made.layout().index()))
+                continue;
+            const Type& prototype = context.program.typeOf(function, link.prototypeOperand());
+            if (prototype.hasObjects() && !prototype.primitives)
+                points.append(ProgramPoint { block, index });
+        }
+    }
+    if (points.isEmpty())
+        return PassOutcome::Unchanged;
+    AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
+        return a.block != b.block ? a.block > b.block : a.index > b.index;
+    });
+    for (ProgramPoint point : points) {
+        Value link = function.at(function.at(point.block).values[point.index]);
+        LayoutID layout = function.at(link.objectOperand()).layout();
+        IRBuilder::Expansion expansion = builder.beginExpansion(point);
+        Value test = IRBuilder::make(Opcode::IsPrototypeOfClass, { link.prototypeOperand() });
+        test.setLayout(layout);
+        ValueID hasPrototypeOfClass = builder.append(WTF::move(test));
+        BlockID linked = builder.addBlock(BlockFrequency::Rare);
+        builder.emitBranch(hasPrototypeOfClass, Target { expansion.continuation }, Target { linked });
+        builder.moveToEndOf(linked);
+        builder.append(WTF::move(link));
+        builder.endExpansion(expansion, std::span<const ValueID>());
+    }
+    return PassOutcome::Changed;
+}
+
 static PassOutcome declareListsOfNumbers(FunctionPassContext&);
 
 // `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No array iterator has a `return`.
@@ -534,7 +595,14 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
 
     if (!context.analyses.opcodesOfValues().intersects(allocations))
         return PassOutcome::Unchanged;
-    if ((removeLinksOfUnusedObjects(context) | declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
+    if (removeLinksOfUnusedObjects(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
+    {
+        IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+        if (testPrototypesOfCreatedObjects(context, builder) == PassOutcome::Changed)
+            return PassOutcome::Changed;
+    }
+    if ((declareListsOfNumbers(context) | readAbsentMembersOfArrayIterators(context)) == PassOutcome::Changed)
         return PassOutcome::Changed;
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;

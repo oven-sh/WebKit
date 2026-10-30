@@ -5,7 +5,6 @@
 
 #include "config.h"
 #include "AOTCoroutines.h"
-#include <cstdlib>
 #include "AOTSummarizeForInlining.h"
 #include "AOTSavedFrame.h"
 #include "AOTSSARepair.h"
@@ -1885,37 +1884,32 @@ static void assignWords(HeapFramePlan& plan, unsigned numberOfValues)
 {
     plan.wordOf.fill(noWord, numberOfValues);
     plan.wordOf[plan.generator.index()] = wordOfGenerator;
+    Vector<Vector<uint32_t, 2>> yieldsOfValue(numberOfValues);
+    Vector<ValueID, 16> values;
+    for (uint32_t index = 0; index < plan.yields.size(); ++index) {
+        for (auto list : { plan.yields[index].stored.span(), plan.yields[index].heldOnly.span() }) {
+            for (ValueID id : list) {
+                if (yieldsOfValue[id.index()].isEmpty())
+                    values.append(id);
+                yieldsOfValue[id.index()].append(index);
+            }
+        }
+    }
     // For each word, the yields at which it is taken.
     Vector<BitVector, 8> yieldsOfWord;
     yieldsOfWord.append(BitVector(plan.yields.size()));
-    for (unsigned index = 0; index < plan.yields.size(); ++index)
-        yieldsOfWord[wordOfGenerator].quickSet(index);
-
-    BitVector isAssigned(numberOfValues);
-    isAssigned.quickSet(plan.generator.index());
-    for (unsigned first = 0; first < plan.yields.size(); ++first) {
-        for (auto list : { plan.yields[first].stored.span(), plan.yields[first].heldOnly.span() }) {
-            for (ValueID id : list) {
-                if (isAssigned.quickSet(id.index()))
-                    continue;
-                BitVector yields(plan.yields.size());
-                for (unsigned index = first; index < plan.yields.size(); ++index) {
-                    if (plan.yields[index].stored.contains(id) || plan.yields[index].heldOnly.contains(id))
-                        yields.quickSet(index);
-                }
-                uint32_t word = wordOfGenerator + 1;
-                for (; word < yieldsOfWord.size(); ++word) {
-                    BitVector overlap = yieldsOfWord[word];
-                    overlap.filter(yields);
-                    if (overlap.isEmpty())
-                        break;
-                }
-                if (word == yieldsOfWord.size())
-                    yieldsOfWord.append(BitVector(plan.yields.size()));
-                yieldsOfWord[word].merge(yields);
-                plan.wordOf[id.index()] = word;
-            }
+    for (ValueID id : values) {
+        const Vector<uint32_t, 2>& yields = yieldsOfValue[id.index()];
+        uint32_t word = wordOfGenerator + 1;
+        for (; word < yieldsOfWord.size(); ++word) {
+            if (std::ranges::none_of(yields, [&](uint32_t yield) { return yieldsOfWord[word].quickGet(yield); }))
+                break;
         }
+        if (word == yieldsOfWord.size())
+            yieldsOfWord.append(BitVector(plan.yields.size()));
+        for (uint32_t yield : yields)
+            yieldsOfWord[word].quickSet(yield);
+        plan.wordOf[id.index()] = word;
     }
     plan.numberOfWords = yieldsOfWord.size();
 }
@@ -1982,6 +1976,15 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
     plan.body = id;
     plan.generator = driverOf(function);
 
+    // Liveness at so many yields costs more than the form is worth.
+    unsigned numberOfYields = 0;
+    for (const Block& block : function.blocks) {
+        for (ValueID value : block.values)
+            numberOfYields += function.at(value).opcode == Opcode::YieldBySavingFrame;
+    }
+    if (numberOfYields > maxWordsOfHeapFrame)
+        return std::nullopt;
+
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Block& data = function.at(block);
         Vector<uint32_t, 4> indexes;
@@ -2024,7 +2027,7 @@ static std::optional<HeapFramePlan> planHeapFrame(const AnalysisContext& context
                 }
                 yield.stored.append(live);
             });
-            if (!isStorable)
+            if (!isStorable || yield.stored.size() >= maxWordsOfHeapFrame)
                 return std::nullopt;
             if (localCalc.isLive(plan.generator))
                 yield.constants.append(plan.generator);
@@ -2110,6 +2113,8 @@ static void removeStoresOfWhatTheWordHolds(Function& function, FunctionAnalyses&
     constexpr int64_t noWordAtAll = -1;
     const CFG& cfg = analyses.cfg();
     Vector<int64_t> wordOfParameter(FillWith { }, function.values.size(), notSeen);
+    for (ValueID parameter : function.at(cfg.root()).parameters)
+        wordOfParameter[parameter.index()] = noWordAtAll;
     auto wordHeldBy = [&](ValueID id) -> int64_t {
         while (isCastWithoutTest(function.at(id).opcode))
             id = function.at(id).operand(0);
@@ -2124,7 +2129,7 @@ static void removeStoresOfWhatTheWordHolds(Function& function, FunctionAnalyses&
         didChange = false;
         for (BlockID block : cfg.reversePostOrder()) {
             const CompactList<ValueID>& parameters = function.at(block).parameters;
-            if (block == cfg.root() || function.at(block).handler)
+            if (block == cfg.root())
                 continue;
             for (uint32_t index = 0; index < parameters.size(); ++index) {
                 int64_t word = notSeen;
@@ -2222,6 +2227,7 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             variable = repair.addVariable(id);
         repair.addDefinition(*variable, definition);
     };
+    TypeID anythingOrUnspecified = types.intern(types.at(TypeTable::anything).withPrimitives(Primitive::Unspecified));
     Vector<std::pair<int64_t, Target>> cases;
     for (unsigned index = 0; index < plan.yields.size(); ++index) {
         const YieldInFrame& yield = plan.yields[index];
@@ -2233,6 +2239,7 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             if (id == plan.generator) {
                 Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
                 read.setIndex(wordOfGenerator);
+                read.setValueType(TypeTable::anything);
                 ValueID word = builder.append(WTF::move(read));
                 Value cast = IRBuilder::make(Opcode::AssumeType);
                 cast.becomeAssumeType(word, Proven::byConstruction(function.at(id).type));
@@ -2242,10 +2249,12 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
             defineLive(id, builder.append(Value(function.at(id))));
         }
         for (ValueID id : yield.stored) {
+            TypeID type = function.at(id).type;
+            // Where the value is not made yet the word is empty, and only what has a fact behind it reads the value.
             Value read = IRBuilder::make(Opcode::GetHeapFrameWord, { frame });
             read.setIndex(plan.wordOf[id.index()]);
+            read.setValueType(types.at(type).mayBeUnspecified() ? anythingOrUnspecified : TypeTable::anything);
             ValueID word = builder.append(WTF::move(read));
-            TypeID type = function.at(id).type;
             if (type == TypeTable::anything) {
                 defineLive(id, word);
                 continue;
@@ -2303,11 +2312,6 @@ static void buildResumeFunction(const AnalysisContext& context, TaskArenas& aren
 void moveGeneratorFramesToHeap(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     BuildContext& build = runner.build();
-    // While it comes up.
-    static const char* const word = getenv("BUN_AOT_HEAP_FRAMES");
-    static const bool isOn = word && word[0] != '0';
-    if (!isOn)
-        return;
     const Program& program = editor.program();
     Vector<uint32_t> bodies = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];

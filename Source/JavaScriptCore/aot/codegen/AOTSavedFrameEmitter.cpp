@@ -241,9 +241,7 @@ void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
 {
     CellPointer generator = in<CellPointer>(value->generatorOperand());
     uint32_t numberOfWords = value->numberOfWords();
-    size_t size = SavedFrame::allocationSize(numberOfWords);
     const B3::AbstractHeap& words = m_heaps.entire(AbstractHeap::InternalFields);
-
     B3::PatchpointValue* address = m_out.patchpoint(B3::pointerType());
     address->effects = B3::Effects::none();
     address->setGenerator([records = &m_records, function = value->function()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
@@ -252,35 +250,39 @@ void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
     });
     Pointer resumeAddress(address);
 
-    LBasicBlock slowPath = newBlock();
-    Join<CellPointer> join(m_out);
-    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), size);
-    CellPointer frame = cells.allocateHeapCell(allocator, slowPath);
-    {
-        CodeGenerator::InitializationScope scope(this->generator());
-        auto word = [&](ptrdiff_t offset) { return m_out.address(words, frame.value(), offset); };
-        cells.storeHeader(frame, loadImmutable64(AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)));
-        m_out.storePtr(m_out.intPtrZero, frame.value(), m_heaps.JSNonArray_butterfly);
-        // The number of words, no words skipped, version 0.
-        m_out.store64(m_out.constInt64(numberOfWords), word(SavedFrame::offsetOfNumberOfWords()));
-        static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3 && !static_cast<int32_t>(CoroutineKind::Generator) && !static_cast<int32_t>(SavedFrame::Continuation::None));
-        m_out.store64(m_out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), word(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-        m_out.store64(resumeAddress.value(), word(SavedFrame::offsetOfResumeAddress()));
-        m_out.store64(frame.value(), word(SavedFrame::offsetOfPromiseOrWaiter()));
-        m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfPreservedRegister()));
-        m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfAsyncContext()));
-        for (uint32_t index = 0; index < numberOfWords; ++index)
-            m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfWords() + index * sizeof(uint64_t)));
+    CellPointer result;
+    if (value.shape() != CodeShape::Fast)
+        result = CellPointer(callStub(value, AOT::newHeapFrame(), { m_out.constInt64(numberOfWords), resumeAddress.value() }).first);
+    else {
+        LBasicBlock slowPath = newBlock();
+        Join<CellPointer> join(m_out);
+        CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+        Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), SavedFrame::allocationSize(numberOfWords));
+        CellPointer frame = cells.allocateHeapCell(allocator, slowPath);
+        {
+            CodeGenerator::InitializationScope scope(this->generator());
+            auto word = [&](ptrdiff_t offset) { return m_out.address(words, frame.value(), offset); };
+            cells.storeHeader(frame, loadImmutable64(AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)));
+            m_out.storePtr(m_out.intPtrZero, frame.value(), m_heaps.JSNonArray_butterfly);
+            // The number of words, no words skipped, version 0.
+            m_out.store64(m_out.constInt64(numberOfWords), word(SavedFrame::offsetOfNumberOfWords()));
+            static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3 && !static_cast<int32_t>(CoroutineKind::Generator) && !static_cast<int32_t>(SavedFrame::Continuation::None));
+            m_out.store64(m_out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), word(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+            m_out.store64(resumeAddress.value(), word(SavedFrame::offsetOfResumeAddress()));
+            m_out.store64(frame.value(), word(SavedFrame::offsetOfPromiseOrWaiter()));
+            m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfPreservedRegister()));
+            m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfAsyncContext()));
+            for (uint32_t index = 0; index < numberOfWords; ++index)
+                m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfWords() + index * sizeof(uint64_t)));
+        }
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        join.add(frame);
+        m_out.appendTo(slowPath);
+        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(numberOfWords)), resumeAddress }, { .isOnRarePath = true }));
+        result = join.finish();
     }
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    m_out.store64(frame.value(), m_out.address(words, generator.value(), Generator::offsetOfSavedFrame()));
+    m_out.store64(result.value(), m_out.address(words, generator.value(), Generator::offsetOfSavedFrame()));
     emitter<BarrierEmitter>().barrier(value, generator);
-    join.add(frame);
-
-    m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { generator, word32(static_cast<int32_t>(numberOfWords)), resumeAddress }, { .isOnRarePath = true }));
-    CellPointer result = join.finish();
     define(value, Boxed(result.value()));
 }
 

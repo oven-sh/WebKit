@@ -123,8 +123,16 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
 {
     LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
     LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
+    LValue lowerHalf = m_out.mul(a, b);
+    return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
+}
+
+// For code on the hot path of a lookup: B3 would do two multiplications, and one mul gives both halves, as in the stubs.
+Word32 HashTableBuiltinEmitter::hashOfBitsByOneMultiplication(Boxed key)
+{
 #if CPU(X86_64)
-    // One mul gives both halves, as in the stubs. B3 would do two multiplications.
+    LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
+    LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
     B3::PatchpointValue* halves = m_out.patchpoint(B3::Int64);
     halves->append(a, B3::ValueRep::reg(X86Registers::eax));
     halves->appendSomeRegister(b);
@@ -138,8 +146,7 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
     });
     return Word32(m_out.castToInt32(halves));
 #else
-    LValue lowerHalf = m_out.mul(a, b);
-    return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
+    return hashOfBits(key);
 #endif
 }
 
@@ -378,15 +385,22 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     LValue isOfKind = m_out.equal(m_out.bitAnd(kinds, m_out.constInt64(imageFlag | wideFlag)), m_out.constInt64(keysAreWide ? wideFlag : 0));
     LValue isNotHuge = m_out.belowOrEqual(capacity, m_out.constInt64(CompactTable::maxCapacityWithLongSlots));
     // One word says how to search. It takes one register in the loop, where the tests it stands for would take three.
-    enum Form : int32_t { Tags, ShortSlots, LongSlots, OtherTable };
+    // Number keys rarely meet a table small enough for tags, so one test sends them to the slots.
+    const int32_t Tags = keysAreWide ? 2 : 0;
+    const int32_t ShortSlots = keysAreWide ? 0 : 1;
+    const int32_t LongSlots = keysAreWide ? 1 : 2;
+    const int32_t OtherTable = 3;
     LValue searchableForm = m_out.select(hasNoSlots, m_out.constInt32(Tags), m_out.select(hasLongSlots, m_out.constInt32(LongSlots), m_out.constInt32(ShortSlots)));
     LValue form = m_out.select(m_out.bitAnd(isOfKind, isNotHuge), searchableForm, m_out.constInt32(OtherTable));
-    m_out.branch(m_out.below(form, m_out.constInt32(OtherTable)), normalEdge(isOfKindAndSize), unlikelyEdge(byStub));
+    if (keysAreWide)
+        m_out.jump(isOfKindAndSize);
+    else
+        m_out.branch(m_out.below(form, m_out.constInt32(OtherTable)), normalEdge(isOfKindAndSize), unlikelyEdge(byStub));
 
     m_out.appendTo(isOfKindAndSize);
     LValue hash;
     if (keysAreWide) {
-        hash = m_out.bitAnd(hashOfBits(key).value(), m_out.constInt32(CompactTable::hashMask));
+        hash = m_out.bitAnd(hashOfBitsByOneMultiplication(key).value(), m_out.constInt32(CompactTable::hashMask));
         m_out.jump(hasHash);
     } else {
         LBasicBlock isCell = newBlock();
@@ -438,7 +452,13 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     };
 
     m_out.appendTo(hasHash);
-    m_out.branch(m_out.equal(form, m_out.constInt32(Tags)), keysAreWide ? unlikelyEdge(hasTags) : normalEdge(hasTags), normalEdge(hasSlots));
+    if (keysAreWide) {
+        LBasicBlock noSlots = newBlock();
+        m_out.branch(m_out.below(form, m_out.constInt32(Tags)), normalEdge(hasSlots), unlikelyEdge(noSlots));
+        m_out.appendTo(noSlots);
+        m_out.branch(m_out.equal(form, m_out.constInt32(Tags)), normalEdge(hasTags), unlikelyEdge(byStub));
+    } else
+        m_out.branch(m_out.equal(form, m_out.constInt32(Tags)), normalEdge(hasTags), normalEdge(hasSlots));
 
     m_out.appendTo(hasTags);
     if (keysAreWide)

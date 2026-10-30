@@ -581,10 +581,12 @@ static bool storeNewExtraPropertiesFromOrdinaryObject(VM& vm, Object& target, co
 
 static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
 {
-    if (plan.addsExtraProperties)
-        validateMutation(vm, target, ObjectMutation::AddProperty);
     if (target.structureID() != plan.target)
         return false;
+    if (!extra && !source.compiledObject)
+        return storeNewExtraPropertiesFromOrdinaryObject(vm, target, plan, source.object);
+    if (plan.addsExtraProperties)
+        validateMutation(vm, target, ObjectMutation::AddProperty);
     Structure* after = plan.extraPropertiesAfter;
     Structure* before = extra ? extra->structure() : nullptr;
     if (!extra)
@@ -785,7 +787,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
 // Fast path: every target slot is still empty, so copy each field and set the order word that the first run produced.
 static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
 {
-    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord() && plan.readsFrom(source.structureID(), source.orderWord(), source.extraProperties()));
+    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord() && plan.readsFrom(source.structureID(), source.orderWord(), plan.leavesElementsOut ? nullptr : source.extraProperties()));
     Extension* targetExtension = nullptr;
     if (plan.granuleBitsFilled) {
         target.ensureExtensionGranules(vm, plan.granuleBitsFilled);
@@ -1586,21 +1588,31 @@ bool tryAssignOrdinaryObjectAsBefore(VM& vm, State& state, Object& target, JSObj
 }
 
 // The fields of a record whose second object holds nothing but elements: the plan does not see that object.
-bool tryDefineFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
+static bool tryCopyFieldsLeavingElementsOut(VM& vm, Object& target, Object& source, bool defines)
 {
     uint32_t orderWord = source.orderWord();
     if (target.orderWord() & orderWordIntegrityBits || &source == &target || isOrderStoredOutOfLine(orderWord) || source.layout().keysAreNeverEnumerated || &source.state() != &target.state())
         return false;
-    AssignmentSource assignmentSource { &source, &source, nullptr, orderWord, { }, true, source.extension(), source.state().strings.get() };
+    AssignmentSource assignmentSource { &source, &source, nullptr, orderWord, { }, defines, source.extension(), source.state().strings.get() };
     DeferGC deferGC(vm);
     State& state = target.state();
     JSObject* extra = target.extraProperties();
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, assignmentSource);
-    if (!plan->isUsable)
+    if (!plan->isUsable || (!defines && plan->storesNameBehindSymbol))
         return false;
     plan->leavesElementsOut = true;
     assignByPlan(vm, target, state, *plan, extra, assignmentSource);
     return true;
+}
+
+bool tryDefineFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
+{
+    return tryCopyFieldsLeavingElementsOut(vm, target, source, true);
+}
+
+bool tryAssignFieldsLeavingElementsOut(VM& vm, Object& target, Object& source)
+{
+    return tryCopyFieldsLeavingElementsOut(vm, target, source, false);
 }
 
 bool Object::tryAssignPropertiesOf(VM& vm, JSObject* source, std::span<UniquedStringImpl* const> excludedNames)
