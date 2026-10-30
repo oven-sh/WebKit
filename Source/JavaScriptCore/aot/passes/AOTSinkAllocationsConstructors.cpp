@@ -296,7 +296,9 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
     if (program.at(replacedType).layouts)
         return DeclaredType(Proven::byConstruction(replacedType));
     Type declared = Type::forLayoutSet(program.declaredMembersOf(original.constructedClass));
-    return DeclaredType(Proven::byConstruction(types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types))));
+    Vector<LayoutID, 8> below(program.layoutsBelow(original.constructedClass));
+    below.append(program.layoutsExpectedBelow(original.constructedClass));
+    return DeclaredType(Proven::byConstruction(types.intern(declared.unionWith(Type::forLayouts(below.span(), types), types))));
 }
 
 static ValueID addThisParameter(IRBuilder& builder)

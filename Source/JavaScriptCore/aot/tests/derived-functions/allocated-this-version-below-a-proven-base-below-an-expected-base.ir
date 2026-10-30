@@ -1,0 +1,41 @@
+# Flow finds that Made extends Between whatever happens. What Between extends it has not proven: the source names Base. So Made is below Base by a proven step and an expected one.
+# The version of Base that takes the allocated object admits Made. It was `never` for an object of Made, and the arm behind the test of Between's static link ended in a trap.
+# FORM: Prepared
+# RUN: derived-functions AllocatedThisVersion:f3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="title" declared={type=anything} flags=[IsRequired]}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Between" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage] classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Made" module=m0 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+
+function f0 name="main" results=[{type=undefined}] {
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="title"
+    Return v3
+}
+function f2 name="Between" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="Made" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L2 callees=[f2]
+    Return v4
+}
+
+# CHECK: function [[baseVersion]] name="Base" module=m0 kind=BaseConstructor role=AllocatedThisVersion {{*}}thisType={type=L0|L1|L2}
+# CHECK-NOT: NewObject
+# CHECK: function [[betweenVersion]] name="Between" module=m0 kind=DerivedConstructor role=AllocatedThisVersion {{*}}thisType={type=L1|L2}
+# CHECK-NEXT: b0([[this]]: L1|L2, [[callee]]: function, [[newTarget]]: anything, [[title]]: anything):
+# CHECK: AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
+# CHECK-NOT: AssumeType
+# CHECK: = CallDirect [[this]], [[newTarget]], [[title]] function=[[baseVersion]] [isConstruction]
+# CHECK: function [[madeVersion]] name="Made" module=m0 kind=DerivedConstructor role=AllocatedThisVersion {{*}}thisType={type=L2}
+# CHECK-NOT: never
+# CHECK-NOT: SuperConstruct
+# CHECK: function=[[betweenVersion]] [isConstruction]
