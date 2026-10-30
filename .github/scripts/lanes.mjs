@@ -53,15 +53,22 @@ const SANITIZERS = "address,undefined";
 
 // All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
 // function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
-//
-// Not -mbranch-protection=pac-ret for arm64: it signs the return address that a C++ function saves. The run time of
-// compiled programs reads that word in the frame record of its operations (AOT_OPERATION_FRAME_RECORD) and writes it
-// (throwOutOfMemoryErrorAtReturnOf). bun would have to compile with it too: LLVM inlines no function into one that differs in it.
 const HARDENING =
   "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
   " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
   " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
+// On top of HARDENING for arm64, which alone has it (clang refuses it for x86-64): a function signs the return address that
+// it saves and checks it before it returns. At -march=armv8-a the instructions are hints, which a processor without pointer
+// authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
+//
+// Not with the compiler: the run time of compiled programs reads that word in the frame record of its operations
+// (AOT_OPERATION_FRAME_RECORD) as it is, and then finds no handler for what an operation throws.
+//
+// Code with and without it runs together. But LLVM inlines no function into one that differs in it, so LTO inlines nothing
+// between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what walks
+// the frame pointers there, as bun's crash handler does, has to take the signatures off too.
+const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -101,9 +108,10 @@ const variants = {
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
-  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler.
+  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
+  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
@@ -127,7 +135,8 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
-//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot". The
+//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
+//                   arm64's "lto-hardened", the one lane with SIGNED_RETURN_ADDRESSES. The
 //                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
 //                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
@@ -149,7 +158,7 @@ const platforms = [
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened", "lto-hardened-aot"] },
     },
     testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
     // Not "asan-aot" of amd64: it has the objects of testaot, for bun's CI.
@@ -163,7 +172,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
