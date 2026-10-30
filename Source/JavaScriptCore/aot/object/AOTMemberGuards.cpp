@@ -1397,8 +1397,9 @@ void ClassTable::didChangePrototypeLink(const LayoutData& layout, ClassSide side
     if (side == ClassSide::Prototype)
         watchpointsOf(m_state).didChangePrototypeSide(layout);
     auto clearGuards = [&](const LayoutData& inheriting) {
+        // The bit of a constructor function's class is not up until somebody has looked, and whoever looks later must not find the link unchanged.
         for (const MemberGuardData& guard : guardsOf(inheriting, side, MemberGuardKind::PrototypeLink))
-            clear(m_state, inheriting, guard);
+            end(m_state, inheriting, guard);
         clearInheritedGuards(m_state, inheriting, base, side);
         return IterationStatus::Continue;
     };

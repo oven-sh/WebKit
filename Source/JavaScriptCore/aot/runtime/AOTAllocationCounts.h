@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTID.h"
 #include "DeferGC.h"
 #include "Options.h"
 #include "VM.h"
@@ -61,9 +62,15 @@ public:
     static void dump(const Instance&, PrintStream&);
 
 private:
+    // What a line counts at its place. A number, an index or an address tells the things of one kind apart.
+    enum class Counted : uint8_t { Layout = 1, Closure, Map, Set, CellsOfAllocator };
+
     static AllocationCounts& ensure(Instance&);
     static AllocationCounts* ensureForFirstInstance(VM&);
+    template<typename Functor> const String& wordsAtAllocatingFrame(VM&, Typed::FunctionID constructor, Counted, uint64_t detail, const Functor& describeCounted);
 
+    // A line is put into words once. From then on the numbers of the frame and of what is counted there find it: a loop that allocates comes here with every free list.
+    UncheckedKeyHashMap<std::pair<uint64_t, uint64_t>, String> m_wordsOfLines;
     Lines m_allocations;
     Lines m_refills;
     Lines m_made;

@@ -168,12 +168,42 @@ public:
         return false;
     }
 
+    // The copy leaves the region and comes to a block of the region again, around a loop that the region holds a part of. It comes to the block itself and not to its copy, with the value that the copy has made.
+    bool isReachedBehindExit(ValueID definition, BlockID use) const
+    {
+        BlockID definingBlock = m_useLists.blockOf(definition);
+        BitVector seen(m_function.blocks.size());
+        Vector<BlockID, 16> worklist;
+        auto visit = [&](BlockID block) {
+            if (block != definingBlock && !seen.set(block.index()))
+                worklist.append(block);
+        };
+        for (size_t index : m_isInRegion) {
+            forEachOutgoingEdge(m_function, BlockID(index), [&](Edge, const Target& target) {
+                if (!contains(target.block))
+                    visit(target.block);
+            });
+        }
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (block == use)
+                return true;
+            forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
+                visit(target.block);
+            });
+        }
+        return false;
+    }
+
     bool canBeSeparatedFromUses(ValueID definition) const
     {
         bool isSeparated = false;
         for (const Use& use : m_useLists.usesOf(definition)) {
-            if (contains(use.block) && (use.block == m_useLists.blockOf(definition) || !isLiveAtEntry(definition)))
-                continue;
+            if (contains(use.block) && (use.block == m_useLists.blockOf(definition) || !isLiveAtEntry(definition))) {
+                if (m_separatesFunctions || use.block == m_useLists.blockOf(definition) || acceptsParameter(use, definition) || !isReachedBehindExit(definition, use.block))
+                    continue;
+                return false;
+            }
             if (acceptsParameter(use, definition)) {
                 isSeparated = true;
                 continue;

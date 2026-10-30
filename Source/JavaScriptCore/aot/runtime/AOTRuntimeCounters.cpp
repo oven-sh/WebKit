@@ -316,9 +316,8 @@ static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID const
     return frames->isAtEnd() ? innermost : frames->frame();
 }
 
-static String describePlace(VM& vm, FunctionID constructor = { })
+static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
 {
-    std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
     if (!frame)
         return "- -"_str;
     const Image& image = *vm.aotState().image;
@@ -352,6 +351,19 @@ static String describeLayoutOfAllocation(const Instance& instance, uint32_t allo
     return makeString('L', environment.index, ':', countedAsWord(hasName ? image.text().createString(name) : emptyString()));
 }
 
+template<typename Functor>
+const String& AllocationCounts::wordsAtAllocatingFrame(VM& vm, FunctionID constructor, Counted kind, uint64_t detail, const Functor& describeCounted)
+{
+    std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
+    // A call site lies in one function, inlined or not.
+    uint64_t site = frame ? (static_cast<uint64_t>(frame->code.index()) + 1) << 32 | frame->callSite.bits() : 0;
+    ASSERT(!(detail >> 48));
+    uint64_t counted = static_cast<uint64_t>(kind) << 56 | static_cast<uint64_t>(vm.aotState().image->position()) << 48 | detail;
+    return m_wordsOfLines.ensure({ site, counted }, [&] {
+        return makeString(describePlace(vm, frame), ' ', describeCounted());
+    }).iterator->value;
+}
+
 AllocationCounts& AllocationCounts::ensure(Instance& instance)
 {
     State& state = *instance.state;
@@ -375,7 +387,10 @@ void AllocationCounts::willAllocate(Instance& instance, uint32_t allocation)
         FunctionID constructor { instance.tables().constructorOfAllocation(allocation) };
         if (constructor)
             constructor = FunctionDescription(constructor).sourceFunction();
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm, constructor), ' ', describeLayoutOfAllocation(instance, allocation)), *list);
+        AllocationCounts& counts = ensure(instance);
+        addLine(counts.m_allocations, counts.wordsAtAllocatingFrame(*instance.vm, constructor, Counted::Layout, allocation, [&] {
+            return describeLayoutOfAllocation(instance, allocation);
+        }), *list);
     }
     size_t reason = 0;
     if (record && record->header)
@@ -390,20 +405,28 @@ void AllocationCounts::willAllocateClosure(Instance& instance, uint64_t request)
         allocator = instance.closures.slimClosureAllocators[MarkedSpace::sizeClassToIndex(SlimClosure::allocationSize(ClosureRequest::countOf(request))) - 1];
     else if (const AllocationSiteRecord* record = instance.objects.allocationSite(ClosureRequest::allocationOf(request)))
         allocator = record->allocator;
-    if (auto list = usedUpListOf(allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " closure:"_s, countedAsWord(writtenFunctionName(closureFunctionWithNumber(ClosureRequest::closureNumberOf(request))))), *list);
+    if (auto list = usedUpListOf(allocator)) {
+        AllocationCounts& counts = ensure(instance);
+        addLine(counts.m_allocations, counts.wordsAtAllocatingFrame(*instance.vm, { }, Counted::Closure, ClosureRequest::closureNumberOf(request), [&] {
+            return makeString("closure:"_s, countedAsWord(writtenFunctionName(closureFunctionWithNumber(ClosureRequest::closureNumberOf(request)))));
+        }), *list);
+    }
 }
 
 void AllocationCounts::willAllocateMap(Instance& instance)
 {
     if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Map)].allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Map"_s), *list);
+        addLine(ensure(instance).m_allocations, ensure(instance).wordsAtAllocatingFrame(*instance.vm, { }, Counted::Map, 0, [] {
+            return "Map"_s;
+        }), *list);
 }
 
 void AllocationCounts::willAllocateSet(Instance& instance)
 {
     if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Set)].allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Set"_s), *list);
+        addLine(ensure(instance).m_allocations, ensure(instance).wordsAtAllocatingFrame(*instance.vm, { }, Counted::Set, 0, [] {
+            return "Set"_s;
+        }), *list);
 }
 
 // Each VM's allocators that have requested a free list. An allocator is registered by willRefill() before it gets its first list.
@@ -453,7 +476,9 @@ void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
     CountedCells list = listOf(&allocator);
     AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
     if (counts)
-        addLine(counts->m_refills, makeString(describePlace(vm), ' ', describeCellsOf(allocator)), list);
+        addLine(counts->m_refills, counts->wordsAtAllocatingFrame(vm, { }, Counted::CellsOfAllocator, std::bit_cast<uintptr_t>(&allocator), [&] {
+            return describeCellsOf(allocator);
+        }), list);
 }
 
 void AllocationCounts::willStopAllocating(VM& vm, const LocalAllocator& allocator)
@@ -473,7 +498,7 @@ void AllocationCounts::willShutDownHeap(VMState& state)
 void AllocationCounts::didMake(VM& vm, ASCIILiteral what, const char* detailOrNull)
 {
     if (AllocationCounts* counts = ensureForFirstInstance(vm))
-        addLine(counts->m_made, makeString(describePlace(vm), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString()), { 0, 1 });
+        addLine(counts->m_made, makeString(describePlace(vm, findAllocatingFrame(vm, { })), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString()), { 0, 1 });
 }
 
 size_t ExactAllocationCounts::numberOfKinds()

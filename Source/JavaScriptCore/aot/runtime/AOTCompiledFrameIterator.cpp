@@ -61,17 +61,23 @@ static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSiteInRun(CallSiteCac
     return resolveReturnAddressInRun(cache, image, pc, cursor.calleeFrame);
 }
 
+// Apart, so that a VM with one image saves no registers for it.
+static NEVER_INLINE const CallSiteCache::Entry* findReturnSiteAmongSeveralImages(VM& vm, const void* pc)
+{
+    const VMState& state = vm.aotState();
+    const Image* image = state.image->findInListByCodeAddress(pc);
+    if (!image)
+        return nullptr;
+    // Making an entry of the cache asks the tables of the image that runs.
+    RunningImageScope scope(vm.aotState(), image);
+    return findReturnSite(*state.callSiteCache, *image, pc);
+}
+
 static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(VM& vm, const void* pc)
 {
     const VMState& state = vm.aotState();
-    if (state.hasSeveralImages) [[unlikely]] {
-        const Image* image = state.image->findInListByCodeAddress(pc);
-        if (!image)
-            return nullptr;
-        // Making an entry of the cache asks the tables of the image that runs.
-        RunningImageScope scope(vm.aotState(), image);
-        return findReturnSite(*state.callSiteCache, *image, pc);
-    }
+    if (state.hasSeveralImages) [[unlikely]]
+        return findReturnSiteAmongSeveralImages(vm, pc);
     return findReturnSite(*state.callSiteCache, *state.image, pc);
 }
 

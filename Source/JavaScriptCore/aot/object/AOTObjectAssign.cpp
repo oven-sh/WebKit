@@ -1349,7 +1349,7 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentByRecentPlan(VM& vm, State& 
     if (!plan || &to == &from)
         return RepeatedCopy::IsNotDone;
     if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne))
-        return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
+        return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), (state.sharesRealm ? from.state() : state).strings.get() }, excludedRunNumberPlusOne);
     DeferGC deferGC(vm);
     if (!tryFillEmptySlotsAsBefore(vm, to, state, *plan, from))
         return RepeatedCopy::IsNotDone;
@@ -1566,8 +1566,6 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     DeferGC deferGC(vm);
     JSObject* extra = target.extraProperties();
     State& state = target.state();
-    if (state.sharesRealm && assignmentSource->compiledObject && !assignmentSource->compiledObject->isDescribedBy(state)) [[unlikely]]
-        return false;
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
     // The plan that ran last between these two Structures: no walk through the sets of plans.
     AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->orderWord, 0);
