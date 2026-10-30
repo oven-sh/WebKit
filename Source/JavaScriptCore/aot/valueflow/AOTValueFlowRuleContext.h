@@ -57,6 +57,8 @@ class ValueFlowRuleContext {
 public:
     ValueFlowRuleContext(const ValueFlowSolver&, ValueFlowRoundLog&, ValueSetMaker&);
 
+    // Every member that holds a set from one run to the next is listed there.
+    void keepSetsHeld(ValueSets&) const;
     const Program& program() const;
     const ValueFlowUniverse& universe() const;
     const ValueFlowProgramNodes& nodes() const;
@@ -271,6 +273,7 @@ private:
     ValueFlowNodeID nodeRead(ValueFlowNodeID);
     ValueFlowNodeID nodeHandedTo(ValueFlowNodeID);
     ValueFlowNodeID instanceHandedTo(ValueFlowNodeID);
+    ValueFlowNodeID instanceGivingBack(ValueFlowNodeID);
     void makeInstance(const ValueFlowInstancedFunction&, ValueFlowObjectID marker);
     void connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID to);
     bool isRedundantAdd(ValueFlowNodeID, ValueSetID);

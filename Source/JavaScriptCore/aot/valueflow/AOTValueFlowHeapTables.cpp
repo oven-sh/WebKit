@@ -192,6 +192,16 @@ ValueFlowObjectID ValueFlowHeapTables::objectOf(BuiltinID builtin) const
     return ValueFlowObjectID(m_firstObjectOfBuiltins + m_program.builtins().canonicalID(builtin).index());
 }
 
+void ValueFlowHeapTables::keepSetsHeld() const
+{
+    Locker locker { m_lock };
+    m_maker.keepSetsToKeep();
+    m_maker.forgetWhatIsRemembered();
+    // Blocks are remembered by their numbers.
+    for (size_t index = 0; index < static_cast<size_t>(5) << (64 - m_shiftOfBlocks); ++index)
+        m_prototypesOfBlocks[index].store(0, std::memory_order_relaxed);
+}
+
 void ValueFlowHeapTables::describeKey(PropertyKeyID key) const
 {
     Locker locker { m_lock };
@@ -577,10 +587,18 @@ ModuleID ValueFlowHeapTables::libraryModuleNamed(std::span<const uint8_t> name) 
     return found && equalSpans(textOf(*found), name) ? found->module : ModuleID();
 }
 
-static size_t lastIndexOf(std::span<const uint8_t> text, uint8_t character)
+// On Windows a path of the image may be written with either slash.
+static constexpr uint8_t withForwardSlash(uint8_t character) { return character == '\\' ? '/' : character; }
+
+static bool isPathBefore(std::span<const uint8_t> first, std::span<const uint8_t> second)
 {
-    for (size_t index = text.size(); index--;) {
-        if (text[index] == character)
+    return std::ranges::lexicographical_compare(first, second, { }, withForwardSlash, withForwardSlash);
+}
+
+static size_t lastIndexOf(std::span<const uint8_t> path, uint8_t character)
+{
+    for (size_t index = path.size(); index--;) {
+        if (withForwardSlash(path[index]) == character)
             return index;
     }
     return notFound;
@@ -607,18 +625,18 @@ void ValueFlowHeapTables::listSpellingsOfFiles()
         std::span<const uint8_t> folder = slash == notFound ? std::span<const uint8_t>() : path.first(slash + 1);
         if (std::exchange(isFirst, false))
             m_folderOfProgram = folder;
-        size_t common = std::ranges::mismatch(m_folderOfProgram, folder).in1 - m_folderOfProgram.begin();
+        size_t common = std::ranges::mismatch(m_folderOfProgram, folder, { }, withForwardSlash, withForwardSlash).in1 - m_folderOfProgram.begin();
         size_t end = lastIndexOf(m_folderOfProgram.first(common), '/');
         m_folderOfProgram = end == notFound ? std::span<const uint8_t>() : m_folderOfProgram.first(end + 1);
         if (!mayAnswerToName(ModuleID(index)))
             continue;
         std::span<const uint8_t> spelling = withoutExtension(path);
         m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size()), ModuleID(index) });
-        if (spanHasSuffix(spelling, std::span(indexFile)))
+        if (spelling.size() >= indexFile.size() && std::ranges::equal(spelling.last(indexFile.size()), indexFile, { }, withForwardSlash))
             m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size() - indexFile.size()), ModuleID(index) });
     }
     AOT::sort(m_spellingsOfFiles, [&](StartOfPath first, StartOfPath second) {
-        return std::ranges::lexicographical_compare(textOf(first), textOf(second));
+        return isPathBefore(textOf(first), textOf(second));
     });
 }
 
@@ -629,7 +647,8 @@ std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(Modul
     };
     std::span<const uint8_t> start = m_program.string(m_program.at(from).path);
     size_t slash = lastIndexOf(start, '/');
-    if (slash == notFound || m_folderOfProgram.empty() || !spanHasPrefix(start, m_folderOfProgram) || std::ranges::any_of(path, isMoreThanPath))
+    bool liesInFolderOfProgram = !m_folderOfProgram.empty() && start.size() >= m_folderOfProgram.size() && std::ranges::equal(start.first(m_folderOfProgram.size()), m_folderOfProgram, { }, withForwardSlash, withForwardSlash);
+    if (slash == notFound || !liesInFolderOfProgram || std::ranges::any_of(path, isMoreThanPath))
         return std::nullopt;
 
     Vector<uint8_t, 256> joined;
@@ -654,9 +673,7 @@ std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(Modul
 
     Vector<ModuleID, 2> found;
     auto add = [&](std::span<const uint8_t> spelling) {
-        auto [first, last] = std::ranges::equal_range(m_spellingsOfFiles, spelling, [](std::span<const uint8_t> first, std::span<const uint8_t> second) {
-            return std::ranges::lexicographical_compare(first, second);
-        }, [&](StartOfPath start) {
+        auto [first, last] = std::ranges::equal_range(m_spellingsOfFiles, spelling, isPathBefore, [&](StartOfPath start) {
             return textOf(start);
         });
         for (; first != last; ++first) {

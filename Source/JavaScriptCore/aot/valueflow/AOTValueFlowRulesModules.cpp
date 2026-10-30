@@ -998,7 +998,7 @@ static void importModule(const ValueFlowStatement& statement, ValueFlowRuleConte
 
 static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const Value& load)
 {
-    return modulesThatNamesFind(context, { statement.function, load.specifierOperand(), load.referrer() }, context.operandsOf(statement)[0]);
+    return modulesThatNamesFind(context, { statement.function, load.specifierOperand(), load.referrer(), load.opcode == Opcode::RequireDynamic }, context.operandsOf(statement)[0]);
 }
 
 // `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().

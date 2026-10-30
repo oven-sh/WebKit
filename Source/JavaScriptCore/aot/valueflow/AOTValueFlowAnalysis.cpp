@@ -60,6 +60,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<Argument> arguments;
         Vector<TextPassed> textsPassed;
         Vector<StringID> relativePaths;
+        Vector<uint32_t> getTraps;
     };
 
     auto functionBoundTo = [&](const Function& function, ValueID id) -> FunctionID {
@@ -82,6 +83,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         auto note = [&](unsigned position) {
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
         };
+        Vector<std::pair<ValueID, FunctionID>, 2> definedAsGet;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
@@ -106,14 +108,28 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                             note(*position);
                     }
                     break;
+                case Opcode::NewObject: {
+                    std::span<const ValueID> values = value.variadicOperands();
+                    std::span<const uint32_t> fields = value.fields();
+                    for (uint32_t position = 0; position < fields.size() && position < values.size(); ++position) {
+                        if (program.at(value.layout()).fields[fields[position]].key != program.keyOf(BuiltinNames::get))
+                            continue;
+                        if (FunctionID stored = functionBoundTo(function, values[position]))
+                            definedAsGet.append({ id, stored });
+                    }
+                    break;
+                }
                 case Opcode::PropSet:
                 case Opcode::PropDefine:
                 case Opcode::DefineMethod: {
                     static_assert(OperandIndex::PropSet::value == 1 && OperandIndex::PropDefine::value == 1 && OperandIndex::DefineMethod::function == 1);
                     if (!value.key())
                         break;
-                    if (FunctionID stored = functionBoundTo(function, value.operand(1)))
+                    if (FunctionID stored = functionBoundTo(function, value.operand(1))) {
                         body.functionsStoredUnderNames.append({ value.key().index(), stored.index() });
+                        if (value.key() == program.keyOf(BuiltinNames::get))
+                            definedAsGet.append({ definitionThroughSameValues(function, value.operand(0)), stored });
+                    }
                     else if (const Value& read = function.at(definitionThroughSameValues(function, value.operand(1))); read.opcode == Opcode::PropGet && read.key())
                         body.namesStoredAgain.append({ read.key().index(), value.key().index() });
                     break;
@@ -123,6 +139,16 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 }
                 if (value.opcode != Opcode::Call && value.opcode != Opcode::Construct)
                     continue;
+                // new Proxy(target, { get(target, key) { .. } })
+                if (const Value& callee = function.at(definitionThroughSameValues(function, value.calleeOperand())); value.opcode == Opcode::Construct && value.numberOfOperands() > 3 && value.operand(3) && callee.opcode == Opcode::Builtin && program.builtins().canonicalID(callee.builtin()) == Builtins::Proxy) {
+                    ValueID handler = definitionThroughSameValues(function, value.operand(3));
+                    if (function.at(handler).opcode == Opcode::FinishObject)
+                        handler = definitionThroughSameValues(function, function.at(handler).objectOperand());
+                    for (auto [object, trap] : definedAsGet) {
+                        if (object == handler)
+                            body.getTraps.append(trap.index());
+                    }
+                }
                 for (uint32_t operand = 2; operand < value.numberOfOperands() && operand < 2 + mostArgumentsLookedAtForTexts; ++operand) {
                     if (!value.operand(operand))
                         continue;
@@ -429,6 +455,14 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 if (positionOfKey[index] != positionBefore)
                     didMove(index, positionBefore, positionOfKey[index]);
             }
+        }
+    }
+    // A read of a name on the proxy asks the trap for that name alone: `get(target, key) { if (key === "write") return write; if (key === "fd") return fd; .. }`.
+    // Behind the rounds above: who calls something under the name `get` is no such read.
+    for (const Found& body : bodies.span()) {
+        for (uint32_t trap : body.getTraps) {
+            if (mayHaveInstances(program.functions[trap]) && program.functions[trap].numberOfPositionalParameters() > positionOfKeyInGetTrap)
+                positionOfKey[trap] = std::min(positionOfKey[trap], positionOfKeyInGetTrap);
         }
     }
     return positionOfKey;

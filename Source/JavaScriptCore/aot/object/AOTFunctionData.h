@@ -224,6 +224,7 @@ struct FunctionTexts {
 };
 static_assert(sizeof(FunctionTexts) == 12 && isImageRecord<FunctionTexts>);
 
+// In the order of the sources of the functions, so that both a function and its source lead to the text.
 struct FunctionTextEntry {
     uint32_t function;
     uint32_t start;

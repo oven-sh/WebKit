@@ -147,6 +147,8 @@ public:
     BuiltinID builtinOf(ValueFlowObjectID) const;
     ModuleID moduleOf(ValueFlowObjectID) const;
     ModuleID moduleOf(RuntimeModuleID runtimeModule) const { return runtimeModule.index() < m_moduleOfRuntimeModule.size() ? m_moduleOfRuntimeModule[runtimeModule.index()] : ModuleID(); }
+    // The sets that are written down when first asked for.
+    void keepSetsRemembered(ValueSets&) const;
     std::atomic<uint32_t>& rememberedClosuresCalledDirectlyBy(FunctionID function) const { return m_closuresCalledDirectlyBy[function.index()]; }
     ModuleID moduleWithBody(FunctionID) const;
     PropertyKeyID keyOf(ValueFlowObjectID object) const { return object.index() >= m_firstKey ? PropertyKeyID(object.index() - m_firstKey) : PropertyKeyID(); }
@@ -288,6 +290,7 @@ private:
     ValueSetID m_builtinFunctionsThatActOnReceiver;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
+    uint32_t m_numberOfRememberedFunctions { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsWithLayoutIn;
     std::unique_ptr<std::atomic<uint32_t>[]> m_closuresCalledDirectlyBy;
@@ -821,6 +824,7 @@ class ValueFlowInstancedFunctions {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowInstancedFunctions);
 public:
     static constexpr uint32_t noKey = UINT32_MAX;
+    static constexpr uint32_t positionOfKeyInGetTrap = 1;
     struct TextPassed {
         uint32_t positionOfArgument;
         StringID text;

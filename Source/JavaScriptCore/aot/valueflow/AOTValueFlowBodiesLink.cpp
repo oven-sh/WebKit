@@ -340,6 +340,25 @@ void ValueFlowUniverse::appendFunctionObjectsOf(const Program& program, const Ty
         appendObjectsOf(builtin, members);
 }
 
+void ValueFlowUniverse::keepSetsRemembered(ValueSets& sets) const
+{
+    auto keepAll = [&](const std::unique_ptr<std::atomic<uint32_t>[]>& remembered, uint32_t count) {
+        for (uint32_t index = 0; remembered && index < count; ++index) {
+            if (uint32_t setPlusOne = remembered[index].load(std::memory_order_relaxed))
+                sets.keep(ValueSetID(setPlusOne - 1));
+        }
+    };
+    keepAll(m_objectsSurelyWithLayoutIn, m_numberOfRememberedLayoutSets);
+    keepAll(m_objectsWithLayoutIn, m_numberOfRememberedLayoutSets);
+    keepAll(m_closuresCalledDirectlyBy, m_numberOfRememberedFunctions);
+    keepAll(m_membersSurelyInsideType, m_numberOfRememberedTypes);
+    if (m_boundFunctionsBindingNoArgument) {
+        uint64_t askedAndFound = m_boundFunctionsBindingNoArgument[0].load(std::memory_order_relaxed);
+        sets.keep(ValueSetID(static_cast<uint32_t>(askedAndFound >> 32)));
+        sets.keep(ValueSetID(static_cast<uint32_t>(askedAndFound)));
+    }
+}
+
 static ValueSetID rememberedSetOr(std::atomic<uint32_t>* remembered, NOESCAPE const Invocable<ValueSetID()> auto& make)
 {
     if (remembered) {
@@ -1393,6 +1412,7 @@ private:
         universe.m_objectsSurelyWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
         universe.m_objectsWithLayoutIn = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedLayoutSets);
         universe.m_closuresCalledDirectlyBy = std::make_unique<std::atomic<uint32_t>[]>(m_program.functions.size());
+        universe.m_numberOfRememberedFunctions = m_program.functions.size();
         for (uint32_t index = m_program.modules.size(); index--;) {
             RuntimeModuleID runtimeModule = m_program.modules[index].runtimeModule;
             if (!runtimeModule)

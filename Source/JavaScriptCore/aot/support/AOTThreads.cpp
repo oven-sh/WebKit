@@ -560,7 +560,7 @@ void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
     })->waitForCompletion();
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
 {
     if (count < 2 || loops.width() == 1) {
         SetForScope isInsideLoop(t_isInsideLoop, t_isInsideLoop || count > 1);
@@ -605,14 +605,14 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE
     });
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
 {
     forEachIndexInParallel(loops, count, [&](unsigned index, unsigned) {
         functor(index);
     });
 }
 
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
+NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
 {
     if (longestFirst.empty()) {
         forEachIndexInParallel(loops, count, functor);

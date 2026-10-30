@@ -119,6 +119,8 @@ struct LoadUnderName {
     ValueID written;
     // A relative path starts at the folder of this file. None: nobody knows the file.
     ModuleID referrer;
+    // require(undefined) throws. import(undefined) asks for "undefined".
+    bool takesStringsAlone { false };
 };
 struct ModulesThatNamesFind {
     // Nobody knows some name, or only the run time can say what it finds.

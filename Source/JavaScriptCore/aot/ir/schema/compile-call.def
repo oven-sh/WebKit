@@ -69,7 +69,7 @@ enum ResultSection {
     Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
     Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
     ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
-    LibraryFunctionsLacked OtherOrigins ExportsThatSpiesReplace WorkerStartsWithoutName BuiltinsThatTestsReplace NamesThatTestsAdd
+    LibraryFunctionsLacked OtherOrigins ExportsThatSpiesReplace WorkerStartsWithoutName
 }
 
 record TextRange abi { offset: UInt32 length: UInt32 }
@@ -87,8 +87,6 @@ record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: 
 record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
 record LackedFunctionRecord abi { function: UInt32 }
 record ReplacedExportRecord abi { variable: UInt32 }
-record ReplacedBuiltinRecord abi { member: Builtin }
-record AddedNameRecord abi { holder: Builtin name: TextRange }
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 witness: Witness }

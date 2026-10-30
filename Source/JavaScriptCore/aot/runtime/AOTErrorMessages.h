@@ -58,8 +58,13 @@ bool readOnTopTestsObjectOfUpdate(VM&);
 // The function whose text holds the place where the frame on top stands, and the line of the place, counted from the line of the function's definition.
 // A function that has no code of its own, because each call holds a copy, has no line.
 struct PlaceInFunctionText {
+    // The address that the place returns to. No two places share one, and an image stays for as long as the process.
+    const void* address;
     FunctionID function;
     std::optional<unsigned> line;
+    // In the file.
+    ModuleID module;
+    LineColumn position;
 };
 std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM&);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);

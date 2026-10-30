@@ -157,6 +157,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
     v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
     v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
+    v(Bool, freeAOTFlowSetsEveryRound, false, Normal, "When compiling: whole-program analysis frees the sets that nobody holds after every round, not only once they have doubled. No byte of the output depends on it."_s) \
     v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
     v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \

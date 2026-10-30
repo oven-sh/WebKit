@@ -1898,9 +1898,10 @@ void AllocationSinking::addTracesOfFruitlessAllocations(Vector<uint64_t>& traces
         if (!m_candidates[index].isAbandoned || cause == LimitID::MaxSinkingWork || cause == LimitID::MaxSinkingRounds)
             tracesWithSurvivors.append(m_tracesOfAllocations[index]);
     }
+    AOT::sort(tracesWithSurvivors);
     size_t sizeBefore = traces.size();
     for (uint64_t trace : m_tracesOfAllocations) {
-        if (!tracesWithSurvivors.contains(trace) && !std::ranges::binary_search(traces.span().first(sizeBefore), trace))
+        if (!std::ranges::binary_search(tracesWithSurvivors, trace) && !std::ranges::binary_search(traces.span().first(sizeBefore), trace))
             traces.append(trace);
     }
     AOT::sort(traces);

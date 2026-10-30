@@ -27,7 +27,6 @@ namespace Typed {
 class FlowResults;
 class Heat;
 class Program;
-struct FlowAddedName;
 
 struct AllocationSiteReport {
     FunctionID function;
@@ -39,9 +38,6 @@ struct FlowReport {
     Vector<Wire::BuiltinUseRecord> builtinsUsed;
     Vector<Wire::LackedFunctionRecord> libraryFunctionsLacked;
     Vector<Wire::ReplacedExportRecord> exportsThatSpiesReplace;
-    Vector<Wire::ReplacedBuiltinRecord> builtinsThatTestsReplace;
-    Vector<Wire::AddedNameRecord> namesThatTestsAdd;
-    Vector<uint8_t> textOfNamesThatTestsAdd;
     Vector<Wire::FeatureUseRecord> featuresUsed;
     Vector<Wire::LocaleUseRecord> localesUsed;
     Vector<uint8_t> localeTags;
@@ -111,10 +107,10 @@ struct FlowReportBodyRecords {
     Vector<BuiltinID> builtinsCalledDirectly;
 };
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program&, BuildContext&);
-// Of the report: unseenCode, builtinsUsed, libraryFunctionsLacked, exportsThatSpiesReplace, builtinsThatTestsReplace and namesThatTestsAdd.
+// Of the report: unseenCode, builtinsUsed, libraryFunctionsLacked and exportsThatSpiesReplace.
 FlowReport reportUsesOfLibraryCode(const FlowResults&);
 using JudgeOfUsesOfLibraryCode = ScopedLambda<bool(const FlowReport&)>;
-FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord>, std::span<const RuntimeFunctionID> libraryFunctionsLacked, std::span<const VariableID> exportsThatSpiesReplace, std::span<const BuiltinID> builtinsThatTestsReplace, std::span<const FlowAddedName> namesThatTestsAdd);
+FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord>, std::span<const RuntimeFunctionID> libraryFunctionsLacked, std::span<const VariableID> exportsThatSpiesReplace);
 FlowReport buildFlowReport(const Program&, const FlowResults&, const GradedSites&, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

@@ -20,6 +20,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
+#include "AOTStackTrace.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTProgramTables.h"
@@ -38,6 +39,7 @@
 #include "JSFunction.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
+#include <wtf/FileSystem.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -513,7 +515,8 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
 {
     size_t start = end;
     while (true) {
-        size_t part = start;
+        // `a!.b`, in a file that still has its types.
+        size_t part = start - (start && text[start - 1] == '!');
         while (part && (text[part - 1] == ')' || text[part - 1] == ']')) {
             std::optional<size_t> opening = findOpeningBracket(text, part - 1);
             if (!opening)
@@ -521,6 +524,7 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
             part = *opening;
             if (part >= 2 && text[part - 1] == '.' && text[part - 2] == '?')
                 part -= 2;
+            part -= part && text[part - 1] == '!';
         }
         size_t name = part;
         while (name && isPartOfName(text[name - 1]))
@@ -546,7 +550,7 @@ static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Characte
 enum class WrittenReads : uint8_t { None, Same, Differ };
 
 // Each place in `text[from, to)` that reads `member` behind a dot. Same: all spell what they read it from alike, and `found` holds that with the member.
-static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size_t from, size_t to, StringView member, std::span<const Latin1Character>& found)
+static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size_t from, size_t to, StringView member, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
     for (size_t at = from + 1; at + member.length() <= to; ++at) {
         if (text[at - 1] != '.' || (at + member.length() < text.size() && isPartOfName(text[at + member.length()])))
@@ -559,6 +563,8 @@ static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size
         std::optional<size_t> start = startOfPathInFrontOf(text, dot);
         if (!start)
             return WrittenReads::Differ;
+        if (within && (*within < *start || *within >= at + member.length()))
+            continue;
         std::span<const Latin1Character> read = text.subspan(*start, at + member.length() - *start);
         if (found.data() && !equalSpans(found, read))
             return WrittenReads::Differ;
@@ -567,44 +573,123 @@ static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size
     return found.data() ? WrittenReads::Same : WrittenReads::None;
 }
 
-using FindInText = WrittenReads (*)(std::span<const Latin1Character>, size_t from, size_t to, StringView, std::span<const Latin1Character>& found);
+// `within`: only what holds that place counts.
+using FindInText = WrittenReads (*)(std::span<const Latin1Character>, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found);
 
-// What the function on top spells at the place that failed. The text of the function is all there is to go by, so this answers only where the line of the place,
-// or else the whole function, has one such place, or spells each of them alike.
-static String findOnTop(VM& vm, StringView name, FindInText find)
+// A run of `bun test` or `bun run` has the files of the program beside it, at the paths that a stack trace prints. An executable has not, and a module of Bun's is no file.
+static size_t startOfNextLine(std::span<const Latin1Character> text, size_t from)
 {
-    if (name.isEmpty() || !name.containsOnlyASCII())
-        return { };
-    std::optional<PlaceInFunctionText> place = placeOnTopInFunctionText(vm);
-    if (!place)
-        return { };
+    size_t newline = WTF::find(text, static_cast<Latin1Character>('\n'), from);
+    return newline == notFound ? text.size() : newline + 1;
+}
+
+struct SourceFile {
+    ModuleID module;
+    Vector<uint8_t> bytes;
+    Vector<size_t> lineStarts;
+};
+
+static const SourceFile& sourceFileOf(ModuleID module)
+{
+    static thread_local SourceFile lastFile;
+    if (lastFile.module == module)
+        return lastFile;
+    String path = sourceURLOf(module);
+    bool isAbsolute = path.startsWith('/') || (path.length() > 2 && isASCIIAlpha(path[0]) && path[1] == ':');
+    std::optional<Vector<uint8_t>> bytes = isAbsolute ? FileSystem::readEntireFile(path) : std::nullopt;
+    lastFile = { module, bytes ? WTF::move(*bytes) : Vector<uint8_t>(), { } };
+    for (size_t start = 0; start < lastFile.bytes.size(); start = startOfNextLine(byteCast<Latin1Character>(lastFile.bytes.span()), start))
+        lastFile.lineStarts.append(start);
+    return lastFile;
+}
+
+// `a!.b(c!)` is `a.b(c)` once the types are gone.
+static String withoutNonNullMarks(std::span<const Latin1Character> text)
+{
+    Vector<Latin1Character> kept;
+    Latin1Character quote = 0;
+    for (size_t at = 0; at < text.size(); ++at) {
+        Latin1Character character = text[at];
+        if (quote) {
+            if (character == '\\' && at + 1 < text.size())
+                kept.append(text[at++]);
+            else if (character == quote)
+                quote = 0;
+        } else if (isQuote(character))
+            quote = character;
+        else if (character == '!' && at && (isPartOfName(text[at - 1]) || text[at - 1] == ')' || text[at - 1] == ']') && (at + 1 == text.size() || text[at + 1] != '='))
+            continue;
+        kept.append(text[at]);
+    }
+    return String::fromUTF8(kept.span());
+}
+
+// What the function spells at the place. The text of the function is all there is to go by, so this answers only where the line of the place,
+// or else the whole function, has one such place, or spells each of them alike.
+static String findAt(const PlaceInFunctionText* place, StringView name, FindInText find)
+{
     std::span<const Latin1Character> text = functionSourceBytesOfSource(place->function);
     std::span<const Latin1Character> found;
     WrittenReads reads = WrittenReads::None;
     if (place->line) {
         size_t lineStart = 0;
-        for (unsigned line = 0; line < *place->line && lineStart < text.size(); ++line) {
-            while (lineStart < text.size() && text[lineStart] != '\n')
-                ++lineStart;
-            ++lineStart;
-        }
-        size_t lineEnd = std::min(lineStart, text.size());
-        while (lineEnd < text.size() && text[lineEnd] != '\n')
-            ++lineEnd;
+        for (unsigned line = 0; line < *place->line && lineStart < text.size(); ++line)
+            lineStart = startOfNextLine(text, lineStart);
+        size_t lineEnd = startOfNextLine(text, lineStart);
+        lineEnd -= lineEnd > lineStart && text[lineEnd - 1] == '\n';
         if (lineStart < lineEnd)
-            reads = find(text, lineStart, lineEnd, name, found);
+            reads = find(text, lineStart, lineEnd, name, std::nullopt, found);
     }
     // Types that took lines of their own are not in the text, so the line may be another.
     if (reads == WrittenReads::None)
-        reads = find(text, 0, text.size(), name, found);
-    return reads == WrittenReads::Same ? String::fromUTF8(found) : String();
+        reads = find(text, 0, text.size(), name, std::nullopt, found);
+    if (reads == WrittenReads::Same)
+        return String::fromUTF8(found);
+
+    // The file says which line and column it is.
+    if (!place->module || !place->position.line || !place->position.column)
+        return { };
+    const SourceFile& file = sourceFileOf(place->module);
+    if (place->position.line > file.lineStarts.size())
+        return { };
+    text = byteCast<Latin1Character>(file.bytes.span());
+    size_t lineStart = file.lineStarts[place->position.line - 1];
+    size_t lineEnd = place->position.line < file.lineStarts.size() ? file.lineStarts[place->position.line] - 1 : text.size();
+    if (lineStart >= lineEnd)
+        return { };
+    found = { };
+    reads = find(text, lineStart, lineEnd, name, lineStart + place->position.column - 1, found);
+    if (reads == WrittenReads::None)
+        reads = find(text, lineStart, lineEnd, name, std::nullopt, found);
+    return reads == WrittenReads::Same ? withoutNonNullMarks(found) : String();
+}
+
+// What the function on top spells at the place that failed. A place asks for one name in one way, so its text is looked through once, however often it throws.
+static String findOnTop(VM& vm, StringView name, FindInText find)
+{
+    struct Answer {
+        FindInText find { nullptr };
+        String name;
+        String quote;
+    };
+    static thread_local UncheckedKeyHashMap<const void*, Answer> answers;
+    if (name.isEmpty() || !name.containsOnlyASCII())
+        return { };
+    std::optional<PlaceInFunctionText> place = placeOnTopInFunctionText(vm);
+    if (!place || !place->address)
+        return { };
+    Answer& answer = answers.add(place->address, Answer { }).iterator->value;
+    if (answer.find != find || StringView(answer.name) != name)
+        answer = { find, name.toString(), findAt(&*place, name, find) };
+    return answer.quote;
 }
 
 // Each place in `text[from, to)` that calls `name`, which is the callee as it is written or the last of its names. `found` holds the call with its arguments, and `new` in front of it.
-static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::span<const Latin1Character>& found)
+static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
-    for (size_t at = from; at + name.length() < to; ++at) {
-        if (text[at + name.length()] != '(' || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
+    for (size_t at = from; at + name.length() + 1 < to; ++at) {
+        size_t open = at + name.length() + (text[at + name.length()] == '!');
+        if (text[open] != '(' || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
             continue;
         if (!equal(name, text.subspan(at, name.length())))
             continue;
@@ -618,11 +703,13 @@ static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size
                 return WrittenReads::Differ;
             start = *path;
         }
-        std::optional<size_t> close = findClosingBracket(text, at + name.length());
+        std::optional<size_t> close = findClosingBracket(text, open);
         if (!close)
             return WrittenReads::Differ;
         if (start >= 4 && text[start - 4] == 'n' && text[start - 3] == 'e' && text[start - 2] == 'w' && text[start - 1] == ' ' && (start == 4 || !isPartOfName(text[start - 5])))
             start -= 4;
+        if (within && (*within < start || *within > *close))
+            continue;
         std::span<const Latin1Character> call = text.subspan(start, *close + 1 - start);
         if (found.data() && !equalSpans(found, call))
             return WrittenReads::Differ;

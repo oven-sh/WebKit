@@ -72,6 +72,33 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
     m_rememberedByStatementOfThisTurn = { };
 }
 
+void ValueFlowRuleContext::keepSetsHeld(ValueSets& sets) const
+{
+    for (const PrototypesAtCreation& remembered : m_prototypesAtCreationOfSets) {
+        sets.keep(remembered.objects);
+        sets.keep(remembered.prototypes);
+    }
+    sets.keep(m_closuresTakingReceiver.closures);
+    sets.keep(m_objectsToldApart.objects);
+    sets.keep(m_objectsToldApart.answer.rest);
+    for (ValueSetID group : m_objectsToldApart.answer.groups)
+        sets.keep(group);
+    sets.keep(m_rememberedOnGeneralWay);
+    sets.keep(m_rememberedByStatementOfThisTurn);
+    for (ValueSetID remembered : m_rememberedByThread)
+        sets.keep(remembered);
+    for (ValueSetID constant : m_constantsOfThisTurn.values())
+        sets.keep(constant);
+    for (ValueSetID seen : m_sourcesOfCopiesSeenFrom.values())
+        sets.keep(seen);
+    for (const auto& operands : m_narrowedOperandsOfRun) {
+        for (const ValueFlowOperand& operand : *operands) {
+            sets.keep(operand.constant);
+            sets.keep(operand.mask);
+        }
+    }
+}
+
 const ValueFlowNodeKey& ValueFlowRuleContext::keyOfStatement() const { return m_keyOfStatementOfThisTurn ? *m_keyOfStatementOfThisTurn : m_solver.keyOf(m_statement); }
 
 void ValueFlowRuleContext::leaveOutWhatIsKnown()
@@ -230,8 +257,17 @@ ValueFlowNodeID ValueFlowRuleContext::instanceOf(ValueFlowNodeID node, ValueFlow
 ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeRead(ValueFlowNodeID node)
 {
     if (!node || node.index() < m_firstNodeOfInstance || node.index() >= m_endOfNodesOfInstance)
-        return node;
+        return m_markerEntered ? instanceGivingBack(node) : node;
     return instanceOf(node, m_markerOfRun);
+}
+
+// What a call gets back from the instance that it has entered: the node that all instances share holds what any of them returns.
+NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::instanceGivingBack(ValueFlowNodeID node)
+{
+    if (!node || !m_instancedFunctions->holdsNode(node))
+        return node;
+    makeInstance(*m_instancedFunctions->find(nodes().functionOf(node)), m_markerEntered);
+    return instanceOf(node, m_markerEntered);
 }
 
 ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeHandedTo(ValueFlowNodeID node)

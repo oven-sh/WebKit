@@ -83,6 +83,8 @@ public:
     static constexpr unsigned numberOfPositions = 16;
 
 private:
+    friend struct CallSiteCacheSlots;
+
     size_t primaryIndex(const void* address) const { return (std::bit_cast<uintptr_t>(address) >> 2) & m_indexMask; }
     size_t secondaryIndex(const void* address) const { return std::bit_cast<uintptr_t>(address) * 0x9e3779b97f4a7c15ull >> m_secondaryIndexShift; }
 
@@ -101,6 +103,7 @@ private:
     unsigned m_secondaryIndexShift { 63 };
     bool m_evictsSecondary { false };
     size_t m_numberOfFilledEntries { 0 };
+    size_t m_numberOfEvictions { 0 };
     FixedVector<Entry> m_entries;
     InlineFrameReader m_inlineFrames;
     std::array<Position, numberOfPositions> m_positions;

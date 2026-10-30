@@ -158,6 +158,7 @@ private:
     void use(BuiltinID builtin, OptionSet<BuiltinUse> uses) { m_context.use(builtin, uses); }
     void noteTestOfMembers(const ValueFlowOperand& object, const HeapKey&);
     ValueFlowOperand withoutProxiesAskedByTheirTraps(const ValueFlowOperand& object);
+    ValueFlowObjectID nameThatGetTrapsAreFollowedFor(ClimbingSet traps, const HeapKey&);
     void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result, const ValueFlowOperand* stored = nullptr);
     void readThroughProxies(ClimbingSet proxies, const HeapKey&, ValueFlowNodeID result);
     ValueFlowOperand withoutProxiesEnumeratedByTheirTraps(const ValueFlowOperand& object);

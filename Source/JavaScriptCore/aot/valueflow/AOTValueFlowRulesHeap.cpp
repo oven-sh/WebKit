@@ -100,6 +100,23 @@ ValueFlowOperand HeapRule::withoutProxiesAskedByTheirTraps(const ValueFlowOperan
     return rest;
 }
 
+// A trap that is followed once for each name it is asked for.
+ValueFlowObjectID HeapRule::nameThatGetTrapsAreFollowedFor(ClimbingSet traps, const HeapKey& key)
+{
+    const ValueFlowInstancedFunctions* instanced = m_context.instancedFunctions();
+    if (!instanced || key.keyClass != HeapKeyClass::Name || !m_context.meet(traps, instanced->closures()))
+        return { };
+    ValueFlowObjectID name = m_universe.keyConstant(key.name);
+    bool hasInstances = true;
+    m_context.forEachMember(m_context.restrict(traps, instanced->closures()), [&](ValueFlowObjectID closure) {
+        FunctionID function = m_universe.closureFunction(closure);
+        ClimbingSet names = m_context.valueOf(m_context.markersOf(function));
+        hasInstances &= instanced->find(function)->positionOfKey == ValueFlowInstancedFunctions::positionOfKeyInGetTrap
+            && (m_context.contains(names, name) || m_context.numberOfMembers(names) < ValueFlowInstancedFunctions::mostInstances);
+    });
+    return hasInstances ? name : ValueFlowObjectID();
+}
+
 void HeapRule::askProxiesByTheirTrap(const HeapKey& key, BuiltinName trap, ValueFlowNodeID result, const ValueFlowOperand* stored)
 {
     ClimbingSet proxies = std::exchange(m_proxiesAskedByTheirTraps, { });
@@ -117,7 +134,10 @@ void HeapRule::askProxiesByTheirTrap(const HeapKey& key, BuiltinName trap, Value
     if (stored)
         arguments.append(stored->node && !stored->constant && !stored->mask ? stored->node : m_context.holding(m_context.valueOf(*stored)));
     arguments.append(proxiesAsElsewhere);
-    callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments.span(), .result = result });
+    {
+        ValueFlowRuleContext::InstanceEntered instance(m_context, trap == BuiltinNames::get ? nameThatGetTrapsAreFollowedFor(traps, key) : ValueFlowObjectID());
+        callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments.span(), .result = result });
+    }
     // A handler that may lack the trap, now or for a while, hands the operation on: the target is asked then, as if the program had named it. A lookup that may find nothing answers undefined.
     if (!m_context.meet(traps, ValueSets::complement(m_context.maker().unite(m_universe.closures(), m_universe.builtinFunctions()))))
         return;
@@ -156,7 +176,10 @@ void HeapRule::readThroughProxies(ClimbingSet proxies, const HeapKey& key, Value
         m_context.holding(ClimbingSet(key.keyClass == HeapKeyClass::Name ? only(m_universe.keyConstant(key.name)) : m_tables.stringAndSymbolKinds())),
         proxiesAsElsewhere,
     };
-    callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments, .result = result });
+    {
+        ValueFlowRuleContext::InstanceEntered instance(m_context, nameThatGetTrapsAreFollowedFor(traps, key));
+        callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments, .result = result });
+    }
     if (!m_context.meet(traps, ValueSets::complement(m_context.maker().unite(m_universe.closures(), m_universe.builtinFunctions()))))
         return;
     // A target that is a proxy itself would be asked for the first one.

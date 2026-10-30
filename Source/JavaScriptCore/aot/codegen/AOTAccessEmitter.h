@@ -28,7 +28,6 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
-    void generateGetCachedValue(const ValueContext&);
     void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
     void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
     void generateValidateAnswerOfGetTrap(const ValueContext&);

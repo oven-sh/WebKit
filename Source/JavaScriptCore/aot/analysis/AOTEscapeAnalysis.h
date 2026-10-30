@@ -209,6 +209,7 @@ class EscapeAnalysis {
 public:
     explicit EscapeAnalysis(FunctionAnalyses&);
 
+    // Then there is no object, and every value may be anything: whoever does not ask finds nothing to build on.
     bool gaveUp() const { return m_gaveUp; }
 
     // The body makes no object, so every object is an entry parameter, and its caller may have done anything with it before the function was entered.

@@ -84,13 +84,6 @@ struct FlowFindings {
     size_t libraryFunctionsLackedCount { 0 };
     const Wire::ReplacedExportRecord* exportsThatSpiesReplace { nullptr };
     size_t exportsThatSpiesReplaceCount { 0 };
-    const Wire::ReplacedBuiltinRecord* builtinsThatTestsReplace { nullptr };
-    size_t builtinsThatTestsReplaceCount { 0 };
-    // The ranges of the names lie in `textOfNames`.
-    const Wire::AddedNameRecord* namesThatTestsAdd { nullptr };
-    size_t namesThatTestsAddCount { 0 };
-    const uint8_t* textOfNames { nullptr };
-    size_t textOfNamesSize { 0 };
 };
 
 // The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.

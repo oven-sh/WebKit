@@ -250,6 +250,7 @@ private:
     std::span<const NarrowedCopy> narrowedCopiesOf(ValueID subject) const;
     bool takeWork(uint64_t amount = 1);
     void giveUp();
+    void forgetObjects();
     void forgetAllButObjects();
 
     void findObjects();
@@ -672,6 +673,8 @@ PointsToResults PointsToSolver::solve()
         collectContents();
     }
     takeSets();
+    if (m_results.gaveUp)
+        forgetObjects();
     m_results.work = m_work;
     m_results.answersFromTypes = WTF::move(m_answersFromTypes);
     return WTF::move(m_results);
@@ -695,7 +698,16 @@ void PointsToSolver::giveUp()
     forgetAllButObjects();
 }
 
-// Once more when the loop has ended: the uses of the value at which it gave up are looked at to the last one.
+// Nothing is known about any object, so there is none to ask about: a list of uses without entries reads as an object that nobody writes to and nobody keeps.
+// `["run", ...(on ? ["--verbose"] : []), name]` in a long function became one list for all calls that way.
+void PointsToSolver::forgetObjects()
+{
+    m_results.objects.clear();
+    m_results.sets.clear();
+    m_results.setOfValue.fill(ValueSetID());
+}
+
+// The objects stay until the solver is through: the uses of the value at which it gave up are looked at to the last one, so this runs once more when the loop has ended.
 void PointsToSolver::forgetAllButObjects()
 {
     m_valuesWithArrivals.clearAll();

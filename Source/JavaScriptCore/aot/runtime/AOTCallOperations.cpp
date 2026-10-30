@@ -595,7 +595,7 @@ std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM& vm)
     std::optional<unsigned> line;
     if (place && definition && place->source == definition->source && place->lineColumn.line >= definition->lineColumn.line)
         line = place->lineColumn.line - definition->lineColumn.line;
-    return PlaceInFunctionText { description.sourceFunction(), line };
+    return PlaceInFunctionText { callSite.address, description.sourceFunction(), line, place ? place->source : ModuleID(), place ? place->lineColumn : LineColumn() };
 }
 
 StringView nameOfConstructorThatRunsOnTop(VM& vm)

@@ -41,12 +41,7 @@ function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
 # CHECK-LABEL: function f2
 # CHECK-NEXT: escape:
 # CHECK-NEXT: gave up: true
-# CHECK-NEXT: objects: 65
-# CHECK: o0 state: Unknown
-# CHECK-NEXT: o0 reasons: [LimitReached]
-# CHECK: o0 aliases: [v0]
-# CHECK: o64 state: Unknown
-# CHECK-NEXT: o64 reasons: [LimitReached]
+# CHECK-NEXT: objects: 0
 function f3 name="fiveCopiesFit" results=[{type=boolean}] {
 # REPEAT: i = 0..64
     v%(i) = NewObject layout=L0 fields=[]

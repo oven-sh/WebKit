@@ -19,6 +19,7 @@
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
+#include "Options.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/CPUTime.h>
@@ -6480,6 +6481,11 @@ void ValueFlowSolver::solve()
     findStatementsWithLongRowsBehindThem();
 
     Vector<ValueSetID> heldAtRest;
+    m_sets.keepSetsMadeSoFar();
+    m_bytesOfSetsBehindLastFreeing = m_sets.bytesOfSetsMade();
+    if (m_input.universe)
+        m_input.universe->builtinTables().heap().keepEverySetMadeFromNowOn();
+    m_freesSetsEveryRound = Options::freeAOTFlowSetsEveryRound();
     Vector<OptionSet<BuiltinUse>> usesAtRest;
     uint32_t functionsReachedAtRest = 0;
 
@@ -6571,6 +6577,8 @@ void ValueFlowSolver::solve()
             static_cast<uint32_t>(m_graph.counters().evaluations - graphBefore.evaluations),
         });
         giveBackRoomOfLargerRounds(m_roundsDone.last().statementRuns + static_cast<uint64_t>(m_roundsDone.last().edgesAdded) + m_roundsDone.last().evaluations);
+        if (heldAtRest.isEmpty())
+            freeSetsThatNobodyHolds();
 
         bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_statementsThatRunOften.isEmpty() && m_dueBehindLongRows.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
         if (ValueSetID proxies = isQuiet ? followedProxiesThatMoreMayBeDoneTo() : ValueSets::nothing; proxies != ValueSets::nothing) {
@@ -7246,6 +7254,143 @@ void ValueFlowSolver::forEachListOfOneRound(auto& solver, NOESCAPE const auto& f
         visitEach(sorted, thread->nodesReadOfShard);
         visitEach(sorted, thread->nodesAskedWhetherEmptyOfShard);
     }
+}
+
+void ValueFlowSolver::freeSetsThatNobodyHolds()
+{
+    AOT_THRESHOLD(size_t, fewestBytesOfSetsMadeBetweenFreeings, 32 * MB);
+    size_t bytesInUse = m_sets.bytesOfSetsMade() - m_sets.bytesOfSetsFree();
+    if (!m_freesSetsEveryRound && bytesInUse < std::max(m_bytesOfSetsBehindLastFreeing + m_bytesOfSetsBehindLastFreeing / 2, m_bytesOfSetsBehindLastFreeing + fewestBytesOfSetsMadeBetweenFreeings))
+        return;
+    MonotonicTime start = MonotonicTime::now();
+    m_sets.willFreeSets();
+    for (const std::unique_ptr<ValueSetMaker>& maker : m_makers)
+        maker->forgetWhatIsRemembered();
+
+    auto keep = [&](ValueSetID set) {
+        m_sets.keep(set);
+    };
+    auto keepEach = [&](const auto& sets) {
+        for (ValueSetID set : sets)
+            keep(set);
+    };
+    auto keepSetsOfNodes = [&](const auto& list) {
+        for (const auto& entry : list)
+            keep(entry.set);
+    };
+    auto keepInShares = [&](size_t count, NOESCAPE const Invocable<void(size_t)> auto& keepAt) {
+        constexpr size_t perShare = 1 << 14;
+        forEachIndexInParallel(m_loops, (count + perShare - 1) / perShare, [&](unsigned share) {
+            for (size_t index = share * perShare; index < std::min(count, (share + 1) * perShare); ++index)
+                keepAt(index);
+        });
+    };
+    m_graph.keepSetsHeld(m_sets);
+    keepInShares(m_madeNodes.size(), [&](size_t index) {
+        keep(m_madeNodes[index].key.set);
+    });
+    keepInShares(m_seenByReadersOfNode.size(), [&](size_t index) {
+        keep(m_seenByReadersOfNode[index]);
+    });
+    keepInShares(m_rememberedByStatement.size(), [&](size_t index) {
+        keep(m_rememberedByStatement[index]);
+    });
+    forEachIndexInParallel(m_loops, numberOfWatchShards, [&](unsigned index) {
+        const WatchShard& shard = m_watchShards[index];
+        for (const Watch& watch : shard.watches)
+            keep(watch.within);
+        for (const WatchedNode& node : shard.watchedNodes)
+            keep(node.seen);
+        for (uint32_t set : shard.numberOfSetWatchedForCover.keys())
+            keep(ValueSetID(set));
+    });
+    auto keepNodesOfName = [&](const NodesOfName& nodes) {
+        keepSetsOfNodes(nodes.ofFewObjects);
+        keepSetsOfNodes(nodes.ofManyObjects);
+        keepSetsOfNodes(nodes.ofVeryManyObjects);
+    };
+    keepInShares(m_names.size(), [&](size_t index) {
+        keep(m_names[index].holders);
+        keepNodesOfName(m_names[index].read);
+        keepNodesOfName(m_names[index].written);
+    });
+    for (const KindOfNames& kind : m_kindsOfNames) {
+        keepNodesOfName(kind.read);
+        keepNodesOfName(kind.written);
+    }
+    for (const LinkShard& shard : m_linkShards) {
+        for (const PartOfNameWatched& part : shard.partsWatched)
+            keep(part.within);
+        for (const LinkShard::NameWatched& watched : shard.namesWatchedInRound)
+            keep(watched.within);
+        for (const auto& written : shard.writtenUnderWatchedNames)
+            keep(written.second);
+        for (const Linked::LongList& list : shard.linked.longLists)
+            keep(list.node.set);
+    }
+    for (const auto* toLink : { &m_readToLink, &m_writtenToLink, &m_readToInsert }) {
+        for (const NodeToLink& node : *toLink)
+            keep(node.node.set);
+    }
+    for (const NodesOfManyObjects& nodes : m_nodesOfManyObjects) {
+        for (const Vector<ValueSetID>& cells : nodes.cells.values())
+            keepEach(cells);
+    }
+    for (const auto& shown : m_valuesShownToStatement.values())
+        keepSetsOfNodes(shown);
+    for (const Covering& covering : m_coverings) {
+        keep(covering.objectsThatMayBeCovered);
+        keep(covering.allButCovered);
+    }
+    for (const KindThatCoversKeys& kind : m_kindsThatCoverKeys)
+        keep(kind.allButKeys);
+    keepSetsOfNodes(m_writtenUnderNamesOfReads.span());
+    for (const auto* lists : { &m_listedWithCoveredMembers, &m_functionsOfEngineListed }) {
+        for (const Vector<ValueFlowNodeSet>& list : *lists)
+            keepSetsOfNodes(list);
+    }
+    for (const auto& entry : m_familyObjectsOfMask) {
+        keep(ValueSetID(entry.key));
+        keep(entry.value);
+    }
+    for (uint32_t set : m_isTooLarge.keys())
+        keep(ValueSetID(set));
+    keepEach(m_closuresFollowedToConstruction.values());
+    keepEach(m_uncoveredAtLastReaderWake);
+    keepEach(m_seenByWatchersOfObjectsWithRareWrite);
+    for (ValueSetID set : { m_seenByWatchersOfObjectsThatAreNotPlain, m_seenByWatchersOfObjectsWrittenUnderUnknownKey, m_seenByWatchersOfEscaped, m_seenByWatchersOfLost, m_takenByRetiredNodes, m_keptOutOfNodesMadeForUnknownObject,
+        m_declaredCallbackArguments, m_objectsThatPlaceholdersMayCover, m_objectsAlwaysFollowed, m_objectsLookedForBesideUnknownObject, m_allButMarks, m_objectsSaidToBeSomething, m_objectsOfProgram, m_untrackedObjectAlone })
+        keep(set);
+    for (const std::unique_ptr<Thread>& thread : m_threads) {
+        thread->context.keepSetsHeld(m_sets);
+        const ValueFlowRoundLog& log = thread->log;
+        for (const ValueFlowRoundLog::MadeNodes& made : log.made)
+            keep(made.key.set);
+        for (const auto& remembered : log.rememberedByStatementsRunWhereMade)
+            keep(remembered.second);
+        keepSetsOfNodes(log.valuesShown);
+        keepSetsOfNodes(log.partsWatched);
+        for (const auto& watched : log.namesWatched)
+            keep(watched.within);
+        for (const auto& parts : thread->partsWatchedOfShard) {
+            for (const Thread::PartWatched& part : parts)
+                keep(part.within);
+        }
+        for (const Thread::NameWatched& watched : thread->namesWatched)
+            keep(watched.within);
+    }
+    if (m_input.universe) {
+        m_input.universe->keepSetsRemembered(m_sets);
+        m_input.universe->builtinTables().heap().keepSetsHeld();
+    }
+
+    forEachIndexInParallel(m_loops, ValueSets::sharesOfSetsToFree, [&](unsigned share) {
+        m_sets.freeShareOfSets(share);
+    });
+    m_sets.didFreeSets();
+    m_bytesOfSetsBehindLastFreeing = m_sets.bytesOfSetsMade() - m_sets.bytesOfSetsFree();
+    if (m_input.build && m_input.build->options().logging.logsPhaseTimes)
+        dataLogLn("AOT flow sets freed | round ", m_counters.rounds, " | in use ", bytesInUse / KB, " KB | behind it ", m_bytesOfSetsBehindLastFreeing / KB, " KB | ", (MonotonicTime::now() - start).milliseconds(), " ms");
 }
 
 void ValueFlowSolver::giveBackRoomOfLargerRounds(uint64_t sizeOfRound)

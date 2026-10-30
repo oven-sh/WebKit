@@ -9,6 +9,7 @@ aot/builtins/AOTBufferBuiltinEmitterAtomics.cpp
 aot/builtins/AOTBuiltinCallEmitterNumbers.cpp
 aot/builtins/AOTBuiltinFamilyEmitter.cpp
 aot/builtins/AOTBuiltinTableDescription.cpp
+aot/builtins/AOTBuiltinTableOfBuild.cpp
 aot/builtins/AOTBuiltinTableValidation.cpp
 aot/builtins/AOTDateBuiltinEmitter.cpp
 aot/builtins/AOTEngineIntrinsicEmitter.cpp

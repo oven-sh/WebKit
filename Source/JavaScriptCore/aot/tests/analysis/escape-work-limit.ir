@@ -1,4 +1,5 @@
-# Past the work limit every object of the one function is unknown, and the functions beside it are analyzed
+# Past the work limit the one function has no object that anybody could ask about, and the functions beside it are analyzed.
+# A list of uses without entries would read as an object that nobody writes to.
 # FORM: Prepared
 # OPTIONS: limit=MaxEscapeAnalysisWork:5
 # RUN: analyses escape
@@ -18,21 +19,7 @@ function f0 name="fiveObjects" results=[{type=boolean}] {
 # CHECK-LABEL: function f0
 # CHECK-NEXT: escape:
 # CHECK-NEXT: gave up: true
-# CHECK-NEXT: objects: 5
-# CHECK-NEXT: o0 definition: v0
-# CHECK-NEXT: o0 kind: Allocation
-# CHECK-NEXT: o0 state: Unknown
-# CHECK-NEXT: o0 reasons: [LimitReached]
-# CHECK: o0 uses: all
-# CHECK-NEXT: o0 live instances: Unknown
-# REPEAT: i = 1..4
-# CHECK: o%(i) definition: v%(i)
-# CHECK-NEXT: o%(i) kind: Allocation
-# CHECK-NEXT: o%(i) state: Unknown
-# CHECK-NEXT: o%(i) reasons: [LimitReached]
-# END REPEAT
-# CHECK: o4 uses: all
-# CHECK-NEXT: o4 live instances: Unknown
+# CHECK-NEXT: objects: 0
 function f1 name="fourObjects" results=[{type=boolean}] {
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L0 fields=[]

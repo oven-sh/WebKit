@@ -260,14 +260,26 @@ private:
             return false;
         DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
         Value* comparison = condition.value->foldIdentity();
-        std::optional<Opcode> inverted = invertedRelation(comparison->opcode());
-        if (!inverted || !comparison->child(0)->type().isInt())
+        // `while (n)`, `n !== 0` and, of what is never negative, `n > 0` all arrive as a branch on the number itself: it is above zero, read without a sign.
+        bool branchesOnNumber = !invertedRelation(comparison->opcode()) && comparison->type().isInt() && (comparison->opcode() == Phi || comparison->opcode() == Add);
+        std::array<Value*, 2> operands;
+        if (branchesOnNumber) {
+            Value* zero = m_proc.addIntConstant(comparison->origin(), comparison->type(), 0);
+            plan.preHeader->appendNonTerminal(zero);
+            operands = { comparison, zero };
+        } else if (comparison->numChildren() == 2)
+            operands = { comparison->child(0), comparison->child(1) };
+        else
             return false;
-        Opcode relation = firstStays == condition.isNonZero ? comparison->opcode() : *inverted;
+        Opcode opcode = branchesOnNumber ? Above : comparison->opcode();
+        std::optional<Opcode> inverted = invertedRelation(opcode);
+        if (!inverted || !operands[0]->type().isInt())
+            return false;
+        Opcode relation = firstStays == condition.isNonZero ? opcode : *inverted;
 
         for (unsigned testedIndex = 0; testedIndex < 2; ++testedIndex) {
-            Value* tested = comparison->child(testedIndex)->foldIdentity();
-            Value* bound = comparison->child(1 - testedIndex)->foldIdentity();
+            Value* tested = operands[testedIndex]->foldIdentity();
+            Value* bound = operands[1 - testedIndex]->foldIdentity();
             if (!bound->hasInt() && loops.belongsTo(bound->owner, loop))
                 continue;
             Value* phi = tested;
@@ -288,7 +300,7 @@ private:
             plan.stayingSuccessorIndex = firstStays ? 0 : 1;
             plan.counter = counter->phi;
             plan.tested = tested;
-            plan.testedOperandOfBranch = block->last()->child(0) == comparison ? std::optional<unsigned>(testedIndex) : std::nullopt;
+            plan.testedOperandOfBranch = block->last()->child(0) == comparison && !branchesOnNumber ? std::optional<unsigned>(testedIndex) : std::nullopt;
             plan.testsCounterBeforeStep = tested == counter->phi;
             plan.start = counter->start;
             plan.bound = bound;

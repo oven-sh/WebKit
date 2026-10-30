@@ -1594,9 +1594,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;
-        // Some rules ask for this lookup only for a while. Who still asks shows once all else is at rest.
-        bool handsOutMembers = key.keyClass != HeapKeyClass::Name || isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest);
-        forEachMemberUnder(handsOutMembers ? holdersFoundThroughUnknownObject(key) : ClimbingSet(), key, [&](BuiltinID member, ModuleID module) {
+        forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID module) {
             if (!isHandedOutThroughPlaceholder(member, key))
                 return;
             BuiltinKind kind = m_builtins.at(member).kind;
@@ -1613,8 +1611,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
-        if (handsOutMembers)
-            runGettersFoundThroughUnknownObject(key);
+        runGettersFoundThroughUnknownObject(key);
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())

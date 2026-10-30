@@ -287,7 +287,7 @@ void DerivedFunctions::PhaseState::confirm(uint32_t requestedOrdinal)
     }
 }
 
-DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
+NEVER_INLINE DerivedFunctions::Entry& DerivedFunctions::entryOf(FunctionID id) const
 {
     RELEASE_ASSERT(m_phase && contains(id) && ordinalOf(id) < m_phase->size());
     return m_phase->entries[ordinalOf(id)];

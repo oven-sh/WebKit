@@ -447,16 +447,21 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
     if (unbuilt.isEmpty())
         return;
 
+    // The objects of the state may be as many as the function has closures, and a suspension reaches a few.
     BitVector isReached;
+    Vector<VirtualObjectID, 8> reached;
     while (!unbuilt.isEmpty()) {
         VirtualObjectID object = unbuilt.takeLast();
         if (!isReached.add(object.index()))
             continue;
         if (const ObjectState* state = m_state.find(object)) {
+            if (!isBuilt.get(object.index()))
+                reached.append(object);
             for (const HeldObject& member : state->heldObjects)
                 unbuilt.append(member.object);
         }
     }
+    AOT::sort(reached);
 
     Function& rewritten = cursor().builder().function();
     BitVector isListed;
@@ -466,16 +471,15 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
         if (member && !isUnbuilt(objectOf(member)) && mayHoldObject(program().typeOf(rewritten, member)) && !isListed.set(member.index()))
             held.append(member);
     };
-    for (const ObjectEntry& entry : m_state.objects) {
-        if (isBuilt.get(entry.object.index()) || !isReached.get(entry.object.index()))
-            continue;
-        const ObjectValues* members = values().find(entry.object);
+    for (VirtualObjectID object : reached) {
+        const ObjectValues* members = values().find(object);
         if (!members)
             continue;
-        if (entry.state.hasCell())
+        const ObjectState& state = *m_state.find(object);
+        if (state.hasCell())
             hold(members->cell);
         // A member that is built holds its own members.
-        if (!entry.state.isCell())
+        if (!state.isCell())
             std::ranges::for_each(members->fields, hold);
     }
     setHeldOperands(rewritten.edit(suspension), held.span());

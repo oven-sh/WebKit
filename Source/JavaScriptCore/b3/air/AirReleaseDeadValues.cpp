@@ -20,6 +20,9 @@
 
 namespace JSC { namespace B3 { namespace Air {
 
+// The phase runs in few functions. Its own size counts for more than its speed.
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+
 namespace {
 
 class DeadValueReleaser {
@@ -436,6 +439,8 @@ void releaseDeadValues(Code& code, const StackColoring& coloring)
     PhaseScope phaseScope(code, "releaseDeadValues"_s);
     DeadValueReleaser(code, coloring).run();
 }
+
+#pragma clang attribute pop
 
 } } } // namespace JSC::B3::Air
 

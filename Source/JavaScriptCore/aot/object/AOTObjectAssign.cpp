@@ -507,7 +507,7 @@ bool FieldStoreRun::acceptsObject(AssignmentPlan::FieldStore& store, JSObject* o
     const RuntimeLayoutTable& layouts = m_state.objects->layouts;
     if (!layouts.fieldAccepts(*store.to, object))
         return false;
-    bool acceptsEveryObjectOfStructure = std::ranges::any_of(layouts.typeOf(*store.to).testsOfMoreThanOneFunction(), [&](const RuntimeCellTest& test) {
+    bool acceptsEveryObjectOfStructure = std::ranges::any_of(layouts.typeOf(*store.to).cellTests(), [&](const RuntimeCellTest& test) {
         return isDecidedByStructure(test, object) && layouts.cellPassesTest(test, object);
     });
     if (acceptsEveryObjectOfStructure) {

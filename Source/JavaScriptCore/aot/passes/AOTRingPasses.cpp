@@ -978,9 +978,12 @@ struct DeadCodeEliminator {
 
     bool staysUnused(ValueID id, const Value& value, const OpcodeRules& rules, Position position)
     {
-        // It keeps nothing alive: there is nothing to let go of where nothing else reads the value.
-        if (value.opcode == Opcode::ReleaseHint)
-            return !waitsFor(value.valueOperand(), id);
+        // It keeps nothing alive: there is nothing to let go of where nothing else reads the value, or where the value names no cell.
+        if (value.opcode == Opcode::ReleaseHint) {
+            const Type& released = context.program.typeOf(function, value.valueOperand());
+            bool mayNameCell = !released.isJavaScriptValue() || released.hasObjects() || released.primitives & cellPrimitives;
+            return mayNameCell && !waitsFor(value.valueOperand(), id);
+        }
 
         switch (rules.unusedValue) {
         case UnusedValueRule::IsRemoved:
@@ -2563,6 +2566,11 @@ struct ControlFlowSimplifier {
     Vector<ValueID, 8> replacedParameters { };
     BitVector throwingUncoveredBlocks { };
     const UseLists* useListsBeforeMerging { nullptr };
+    const Dominators* dominatorsBeforeMerging { nullptr };
+    // For hasUsesReachableFromHandler(), from one question to the next.
+    Vector<uint32_t> stampOfBlock { };
+    uint32_t lastStamp { 0 };
+    std::optional<BitVector> blocksLeadingToEdgesBack { };
     size_t numberOfChanges { 0 };
     bool onlyJoinedBlocks { !analyses.cfg().hasHandlers() };
     bool replacedParameterByKnownValue { false };
@@ -3324,33 +3332,86 @@ struct ControlFlowSimplifier {
         return block.handler->block == successor.handler->block && std::ranges::equal(block.handler->arguments, successor.handler->arguments, [&](ValueID argument, ValueID successorArgument) { return resolve(argument) == resolve(successorArgument); });
     }
 
-    bool hasUsesReachableFromHandler(const CFG& cfg, BlockID id, BlockID next) const
+    // From any other block every way leads to blocks that come later in reverse post-order, and to no others.
+    const BitVector& findBlocksLeadingToEdgesBack(const CFG& cfg)
     {
-        RELEASE_ASSERT(useListsBeforeMerging);
+        if (!blocksLeadingToEdgesBack) {
+            blocksLeadingToEdgesBack.emplace(cfg.numNodes());
+            std::span<const BlockID> order = cfg.reversePostOrder();
+            for (size_t index = cfg.hasCycle() ? order.size() : 0; index--;) {
+                bool leadsBack = std::ranges::any_of(cfg.successors(order[index]), [&](BlockID successor) {
+                    return cfg.reversePostOrderIndex(successor) <= index || blocksLeadingToEdgesBack->quickGet(successor.index());
+                });
+                if (leadsBack)
+                    blocksLeadingToEdgesBack->quickSet(order[index].index());
+            }
+        }
+        return *blocksLeadingToEdgesBack;
+    }
+
+    // Whether control that enters the handler of `next` can come to a use of what `id` defines without coming through `id` again.
+    // A handler may lead back into the function, as that of a call whose result is awaited does. So the walk from it leaves out whatever lies behind the last use, and it ends
+    // at a block through which every way to that use leads: a function of n such calls would otherwise be walked to its end n times.
+    bool hasUsesReachableFromHandler(const CFG& cfg, BlockID id, BlockID next)
+    {
+        RELEASE_ASSERT(useListsBeforeMerging && dominatorsBeforeMerging);
         const Block& block = function.at(id);
         const Block& successor = function.at(next);
-        BitVector blocksWithUse(cfg.numNodes());
-        bool hasUse = false;
+        if (stampOfBlock.isEmpty())
+            stampOfBlock.fill(0, cfg.numNodes());
+        const uint32_t holdsUse = ++lastStamp;
+        const uint32_t wasVisited = ++lastStamp;
+        BlockID lastBlockWithUse;
         auto isArgumentOfHandler = [&](ValueID definition) {
             bool isArgument = false;
             for (const Use& use : useListsBeforeMerging->usesOf(definition)) {
                 isArgument |= use.kind == Use::Kind::HandlerArgument && use.block == next;
-                blocksWithUse.set(use.block.index());
-                hasUse = true;
+                if (use.block == id || !cfg.isReachable(use.block))
+                    continue;
+                stampOfBlock[use.block.index()] = holdsUse;
+                if (!lastBlockWithUse || cfg.reversePostOrderIndex(use.block) > cfg.reversePostOrderIndex(lastBlockWithUse))
+                    lastBlockWithUse = use.block;
             }
             return isArgument;
         };
         bool isArgument = std::ranges::any_of(block.values, isArgumentOfHandler)
             || std::ranges::any_of(successor.parameters, isArgumentOfHandler)
             || std::ranges::any_of(replacedParameters, [&](ValueID parameter) { return block.values.contains(resolve(parameter)) && isArgumentOfHandler(parameter); });
-        if (isArgument || !hasUse)
+        if (isArgument || !lastBlockWithUse)
             return isArgument;
-        BitVector barrier(cfg.numNodes());
-        barrier.set(id.index());
-        return cfg.reachesAnyOf(successor.handler->block, barrier, blocksWithUse);
+
+        // Every way to a use leads through `id`. So does every way from the handler to one, where the handler can be entered without coming through `id`.
+        const Dominators& dominators = *dominatorsBeforeMerging;
+        BlockID handler = successor.handler->block;
+        if (!dominators.dominates(id, handler))
+            return false;
+        const BitVector& leadsToEdgeBack = findBlocksLeadingToEdgesBack(cfg);
+        const uint32_t indexOfLastUse = cfg.reversePostOrderIndex(lastBlockWithUse);
+        Vector<BlockID, 16> worklist;
+        auto enter = [&](BlockID entered) {
+            uint32_t& stamp = stampOfBlock[entered.index()];
+            if (stamp == holdsUse)
+                return true;
+            if (entered == id || stamp == wasVisited)
+                return false;
+            stamp = wasVisited;
+            if (cfg.reversePostOrderIndex(entered) > indexOfLastUse && !leadsToEdgeBack.quickGet(entered.index()))
+                return false;
+            if (dominators.strictlyDominates(id, entered) && dominators.dominates(entered, lastBlockWithUse))
+                return true;
+            worklist.append(entered);
+            return false;
+        };
+        if (enter(handler))
+            return true;
+        while (!worklist.isEmpty()) {
+            if (std::ranges::any_of(cfg.successors(worklist.takeLast()), enter))
+                return true;
+        }
+        return false;
     }
 
-    HandlerChoice chooseHandler(const CFG& cfg, BlockID id, BlockID next) const
+    HandlerChoice chooseHandler(const CFG& cfg, BlockID id, BlockID next)
     {
         const Block& block = function.at(id);
         const Block& successor = function.at(next);
@@ -3418,8 +3479,10 @@ struct ControlFlowSimplifier {
                 if (!function.at(member).handler && !throwingUncoveredBlocks.get(member.index()) && mayThrowIn(member))
                     throwingUncoveredBlocks.set(member.index());
             }
-            if (!function.at(id).handler && function.at(*next).handler)
+            if (!function.at(id).handler && function.at(*next).handler) {
                 useListsBeforeMerging = &analyses.useLists();
+                dominatorsBeforeMerging = &analyses.dominators();
+            }
         }
         for (BlockID id : cfg.reversePostOrder()) {
             replacedParameters.shrink(0);

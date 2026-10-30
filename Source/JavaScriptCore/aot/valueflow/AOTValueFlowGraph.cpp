@@ -1471,6 +1471,52 @@ void ValueFlowGraph::layPredecessorsInRows()
     });
 }
 
+void ValueFlowGraph::keepSetsHeld(ValueSets& sets)
+{
+    constexpr uint32_t nodesPerShare = 1 << 14;
+    m_team->run((m_numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned) {
+        for (uint32_t node = share * nodesPerShare; node < std::min<uint64_t>(m_numberOfNodes, static_cast<uint64_t>(share + 1) * nodesPerShare); ++node) {
+            sets.keep(m_value[node]);
+            sets.keep(ValueSetID(m_rows[node].set));
+        }
+    });
+    for (const Mask& mask : m_masks) {
+        sets.keep(mask.admitted);
+        sets.keep(mask.familyObjects);
+    }
+    for (const Covering& covering : m_coverings) {
+        sets.keep(covering.listedMembersOfWhole);
+        sets.keep(covering.allButCoverable);
+        sets.keep(ValueSetID(covering.setHeldByCoveredNode));
+    }
+    for (ValueSetID set : { m_lowMembers, m_allButKeptOutOfNodesMadeForPlaceholders, m_objectsWithStandIn, m_stringsWithStandIn, m_placeholders.objectsWithLayoutOfProgram, m_placeholders.closures })
+        sets.keep(set);
+    for (const std::unique_ptr<Worker>& worker : m_workers) {
+        for (ValueSetID set : worker->setsOfLowMembers.values())
+            sets.keep(set);
+        for (const Worker::LatestSetOfLowMembers& latest : worker->latestSetsOfLowMembers)
+            sets.keep(latest.set);
+    }
+    auto keepArrivals = [&](const Arrivals& arrivals) {
+        for (const Arrival& arrival : arrivals.list)
+            sets.keep(ValueSetID(arrival.set));
+    };
+    auto keepMessages = [&](const Vector<Message>& messages) {
+        for (const Message& message : messages)
+            sets.keep(ValueSetID(message.set));
+    };
+    keepArrivals(m_arrivals);
+    for (const Vector<Message>& messages : m_messages)
+        keepMessages(messages);
+    for (const std::unique_ptr<Shard>& shard : m_shards) {
+        keepArrivals(shard->arrivals);
+        for (const auto& messagesOfWave : shard->messages) {
+            for (const Vector<Message>& messages : messagesOfWave)
+                keepMessages(messages);
+        }
+    }
+}
+
 void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
 {
     RELEASE_ASSERT(!m_hasReleasedSolvingState);

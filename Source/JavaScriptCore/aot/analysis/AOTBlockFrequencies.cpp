@@ -255,8 +255,21 @@ static std::pair<BranchSide, BranchSide> findRarerSides(const FrequencyInputs& i
         sideOffUsualPath = BranchSide::Taken;
     else if (test.opcode == Opcode::ToBoolean && isMaskedByConstant(test.operand(0)))
         sideOffUsualPath = BranchSide::Taken;
-    if (condition.isNegated)
-        return { oppositeOf(unlikelySide), oppositeOf(sideOffUsualPath) };
+    if (condition.isNegated) {
+        unlikelySide = oppositeOf(unlikelySide);
+        sideOffUsualPath = oppositeOf(sideOffUsualPath);
+    }
+    // `while (kinds[text[p]] & letter) p++`, `while (text[p] === space) p++`: whoever writes a loop expects it to go round, whatever its test looks like.
+    if (std::optional<unsigned> cycle = inputs.cycles.innermostCycleOf(block)) {
+        bool takenStays = inputs.cycles.forest().contains(*cycle, terminator.taken().block);
+        if (takenStays != inputs.cycles.forest().contains(*cycle, terminator.notTaken().block)) {
+            BranchSide stayingSide = takenStays ? BranchSide::Taken : BranchSide::NotTaken;
+            if (unlikelySide == stayingSide)
+                unlikelySide = BranchSide::Unknown;
+            if (sideOffUsualPath == stayingSide)
+                sideOffUsualPath = BranchSide::Unknown;
+        }
+    }
     return { unlikelySide, sideOffUsualPath };
 }
 

@@ -643,11 +643,24 @@ void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
     reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size);
 }
 
+#if USE(MEMORY_FOOTPRINT_API) && USE(BUN_JSC_ADDITIONS)
+// Kept out of line. Link-time optimization would otherwise inline this, down to the struct that WTF::memoryFootprint() fills, into collectNow() and the
+// allocation slow path. Their frames are on the stack during a collection, and the conservative scan would read whatever stale pointers lie in that struct's unwritten slots.
+static NEVER_INLINE bool isOverCriticalMemoryThreshold()
+{
+    return WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+}
+#endif
+
 bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType)
 {
 #if USE(MEMORY_FOOTPRINT_API)
     if (memoryThresholdCallType == MemoryThresholdCallType::Direct || ++m_percentAvailableMemoryCachedCallCount >= 100) {
+#if USE(BUN_JSC_ADDITIONS)
+        m_overCriticalMemoryThreshold = isOverCriticalMemoryThreshold();
+#else
         m_overCriticalMemoryThreshold = WTF::percentAvailableMemoryInUse() > Options::criticalGCMemoryThreshold();
+#endif
         m_percentAvailableMemoryCachedCallCount = 0;
     }
 

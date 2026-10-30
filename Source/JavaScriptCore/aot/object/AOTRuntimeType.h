@@ -92,17 +92,6 @@ struct alignas(4) RuntimeType {
         return { reinterpret_cast<const RuntimeCellTest*>(this + 1), numberOfCellTests };
     }
 
-    // A member that holds one of many functions has a test for each of them. They stand behind all other tests, by rising number.
-    std::span<const RuntimeCellTest> testsOfOneFunctionEach() const
-    {
-        std::span<const RuntimeCellTest> tests = cellTests();
-        return tests.subspan(std::ranges::partition_point(tests, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; }) - tests.begin());
-    }
-
-    std::span<const RuntimeCellTest> testsOfMoreThanOneFunction() const { return cellTests().first(numberOfCellTests - testsOfOneFunctionEach().size()); }
-
-    bool listsClosureNumber(uint32_t number) const { return std::ranges::binary_search(testsOfOneFunctionEach(), number, { }, &RuntimeCellTest::operand); }
-
     std::span<const uint32_t> literalStrings() const
     {
         return { reinterpret_cast<const uint32_t*>(cellTests().data() + numberOfCellTests), numberOfLiteralStrings };
@@ -132,7 +121,7 @@ struct alignas(4) RuntimeType {
 
     bool acceptsEveryObject() const
     {
-        for (const RuntimeCellTest& test : testsOfMoreThanOneFunction()) {
+        for (const RuntimeCellTest& test : cellTests()) {
             if (test.kind == CellTestKind::IsObject)
                 return true;
         }

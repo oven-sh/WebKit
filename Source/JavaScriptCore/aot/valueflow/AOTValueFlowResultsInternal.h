@@ -930,8 +930,6 @@ struct ValueFlowUsesOfLibraryCode {
     Vector<BuiltinUseRecord> builtinUses;
     Vector<RuntimeFunctionID> libraryFunctionsLacked;
     Vector<VariableID> exportsThatSpiesReplace;
-    Vector<BuiltinID> builtinsThatTestsReplace;
-    Vector<FlowAddedName> namesThatTestsAdd;
 };
 ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs&);
 

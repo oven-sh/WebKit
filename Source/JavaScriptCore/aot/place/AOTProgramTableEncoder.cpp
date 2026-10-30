@@ -422,10 +422,6 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
             if (std::optional<RuntimeCellTest> encoded = encodeCellTest(encoder, records, test))
                 cellTests.append(*encoded);
         }
-        // RuntimeType::testsOfOneFunctionEach().
-        AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
-            return test.kind == CellTestKind::IsClosureOf ? test.operand : -1;
-        });
         for (StringID literal : plan.stringLiterals) {
             if (!numbered.isLeftOut(literal))
                 literalStrings.append(literal);
@@ -2138,7 +2134,7 @@ static bool hasFunctionText(const Program& program, const Function& function)
     return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
-static void appendFunctionTexts(TableEncoder& encoder)
+static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionTraceRecord> traces)
 {
     struct RetainedTextRange {
         uint32_t start;
@@ -2218,7 +2214,9 @@ static void appendFunctionTexts(TableEncoder& encoder)
         uint32_t start = range.textOffset + function.text.start - range.start;
         return FunctionTextEntry { functions[index].entrypoint.index(), start, start + function.text.end - function.text.start };
     });
-    AOT::sortInLine(entries, { }, &FunctionTextEntry::function);
+    AOT::sortInLine(entries, { }, [&](const FunctionTextEntry& entry) {
+        return std::pair { traces[entry.function].sourceFunctionIndex, entry.function };
+    });
 
     uint32_t entriesOffset = encoder.writer.append(entries);
     uint32_t textOffset = encoder.writer.append(text);
@@ -2303,7 +2301,7 @@ void encodeFunctionTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::implementedBuiltins, implementedBuiltins);
 
     appendClosureFunctionTables(encoder);
-    appendFunctionTexts(encoder);
+    appendFunctionTexts(encoder, traces.span());
     appendConstructEntrypoints(encoder);
     appendPlacesOfTailCalls(encoder);
 }

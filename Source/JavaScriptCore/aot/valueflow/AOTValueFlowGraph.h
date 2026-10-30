@@ -170,6 +170,8 @@ public:
 
     const Counters& counters() const { return m_counters; }
     void addBytesTo(ValueFlowBytesByTable&) const;
+    // Every member that holds a set is listed there.
+    void keepSetsHeld(ValueSets&);
     void giveBackMostRoomOfListsOfOneRound();
 
 private:

@@ -14,6 +14,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTOperatorEmitter.h"
+#include "AOTPlacement.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotEmitter.h"

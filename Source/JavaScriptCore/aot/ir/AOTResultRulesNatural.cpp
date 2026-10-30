@@ -185,6 +185,13 @@ static std::optional<Type> bitwiseResultBoundedByOneOperand(Opcode opcode, Opera
             return std::nullopt;
         return Type::integer({ 0, Range::uint32().maximum >> (count.integers.minimum & 31) });
     }
+    case Opcode::RShift: {
+        const Type& count = *operands[1];
+        if (!count.isInteger() || !count.integers.isSingleValue())
+            return std::nullopt;
+        int64_t shift = count.integers.minimum & 31;
+        return Type::integer({ Range::int32().minimum >> shift, Range::int32().maximum >> shift });
+    }
     default:
         return std::nullopt;
     }

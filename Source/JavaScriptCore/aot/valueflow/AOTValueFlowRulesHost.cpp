@@ -862,6 +862,10 @@ ModulesThatNamesFind modulesThatNamesFind(const Program& program, const ValueFlo
                 found.anything = true;
             return found.anything;
         }
+        constexpr uint16_t neverConvertedToString = Primitive::Symbol | Primitive::Absent;
+        constexpr uint16_t noString = Primitive::NumberLike | Primitive::BigInt | neverConvertedToString;
+        if (member.index() < ValueFlowUniverse::numberOfPrimitiveKinds && ((1u << member.index()) & (load.takesStringsAlone ? noString : neverConvertedToString)))
+            return false;
         // No module of the library is spelled "undefined".
         auto text = std::ranges::find_if(primitiveKeyTexts, [&](const PrimitiveKeyText& entry) {
             return member == ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(entry.primitive));
@@ -904,12 +908,12 @@ void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, c
         context.add(answer, publicNativeModules(context));
 }
 
-static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context, ValueFlowObjectID loader)
+static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context, ValueFlowObjectID loader, BuiltinID builtin)
 {
     constexpr size_t indexOfName = 2;
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
         return { .anything = true };
-    ModulesThatNamesFind found = modulesThatNamesFind(context, { call.function, context.program().at(call.function).at(call.site).operand(indexOfName), context.universe().moduleOf(loader) }, context.operandsOf(call)[indexOfName]);
+    ModulesThatNamesFind found = modulesThatNamesFind(context, { call.function, context.program().at(call.function).at(call.site).operand(indexOfName), context.universe().moduleOf(loader), builtin == Builtins::ModuleRequire }, context.operandsOf(call)[indexOfName]);
     // What the loader makes of a file on disk has a site at the two operations alone.
     found.anything |= found.fileOutsideImage;
     return found;
@@ -938,7 +942,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
             return;
         if (!loadsModulesByName(*cause))
             return raiseEvent(context, builtin, *cause, statement.result);
-        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context, callee);
+        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context, callee, builtin);
         if (found.anything || (loadsOnlyLibraryModules(builtin) && !found.filesOfProgram.isEmpty()))
             return loadsOnlyLibraryModules(builtin) ? handLibraryModulesTo(context, statement.result) : raiseEvent(context, builtin, *cause, statement.result);
         noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);

@@ -845,6 +845,10 @@ private:
     static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
     // The lists that each round fills anew keep the room that the largest round took. The rounds are largest in the middle of a solve, and the tables at its end.
     void giveBackRoomOfLargerRounds(uint64_t sizeOfRound);
+    // Between two rounds. Every member that holds a set is listed there, and so is whatever else the rules write sets to.
+    void freeSetsThatNobodyHolds();
+    size_t m_bytesOfSetsBehindLastFreeing { 0 };
+    bool m_freesSetsEveryRound { false };
     std::array<uint64_t, 8> m_sizesOfLatestRounds { };
     uint64_t m_sizeOfRoundThatListsHaveRoomFor { 0 };
 

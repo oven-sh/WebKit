@@ -915,32 +915,18 @@ static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& b
 
 // `let sum = i; for (..) sum = (sum + x) | 0`: every turn hands on an int32, and only the first value may be no int32, yet that value makes the sum a double in every turn.
 // So the first value is tested once in front of the loop, and the loop gets a copy whose sum is an integer.
-static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context, BitVector& headersOfCopiesThatStayedNumbers)
+static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context)
 {
     const Program& program = context.program;
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     const NaturalLoops& loops = analyses.naturalLoops();
-    // `b(x: i32, y: number)` where every edge passes one value for both: y is x, and only x is typed as an int32. The types of the copy go by what the edges pass.
-    struct SameValueOfNarrowerType {
-        Edge edge;
-        uint32_t index;
-        ValueID value;
-    };
-    Vector<SameValueOfNarrowerType, 2> sameValuesOfNarrowerType;
     // What an inner loop hands on is its own first value or an int32, and its first value is that of the outer loop.
-    auto isInt32OrComesFrom = [&](ValueID parameter, Edge firstEdge, uint32_t firstIndex) {
+    auto isInt32OrComesFrom = [&](ValueID parameter, ValueID start) {
         BitVector seen(function.values.size());
-        Vector<std::pair<Edge, uint32_t>, 8> worklist { { firstEdge, firstIndex } };
+        Vector<ValueID, 8> worklist { start };
         while (!worklist.isEmpty()) {
-            auto [passingEdge, passedIndex] = worklist.takeLast();
-            ValueID passed = targetOf(function, passingEdge).arguments[passedIndex];
-            ValueID value = analyses.identityOf(passed);
-            if (value != parameter && value != passed && program.typeOf(function, value).isInt32() && !program.typeOf(function, passed).isInt32()) {
-                if (!analyses.dominates(value, pointBeforeTerminatorOf(function, passingEdge.from)))
-                    return false;
-                sameValuesOfNarrowerType.append({ passingEdge, passedIndex, value });
-            }
+            ValueID value = analyses.identityOf(worklist.takeLast());
             if (value == parameter || program.typeOf(function, value).isInt32() || seen.quickSet(value.index()))
                 continue;
             ValueLocation location = analyses.useLists().locationOf(value);
@@ -954,7 +940,7 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context,
             for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
                 if (edge.isHandlerEdge() || hasEdgeResults(function, edge))
                     return false;
-                worklist.append({ edge, indexInBlock });
+                worklist.append(targetOf(function, edge).arguments[indexInBlock]);
             }
         }
         return true;
@@ -969,8 +955,6 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context,
         BlockID header = loop.header();
         if (function.at(header).frequency.predicted() != BlockFrequency::Normal || !isHot(heatClassOf(context, header)).predicted())
             continue;
-        if (headersOfCopiesThatStayedNumbers.get(header.index()))
-            continue;
         std::optional<Edge> entry = loops.findSingleEntry(loop);
         if (!entry || entry->isHandlerEdge())
             continue;
@@ -980,9 +964,8 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context,
             const Type& type = program.typeOf(function, parameters[index]);
             if (!type.isNumberWithoutFraction() || type.isInteger())
                 continue;
-            sameValuesOfNarrowerType.clear();
             bool handsOnInt32 = std::ranges::all_of(analyses.cfg().incomingEdges(header), [&](Edge edge) {
-                return !loops.belongsTo(edge.from, loop) || isInt32OrComesFrom(parameters[index], edge, index);
+                return !loops.belongsTo(edge.from, loop) || isInt32OrComesFrom(parameters[index], targetOf(function, edge).arguments[index]);
             });
             ValueID first = targetOf(function, *entry).arguments[index];
             if (!handsOnInt32 || !program.typeOf(function, first).isNumberWithoutFraction())
@@ -1038,10 +1021,6 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context,
         if (context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes) || RegionCloner::checkCanDuplicate(analyses, region.span()) != CloneCheck::CanClone)
             continue;
 
-        for (const SameValueOfNarrowerType& same : sameValuesOfNarrowerType)
-            editTarget(function, same.edge).arguments[same.index] = same.value;
-        if (!sameValuesOfNarrowerType.isEmpty())
-            analyses.didChangeValues();
         IRBuilder builder(analyses.context(), function, context.types, &analyses);
         builder.setOrigin(function.at(entry->from).terminator.origin());
         BlockID front = builder.splitEdge(*entry);
@@ -1066,9 +1045,6 @@ static bool copyLoopWhoseFirstValueIsTheOnlyNumber(FunctionPassContext& context,
         analyses.didChangeControlFlow();
         ValueID narrowed = function.at(cloner.cloneOf(header)).parameters[*parameterIndex];
         narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, std::span(&narrowed, 1));
-        // A further copy would fare no better, and so would the one after it.
-        if (!program.typeOf(function, narrowed).isInteger())
-            headersOfCopiesThatStayedNumbers.set(cloner.cloneOf(header).index());
         return true;
     }
     return false;
@@ -1164,8 +1140,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
-    BitVector headersOfCopiesThatStayedNumbers;
-    while (!convertsOnlyWhatComparesNoVariable && copyLoopWhoseFirstValueIsTheOnlyNumber(context, headersOfCopiesThatStayedNumbers)) {
+    while (!convertsOnlyWhatComparesNoVariable && copyLoopWhoseFirstValueIsTheOnlyNumber(context)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
@@ -1289,9 +1264,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            // What a site is asked about may be a slot that goes ahead of the loop with the question.
-            if (value.opcode == Opcode::GetCachedValue)
-                return true;
             if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
@@ -1328,14 +1300,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         return value.opcode == Opcode::GetModuleVariable && factsOfFirstTurn.contains(value.factOperand());
     };
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
-    // The back end lifts the load of a slot by itself. It goes ahead here where a site is asked about what the slot holds, which the back end cannot move.
-    BitVector sitesAreAskedAbout;
-    for (size_t index : body) {
-        for (ValueID id : function.at(BlockID(index)).values) {
-            if (function.at(id).opcode == Opcode::GetCachedValue)
-                sitesAreAskedAbout.set(function.at(id).objectOperand().index());
-        }
-    }
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
         if (testsOfValuesThemselves.contains(value.opcode)) {
@@ -1354,13 +1318,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 return false;
             Effects effects = context.analyses.effectsOf(id).onAnyEdge();
             return effects.isUnobservable() && !effects.reads.overlaps(clobbers.writes);
-        }
-        // So does a slot whose guard stands ahead of the loop, and what a site remembers of an object. What the site itself holds may change at any time: an answer of nothing is always right, and the read by name stands behind it.
-        if (value.opcode == Opcode::GetCachedValue || (value.opcode == Opcode::GetSlot && sitesAreAskedAbout.get(id.index()))) {
-            if (keptReads.get(id.index()) || !hasInvariantOperands(value))
-                return false;
-            Effects effects = context.analyses.effectsOf(id).onAnyEdge();
-            return effects.isUnobservable() && !effects.reads.without(heapsWhoseWritesNobodySees).overlaps(clobbers.writes);
         }
         // So does a look-up in a Map or a Set while the loop writes to none.
         if (isCollectionLookup(program, value)) {

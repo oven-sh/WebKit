@@ -225,6 +225,9 @@ public:
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
     const ConstantsHoldingModules& constantsHoldingModules() const LIFETIME_BOUND { return m_constantsHoldingModules; }
 
+    // The tables that are filled when first asked for hold sets of m_maker alone, made of what the program says: all of them are kept.
+    void keepEverySetMadeFromNowOn() const { m_maker.keepEverySetMade(); }
+    void keepSetsHeld() const;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 

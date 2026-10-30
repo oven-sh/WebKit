@@ -27,7 +27,6 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTRepresentation.h"
-#include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
@@ -2212,8 +2211,6 @@ namespace {
 constexpr AbstractHeapSet carriedHeaps = heapsOfVariables | AbstractHeapSet { AbstractHeap::ObjectFields };
 // The results of these tests hold until something writes what they read.
 constexpr OpcodeSet objectTestsHoistedBeforeLoops { Opcode::HasBirthFieldsFilled };
-// They go ahead of a loop together with a question to a site that stands behind them. By themselves they do not: the first test of the loop is then made twice, which a loop of few turns does not earn back.
-constexpr OpcodeSet objectTestsHoistedAheadOfQuestionsToSites { Opcode::IsSlotFilled, Opcode::AreMembersUnchanged };
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -2349,7 +2346,7 @@ struct VariableCarrier : LoopEditor {
     PassOutcome run()
     {
         bool hoistedObjectTests = false;
-        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops | OpcodeSet { Opcode::GetCachedValue })) {
+        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops)) {
             for (BlockID header : headersFromInnermost()) {
                 const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
                 if (loop && isHeaderOfLoopOfProgram(header) && moveLeadingTestsAheadOf(*loop, LeadingTests::OfObjects))
@@ -2899,15 +2896,6 @@ struct VariableCarrier : LoopEditor {
             });
         };
 
-        OpcodeSet objectTests = objectTestsHoistedBeforeLoops;
-        for (unsigned position = 0; wanted == LeadingTests::OfObjects && position < loop.size(); ++position) {
-            bool asksSite = std::ranges::any_of(m_function.at(loop.at(position)).values, [&](ValueID value) {
-                return m_function.at(value).opcode == Opcode::GetCachedValue;
-            });
-            if (asksSite)
-                objectTests = objectTests | objectTestsHoistedAheadOfQuestionsToSites;
-        }
-
         Vector<LeadingTest, 4> tests;
         Vector<ValueID, 4> proven;
         for (BlockID id = loop.header();;) {
@@ -2923,7 +2911,7 @@ struct VariableCarrier : LoopEditor {
                 Opcode opcode = m_function.at(value).opcode;
                 return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
-            if (wanted == LeadingTests::OfObjects && !objectTests.contains(test.opcode)) {
+            if (wanted == LeadingTests::OfObjects && !objectTestsHoistedBeforeLoops.contains(test.opcode)) {
                 bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
                     return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
                 });
@@ -2950,11 +2938,10 @@ struct VariableCarrier : LoopEditor {
                 test.forEachOperand([&](ValueID operand, uint32_t) {
                     testsOnlyLoopInvariantValues &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
                 });
-                bool needsProof = !objectTestsHoistedAheadOfQuestionsToSites.contains(test.opcode);
-                if (!testsOnlyLoopInvariantValues || (needsProof && taken.proofs.isEmpty()) || !noWriteClobbersReadsOf(loop, block.values.last()))
+                if (!testsOnlyLoopInvariantValues || taken.proofs.isEmpty() || !noWriteClobbersReadsOf(loop, block.values.last()))
                     break;
                 tests.append({ id, std::nullopt });
-                proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
+                proven.append(m_function.at(taken.block).parameters.last());
                 id = taken.block;
                 continue;
             }
@@ -3448,27 +3435,6 @@ struct LoopPathSeparator : LoopEditor {
         return false;
     }
 
-    // What a site remembers of an object is asked once, ahead of the loop, where what stays runs no other code and stores to no object.
-    bool letsSiteBeAskedAheadOfLoop(const BitVector& isInLoop, const BitVector& leaves)
-    {
-        auto staysQuiet = [](const Effects& effects) {
-            return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsThatLookupsByNameRead);
-        };
-        bool asksSite = false;
-        for (size_t index : isInLoop) {
-            if (leaves.get(index))
-                continue;
-            if (!staysQuiet(m_analyses.effectsOfTerminator(BlockID(index)).onAnyEdge()))
-                return false;
-            for (ValueID value : m_function.blocks[index].values) {
-                if (!staysQuiet(m_analyses.effectsOf(value).onAnyEdge()))
-                    return false;
-                asksSite |= m_function.at(value).opcode == Opcode::GetCachedValue;
-            }
-        }
-        return asksSite;
-    }
-
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
     {
@@ -3726,7 +3692,7 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        bool paysByItself = movesTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || letsSiteBeAskedAheadOfLoop(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves));
+        bool paysByItself = movesTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves));
         if (!paysByItself && !(isShort && (paysForLoopInside || leavesTestWithOneAnswer(isInLoop, leaves))))
             return std::nullopt;
         plan.onlyLeavesTestWithOneAnswer = !paysByItself;
@@ -4087,8 +4053,7 @@ PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
 {
     if (!context.function.hasBody() || !context.analyses.naturalLoops().numLoops())
         return PassOutcome::Unchanged;
-    PassOutcome outcome = askSitesBeforeReadsByNameInQuietLoops(context);
-    outcome |= LoopPathSeparator { { context } }.run();
+    PassOutcome outcome = LoopPathSeparator { { context } }.run();
     outcome |= VariableCarrier { { context } }.run();
     // SimplifyCasts runs inside this pass, and what it says it has kept holds for the function as it left it.
     context.keptAnalyses = { };

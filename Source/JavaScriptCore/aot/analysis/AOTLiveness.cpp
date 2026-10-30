@@ -751,9 +751,15 @@ const BitVector& LivenessOfAskedValues::blocksEnteredWith(ValueID id)
 Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
     : m_liveness(liveness)
     , m_block(block)
-    , m_live(liveness.m_useLists.numberOfValues())
 {
     RELEASE_ASSERT(liveness.m_cfg.isReachable(block));
+    {
+        Locker locker { liveness.m_spareWordsLock };
+        if (!liveness.m_spareWords.isEmpty())
+            m_words = liveness.m_spareWords.takeLast();
+    }
+    if (m_words.isEmpty())
+        m_words.fill(0, (liveness.m_useLists.numberOfValues() + 63) / 64);
     m_index = liveness.m_function.at(block).values.size();
 
     liveness.m_function.at(block).forEachChildOutsideValues([&](ValueID child) {
@@ -766,7 +772,7 @@ Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
     auto addLiveAtHead = [&](BlockID successor) {
         RELEASE_ASSERT(liveness.isTrackedBlock(successor));
         liveness.forEachLiveAtHead(successor, [&](ValueID id) {
-            m_live.quickSet(id.index());
+            add(id);
         });
     };
     for (BlockID successor : liveness.m_cfg.successors(block))
@@ -775,12 +781,43 @@ Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
         addLiveAtHead(edge.second);
 }
 
+Liveness::LocalCalc::~LocalCalc()
+{
+    for (uint32_t word : m_wordsInUse)
+        m_words[word] = 0;
+    Locker locker { m_liveness.m_spareWordsLock };
+    m_liveness.m_spareWords.append(WTF::move(m_words));
+}
+
+bool Liveness::LocalCalc::add(ValueID id)
+{
+    uint64_t& word = m_words[id.index() / 64];
+    uint64_t bit = 1ull << (id.index() % 64);
+    if (word & bit)
+        return true;
+    // The word may be listed: its last bit may have been cleared.
+    if (!word)
+        m_wordsInUse.append(id.index() / 64);
+    word |= bit;
+    return false;
+}
+
+std::span<const uint32_t> Liveness::LocalCalc::wordsInUse() const
+{
+    if (m_numberOfSortedWords != m_wordsInUse.size()) {
+        AOT::sort(m_wordsInUse);
+        removeRepeatedElements(m_wordsInUse);
+        m_numberOfSortedWords = m_wordsInUse.size();
+    }
+    return m_wordsInUse.span();
+}
+
 void Liveness::LocalCalc::execute(uint32_t index)
 {
     RELEASE_ASSERT(m_index && index == m_index - 1);
     m_index = index;
     ValueID id = m_liveness.m_function.at(m_block).values[index];
-    m_live.clear(id.index());
+    m_words[id.index() / 64] &= ~(1ull << (id.index() % 64));
     m_liveness.m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
         use(operand);
     });
@@ -791,13 +828,13 @@ void Liveness::LocalCalc::use(ValueID id)
     if (!id)
         return;
     if (m_liveness.isTrackedValue(id))
-        m_live.set(id.index());
+        add(id);
     if (!m_liveness.m_hasTrackedBases)
         return;
     m_liveness.forEachBase(id, [&](ValueID base) {
         if (!m_liveness.isTrackedValue(base))
             return IterationStatus::Continue;
-        return m_live.set(base.index()) ? IterationStatus::Done : IterationStatus::Continue;
+        return add(base) ? IterationStatus::Done : IterationStatus::Continue;
     });
 }
 

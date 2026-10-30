@@ -401,14 +401,6 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         failUnless(logicalOr(logicalNot(in<Condition>(replacement)), hasForm), ValidationFailureKind::GuardNoLongerHolds, array, value.id());
         return;
     }
-    // A site learns and forgets at any time, and an answer of nothing is always right. Two values that it gives for one object are one value.
-    if (keptOperation.opcode == Opcode::GetCachedValue) {
-        Boxed keptAnswer = in<Boxed>(kept);
-        Boxed movedAnswer = in<Boxed>(replacement);
-        Condition oneIsNothing = logicalOr(isZero(Integer(keptAnswer.value())), isZero(Integer(movedAnswer.value())));
-        failUnless(logicalOr(oneIsNothing, Condition(m_out.equal(keptAnswer.value(), movedAnswer.value()))), ValidationFailureKind::ReadsDiffer, keptAnswer, value.id());
-        return;
-    }
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Boxed keptValue = conversions.box(value, get(kept), typeOf(kept));

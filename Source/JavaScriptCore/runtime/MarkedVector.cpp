@@ -140,7 +140,7 @@ void MarkedVectorBase::slowEnsureCapacityAndCrashOnOverflow(size_t requestedCapa
     RELEASE_ASSERT(status != Status::Overflowed);
 }
 
-auto MarkedVectorBase::expandCapacity(Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(Request request) -> Status
 {
     setNeedsOverflowCheck();
     auto checkedNewCapacity = CheckedInt32(m_capacity) * 2;
@@ -149,7 +149,7 @@ auto MarkedVectorBase::expandCapacity(Request request) -> Status
     return expandCapacity(checkedNewCapacity, request);
 }
 
-auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> Status
 {
     setNeedsOverflowCheck();
     ASSERT(m_capacity < newCapacity);

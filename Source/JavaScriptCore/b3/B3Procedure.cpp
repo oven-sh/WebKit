@@ -778,7 +778,7 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
     return code().calleeSaveRegisterAtOffsetList();
 }
 
-Value* Procedure::addValueImpl(Value* value)
+NEVER_INLINE Value* Procedure::addValueImpl(Value* value)
 {
     m_opcodesEverAdded.set(value->opcode());
     m_knownInductions.didAddValue();

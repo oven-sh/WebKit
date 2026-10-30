@@ -762,6 +762,11 @@ bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
     return site && isOperationReturnSite(*site);
 }
 
+std::span<const uint8_t> compiledCodeOf(VM& vm)
+{
+    return vm.hasCompiledCode() ? vm.aotState().image->code() : std::span<const uint8_t> { };
+}
+
 bool isTopFrameCompiled(VM& vm)
 {
     return isOperationFrameRecord(vm, vm.topCallFrame);
@@ -1104,6 +1109,7 @@ void CallSiteCache::setNumberOfEntries(size_t numberOfEntries)
     m_indexMask = numberOfEntries - 1;
     m_secondaryIndexShift = 64 - static_cast<unsigned>(std::countr_zero(numberOfEntries));
     m_numberOfFilledEntries = 0;
+    m_numberOfEvictions = 0;
     for (const Entry& entry : previousEntries) {
         if (!entry.address)
             continue;
@@ -1114,7 +1120,9 @@ void CallSiteCache::setNumberOfEntries(size_t numberOfEntries)
     }
 }
 
-// An entry that is pushed out comes back into its other slot the next time it is asked for, which settles as long as less than half of the slots are taken. From there on the table doubles.
+// The image lies at another address in every process, so which addresses meet in a slot is a matter of chance. Whoever holds one of the two slots makes room where its own other slot is free.
+// An entry that is pushed out comes back the next time it is asked for. A few entries with too few slots between them would do that to each other for ever, however empty the table:
+// it doubles once it has pushed out as many entries as it has slots, as it does once half of the slots are taken.
 CallSiteCache::Entry& CallSiteCache::slotForNewEntry(const void* address)
 {
     if (m_entries.isEmpty())
@@ -1124,10 +1132,21 @@ CallSiteCache::Entry& CallSiteCache::slotForNewEntry(const void* address)
             ++m_numberOfFilledEntries;
             return *slot;
         }
-        if (m_entries.size() == maxNumberOfEntries || m_numberOfFilledEntries * 2 < m_entries.size())
+        for (size_t index : { primaryIndex(address), secondaryIndex(address) }) {
+            Entry& holder = m_entries[index];
+            size_t primaryOfHolder = primaryIndex(holder.address);
+            Entry& otherSlot = m_entries[primaryOfHolder == index ? secondaryIndex(holder.address) : primaryOfHolder];
+            if (!otherSlot.address) {
+                otherSlot = holder;
+                ++m_numberOfFilledEntries;
+                return holder;
+            }
+        }
+        if (m_entries.size() == maxNumberOfEntries || (m_numberOfFilledEntries * 2 < m_entries.size() && m_numberOfEvictions < m_entries.size()))
             break;
         setNumberOfEntries(m_entries.size() * 2);
     }
+    ++m_numberOfEvictions;
     m_evictsSecondary = !m_evictsSecondary;
     return m_entries[m_evictsSecondary ? secondaryIndex(address) : primaryIndex(address)];
 }

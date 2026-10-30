@@ -239,17 +239,6 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         out.print("g"_s, variable.index());
         printer.endLine();
     }
-    for (BuiltinID member : builtins.builtinsThatTestsReplace) {
-        printer.beginLine("replaced-builtin"_s);
-        print(member);
-        printer.endLine();
-    }
-    for (const FlowAddedName& added : builtins.namesThatTestsAdd) {
-        printer.beginLine("added-name"_s);
-        print(added.holder);
-        out.print(' ', String::fromUTF8ReplacingInvalidSequences(added.name.span()));
-        printer.endLine();
-    }
     for (const FlowWorkerEntry& entry : builtins.workerEntries) {
         beginLine("worker-entry"_s);
         printer.print(entry.path);

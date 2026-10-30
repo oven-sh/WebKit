@@ -34,10 +34,6 @@ struct NamedAccessSite {
     PropertyAccessPlan plan;
 };
 
-inline constexpr AbstractHeapSet heapsThatLookupsByNameRead { AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::ObjectFields, AbstractHeap::PrototypeLinks };
-// In front of the passes that take what stays the same out of a loop.
-PassOutcome askSitesBeforeReadsByNameInQuietLoops(FunctionPassContext&);
-
 struct ElementAccessSite {
     ValueSite site;
     ElementAccessPlan plan;

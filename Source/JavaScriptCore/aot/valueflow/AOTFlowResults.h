@@ -234,12 +234,6 @@ struct FlowSiteTables {
     Vector<FlowDataNode> dataNodes;
 };
 
-// A name that a test may add to a built-in object which takes no new names.
-struct FlowAddedName {
-    BuiltinID holder;
-    Vector<uint8_t> name;
-};
-
 struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
     // One record for each place in the source that writes a location, by holder, key and place.
@@ -262,8 +256,6 @@ struct FlowBuiltinTables {
     std::optional<Witness> workerStartWithoutName;
     // The exports that a reached call of a spy may replace and that the front end has not made replaceable. Sorted.
     Vector<VariableID> exportsThatSpiesReplace;
-    Vector<BuiltinID> builtinsThatTestsReplace;
-    Vector<FlowAddedName> namesThatTestsAdd;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
     bool areFilled { false };
 };
@@ -452,8 +444,6 @@ public:
     std::span<const FlowWorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.builtins.workerEntries.span(); }
     std::optional<Witness> workerStartWithoutName() const { return m_tables.builtins.workerStartWithoutName; }
     std::span<const VariableID> exportsThatSpiesReplace() const LIFETIME_BOUND { return m_tables.builtins.exportsThatSpiesReplace.span(); }
-    std::span<const BuiltinID> builtinsThatTestsReplace() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatTestsReplace.span(); }
-    std::span<const FlowAddedName> namesThatTestsAdd() const LIFETIME_BOUND { return m_tables.builtins.namesThatTestsAdd.span(); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     const BitVector& builtinsThatMayBeTrimmed() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatMayBeTrimmed; }
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }
