@@ -365,8 +365,14 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
             AOT_TEST_CHECK(isTop(withFrameRecord, recordOfCaller, returnAddressIn(1)));
         };
         check(returnAddressIn(1));
-#if !OS(DARWIN)
-        check(std::bit_cast<void*>(std::bit_cast<uintptr_t>(returnAddressIn(1)) | 0x2cULL << 48));
+#if CPU(ARM64) && !OS(DARWIN)
+        // PACIAZ signs the link register. On a processor without pointer authentication it does nothing, and this repeats the check above.
+        uintptr_t signedReturnAddress = std::bit_cast<uintptr_t>(returnAddressIn(1));
+        asm("mov x30, %0\n"
+            "hint #24\n"
+            "mov %0, x30"
+            : "+r"(signedReturnAddress) : : "x30");
+        check(std::bit_cast<void*>(signedReturnAddress));
 #endif
     }
 }
