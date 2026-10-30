@@ -1,3 +1,4 @@
+//@ skip if !$isWasmPlatform # Bun: upstream runs it everywhere. It uses WebAssembly, which a build with ENABLE_WEBASSEMBLY=0 has not.
 //@ skip if !$jitTests
 //@ skip if !$isFTLPlatform
 //@ runWithoutBaseOption("default", "--slowPathAllocsBetweenGCs=10", "--jitPolicyScale=0", "--useConcurrentJIT=0", "--validateExceptionChecks=1")

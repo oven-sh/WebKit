@@ -121,6 +121,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+#include "JSCPtrTag.h"
+#include <sys/auxv.h>
+#endif
+
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyStruct.h"
@@ -2327,7 +2332,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionFunctionsSignReturnAddress);
 static JSC_DECLARE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned);
-static JSC_DECLARE_HOST_FUNCTION(functionRemoveSignatureOfReturnAddressOfCaller);
+static JSC_DECLARE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGigacageEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionToCacheableDictionary);
 static JSC_DECLARE_HOST_FUNCTION(functionToUncacheableDictionary);
@@ -4944,42 +4949,44 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
 
 // Returns true if LLInt and the JITs are to sign the return address that a function saves, and the processor does so.
 // Usage: $vm.functionsSignReturnAddress()
-JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
 #if CPU(ARM64E)
-    UNUSED_PARAM(callFrame);
     return JSValue::encode(jsBoolean(true));
 #elif ENABLE(RETURN_ADDRESS_SIGNING)
-    uintptr_t address = std::bit_cast<uintptr_t>(callFrame);
-    uintptr_t result = address;
-    asm("mov x30, %0\n"
-        "hint #26\n" // PACIBZ
-        "mov %0, x30"
-        : "+r"(result) : : "x30");
-    return JSValue::encode(jsBoolean(result != address));
+    // Not by signing something: a signature has few bits, and all of them may be zero.
+    constexpr unsigned long hwcapPACA = 1UL << 30;
+    return JSValue::encode(jsBoolean(getauxval(AT_HWCAP) & hwcapPACA));
 #else
-    UNUSED_PARAM(callFrame);
     return JSValue::encode(jsBoolean(false));
 #endif
 }
 
-// Returns true if the return address that the calling function saved in its frame has a signature.
+// Returns true if the return address that the calling function saved in its frame has the signature that belongs there.
+// Without pointer authentication that is none, and the answer is true.
 // Usage: $vm.returnAddressOfCallerIsSigned()
 JSC_DEFINE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     CallFrame* caller = callFrame->callerFrame();
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    const void* stackPointerAtEntry = reinterpret_cast<const CallerFrameAndPC*>(caller) + 1;
+    return JSValue::encode(jsBoolean(caller->rawReturnPC() == signReturnAddress(caller->returnPCForInspection(), stackPointerAtEntry)));
+#else
     return JSValue::encode(jsBoolean(caller->rawReturnPC() != caller->returnPCForInspection()));
+#endif
 }
 
-// Leaves the address alone, which is what somebody who overwrites it can do at best. The calling function must not get to return to it.
-// Usage: $vm.removeSignatureOfReturnAddressOfCaller()
-JSC_DEFINE_HOST_FUNCTION(functionRemoveSignatureOfReturnAddressOfCaller, (JSGlobalObject*, CallFrame* callFrame))
+// The calling function must not get to return. Only where $vm.functionsSignReturnAddress().
+// Usage: $vm.corruptSignatureOfReturnAddressOfCaller()
+JSC_DEFINE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     CallFrame* caller = callFrame->callerFrame();
-    caller->setReturnPC(caller->returnPCForInspection());
+    // Bit 54 is part of the signature however many bits of an address the kernel uses. Taking the signature off would do nothing
+    // where all of its bits are zero.
+    caller->setReturnPC(std::bit_cast<void*>(std::bit_cast<uintptr_t>(caller->rawReturnPC()) ^ (1ULL << 54)));
     return JSValue::encode(jsUndefined());
 }
 
@@ -6291,7 +6298,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
     addFunction(vm, alwaysAllow, "functionsSignReturnAddress"_s, functionFunctionsSignReturnAddress, 0);
     addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
-    addFunction(vm, alwaysAllow, "removeSignatureOfReturnAddressOfCaller"_s, functionRemoveSignatureOfReturnAddressOfCaller, 0);
+    addFunction(vm, alwaysAllow, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);

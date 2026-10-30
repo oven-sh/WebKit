@@ -1,3 +1,4 @@
+//@ skip if !$isWasmPlatform # Bun: upstream runs it everywhere. It uses WebAssembly, which a build with ENABLE_WEBASSEMBLY=0 has not.
 function shouldBe(actual, expected)
 {
     if (actual !== expected)

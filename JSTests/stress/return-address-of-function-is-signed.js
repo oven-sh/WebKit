@@ -4,15 +4,18 @@
 // Where functions are to sign the return address that they save, they do so in every tier: a frame that one tier made is
 // returned from by another.
 
-const expected = $vm.functionsSignReturnAddress();
+// Where they are not to, or the processor has no pointer authentication, there is nothing to ask.
+if (!$vm.functionsSignReturnAddress())
+    quit();
+
 const seen = { };
 
 function check()
 {
     // Asked here and not in a function of its own: the answer is about the function that asks.
     let name = $vm.ftlTrue() ? "FTL" : $vm.dfgTrue() ? "DFG" : $vm.baselineJITTrue() ? "Baseline" : "LLInt";
-    if ($vm.returnAddressOfCallerIsSigned() !== expected)
-        throw new Error(`${name}: the return address is ${expected ? "not " : ""}signed`);
+    if (!$vm.returnAddressOfCallerIsSigned())
+        throw new Error(`${name}: the return address is not signed`);
     seen[name] = true;
 }
 noInline(check);

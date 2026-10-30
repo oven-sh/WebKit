@@ -15,7 +15,7 @@ const highestTier = !$vm.useJIT() ? "LLInt" : !$vm.useDFGJIT() ? "Baseline" : $v
 function victim(replace)
 {
     if (replace)
-        $vm.removeSignatureOfReturnAddressOfCaller();
+        $vm.corruptSignatureOfReturnAddressOfCaller();
     // Asked here and not in a function of its own: the answer is about the function that asks.
     return $vm.ftlTrue() ? "FTL" : $vm.dfgTrue() ? "DFG" : $vm.baselineJITTrue() ? "Baseline" : "LLInt";
 }
