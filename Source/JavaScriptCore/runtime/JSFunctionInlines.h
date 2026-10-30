@@ -219,15 +219,7 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
         return uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
     }
 
-    const Identifier& ecmaName = jsExecutable()->ecmaName();
-    String name;
-    // https://tc39.github.io/ecma262/#sec-exports-runtime-semantics-evaluation
-    // When the ident is "*default*", we need to set "default" for the ecma name.
-    // This "*default*" name is never shown to users.
-    if (ecmaName == vm.propertyNames->starDefaultPrivateName)
-        name = vm.propertyNames->defaultKeyword.string();
-    else
-        name = ecmaName.string();
+    String name = jsExecutable()->ecmaName().string();
 
     if (jsExecutable()->isGetter()) {
         name = makeNameWithOutOfMemoryCheck(globalObject, scope, "Getter "_s, "get "_s, name);
