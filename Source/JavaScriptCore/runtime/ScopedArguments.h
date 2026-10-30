@@ -130,17 +130,17 @@ public:
     
     void initModifiedArgumentsDescriptorIfNecessary(JSGlobalObject* globalObject)
     {
-        GenericArgumentsImpl<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::initModifiedArgumentsDescriptorIfNecessary(globalObject, m_totalLength);
     }
 
     void setModifiedArgumentDescriptor(JSGlobalObject* globalObject, unsigned index)
     {
-        GenericArgumentsImpl<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_table->length());
+        GenericArgumentsImpl<ScopedArguments>::setModifiedArgumentDescriptor(globalObject, index, m_totalLength);
     }
 
     bool isModifiedArgumentDescriptor(unsigned index)
     {
-        return GenericArgumentsImpl<ScopedArguments>::isModifiedArgumentDescriptor(index, m_table->length());
+        return GenericArgumentsImpl<ScopedArguments>::isModifiedArgumentDescriptor(index, m_totalLength);
     }
 
     void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
