@@ -52,7 +52,7 @@ private:
     // A stub that keeps nearly every register may still allocate, so the registers that a patchpoint clobbers say nothing.
     static bool mayCollect(const Inst& inst)
     {
-        if (inst.kind.opcode == CCall)
+        if (inst.kind.opcode == ColdCCall)
             return true;
         if (inst.kind.opcode != Patch || hintOf(inst))
             return false;
