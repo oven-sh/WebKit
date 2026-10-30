@@ -356,7 +356,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
         ASSERT(!maySuspend(call.opcode));
         bool isCalled = call.operandUses(operandIndex).containsAny(callingUses);
         bool isCalledByNativeCode = isCalled && runtimeOf(call.opcode);
-        if (isCalled && !isCalledByNativeCode) {
+        if (isCalled) {
             lose(countedCallsOf(carried.all()));
             if (call.opcode == Opcode::Call)
                 return;
@@ -394,6 +394,9 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             handOn(user.function(), *capture, carried);
             return;
         }
+
+        if (user.opcode == Opcode::GetSuperBase)
+            lose(contentsOf(carried.references) | countedCallsOf(carried.references));
 
         OperandUses uses = summarizeOperand(effects, function, user, operandIndex).uses;
         bool followsResult = propagatesFramePointers(user.opcode);

@@ -662,7 +662,8 @@ uint64_t parametersWhoseContentsAreCalled(const Program& program, FunctionID id,
     for (uint32_t parameter = 0; parameter < numberOfTrackedParameters; ++parameter) {
         if (!borrowedParameters.isBorrowed(id, parameter) || !borrowedParameters.mayBeCalled(id, parameter))
             continue;
-        if (isNeverCalled(program.typeOf(function, parameters[parameter])))
+        bool isCalleeWithContentsLost = function.calleeParameterIndex() == parameter && !borrowedParameters.borrowsContents(id, parameter);
+        if (isNeverCalled(program.typeOf(function, parameters[parameter])) || isCalleeWithContentsLost)
             result |= 1ull << parameter;
     }
     return result;
@@ -696,7 +697,8 @@ FunctionSummary createSummaryFromFlow(const Program& program, const FlowResults&
             continue;
         operand = operand.uses == OperandUses::all() ? borrowedParameters.summaryOf(id, parameter) : withoutUsesThatTableExcludes(operand.uses, borrowedParameters, id, parameter);
         if (contentsAreCalled >> parameter & 1) {
-            operand.uses.remove(callingUses);
+            if (program.at(id).calleeParameterIndex() != parameter)
+                operand.uses.remove(callingUses);
             operand.uses.add(OperandUse::RetainsContents);
         }
     }
