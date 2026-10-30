@@ -515,7 +515,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
             tables.sites.dataNodes[numberOfOtherNodes + (stamp.site.index() - numberOfOtherSites)] = { rootSite, node.ordinal, stamp };
         }
         if (stamps.size() != numberOfOtherStamps)
-            AOT::sort(stamps, { }, &FlowAllocationStamp::value);
+            AOT::sortInLine(stamps, { }, &FlowAllocationStamp::value);
     });
 
     for (AllocationClassID classOfArrays : classesOfArrays) {

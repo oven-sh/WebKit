@@ -366,7 +366,7 @@ void IntegerRelations::indexComparisonsByBase()
             add(bases.right);
     }
     for (auto& entry : m_blocksBehindComparisonsAbout) {
-        AOT::sort(entry.value, [&](BlockID first, BlockID second) {
+        AOT::sortInLine(entry.value, [&](BlockID first, BlockID second) {
             return std::pair { m_depthInDominatorTree[second.index()], second.index() } < std::pair { m_depthInDominatorTree[first.index()], first.index() };
         });
     }

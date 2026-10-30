@@ -55,6 +55,13 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const I
 JSObject* createUpdateOfNullishError(JSGlobalObject*);
 // An operation runs in the top frame, for the read of such an update: the read makes that test.
 bool readOnTopTestsObjectOfUpdate(VM&);
+// The function whose text holds the place where the frame on top stands, and the line of the place, counted from the line of the function's definition.
+// A function that has no code of its own, because each call holds a copy, has no line.
+struct PlaceInFunctionText {
+    FunctionID function;
+    std::optional<unsigned> line;
+};
+std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM&);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);

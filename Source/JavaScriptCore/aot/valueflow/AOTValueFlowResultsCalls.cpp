@@ -112,7 +112,7 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
             numberOfUnknownOperands += inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
             stamp(StampedOperand { id, function, statement, operand, typeByRules, family, held, seen, arena, positions, maker, application.bodies[index], worker });
         }
-        AOT::sort(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
+        AOT::sortInLine(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
         inputs.build.statistics().count(statisticOfUnknownOperands, numberOfUnknownOperands);
     });
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());

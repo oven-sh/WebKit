@@ -176,11 +176,11 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
             entry.nodesOfMembers.append({ member.index(), index });
         });
     }
-    AOT::sort(entry.nodesOfMembers);
+    AOT::sortInLine(entry.nodesOfMembers);
     entry.writtenThroughUnknownObject = maker.get().uniteAll(throughUnknownObject.span());
     entry.writtenThroughUntrackedObject = maker.get().uniteAll(throughUntrackedObject.span());
     // The same value is written through one set after another as the set grows: whoever meets any of them finds that value, so they count as one.
-    AOT::sort(nodesOfManyMembers, { }, [&](uint32_t index) {
+    AOT::sortInLine(nodesOfManyMembers, { }, [&](uint32_t index) {
         return std::pair { entry.nodes[index].value, index };
     });
     for (size_t first = 0; first < nodesOfManyMembers.size();) {

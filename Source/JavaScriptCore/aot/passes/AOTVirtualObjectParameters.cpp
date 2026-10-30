@@ -927,7 +927,7 @@ static void showOperationsInFrameOfBody(const Program& program, TypeArena& types
     for (uint32_t index = 0; index < wrapper.blocks.size(); ++index) {
         blocks.append(BlockID(index));
         for (ValueID id : wrapper.blocks[index].values) {
-            if (entered || !takesFactOfEntry(program, wrapper.at(id), false))
+            if (entered || !takesFactOfEntry(program, wrapper.at(id)))
                 continue;
             Value fact = IRBuilder::make(Opcode::Entered);
             fact.setFunction(body);

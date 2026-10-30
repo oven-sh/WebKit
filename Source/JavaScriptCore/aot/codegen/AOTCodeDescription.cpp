@@ -60,7 +60,7 @@ public:
     {
         if (m_landingPads.isEmpty())
             return;
-        AOT::stableSort(m_landingPads, { }, &SiteLandingPad::site);
+        AOT::stableSortInLine(m_landingPads, { }, &SiteLandingPad::site);
         m_copies.grow(numberOfSites + 1);
         for (uint32_t index = m_landingPads.size(); index--;) {
             Copies& copies = m_copies[m_landingPads[index].site];
@@ -125,7 +125,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     TrapRecords& traps = records.traps;
     RELEASE_ASSERT(!described.build.validates() || records.units.takeTraps().size() == traps.trappingAccesses.size());
 
-    AOT::sort(traps.trapSites, { }, &TrapSite::value);
+    AOT::sortInLine(traps.trapSites, { }, &TrapSite::value);
     Vector<FaultingAccess> accesses;
     accesses.reserveInitialCapacity(traps.trappingAccesses.size() + traps.callThrowSites.size());
     for (const TrappingAccess& access : traps.trappingAccesses) {
@@ -144,7 +144,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     }
     for (const CallThrowSite& site : traps.callThrowSites)
         accesses.append({ body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall), { }, site.words });
-    AOT::sort(accesses, { }, &FaultingAccess::codeOffset);
+    AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
     return accesses;
 }
 
@@ -165,7 +165,7 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
         if (poll.callSite)
             references.append({ poll.returnOffset(), &poll.callSite.bits });
     }
-    AOT::stableSort(references, { }, &SiteReference::returnOffset);
+    AOT::stableSortInLine(references, { }, &SiteReference::returnOffset);
     return references;
 }
 
@@ -462,7 +462,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     sites.frameMapWords = WTF::move(records.frameMaps.words);
     sites.faultingAccesses = collectFaultingAccesses(described, records, linkBuffer, body);
     sites.pollSites = WTF::move(records.traps.pollSites);
-    AOT::sort(sites.pollSites, { }, &PollSite::offset);
+    AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
 
     ShownFunctions shownFunctions = findShownFunctions(described);
     foldMethodReadSites(described, shownFunctions, records.sites.positions, body, sites);

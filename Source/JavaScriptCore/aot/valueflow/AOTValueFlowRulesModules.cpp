@@ -946,10 +946,8 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 
-static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowHostNode answers, ValueFlowNodeID target)
+static void answerWithWhatLoaderMakesOfData(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowNodeID target)
 {
-    if (isWrittenInProgram(context.program().at(statement.function)))
-        letModulesBeLoadedByName(context, answers);
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowObjectID object = universe.siteObject(statement, 1);
     ValueFlowObjectID array = universe.siteObject(statement, 2);
@@ -959,6 +957,13 @@ static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRule
     context.add(context.written(only(context, object), unknownKeyName), data);
     context.add(context.written(only(context, array), { ValueFlowNameKind::Elements, 0 }), data);
     context.add(target, data);
+}
+
+static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowHostNode answers, ValueFlowNodeID target)
+{
+    if (isWrittenInProgram(context.program().at(statement.function)))
+        letModulesBeLoadedByName(context, answers);
+    answerWithWhatLoaderMakesOfData(statement, context, target);
     context.connect(context.nodes().ofHost(answers), target);
 }
 
@@ -993,7 +998,7 @@ static void importModule(const ValueFlowStatement& statement, ValueFlowRuleConte
 
 static ModulesThatNamesFind modulesThatNamesFind(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const Value& load)
 {
-    return modulesThatNamesFind(context, statement.function, load.specifierOperand(), context.operandsOf(statement)[0]);
+    return modulesThatNamesFind(context, { statement.function, load.specifierOperand(), load.referrer() }, context.operandsOf(statement)[0]);
 }
 
 // `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().
@@ -1103,12 +1108,19 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         return;
     case Opcode::ImportDynamic:
         escapeOperands(statement, context);
-        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); found.fileOfProgram)
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); found.anything)
             loadByUnknownName(statement, context, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
         else {
-            noteLoadUnderSpelledNames(context, statement.function, found, settledValueOfPromiseAt(statement, context));
+            noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::NamespacesLoadedByName, settledValueOfPromiseAt(statement, context));
             for (ModuleID module : found.libraryModules)
                 importModule(statement, context, module);
+            for (ModuleID module : found.filesOfProgram) {
+                importModule(statement, context, module);
+                for (ModuleID form : formsInImage(program, module))
+                    importModule(statement, context, form);
+            }
+            if (found.fileOutsideImage)
+                answerWithWhatLoaderMakesOfData(statement, context, settledValueOfPromiseAt(statement, context));
         }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
@@ -1116,10 +1128,16 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         escapeOperands(statement, context);
         if (program.at(operation.referrer()).exportsVariable)
             context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, context.universe().objectOf(Builtins::ModuleObject, operation.referrer())));
-        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.fileOfProgram) {
-            noteLoadUnderSpelledNames(context, statement.function, found, statement.result);
+        if (ModulesThatNamesFind found = modulesThatNamesFind(statement, context, operation); !found.anything) {
+            noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
             for (ModuleID module : found.libraryModules)
                 requireModule(statement, context, module);
+            for (ModuleID module : found.filesOfProgram) {
+                requireModule(statement, context, module);
+                followModuleObjectsOfRequire(context, operation.referrer(), module);
+            }
+            if (found.fileOutsideImage && statement.result)
+                answerWithWhatLoaderMakesOfData(statement, context, statement.result);
         } else if (statement.result)
             loadByUnknownName(statement, context, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
         else if (isWrittenInProgram(program.at(statement.function)))

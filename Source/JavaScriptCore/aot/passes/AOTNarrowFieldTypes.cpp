@@ -90,7 +90,7 @@ bool holdsRawValueFromBirth(const Program& program, FieldReference reference)
 
 static void sortAndRemoveRepeated(auto& list)
 {
-    AOT::sort(list);
+    AOT::sortInLine(list);
     removeRepeatedElements(list);
 }
 

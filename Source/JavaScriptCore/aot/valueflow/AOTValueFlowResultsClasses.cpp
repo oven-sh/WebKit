@@ -458,7 +458,7 @@ static Vector<ClassMember> listMembersInDefinitionOrder(Vector<ClassMemberDefini
     auto orderOf = [](const ClassMemberDefinition& definition) {
         return std::tuple { definition.index, memberOrderOf(definition.member) };
     };
-    AOT::sort(definitions, { }, orderOf);
+    AOT::sortInLine(definitions, { }, orderOf);
     definitions.shrink(std::ranges::unique(definitions, { }, orderOf).begin() - definitions.begin());
 
     return Vector<ClassMember>(definitions.size(), [&](size_t position) {
@@ -594,7 +594,7 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
     list(inputs.universe().prototypeOf(classLayout));
     for (ValueFlowObjectID stored : ledger.prototypeObjectsStoredFor(classLayout))
         list(stored);
-    AOT::stableSort(assigned, { }, &AssignedValue::key);
+    AOT::stableSortInLine(assigned, { }, &AssignedValue::key);
     return assigned;
 }
 
@@ -657,14 +657,14 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         if (entry.member.key)
             namedMembers.append(entry.member);
     }
-    AOT::sort(namedMembers, { }, memberOrderOf);
+    AOT::sortInLine(namedMembers, { }, memberOrderOf);
     namedMembers.shrink(std::ranges::unique(namedMembers, { }, memberOrderOf).begin() - namedMembers.begin());
     if (followsMutations && Claims::isStoredToUnderNamesAlone(writersOfEveryOwnProperty[prototypeSide]))
         listWhatIsStoredOverMembers(inputs, listWhatIsAssigned(inputs, ledger, id, answers).span(), namedMembers);
     Vector<decltype(memberOrderOf(std::declval<const ClassMember&>())), 16> definedMembers(definition.definitions.size(), [&](size_t index) {
         return memberOrderOf(definition.definitions[index].member);
     });
-    AOT::sort(definedMembers);
+    AOT::sortInLine(definedMembers);
     Vector<FunctionID, 16> definedFunctions(definition.definitions.size(), [&](size_t index) {
         return definition.definitions[index].member.function;
     });

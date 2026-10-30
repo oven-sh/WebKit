@@ -332,7 +332,7 @@ void SSARepair::run()
         }
         if (data.uses.isEmpty())
             continue;
-        AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
+        AOT::sortInLine(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
             return useLists.isBefore(a.use, b.use);
         });
 
@@ -509,7 +509,7 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
     if (cuts.isEmpty())
         return;
 
-    AOT::sort(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
+    AOT::sortInLine(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
         return std::tie(a.block, a.index) < std::tie(b.block, b.index);
     });
     removeRepeatedElements(cuts);
@@ -915,7 +915,7 @@ const SSARepair::Definition* SSARepair::findLastDefinitionBefore(const VariableD
 
 void SSARepair::sortDefinitions(VariableData& data)
 {
-    AOT::stableSort(data.definitions, [](const Definition& a, const Definition& b) {
+    AOT::stableSortInLine(data.definitions, [](const Definition& a, const Definition& b) {
         return std::tie(a.block, a.order) < std::tie(b.block, b.order);
     });
 }

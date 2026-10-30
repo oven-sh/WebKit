@@ -28,6 +28,7 @@
 #include "AOTHeat.h"
 #include "AOTInlineCopy.h"
 #include "AOTLayout.h"
+#include "AOTMethodDispatch.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
@@ -1178,6 +1179,13 @@ static std::optional<MemberConditions> conditionsOfClassObject(const PropertyAcc
 
     MemberConditions conditions = WTF::move(hasInstance.conditions);
     const ClassFlow& classFlow = program.at(tested).classFlow;
+    // `Object.setPrototypeOf(Readable, Stream)`: the function has another parent than Function.prototype from before its first construction on.
+    // The guard of the member is armed over the chain that is there, and ends when an object of that chain gets the name or another parent.
+    if (program.at(tested).has(LayoutFlags::IsConstructorFunction)) {
+        conditions.removeAllMatching([&](const MemberCondition& condition) {
+            return condition.kind == MemberCondition::Kind::PrototypeLinkUnchanged && condition.layout == tested && condition.side == ClassSide::Static;
+        });
+    }
     // No code can change the property of a class.
     if (program.at(tested).has(LayoutFlags::IsConstructorFunction) && classFlow.prototypeProperty != MemberMutability::Fixed && !classFlow.hasAssignedPrototype)
         addCondition(conditions, { MemberCondition::Kind::MemberUnchanged, tested, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
@@ -1549,6 +1557,7 @@ struct CallResolver {
             { { Opcode::CallList }, &CallResolver::planSpreadHandover },
             { { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList }, &CallResolver::planListCall },
             { { Opcode::CallList }, &CallResolver::planCallWithElements },
+            { { Opcode::CallList }, &CallResolver::planPushOfList },
             { { Opcode::InstanceOf }, &CallResolver::planInstanceOf },
             { { Opcode::CallBuiltin }, &CallResolver::planFunctionMethod },
         };
@@ -2674,7 +2683,9 @@ struct CallResolver {
         if (!conditions.isEmpty() && hasFailedEarlier(makeConditionsTest(context.types, conditions.span()), site))
             return std::unexpected(CallDeclineReason::NeedsTest);
 
-        return [this, &site, subject, instances, isAlwaysFalse, failedTestMeansFalse, takesPlaceOfOperation, testsPrototypeOfInstance = answers.testsObjects, conditions = WTF::move(conditions)] {
+        // `this instanceof Duplex`, in a program that makes only what is below: nothing has begun the guards of a function that is only a base.
+        LayoutID functionWhoseGuardsBegin = conditions.isEmpty() ? LayoutID() : constructorFunctionAskedAbout(program, makeConditionsTest(context.types, conditions.span()));
+        return [this, &site, subject, instances, isAlwaysFalse, failedTestMeansFalse, takesPlaceOfOperation, functionWhoseGuardsBegin, testsPrototypeOfInstance = answers.testsObjects, conditions = WTF::move(conditions)] {
             if (takesPlaceOfOperation && isAlwaysFalse) {
                 Value answer = IRBuilder::make(Opcode::Boolean);
                 answer.setBoolean(false);
@@ -2686,7 +2697,7 @@ struct CallResolver {
             }
 
             expansion.begin(site.position);
-            branchOnConditions(conditions.span(), { });
+            branchOnConditions(conditions.span(), { }, functionWhoseGuardsBegin);
             if (isAlwaysFalse)
                 expansion.finishArm(builder.appendBoolean(false));
             else if (failedTestMeansFalse)
@@ -2966,6 +2977,57 @@ struct CallResolver {
             expansion.begin(site.position);
             ValueID list = expansion.original().listOperand();
             expansion.finishArm(appendDirectCall(builder, { .callee = shared, .arguments = singleElementSpan(list), .accessSite = expansion.original().accessSite(), .isNeverInlined = true, .isTailCall = expansion.isTailCall() }));
+            expansion.end();
+        };
+    }
+
+    // `list.push(...other)`, `list.push.apply(list, other)`: Array.prototype.push appends the elements of the unchanged array to the array and answers with the new length.
+    // No store into an array with unchanged storage runs the code of others. One that refuses the elements, or the length, AppendElements hands to Array.prototype.push itself.
+    Plan planPushOfList(const CallSite& site)
+    {
+        if (isRare(site).predicted())
+            return declined;
+        const Value& call = function.at(site.position.value);
+        ValueID receiver = call.thisValueOperand();
+        if (!receiver || singleBuiltinCalleeOf(program, function, call) != Builtins::ArrayPrototypePush)
+            return declined;
+        if (!typeOf(receiver).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
+            return declined;
+        if (!typeOf(call.listOperand()).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
+            return declined;
+        PristineRequirement unchangedStorage { BuiltinClasses::Array, PristineAspects::Storage };
+        bool isStorageProvenUnchanged = isProvenPristine(receiver, unchangedStorage, site);
+        bool isListUnchangedByType = pristineAspectsProvenBy(typeOf(call.listOperand()), BuiltinClasses::Array).containsAll(pristineArray.aspects);
+        if ((!isStorageProvenUnchanged || !isListUnchangedByType) && pristineTestOf(program.builtins(), BuiltinClasses::Array) != PristineTest::MayPass)
+            return declined;
+
+        return [this, &site, unchangedStorage, isStorageProvenUnchanged, isListUnchangedByType] {
+            expansion.begin(site.position);
+            ValueID receiver = expansion.original().thisValueOperand();
+            ValueID list = expansion.original().listOperand();
+            BlockID asBefore = builder.addBlock(BlockFrequency::Rare);
+            auto goOnIf = [&](ValueID condition) {
+                BlockID next = builder.addBlock(expansion.frequency());
+                builder.emitBranch(condition, Target { next, { }, { } }, Target { asBefore, { }, { } });
+                builder.moveToEndOf(next);
+            };
+            // The call refuses a list that does not fit on the stack.
+            goOnIf(appendTestThatListFits(list, 0));
+            if (!isStorageProvenUnchanged)
+                goOnIf(builder.append(makePristineTest(receiver, unchangedStorage.builtinClass, unchangedStorage.aspects)));
+            Value append = IRBuilder::make(Opcode::AppendElements, { receiver, list });
+            if (!isListUnchangedByType) {
+                IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(makePristineTest(list, pristineArray.builtinClass, pristineArray.aspects)), testedOperandIndex, expansion.frequency(), BlockFrequency::Rare, { BlockID(), Target { asBefore, { }, { } } });
+                append.setGuardOperand(branch.provenOnTaken);
+                builder.moveToEndOf(branch.taken);
+            }
+            builder.append(WTF::move(append));
+            Value length = IRBuilder::make(Opcode::PropGet, { receiver });
+            length.setKey(program.keyOf(BuiltinNames::length));
+            expansion.finishArm(expansion.append(WTF::move(length)));
+
+            builder.moveToEndOf(asBefore);
+            expansion.finishArm(expansion.appendOriginal());
             expansion.end();
         };
     }

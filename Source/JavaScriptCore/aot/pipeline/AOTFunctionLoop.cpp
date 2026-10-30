@@ -277,7 +277,7 @@ void FunctionQueue::processShare(Worker& own)
         }
 
         confirmFoundFunctions(found);
-        AOT::sort(found, isProcessedLater);
+        AOT::sortInLine(found, isProcessedLater);
         if (!found.isEmpty()) {
             Locker locker { own.lock };
             own.functions.append(found.span());
@@ -318,7 +318,7 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::
         first.append(function);
         m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
     }
-    AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
+    AOT::sortInLine(m_speculativeFunctions, { }, &SpeculativeFunction::id);
     parallelSort(m_loops, first.mutableSpan(), isProcessedLater);
 
     ParallelRegionScope parallelRegion;

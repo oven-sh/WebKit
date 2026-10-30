@@ -20,7 +20,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxRepeatedSourceBytes(Load, CodeSize, NotOptimized, 262144, 262144, 0, "bytes of source text that entry points compiled on their own have in common")
     MaxRepeatedSourcePercent(Load, CodeSize, NotOptimized, 5, 5, 0, "percent of the source text that entry points compiled on their own have in common")
     MaxDataNodes(Load, Memory, BuildError, 16777216, 16777216, 0, "values in a data module or macro result")
-    MaxNestingDepth(Lower, Memory, BuildError, 2000, 2000, 0, "how deeply code can be nested")
+    MaxDataNestingDepth(Lower, Memory, BuildError, 2000, 2000, 0, "how deeply the values of a data module or macro result can be nested")
     MaxTypeNodes(Lower, CompileTime, WiderType, 65536, 65536, 0, "the size of one TypeScript type")
     MaxExpectedResultLayouts(Lower, CompileTime, WiderType, 256, 256, 0, "object types reachable from one call's declared result type")
     MaxSupertypePairs(Lower, CompileTime, GenericPath, 4096, 4096, 0, "type pairs compared for one conversion")

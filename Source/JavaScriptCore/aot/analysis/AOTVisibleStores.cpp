@@ -347,7 +347,7 @@ public:
         forEachIndexInParallel(m_loops, numberOfKeys, [&](unsigned key) {
             std::span<FieldWithKey> fields = m_fieldsWithKey.mutableSpan().subspan(m_firstFieldWithKey[key], m_firstFieldWithKey[key + 1] - m_firstFieldWithKey[key]);
             if (fields.size() > 1)
-                AOT::sort(fields);
+                AOT::sortInLine(fields);
         });
 
         m_typeFacts.grow(program.types.size());
@@ -1297,7 +1297,7 @@ void StoreGraph::build(const VisibleStores::FunctionFilter& shouldRead)
 
     for (GraphPart& part : m_parts)
         m_methods.appendVector(std::exchange(part.methods, { }));
-    AOT::sort(m_methods);
+    AOT::sortInLine(m_methods);
     removeRepeatedElements(m_methods);
     forEachIndexInParallel(m_loops, m_parts.size(), [&](unsigned index) {
         GraphPart& part = m_parts[index];

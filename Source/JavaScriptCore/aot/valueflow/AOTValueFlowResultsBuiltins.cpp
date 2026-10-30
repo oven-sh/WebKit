@@ -307,7 +307,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
     auto orderOf = [](const FeatureUseRecord& use) {
         return std::tuple(use.feature, use.builtin);
     };
-    AOT::sort(uses, { }, orderOf);
+    AOT::sortInLine(uses, { }, orderOf);
     uses.shrink(std::ranges::unique(uses, { }, orderOf).begin() - uses.begin());
     markUnnamedFeatureUses(inputs, uses);
     return uses;
@@ -366,14 +366,49 @@ static bool isLoadUnderConstantName(const Program& program, const Witness& witne
     return function.at(definitionThroughSameValues(function, load.specifierOperand())).opcode == Opcode::String;
 }
 
-static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContext& build, std::span<const UnseenCodeRecord> records)
+// `for (const name of ["os", "./plugin.ts"]) await import(name)`: the build knows every name, and each finds a module of the image.
+static bool findsModuleUnderEveryName(const ValueFlowResultInputs& inputs, const Witness& witness, bool isCallOfLoader)
 {
+    const Program& program = inputs.program;
+    FunctionID function(witness.function);
+    const Value& load = program.at(function).at(ValueID(witness.value));
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.site != ValueID(witness.value))
+            continue;
+        size_t indexOfName = isCallOfLoader ? 2 : 0;
+        if (statement.operandCount <= indexOfName)
+            return false;
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+        auto valuesOf = [&](const ValueFlowOperand& operand) {
+            return ValueFlowRuleContext::valueShownToRules(operand, inputs.solver(), maker.get());
+        };
+        auto findsEveryNameFrom = [&](ModuleID referrer) {
+            return modulesThatNamesFind(program, inputs.universe(), inputs.solver().input().refusedCode, { function, load.operand(indexOfName), referrer }, [&](const ScopedLambda<bool(ValueFlowObjectID)>& functor) {
+                inputs.sets().anyMember(valuesOf(operands[indexOfName]), functor);
+            }).findsEveryName();
+        };
+        if (!isCallOfLoader)
+            return findsEveryNameFrom(load.referrer());
+        return !inputs.sets().anyMember(valuesOf(operands[0]), [&](ValueFlowObjectID loader) {
+            return !findsEveryNameFrom(inputs.universe().moduleOf(loader));
+        });
+    }
+    return false;
+}
+
+static void warnAboutLoadsUnderComputedNames(const ValueFlowResultInputs& inputs, std::span<const UnseenCodeRecord> records)
+{
+    const Program& program = inputs.program;
+    BuildContext& build = inputs.build;
     Vector<SourceLocation> reportedLocations;
     for (const UnseenCodeRecord& record : records) {
         if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
             continue;
         bool isCallOfLoader = record.builtin != Wire::none;
         if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
+            continue;
+        if (findsModuleUnderEveryName(inputs, record.witness, isCallOfLoader))
             continue;
         if (hasModule(record.witness.location)) {
             if (reportedLocations.contains(record.witness.location))
@@ -468,7 +503,7 @@ static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations)
     auto orderOf = [](const BuiltinLocationFlow& location) {
         return std::tuple(location.holder, location.key);
     };
-    AOT::stableSort(locations, { }, orderOf);
+    AOT::stableSortInLine(locations, { }, orderOf);
     size_t size = 0;
     for (const BuiltinLocationFlow& location : locations) {
         if (!size || orderOf(locations[size - 1]) != orderOf(location)) {
@@ -1220,7 +1255,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     tables.wholeProgram.unseenCode = WTF::move(usesOfLibraryCode.unseenCode);
     tables.wholeProgram.loadsOfMachineCode = WTF::move(usesOfLibraryCode.loadsOfMachineCode);
     tables.wholeProgram.findsFilesOfProgramByName = filesOfProgramAreLoadedByName(inputs.solution);
-    warnAboutLoadsUnderComputedNames(inputs.program, inputs.build, tables.wholeProgram.unseenCode.span());
+    warnAboutLoadsUnderComputedNames(inputs, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);
     times.didFinish("built-ins: code that runs, unseen code, instances"_s);
     tables.builtins.uses = WTF::move(usesOfLibraryCode.builtinUses);

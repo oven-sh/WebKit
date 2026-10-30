@@ -162,7 +162,7 @@ static ValueFlowObjectsToldApart tellManyObjectsApart(ValueFlowRuleContext& cont
         else
             member.group = 3ull << 32 | member.object.index();
     }
-    AOT::stableSort(members, { }, &Member::group);
+    AOT::stableSortInLine(members, { }, &Member::group);
     uint64_t numberOfGroups = 0;
     for (size_t index = 0; index < members.size(); ++index)
         numberOfGroups += !index || members[index].group != members[index - 1].group;
@@ -175,7 +175,7 @@ static ValueFlowObjectsToldApart tellManyObjectsApart(ValueFlowRuleContext& cont
                 break;
             member.group = 4ull << 32 | member.object.index();
         }
-        AOT::stableSort(members, { }, &Member::group);
+        AOT::stableSortInLine(members, { }, &Member::group);
     }
     Vector<ValueFlowObjectID, 64> objects;
     for (size_t first = 0; first < members.size();) {
@@ -620,7 +620,7 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     return context.contains(context.valueOf(context.readWhatWasWritten(inHandsOfProgram, ValueFlowName::property(context.program(), key))), ValueFlowUniverse::unknownObject());
 }
 
-static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key)
+static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
 {
     context.forEachMemberInLine(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
@@ -636,7 +636,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     // A proxy answers any name with what its trap returns.
     if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
         letWhateverHasEscapedBeCalled(context);
-    callOperandOfDescribedCall(statement, context, statement.key == key ? key : PropertyKeyID(), true);
+    callOperandOfDescribedCall(statement, context, receiversAreToldApart && statement.key == key ? key : PropertyKeyID(), true);
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)
@@ -806,6 +806,28 @@ static bool mayLookAtReceiver(ValueFlowRuleContext& context, ClimbingSet callees
     return mayLook;
 }
 
+// What lets in unseen code stays listed beside a value nobody knows, so once it has escaped every callee nobody knows lists it.
+// Where such a callee is called, runUsedBuiltins() calls the functions of the host that have escaped, with operands nobody knows, once for the whole program. The operands of this call escape with it.
+// Applied here as well, a function that reads a hundred options would read them off the operands of every such call.
+static ClimbingSet withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(ValueFlowRuleContext& context, ClimbingSet callees)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    const BuiltinTable& builtins = context.program().builtins();
+    ClimbingSet listed = context.restrict(callees, context.maker().intersect(universe.builtinFunctions(), universe.builtinTables().heap().objectsThatLetInUnseenCode()));
+    if (!context.meet(listed, ValueSets::anything))
+        return callees;
+    ClimbingSet called = context.valueWithin(context.valueWithin(listed, ValueFlowProgramNodes::escaped()), context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders));
+    Vector<ValueFlowObjectID, 8> ofHost;
+    context.forEachMember(called, [&](ValueFlowObjectID function) {
+        if (builtins.at(universe.builtinOf(function)).origin == BuiltinOrigin::Host)
+            ofHost.append(function);
+    });
+    if (ofHost.isEmpty())
+        return callees;
+    letWhateverHasEscapedBeCalled(context);
+    return context.restrict(callees, ValueSets::complement(context.maker().of(ofHost.span())));
+}
+
 void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -878,6 +900,8 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
             receiversFollowedBehindUnknownObject = universe.builtinTables().heap().functionsThatCallOrBindOperand();
         }
     }
+    if (context.contains(callees, ValueFlowUniverse::unknownObject()))
+        listedCallees = withoutFunctionsOfHostThatWhoeverCallsWhatHasEscapedCalls(context, listedCallees);
     callListedBuiltins(statement, context, listedCallees, kind, receiversFollowedBehindUnknownObject);
     allocateRowsOfQuery(statement, context);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
@@ -904,7 +928,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (placeholder == ValueFlowUniverse::unknownObject() && isCodeThatRecordsDescribe(context.universe(), statement.function))
             callOperandOfDescribedCall(statement, context);
         else if (keyOfMember)
-            callMemberNobodyKnows(statement, context, keyOfMember);
+            callMemberNobodyKnows(statement, context, keyOfMember, context.meet(callees, enteredClosures));
         else
             passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
     }

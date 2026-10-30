@@ -266,7 +266,7 @@ ShapeTestCandidates collectShapeTestCandidates(const PlacementContext& context, 
         SiteWeight& weight = result.singleLayoutTestWeight[result.listedLayouts[lists[i].firstLayout]];
         weight = saturatedSum(weight, lists[i].weight);
     }
-    AOT::sort(result.listsByWeight, [&](uint32_t a, uint32_t b) {
+    AOT::sortInLine(result.listsByWeight, [&](uint32_t a, uint32_t b) {
         return std::tuple { lists[b].weight.predicted(), lists[a].numberOfLayouts, a } < std::tuple { lists[a].weight.predicted(), lists[b].numberOfLayouts, b };
     });
     return result;
@@ -309,7 +309,7 @@ public:
         Vector<uint32_t> leavesByKey(leafKey.size(), [](size_t leaf) {
             return static_cast<uint32_t>(leaf);
         });
-        AOT::sort(leavesByKey, { }, [&](uint32_t leaf) {
+        AOT::sortInLine(leavesByKey, { }, [&](uint32_t leaf) {
             return leafKey[leaf];
         });
         for (uint32_t leaf : leavesByKey) {
@@ -330,7 +330,7 @@ public:
                 children.append(child);
             });
             if (at(node).kind == Kind::P) {
-                AOT::sort(children, [&](uint32_t a, uint32_t b) {
+                AOT::sortInLine(children, [&](uint32_t a, uint32_t b) {
                     return keys[a] < keys[b];
                 });
             } else if (keys[children.last()] < keys[children.first()])
@@ -790,7 +790,7 @@ private:
             if (m_context.isCompiledObject(LayoutID(i)) && !m_leafOfLayout[i])
                 m_layoutsTestedAlone.append(i);
         }
-        AOT::stableSort(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
+        AOT::stableSortInLine(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
             return (m_candidates.singleLayoutTestWeight[a] > m_candidates.singleLayoutTestWeight[b]).predicted();
         });
     }

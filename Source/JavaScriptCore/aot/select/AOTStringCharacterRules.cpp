@@ -272,7 +272,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 
     std::optional<bool> functionSuspends;
     for (auto& remaining : readersOfString.values()) {
-        AOT::sort(remaining, { }, [&](const PlacedIndex& placed) {
+        AOT::sortInLine(remaining, { }, [&](const PlacedIndex& placed) {
             return std::pair { cfg.reversePostOrderIndex(placed.point.block), placed.point.index };
         });
         while (remaining.size() > 1) {

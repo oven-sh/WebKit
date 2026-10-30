@@ -1032,7 +1032,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
             lowInNoSet |= arrival.low;
     }
     if (setsArrived.size() > 2) {
-        AOT::sort(setsArrived, { }, &ValueSetID::index);
+        AOT::sortInLine(setsArrived, { }, &ValueSetID::index);
         removeRepeatedElements(setsArrived);
     }
     ValueSetID set = setsArrived.isEmpty() ? ValueSets::nothing : setsArrived.size() == 1 ? setsArrived[0] : maker.uniteAll(setsArrived.span());

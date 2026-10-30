@@ -790,7 +790,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (PropertyKeyID key = fieldAt(program, fields[candidate]).key)
             candidatesByKey.append({ key, candidate });
     }
-    AOT::sort(candidatesByKey);
+    AOT::sortInLine(candidatesByKey);
 
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {

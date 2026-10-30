@@ -131,7 +131,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ResolveAwaitedCalls, { .opcodes = { Opcode::AwaitBySavingFrame, Opcode::PromiseAllOfElements } } },
     { PassID::SinkConstants, { .traits = BodyTrait::SeveralBlocks } },
     { PassID::ExpandLongArrayLiterals, { .opcodes = { Opcode::NewArray } } },
-    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
+    { PassID::FinishBirths, { .opcodes = { Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PropSet, Opcode::PropDefine, Opcode::NewObject }, .traits = BodyTrait::UnfinishedThis } },
     { PassID::RemoveRedundantBarriers, { .opcodes = operationsThatMayRunBarrier } },
 };
 

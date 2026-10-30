@@ -109,7 +109,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
             stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .elementsAreProven = hasElements && facts->contentsAreProven, .arrayStorage = hasElements ? facts->arrayStorage : ArrayStorage::Other });
         }
-        AOT::sort(stamps, { }, &FlowAllocationStamp::value);
+        AOT::sortInLine(stamps, { }, &FlowAllocationStamp::value);
     });
 
     classOfBuiltinClass.append(classOfUnwrittenArrays);
@@ -135,7 +135,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     };
     Vector<FlowBodyUpdate>& bodies = tables.application->bodies;
     Vector<AllocationSiteID> sitesOfStamps = collectInParallel<AllocationSiteID>(loops, bodies.size(), [&](unsigned index, Vector<AllocationSiteID>& found) {
-        AOT::sort(bodies[index].allocations, { }, &FlowAllocationStamp::value);
+        AOT::sortInLine(bodies[index].allocations, { }, &FlowAllocationStamp::value);
         for (const FlowAllocationStamp& stamp : bodies[index].allocations)
             found.append(stamp.site);
     });
@@ -171,7 +171,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
         renumber(node.rootSite);
         renumber(node.stamp.site);
     }
-    AOT::sort(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
+    AOT::sortInLine(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
         return std::tuple(node.rootSite, node.ordinal);
     });
 }

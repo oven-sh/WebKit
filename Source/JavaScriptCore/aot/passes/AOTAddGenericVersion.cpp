@@ -914,8 +914,8 @@ struct PositionsProvenByTypes {
             for (uint32_t field = 0; layout.isEnvironment() && field < layout.fields.size(); ++field)
                 addVariableIfOpen({ Position::Kind::Field, index, field }, layout.fields[field].flow.location, assignedByEvaluatedText.span());
         }
-        AOT::sort(assumed);
-        AOT::sort(assumedWithoutStart);
+        AOT::sortInLine(assumed);
+        AOT::sortInLine(assumedWithoutStart);
         noteCandidates();
     }
 
@@ -1240,7 +1240,7 @@ struct PositionsProvenByTypes {
                 Vector<Position> taken = collectInParallel<Position>(loops, bodiesToLookAt.size(), [&](unsigned index, Vector<Position>& found) {
                     found.appendVector(std::exchange(bodies[bodiesToLookAt[index]].*list, { }));
                 });
-                AOT::sort(taken);
+                AOT::sortInLine(taken);
                 return taken;
             };
             Vector<Position> givenUp = takeInOrder(&Body::positionsGivenUp);
@@ -1632,7 +1632,7 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
                 reads.typedReadsByName.append(id);
         }
     }
-    AOT::sort(reads.positions);
+    AOT::sortInLine(reads.positions);
     removeRepeatedElements(reads.positions);
     reads.positions.shrinkToFit();
     reads.typedReadsByName.shrinkToFit();
@@ -1849,12 +1849,12 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         Vector<Position> marked = std::exchange(assignedByEvaluatedText, { });
         for (Vector<Position>& stores : storesByFunction)
             marked.appendVector(WTF::move(stores));
-        AOT::sort(marked);
+        AOT::sortInLine(marked);
         removeRepeatedElements(marked);
         marked.removeAllMatching([&](Position position) { return !markExpected(program, position); });
         for (FieldReference field : std::exchange(fieldsTakenBack, { }))
             marked.append(positionOfField(field));
-        AOT::sort(marked);
+        AOT::sortInLine(marked);
         if (marked.isEmpty())
             break;
         numberOfPositions += marked.size();

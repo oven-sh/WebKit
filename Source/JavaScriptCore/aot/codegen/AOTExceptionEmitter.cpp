@@ -77,7 +77,7 @@ void ExceptionEmitter::findValuesCaughtByCleanups()
                 edges.append({ target.arguments[i], parameters[i] });
         });
     }
-    AOT::sort(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
+    AOT::sortInLine(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
     while (!worklist.isEmpty()) {
         Caught caught = worklist.takeLast();
         auto added = m_valuesCaughtByCleanups.add(caught.value, caught.cleanup);

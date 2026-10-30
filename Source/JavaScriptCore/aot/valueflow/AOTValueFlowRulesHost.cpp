@@ -812,10 +812,10 @@ static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
 }
 
 // Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
-static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
+static bool isNameOfPackageOutsideImage(const ValueFlowUniverse& universe, RefusedCode refused, std::span<const uint8_t> name)
 {
     std::span<const uint8_t> package = packageNamedBy(name);
-    return !package.empty() && context.refusedCode().codeOutsideImage && !context.universe().builtinTables().heap().holdsModuleOfPackage(package);
+    return !package.empty() && refused.codeOutsideImage && !universe.builtinTables().heap().holdsModuleOfPackage(package);
 }
 
 // "node:" and "bun:" stand in front of names of the library alone.
@@ -824,43 +824,59 @@ static bool hasSchemeOfLibrary(std::span<const uint8_t> name)
     return spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) || spanHasPrefix(name, byteCast<uint8_t>("bun:"_span));
 }
 
-ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, FunctionID load, ValueID written, const ValueFlowOperand& name)
+ModulesThatNamesFind modulesThatNamesFind(const Program& program, const ValueFlowUniverse& universe, RefusedCode refused, const LoadUnderName& load, NOESCAPE const NamesOfLoad& forEachName)
 {
-    const Program& program = context.program();
-    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowHeapTables& tables = universe.builtinTables().heap();
     ModulesThatNamesFind found;
-    auto add = [&](std::span<const uint8_t> text) {
-        if (ModuleID module = universe.builtinTables().heap().libraryModuleNamed(text))
-            found.libraryModules.append(module);
-        else if (hasSchemeOfLibrary(text) || isNameOfPackageOutsideImage(context, text))
-            found.nativeModule = true;
+    auto addPath = [&](std::span<const uint8_t> path) {
+        std::optional<Vector<ModuleID, 2>> files = load.referrer ? tables.filesThatPathFinds(load.referrer, path) : std::nullopt;
+        if (!files || (files->isEmpty() && !refused.codeOutsideImage))
+            found.anything = true;
+        else if (files->isEmpty())
+            found.fileOutsideImage = true;
         else
-            found.fileOfProgram = true;
+            found.filesOfProgram.appendVector(*files);
+    };
+    auto add = [&](std::span<const uint8_t> text) {
+        if (ModuleID module = tables.libraryModuleNamed(text))
+            found.libraryModules.append(module);
+        else if (hasSchemeOfLibrary(text) || isNameOfPackageOutsideImage(universe, refused, text))
+            found.nativeModule = true;
+        else if (!text.empty() && text[0] == '.')
+            addPath(text);
+        else
+            found.anything = true;
     };
     // A text that is no key of the program is any string to the values.
-    const Function& function = program.at(load);
-    if (const Value& definition = function.at(definitionThroughSameValues(function, written)); definition.opcode == Opcode::String) {
+    const Function& function = program.at(load.function);
+    if (const Value& definition = function.at(definitionThroughSameValues(function, load.written)); definition.opcode == Opcode::String) {
         add(program.string(definition.string()));
         return found;
     }
-    context.forEachMember(context.valueOf(name), [&](ValueFlowObjectID member) {
-        if (found.fileOfProgram)
-            return;
+    forEachName([&](ValueFlowObjectID member) {
         if (universe.kindOf(member) == ValueFlowObjectKind::Key) {
             const PropertyKey& key = program.at(universe.keyOf(member));
             if (key.kind == PropertyKeyKind::Text)
                 add(program.string(key.text));
             else
-                found.fileOfProgram = true;
-            return;
+                found.anything = true;
+            return found.anything;
         }
-        // `for (const name of names) await import(name)`: to the values a step of an iteration may answer undefined. No module of the library is spelled so.
+        // No module of the library is spelled "undefined".
         auto text = std::ranges::find_if(primitiveKeyTexts, [&](const PrimitiveKeyText& entry) {
             return member == ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(entry.primitive));
         });
-        found.fileOfProgram = text == std::end(primitiveKeyTexts) || !isNameOfPackageOutsideImage(context, byteCast<uint8_t>(text->text.span()));
+        found.anything = text == std::end(primitiveKeyTexts) || !isNameOfPackageOutsideImage(universe, refused, byteCast<uint8_t>(text->text.span()));
+        return found.anything;
     });
     return found;
+}
+
+ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext& context, const LoadUnderName& load, const ValueFlowOperand& name)
+{
+    return modulesThatNamesFind(context.program(), context.universe(), context.refusedCode(), load, [&](const ScopedLambda<bool(ValueFlowObjectID)>& functor) {
+        context.anyMember(context.valueOf(name), functor);
+    });
 }
 
 static ClimbingSet publicNativeModules(ValueFlowRuleContext& context)
@@ -875,20 +891,28 @@ static ClimbingSet publicNativeModules(ValueFlowRuleContext& context)
     return ClimbingSet(context.maker().of(objects.span()));
 }
 
-void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, const ModulesThatNamesFind& found, ValueFlowNodeID answer)
+void noteLoadUnderSpelledNames(ValueFlowRuleContext& context, FunctionID load, const ModulesThatNamesFind& found, ValueFlowHostNode answers, ValueFlowNodeID answer)
 {
-    if (isWrittenInProgram(context.program().at(load)))
+    RELEASE_ASSERT(answers == ValueFlowHostNode::RequiredValuesLoadedByName || answers == ValueFlowHostNode::NamespacesLoadedByName);
+    if (isWrittenInProgram(context.program().at(load))) {
         raiseHostFlag(context, ValueFlowHostNode::LibraryModulesAreLoadedUnderSpelledNames);
+        // The image keeps every file that a name may find findable. Only this load is known to find fewer.
+        if (!found.filesOfProgram.isEmpty())
+            raiseHostFlag(context, answers == ValueFlowHostNode::RequiredValuesLoadedByName ? ValueFlowHostNode::ModulesAreRequiredByName : ValueFlowHostNode::ModulesAreImportedByName);
+    }
     if (found.nativeModule && answer)
         context.add(answer, publicNativeModules(context));
 }
 
-static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+static ModulesThatNamesFind modulesThatNamesPassedFind(const ValueFlowStatement& call, ValueFlowRuleContext& context, ValueFlowObjectID loader)
 {
     constexpr size_t indexOfName = 2;
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
-        return { .fileOfProgram = true };
-    return modulesThatNamesFind(context, call.function, context.program().at(call.function).at(call.site).operand(indexOfName), context.operandsOf(call)[indexOfName]);
+        return { .anything = true };
+    ModulesThatNamesFind found = modulesThatNamesFind(context, { call.function, context.program().at(call.function).at(call.site).operand(indexOfName), context.universe().moduleOf(loader) }, context.operandsOf(call)[indexOfName]);
+    // What the loader makes of a file on disk has a site at the two operations alone.
+    found.anything |= found.fileOutsideImage;
+    return found;
 }
 
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
@@ -914,11 +938,13 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
             return;
         if (!loadsModulesByName(*cause))
             return raiseEvent(context, builtin, *cause, statement.result);
-        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context);
-        if (found.fileOfProgram)
+        ModulesThatNamesFind found = modulesThatNamesPassedFind(statement, context, callee);
+        if (found.anything || (loadsOnlyLibraryModules(builtin) && !found.filesOfProgram.isEmpty()))
             return loadsOnlyLibraryModules(builtin) ? handLibraryModulesTo(context, statement.result) : raiseEvent(context, builtin, *cause, statement.result);
-        noteLoadUnderSpelledNames(context, statement.function, found, statement.result);
+        noteLoadUnderSpelledNames(context, statement.function, found, ValueFlowHostNode::RequiredValuesLoadedByName, statement.result);
         for (ModuleID module : found.libraryModules)
+            requireModule(statement, context, module);
+        for (ModuleID module : found.filesOfProgram)
             requireModule(statement, context, module);
     });
 }

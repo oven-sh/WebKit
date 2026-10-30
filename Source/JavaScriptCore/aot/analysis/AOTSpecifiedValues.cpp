@@ -140,7 +140,7 @@ private:
             if (m_casts.isEmpty() || m_casts.last().operand != use.operand || m_casts.last().block != use.block)
                 m_casts.append({ use.operand, use.block, 0, ValueID() });
         }
-        AOT::sort(m_casts, { }, &Cast::key);
+        AOT::sortInLine(m_casts, { }, &Cast::key);
         removeRepeatedElements(m_casts, [](const Cast& a, const Cast& b) { return a.key() == b.key(); });
 
         Vector<uint32_t, 16> inOrderOfTree;

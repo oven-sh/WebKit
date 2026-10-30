@@ -536,7 +536,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
 
     body.word = tracked & ~lost;
     Vector<HandedOnReferences>& entries = body.handedOn;
-    AOT::sort(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
+    AOT::sortInLine(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
         return std::tuple(a.callee, a.entryParameter) < std::tuple(b.callee, b.entryParameter);
     });
     size_t numberOfMergedEntries = 0;

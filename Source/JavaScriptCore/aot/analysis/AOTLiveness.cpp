@@ -48,7 +48,7 @@ static Vector<std::pair<ValueID, BlockID>> collectNarrowedOperandUses(const Func
             uses.append({ subject, block });
         });
     }
-    AOT::sort(uses);
+    AOT::sortInLine(uses);
     removeRepeatedElements(uses);
     return uses;
 }
@@ -83,7 +83,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
                 });
             }
         }
-        AOT::sort(interiorPointers);
+        AOT::sortInLine(interiorPointers);
     }
     m_hasTrackedBases = !interiorPointers.isEmpty();
 

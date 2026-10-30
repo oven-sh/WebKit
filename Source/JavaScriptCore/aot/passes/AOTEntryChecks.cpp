@@ -496,7 +496,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             }
         });
     });
-    AOT::sort(misfits);
+    AOT::sortInLine(misfits);
     for (Split& split : splits) {
         split.checkedEntryValues.removeAllMatching([&](const CheckedEntryValue& checked) {
             return std::ranges::binary_search(misfits, Misfit { split.id, checked.entryParameter });
@@ -671,7 +671,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!checks.isEmpty() || !checkedEntryValues.isEmpty())
             found.append(Split { id, WTF::move(checks), WTF::move(checkedEntryValues) });
     });
-    AOT::sort(splits, { }, &Split::id);
+    AOT::sortInLine(splits, { }, &Split::id);
     keepWhereEveryKnownArrivalFits(program, loops, splits);
     // The test at the entrance is for the type that the body checks for. The typed body holds the value proven, hands it on proven, and enters its callees behind their own tests.
     for (Split& split : splits) {
@@ -897,7 +897,7 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<ShorterEntrance> keys = WTF::map(calls, [](const AnsweredCall& call) {
         return call.entered;
     });
-    AOT::sort(keys);
+    AOT::sortInLine(keys);
     removeRepeatedElements(keys);
 
     unsigned count = static_cast<unsigned>(keys.size());

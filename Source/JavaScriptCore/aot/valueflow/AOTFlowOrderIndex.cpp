@@ -461,7 +461,7 @@ static void createOwners(FlowScopeIndex& index)
         }
     }
     for (FlowScopeOwner& owner : index.owners)
-        AOT::sort(owner.exports);
+        AOT::sortInLine(owner.exports);
 }
 
 FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder)

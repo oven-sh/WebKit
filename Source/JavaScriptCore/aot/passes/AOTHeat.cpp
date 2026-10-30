@@ -2339,7 +2339,7 @@ ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
         }
         if (!didSplit)
             return;
-        AOT::sort(result.mutableSubspan(firstSiteOfFunction), { }, [](const OutliningSite* site) {
+        AOT::sortInLine(result.mutableSubspan(firstSiteOfFunction), { }, [](const OutliningSite* site) {
             return std::pair { site->orderOfEntryBlock, site->firstIndex };
         });
     });
@@ -2427,7 +2427,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
         }, firstGroupWithHash);
     });
 
-    AOT::sort(groups.mutableSpan(), { }, [](const SiteGroup& group) {
+    AOT::sortInLine(groups.mutableSpan(), { }, [](const SiteGroup& group) {
         return group.first();
     });
     return groups;
@@ -2469,7 +2469,7 @@ static bool canLeaveByItsLastCall(const AnalysisContext& context, const CallingC
         return false;
     bool onlyPreparesArguments = std::ranges::all_of(values.first(values.size() - 1), [&](ValueID id) {
         const Value& value = source.at(id);
-        return isRematerializable(value) || value.opcode == Opcode::GetCapture || isCastThatProvesNothing(value.opcode);
+        return isRematerializable(value) || value.opcode == Opcode::GetCapture || isCastThatProvesNothing(value.opcode) || value.opcode == Opcode::AssumeType || value.opcode == Opcode::Specified;
     });
     if (!onlyPreparesArguments)
         return false;

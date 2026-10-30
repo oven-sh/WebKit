@@ -937,7 +937,7 @@ private:
                 for (uint32_t index = 0; index < parameters.size(); ++index)
                     result.append(BlockParameter { parameters[index], Typed::BlockID(block), index });
             }
-            AOT::stableSort(result, { }, &BlockParameter::parameter);
+            AOT::stableSortInLine(result, { }, &BlockParameter::parameter);
             return result;
         }).iterator->value;
         auto found = std::ranges::lower_bound(sortedParameters, parameter, { }, &BlockParameter::parameter);

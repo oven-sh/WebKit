@@ -16,6 +16,7 @@
 #include "AOTObjectVisiting.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
@@ -468,6 +469,9 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
             if (test.kind == CellTestKind::CarriesBrandOfClass)
                 return !encoder.placement.rankOfClass(test.classLayout);
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
+        });
+        AOT::stableSort(plan.cellTests.mutableSpan(), { }, [&](const CellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? encoder.placement.closureNumberOf(encoder.findEntrypoint(test.function)) : -1;
         });
         // In a plan, String says that some string passes. In a record it says that every string passes.
         uint16_t primitives = plan.stringLiterals.isEmpty() ? plan.passingPrimitives : (plan.passingPrimitives & ~Primitive::String) | Primitive::LiteralString;

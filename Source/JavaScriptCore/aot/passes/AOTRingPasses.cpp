@@ -3673,7 +3673,7 @@ static PassOutcome mergeRepeatedTruthinessTests(FunctionPassContext& context)
         return PassOutcome::Unchanged;
     for (TruthinessTest& test : tests)
         test.tested = rewrite.analyses.identities().identityOf(test.tested);
-    AOT::stableSort(tests, { }, &TruthinessTest::tested);
+    AOT::stableSortInLine(tests, { }, &TruthinessTest::tested);
 
     size_t firstKept = 0;
     size_t endOfKept = 0;
@@ -4313,7 +4313,7 @@ static bool removeLoopPollsFromHandlers(FunctionPassContext& context)
     Vector<unsigned, 8> outermostFirst;
     for (unsigned index = 0; index < loops.numLoops(); ++index)
         outermostFirst.append(index);
-    AOT::sort(outermostFirst, [&](unsigned a, unsigned b) {
+    AOT::sortInLine(outermostFirst, [&](unsigned a, unsigned b) {
         unsigned depthOfA = loops.loopDepth(loops.loop(a).header());
         unsigned depthOfB = loops.loopDepth(loops.loop(b).header());
         return depthOfA != depthOfB ? depthOfA < depthOfB : a < b;

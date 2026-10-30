@@ -404,7 +404,7 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
         region.append(block);
         worklist.append(cfg.predecessors(block));
     }
-    AOT::sort(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    AOT::sortInLine(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
     return region;
 }
 
@@ -2942,7 +2942,7 @@ struct ArmDispatcher {
             for (ValueID close : copies[copy].operations.closes)
                 addSite(close, copy);
         }
-        AOT::sort(sites, std::ranges::greater { }, [](const OperationSite& site) { return blockAndIndexOf(site.point); });
+        AOT::sortInLine(sites, std::ranges::greater { }, [](const OperationSite& site) { return blockAndIndexOf(site.point); });
     }
 
     // An operation that is expanded ends its block, and what stood behind it stands in another block from then on.

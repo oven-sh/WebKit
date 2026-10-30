@@ -993,6 +993,9 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
             return;
         }
         frame.calleeLiesInFrame = false;
+        // One marked function in the program brings every frame here, and most frames are of functions that are named as they are written.
+        if (!tables.framesAreNamedByCallee(sourceFunction))
+            return;
         if (!hasOnlyEntrypointsBelow(walk.image(), reader, frame.code, logicalFrame, sourceFunction))
             return;
         knowsCallee = false;

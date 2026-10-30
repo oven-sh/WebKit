@@ -1419,10 +1419,10 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     return builder.append(WTF::move(cast));
 }
 
-bool takesFactOfEntry(const Program& program, const Value& value, bool calleeIsPredicted)
+bool takesFactOfEntry(const Program& program, const Value& value)
 {
     const LocationFlow* flow = flowOfVariableReadBy(program, value);
-    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, calleeIsPredicted) && !namesFactOrGivesWordThatMayBeAnything(value);
+    return flow && holdsDeclaredTypeOnlyBehindEntryOfCopy(*flow) && !namesFactOrGivesWordThatMayBeAnything(value);
 }
 
 ValueID readWordAndAssumeInPlace(Function& function, TypeArena& types, ValueID id, ValueID fact)
@@ -1470,7 +1470,7 @@ void nameFactOfEntry(const Program& program, Function& function, TypeArena& type
     Vector<ValueID, 8> readsOfFields;
     for (BlockID block : blocks) {
         for (ValueID id : function.at(block).values) {
-            if (!takesFactOfEntry(program, function.at(id), calleeIsPredicted))
+            if (!takesFactOfEntry(program, function.at(id)))
                 continue;
             if (function.at(id).opcode == Opcode::GetModuleVariable)
                 function.edit(id).setFactOperand(fact);
@@ -1551,7 +1551,7 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
     bool calleeIsPredicted = liesInCopyOfPredictedCallee(builder.function(), firstFrame);
     bool needsFact = std::ranges::any_of(region, [&](BlockID block) {
         return std::ranges::any_of(source.at(block).values, [&](ValueID id) {
-            return takesFactOfEntry(program, source.at(id), calleeIsPredicted) || narrowsWhatFunctionIsHanded(program, source, source.at(id));
+            return takesFactOfEntry(program, source.at(id)) || narrowsWhatFunctionIsHanded(program, source, source.at(id));
         });
     });
     ValueID entered;
@@ -2116,7 +2116,7 @@ static uint32_t computeFoldedBytes(FunctionPassContext& context, ValueID callID,
     }
 
     // A range holds another where it holds its beginning, so what is asked is whether a number lies in one of the ranges: they are joined where they meet.
-    AOT::sort(foldedRanges, { }, &DominatedRange::begin);
+    AOT::sortInLine(foldedRanges, { }, &DominatedRange::begin);
     size_t numberOfJoinedRanges = 0;
     for (const DominatedRange& range : foldedRanges) {
         if (range.isEmpty())
@@ -2892,7 +2892,7 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
             sites[index].heat = heat > 0 ? heat : 0;
         }
     }
-    AOT::sort(order, [&](uint32_t a, uint32_t b) {
+    AOT::sortInLine(order, [&](uint32_t a, uint32_t b) {
         const InlineSite& first = sites[a];
         const InlineSite& second = sites[b];
         if (first.heat != second.heat)

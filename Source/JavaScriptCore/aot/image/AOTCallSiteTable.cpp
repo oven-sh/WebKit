@@ -116,7 +116,7 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
         returnSites.append({ returnOffset, *site, false, firstReadColumnDelta });
     });
     RELEASE_ASSERT(firstReadSites.empty());
-    AOT::stableSort(returnSites, { }, &SiteWithCode::returnOffset);
+    AOT::stableSortInLine(returnSites, { }, &SiteWithCode::returnOffset);
     // findCallSite() hands a return address the site in front of it only if that site says nothing but where it is.
     for (size_t i = 1; i < returnSites.size(); ++i)
         RELEASE_ASSERT(returnSites[i].site != returnSites[i - 1].site || !std::ranges::binary_search(code.sites.flaggedSites, returnSites[i].site, { }, &FlaggedSite::site));

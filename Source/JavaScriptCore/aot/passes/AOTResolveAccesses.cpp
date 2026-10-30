@@ -454,7 +454,7 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
             ASSERT(plan.operation != Opcode::PutModuleVariable || variable.declared.isExpected() || program.typeOf(function, operands.stored).isSubsetOf(program.at(variable.declared.written()), program));
             // In a frame of another function the program reads here, and what the variable holds is known from here on.
             ValueID entered;
-            if (plan.operation == Opcode::GetModuleVariable && value->inlineFrame && holdsDeclaredTypeOnlyBehindEntry(variable.flow, liesInCopyOfPredictedCallee(function, value->inlineFrame))) {
+            if (plan.operation == Opcode::GetModuleVariable && value->inlineFrame && holdsDeclaredTypeOnlyBehindEntryOfCopy(variable.flow)) {
                 Value fact = IRBuilder::make(Opcode::Entered);
                 fact.setFunction(function.inlineFrames[value->inlineFrame].callee);
                 entered = insertBeforeAccess(WTF::move(fact));
@@ -1077,6 +1077,100 @@ static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& con
         expansion.end();
     }
     context.analyses.didChangeValues();
+}
+
+// `table.name` off an object without a layout may run a getter or a trap, so it is one operation that nothing moves past and that moves nowhere.
+// Mostly it finds a plain value. What the site remembers of the last object says so without running anything: the read by name stays behind for whatever the site does not know, in unlikely code.
+// Only off an object that is the same in every turn, in a loop whose likely paths run no other code and store to no object: there the question leaves the loop. Elsewhere it would only make the code longer.
+PassOutcome askSitesBeforeReadsByNameInQuietLoops(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const Program& program = context.program;
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    const UseLists& useLists = context.analyses.useLists();
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    // It is made ahead of the loop, or read from a slot of what is.
+    auto isSameInEveryTurn = [&](ValueID object, const NaturalLoop& loop) {
+        auto isMadeAheadOfLoop = [&](ValueID value) {
+            return !loops.belongsTo(useLists.locationOf(value).block, loop);
+        };
+        ValueID identity = context.analyses.identityOf(object);
+        if (isMadeAheadOfLoop(identity))
+            return true;
+        const Value& made = function.at(identity);
+        return made.opcode == Opcode::GetSlot && isMadeAheadOfLoop(context.analyses.identityOf(made.objectOperand()));
+    };
+    auto isReadOffObjectWithoutLayout = [&](ValueID id) {
+        const Value& value = function.at(id);
+        if (value.opcode != Opcode::PropGet || value.isFreeName() || !value.key() || value.receivers() || program.nameClassOf(value.key()) == NameClass::Length)
+            return false;
+        // A read that is known to run no code leaves the loop as it is.
+        if (!context.analyses.effectsOf(id).onAnyEdge().mayRunOtherCode())
+            return false;
+        const Type& object = program.typeOf(function, value.objectOperand());
+        return object.isJavaScriptValue() && object.hasObjects() && !object.layouts;
+    };
+    auto staysQuiet = [&](const Effects& effects) {
+        return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsThatLookupsByNameRead);
+    };
+
+    Vector<ValueSite, 4> reads;
+    for (unsigned index = 0; index < loops.numLoops(); ++index) {
+        const NaturalLoop& loop = loops.loop(index);
+        if (!isExpectedToRun(context, loop).predicted() || !isHot(heatClassOfLoopAt(context, loop.header())).predicted() || frequencies.classOf(loop.header()).predicted() != BlockFrequency::Normal)
+            continue;
+        Vector<ValueSite, 4> readsOfLoop;
+        bool isQuiet = true;
+        for (unsigned position = 0; position < loop.size() && isQuiet; ++position) {
+            BlockID id = loop.at(position);
+            const Block& block = function.at(id);
+            if ((frequencies.classOf(id) > frequencies.classOf(loop.header())).predicted())
+                continue;
+            isQuiet = !block.handler && !block.isHandlerBlock() && loops.innerMostLoopOf(id) == &loop && staysQuiet(context.analyses.effectsOfTerminator(id).onAnyEdge());
+            for (uint32_t place = 0; place < block.values.size() && isQuiet; ++place) {
+                if (isReadOffObjectWithoutLayout(block.values[place]) && isSameInEveryTurn(function.at(block.values[place]).objectOperand(), loop))
+                    readsOfLoop.append({ id, place, block.values[place] });
+                else
+                    isQuiet = staysQuiet(context.analyses.effectsOf(block.values[place]).onAnyEdge());
+            }
+        }
+        if (isQuiet)
+            reads.appendVector(readsOfLoop);
+    }
+    if (reads.isEmpty())
+        return PassOutcome::Unchanged;
+
+    AOT::sort(reads, std::ranges::greater { }, [](const ValueSite& site) {
+        return std::pair { site.block, site.index };
+    });
+    Type valueOrNothing = Type::anything();
+    valueOrNothing.primitives |= Primitive::Absent;
+    TypeID typeOfAnswer = context.types.intern(valueOrNothing);
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    SiteExpansion expansion(context, builder);
+    for (const ValueSite& read : reads) {
+        expansion.begin(read);
+        // What a test in the loop has proven of the object is made in the loop. The question needs none of it.
+        ValueID object = context.analyses.identityOf(expansion.original().objectOperand());
+        Expected<BlockFrequency> frequency = expansion.frequency();
+        BlockID byName = builder.addBlock(rarerOf(frequency, BlockFrequency::Unlikely));
+        Expected<BlockFrequency> frequencyByName = function.at(byName).frequency;
+        Value question = IRBuilder::make(Opcode::GetCachedValue, { object });
+        question.setKey(expansion.original().key());
+        question.setValueType(typeOfAnswer);
+        ValueID answer = expansion.append(WTF::move(question));
+        IRBuilder::ProvenBranch knows = builder.emitBranchWithProof(builder.appendTypeTest(answer, Type::anything()), OperandIndex::TypeTest::value, frequency, frequencyByName);
+        builder.moveToEndOf(knows.notTaken);
+        builder.emitJump(byName);
+        builder.moveToEndOf(knows.taken);
+        expansion.finishArm(knows.provenOnTaken);
+
+        builder.moveToEndOf(byName);
+        expansion.finishArm(expansion.appendOriginal());
+        expansion.end();
+    }
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
 }
 
 // Every receiver finds one and the same method of its class where it has no property of its own under the name.
@@ -3513,7 +3607,7 @@ static bool splitLoops(FunctionPassContext& context)
                 candidates.append(&loops.loop(index));
         }
         // Outer loops come first: the test stands in front of the widest loop that does not change the object.
-        AOT::stableSort(candidates, std::ranges::greater { }, &NaturalLoop::size);
+        AOT::stableSortInLine(candidates, std::ranges::greater { }, &NaturalLoop::size);
         LoopSplit result = LoopSplit::NotSplit;
         for (size_t index = 0; index < candidates.size() && result == LoopSplit::NotSplit; ++index) {
             isFinishedHeader.set(candidates[index]->header().index());
@@ -3899,7 +3993,7 @@ static PassOutcome splitAccesses(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     const CFG& cfg = context.analyses.cfg();
-    AOT::stableSort(plans, { }, [&](const PlannedSplit& plan) {
+    AOT::stableSortInLine(plans, { }, [&](const PlannedSplit& plan) {
         return std::pair { cfg.reversePostOrderIndex(plan.site.block), plan.site.index };
     });
 
@@ -4215,7 +4309,7 @@ DispatchPlan planDispatch(FunctionPassContext& context, const MemberPartition& p
         if (canEmitArm(arm))
             plan.arms.append(index);
     }
-    AOT::sort(plan.arms, { }, [&](uint32_t arm) {
+    AOT::sortInLine(plan.arms, { }, [&](uint32_t arm) {
         return ranks[arm];
     });
     if (context.exceeds(LimitID::MaxDispatchCases, plan.arms.size(), site))

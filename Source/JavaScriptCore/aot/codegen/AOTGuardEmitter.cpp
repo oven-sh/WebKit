@@ -249,7 +249,7 @@ void GuardEmitter::planTestsOfFlags()
                 mayBeUnfinished.add(analyses().identityOf(test.objectOperand()));
         }
     }
-    AOT::stableSort(tests, { }, [](const Test& test) {
+    AOT::stableSortInLine(tests, { }, [](const Test& test) {
         return test.object.index();
     });
 

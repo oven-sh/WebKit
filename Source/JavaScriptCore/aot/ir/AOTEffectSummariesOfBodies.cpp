@@ -404,7 +404,7 @@ private:
         Vector<uint32_t, 32> positions(m_sources.size(), [](size_t position) {
             return static_cast<uint32_t>(position);
         });
-        AOT::sort(positions, std::ranges::less { }, [&](uint32_t position) {
+        AOT::sortInLine(positions, std::ranges::less { }, [&](uint32_t position) {
             return sortKeyOf(m_sources[position]);
         });
         size_t numberOfDependencies = 0;

@@ -900,6 +900,34 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             declared.add(program.at(result.written()));
         return declared;
     };
+    // A function behind those whose results it returns: where no calls go round, one round over this order finds everything, however long the row of calls.
+    Vector<uint32_t> calleesFirst;
+    {
+        struct Visit {
+            uint32_t index;
+            uint32_t nextCallee { 0 };
+        };
+        BitVector wasEntered(returns.size());
+        Vector<Visit, 16> visits;
+        for (uint32_t root = 0; root < returns.size(); ++root) {
+            if (wasEntered.quickSet(root))
+                continue;
+            visits.append({ root });
+            while (!visits.isEmpty()) {
+                Visit& visit = visits.last();
+                const auto& handedOn = returns[visit.index].handedOn;
+                if (visit.nextCallee == handedOn.size()) {
+                    calleesFirst.append(visit.index);
+                    visits.removeLast();
+                    continue;
+                }
+                Index callee = indexOf[handedOn[visit.nextCallee++].index()];
+                if (callee && !wasEntered.quickSet(callee.index()))
+                    visits.append({ static_cast<uint32_t>(callee.index()) });
+            }
+        }
+    }
+
     BitVector staysAsDeclared(returns.size());
     Vector<ReturnedNumbers> returned(returns.size());
     Vector<Representation> chosen(returns.size());
@@ -912,7 +940,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             returned[index] = returns[index].values;
         for (bool didGrow = true; didGrow;) {
             didGrow = false;
-            for (unsigned index = 0; index < returns.size(); ++index) {
+            for (uint32_t index : calleesFirst) {
                 if (staysAsDeclared.quickGet(index))
                     continue;
                 ReturnedNumbers before = returned[index];

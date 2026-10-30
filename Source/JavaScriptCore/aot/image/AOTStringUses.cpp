@@ -418,7 +418,7 @@ static void groupColumnsByFunction(std::span<NameCandidate> namesWithColumn)
     if (namesWithColumn.size() <= hotNameCount)
         return;
     auto remainingNamesWithColumn = namesWithColumn.subspan(hotNameCount);
-    AOT::stableSort(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
+    AOT::stableSortInLine(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
         return a.firstTableLookupFunction < b.firstTableLookupFunction;
     });
 }

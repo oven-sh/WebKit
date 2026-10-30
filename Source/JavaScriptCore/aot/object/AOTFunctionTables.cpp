@@ -766,23 +766,49 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     nameFramesOfFunction(vm, closure, name);
 }
 
-JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+std::span<const Latin1Character> functionSourceBytes(FunctionID function)
 {
     const ProgramTables& tables = programTables();
     auto texts = tables.functionTexts();
     if (texts.empty())
-        return nullptr;
+        return { };
+    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
+    auto entry = std::ranges::lower_bound(entries, function.index(), { }, &FunctionTextEntry::function);
+    if (entry == entries.end() || entry->function != function.index())
+        return { };
+    return { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
+}
+
+// The table lists the function that implements the closures. Nothing leads there from the source, so this looks at each entry, and only a throw asks.
+std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID source)
+{
+    static thread_local std::pair<FunctionID, std::span<const Latin1Character>> lastAnswer;
+    if (lastAnswer.first == source && source)
+        return lastAnswer.second;
+    const ProgramTables& tables = programTables();
+    auto texts = tables.functionTexts();
+    if (texts.empty())
+        return { };
+    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
+    auto entry = std::ranges::find(entries, source.index(), [&](const FunctionTextEntry& entry) { return tables.sourceFunctionOf(entry.function); });
+    std::span<const Latin1Character> bytes;
+    if (entry != entries.end())
+        bytes = { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
+    lastAnswer = { source, bytes };
+    return bytes;
+}
+
+JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+{
     VM& vm = globalObject->vm();
     FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
     if (auto found = answered.find(function); found != answered.end()) {
         if (JSString* text = found->value.get())
             return text;
     }
-    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
-    auto entry = std::ranges::lower_bound(entries, function.index(), { }, &FunctionTextEntry::function);
-    if (entry == entries.end() || entry->function != function.index())
+    std::span bytes = functionSourceBytes(function);
+    if (!bytes.data())
         return nullptr;
-    std::span bytes { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
     JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
     answered.set(function, Weak<JSString>(text));
     return text;

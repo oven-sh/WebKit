@@ -210,6 +210,9 @@ public:
     bool holdsModuleOfPackage(std::span<const uint8_t> package) const;
     // The module of the library that the name finds: its path, with or without "node:" in front, or one of its other names.
     ModuleID libraryModuleNamed(std::span<const uint8_t> name) const;
+    // The files of the image that "./name" and "../name" may find from the folder of a file. The extension may differ, and a folder stands for its index file.
+    // No answer where only the run time can say: the path leaves the folder of the program, or holds more than a path.
+    std::optional<Vector<ModuleID, 2>> filesThatPathFinds(ModuleID from, std::span<const uint8_t> path) const;
 
     std::span<const ValueFlowClassOfEntries> classesOfEntries() const LIFETIME_BOUND { return m_classesOfEntries.span(); }
     std::span<const ValueFlowClassOfEntries> classesOfHostWithEntries() const LIFETIME_BOUND { return m_classesOfHostWithEntries.span(); }
@@ -330,6 +333,16 @@ private:
     BitVector m_mayAnswerToName;
     Vector<RestOfPath> m_whereNamesOfPackagesBegin;
     Vector<RestOfPath> m_namesOfLibraryModules;
+    struct StartOfPath {
+        StringID path;
+        uint32_t length;
+        ModuleID module;
+    };
+    std::span<const uint8_t> textOf(StartOfPath start) const { return m_program.string(start.path).first(start.length); }
+    void listSpellingsOfFiles();
+    Vector<StartOfPath> m_spellingsOfFiles;
+    // With the slash at its end. Every file of the program lies under it.
+    std::span<const uint8_t> m_folderOfProgram;
     BitVector m_keysStoredUnderOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;

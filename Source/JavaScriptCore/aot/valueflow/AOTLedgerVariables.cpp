@@ -523,7 +523,7 @@ struct AccessesThroughHolders {
             else if (variables[position].key)
                 positionsByKey.append(position);
         }
-        AOT::stableSort(positionsByKey, { }, [&](uint32_t position) { return std::pair { variables[position].object, variables[position].key.index() }; });
+        AOT::stableSortInLine(positionsByKey, { }, [&](uint32_t position) { return std::pair { variables[position].object, variables[position].key.index() }; });
     }
 
     bool reachesFollowedObject(ValueFlowStatementID sharedLookup) const { return lookupReachesFollowedObject[sharedLookup.index() - solver.input().statements.size()]; }
@@ -923,7 +923,7 @@ struct AccessesThroughHolders {
 
         setOfObjects = heap.maker().of(objects.span());
         setOfEscapedObjects = heap.maker().of(escapedObjects.span());
-        AOT::stableSort(variables, { }, &VariableOnObject::object);
+        AOT::stableSortInLine(variables, { }, &VariableOnObject::object);
         indexVariables();
         setsWithObject.fill(0, sets.endOfTableBySet() / 4);
         lookupReachesFollowedObject.fill(0, solver.numberOfStatements() - solver.input().statements.size());

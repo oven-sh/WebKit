@@ -257,7 +257,7 @@ static void encodeFrameRanges(Vector<uint8_t>& bytes, const CompiledCode& code)
         return;
     // A function may set its frame up in thousands of places. The offsets ascend, so one walk through the sorted ranges answers for all of them.
     Vector<CodeRange, 1> ranges = code.frame.frameRanges;
-    AOT::sort(ranges, { }, &CodeRange::begin);
+    AOT::sortInLine(ranges, { }, &CodeRange::begin);
     size_t nextRange = 0;
     uint32_t endOfRangesPassed = 0;
     auto hasFrameAt = [&](uint32_t offset) {
@@ -441,7 +441,7 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
         if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || usesCallConvention || hasAddressInImage(linkage))
             addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
     }
-    AOT::sort(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
+    AOT::sortInLine(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
         bool isFirstPart = isFoundByKey(StubKey::fromBits(a.key).family());
         if (isFirstPart != isFoundByKey(StubKey::fromBits(b.key).family()))
             return isFirstPart;

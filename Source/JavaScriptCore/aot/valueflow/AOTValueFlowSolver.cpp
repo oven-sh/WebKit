@@ -2787,7 +2787,7 @@ void ValueFlowSolver::wakeWatchersOfNamesWrittenOnMoreObjects(unsigned numberOfS
     Vector<std::pair<uint32_t, ValueSetID>>& written = shard.writtenUnderWatchedNames;
     if (written.isEmpty())
         return;
-    AOT::sort(written, { }, [](const std::pair<uint32_t, ValueSetID>& entry) {
+    AOT::sortInLine(written, { }, [](const std::pair<uint32_t, ValueSetID>& entry) {
         return std::pair(entry.first, entry.second.index());
     });
     Vector<ValueSetID, 16> setsOfName;
@@ -2932,7 +2932,7 @@ void ValueFlowSolver::insertNodesOfShards(const ListWithRoomToFill<NodeToLink>& 
     std::array<uint32_t, numberOfLinkShards> shardsInOrder;
     for (unsigned position = 0; position < numberOfLinkShards; ++position)
         shardsInOrder[position] = numberOfLinkShards - 1 - position;
-    AOT::stableSort(std::span(shardsInOrder).subspan(numberOfLinkShardsOfKinds), std::ranges::greater(), [&](uint32_t shard) {
+    AOT::stableSortInLine(std::span(shardsInOrder).subspan(numberOfLinkShardsOfKinds), std::ranges::greater(), [&](uint32_t shard) {
         return m_nodesToInsertOfShards[shard].size();
     });
     forEachIndexInParallel(m_loops, numberOfLinkShards, [&](unsigned task, unsigned worker) {
@@ -3710,7 +3710,7 @@ bool ValueFlowSolver::merge()
         }
     }
     m_bodiesReachedInRound.shrink(0);
-    AOT::sort(constantsToMake, [](const KeyToMake& first, const KeyToMake& second) {
+    AOT::sortInLine(constantsToMake, [](const KeyToMake& first, const KeyToMake& second) {
         return std::tuple { first.hashOfMembers, first.key.set.index() } < std::tuple { second.hashOfMembers, second.key.set.index() };
     });
     constantsToMake.shrink(std::unique(constantsToMake.begin(), constantsToMake.end(), [](const KeyToMake& first, const KeyToMake& second) {
@@ -3863,7 +3863,7 @@ bool ValueFlowSolver::merge()
                 for (const std::unique_ptr<Thread>& thread : m_threads)
                     sizes[shard] += sizeIn(*thread, shard);
             }
-            AOT::stableSort(shards, std::ranges::greater(), [&](uint32_t shard) {
+            AOT::stableSortInLine(shards, std::ranges::greater(), [&](uint32_t shard) {
                 return sizes[shard];
             });
         };
@@ -4537,7 +4537,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                         });
                     }
                 });
-                AOT::sort(layouts.list, { }, [](LayoutID layout) { return layout.index(); });
+                AOT::sortInLine(layouts.list, { }, [](LayoutID layout) { return layout.index(); });
                 group.share = share;
                 group.firstLayout = layoutsOfGroupsInShare[share].size();
                 group.numberOfLayouts = layouts.list.size();
@@ -6588,7 +6588,8 @@ void ValueFlowSolver::solve()
             m_usesGeneralRulesOnly = true;
             heldAtRest.appendRange(m_graph.values().begin(), m_graph.values().end());
             for (uint32_t index = 0; index < heldAtRest.size(); ++index) {
-                if (m_graph.isAtRest(ValueFlowNodeID(index)) || (index >= m_input.numberOfNodes && m_madeNodesOfNode[index - m_input.numberOfNodes] == noSolverIndex))
+                // A call group only hands on what it takes, and which callees share one hangs on what arrived together. The parameters that it feeds are compared.
+                if (m_graph.isAtRest(ValueFlowNodeID(index)) || (index >= m_input.numberOfNodes && (m_madeNodesOfNode[index - m_input.numberOfNodes] == noSolverIndex || keyOfMadeNode(ValueFlowNodeID(index))->kind == ValueFlowMadeNodeKind::CallGroup)))
                     heldAtRest[index] = ValueSetID();
             }
             usesAtRest = m_usesOfBuiltin;

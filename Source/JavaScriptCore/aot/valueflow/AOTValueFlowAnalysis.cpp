@@ -40,7 +40,7 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
     return position < function.numberOfPositionalParameters() ? std::optional(position) : std::nullopt;
 }
 
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<ValueFlowNotedOperations>& notedOperations)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations)
 {
     notedOperations.fill(0, program.functions.size());
     struct Argument {
@@ -59,6 +59,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<CallPassingParameters> calls;
         Vector<Argument> arguments;
         Vector<TextPassed> textsPassed;
+        Vector<StringID> relativePaths;
     };
 
     auto functionBoundTo = [&](const Function& function, ValueID id) -> FunctionID {
@@ -77,6 +78,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         const Function& function = program.functions[index];
         notedOperations[index] = notedOperationsOf(function);
         bool hasInstances = mayHaveInstances(function);
+        bool isOfProgram = isWrittenInProgram(function);
         auto note = [&](unsigned position) {
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
         };
@@ -84,6 +86,10 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
                 switch (value.opcode) {
+                case Opcode::String:
+                    if (std::span<const uint8_t> text = program.string(value.string()); isOfProgram && (spanHasPrefix(text, byteCast<uint8_t>("./"_span)) || spanHasPrefix(text, byteCast<uint8_t>("../"_span))))
+                        body.relativePaths.append(value.string());
+                    break;
                 case Opcode::ElemSet:
                 case Opcode::ElemDefine:
                     static_assert(OperandIndex::ElemSet::property == 1 && OperandIndex::ElemDefine::property == 1);
@@ -149,8 +155,10 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             scan(index, found);
         return found;
     });
-    for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
+    for (size_t chunk = 0; chunk < bodies.size(); ++chunk) {
         textsPassed.appendVector(std::exchange(bodies[chunk].textsPassed, { }));
+        relativePaths.appendVector(std::exchange(bodies[chunk].relativePaths, { }));
+    }
 
     // `a.to = b.from` stores again under `to` what lies under `from`. The lists of functions under names are not closed over that: n names, each stored into the next, would hold n * n / 2 members.
     // Names that are stored into each other in a circle form a group. A group keeps what is stored under its names directly and knows the groups that are stored into it.
@@ -172,7 +180,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<uint32_t> entries;
     };
     auto layOutRows = [](uint32_t numberOfRows, Pairs&& pairs) {
-        AOT::sort(pairs);
+        AOT::sortInLine(pairs);
         removeRepeatedElements(pairs);
         Rows rows;
         rows.first.fill(0, numberOfRows + 1);
@@ -506,15 +514,35 @@ static void internEmbeddedFilePaths(Program& program)
     });
 }
 
+// `for (const name of new Set(["os", "./plugin.ts"])) await import(name)`: a text is followed to a load only as a key.
+static void internNamesOfModules(Program& program, std::span<const StringID> relativePaths)
+{
+    auto intern = [&](StringID text) {
+        program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
+    };
+    std::ranges::for_each(relativePaths, intern);
+    for (const Module& module : program.modules) {
+        if (!module.runtimeModule || !isAskedOfHostByName(module))
+            continue;
+        intern(module.path);
+        std::ranges::for_each(module.otherNames, intern);
+        std::span<const uint8_t> path = program.string(module.path);
+        if (StringID name = spanHasPrefix(path, byteCast<uint8_t>("node:"_span)) ? program.strings.find(path.subspan(5)) : StringID())
+            intern(name);
+    }
+}
+
 static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& build, Vector<uint32_t>& positionOfKey)
 {
     PhaseTimes times(build, PassID::AnalyzeFlow);
     Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
+    Vector<StringID> relativePaths;
     Vector<ValueFlowNotedOperations> notedOperations;
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, notedOperations);
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, relativePaths, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     internEmbeddedFilePaths(program);
+    internNamesOfModules(program, relativePaths.span());
     times.didFinish("solve: keys"_s);
     ValueFlowBodies bodies = reduceBodies(program, build, WTF::move(notedOperations));
     times.didFinish("solve: bodies"_s);

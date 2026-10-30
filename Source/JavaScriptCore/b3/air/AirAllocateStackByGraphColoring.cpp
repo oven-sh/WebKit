@@ -1309,7 +1309,7 @@ private:
         uint32_t nextRangeOfSlot { noRange };
     };
 
-    // Cells of one size. Finds the lowest cell that stays free beyond a position in logarithmic time.
+    // Cells of one size. Finds the lowest cell, from a given one on, that stays free beyond a position in logarithmic time.
     class CellPool {
     public:
         void reserve(size_t maxNumberOfCells)
@@ -1318,10 +1318,16 @@ private:
             m_freeUntil.fill(noPosition, 2 * m_numberOfLeaves);
         }
 
-        uint32_t findLowestCellFreeBeyond(uint32_t position) const
+        uint32_t findLowestCellFreeBeyond(uint32_t position, uint32_t firstCell = 0) const
         {
-            RELEASE_ASSERT(m_freeUntil[1] > position);
-            size_t node = 1;
+            // Up to the lowest subtree behind the cells in front of `firstCell` that holds such a cell, then down to its first one.
+            size_t node = m_numberOfLeaves + firstCell;
+            while (m_freeUntil[node] <= position) {
+                while (node & 1)
+                    node /= 2;
+                RELEASE_ASSERT(node);
+                ++node;
+            }
             while (node < m_numberOfLeaves) {
                 node *= 2;
                 if (m_freeUntil[node] <= position)
@@ -1337,8 +1343,6 @@ private:
             for (node /= 2; node; node /= 2)
                 m_freeUntil[node] = std::max(m_freeUntil[2 * node], m_freeUntil[2 * node + 1]);
         }
-
-        bool isFreeAt(uint32_t cell, uint32_t position) const { return m_freeUntil[m_numberOfLeaves + cell] > position; }
 
         // The ranges of the slots in a cell that have not begun yet. No two of one cell meet.
         void addRangeToCome(uint32_t cell, uint32_t start, uint32_t end) { m_rangesToCome.insert({ cell, start, end }); }
@@ -1541,12 +1545,9 @@ private:
         });
 
         RELEASE_ASSERT(m_ranges.size() < noRange);
-        m_lastEndOfSlot.fill(noPosition, m_code.stackSlots().size());
         Vector<uint32_t> nextRangeOfSlot(FillWith { }, m_code.stackSlots().size(), noRange);
         for (size_t index = m_ranges.size(); index--;) {
             Range& range = m_ranges[index];
-            if (m_lastEndOfSlot[range.slotIndex] == noPosition)
-                m_lastEndOfSlot[range.slotIndex] = range.end;
             range.nextRangeOfSlot = std::exchange(nextRangeOfSlot[range.slotIndex], static_cast<uint32_t>(index));
         }
     }
@@ -1578,24 +1579,16 @@ private:
 
         // A slot that is read again on a rare path has a range where it is written and one far behind, among the rare blocks. The ranges of two such slots lie
         // a, b, a, b, so neither fits between two ranges of the other, and a place for each would make the frame grow with the function.
-        auto fitsBesideSlotsOf = [&](const CellPool& pool, uint32_t cell, const Range& first) {
-            if (!pool.isFreeAt(cell, first.start))
-                return false;
-            unsigned numberOfRanges = 0;
-            for (const Range* range = &first;; range = &m_ranges[range->nextRangeOfSlot]) {
-                if (++numberOfRanges > AirLimits::maxRangesFittedBetweenOthers || pool.meetsRangeToCome(cell, range->start, range->end))
-                    return false;
-                if (range->nextRangeOfSlot == noRange)
-                    return true;
-            }
-        };
+        // The lowest cell that is free for the first range nearly always fits the others too: two slots that are live together anywhere are live together
+        // where the later one is written first, unless that block is laid out behind one that reads it. So the cells that are looked at are few, however many are in use.
         auto chooseCell = [&](const CellPool& pool, const Range& first) {
-            uint32_t numberOfCellsTried = std::min<uint32_t>(pool.numberOfCells(), AirLimits::maxCellsTriedForSlotWithGaps);
-            for (uint32_t cell = 0; first.nextRangeOfSlot != noRange && cell < numberOfCellsTried; ++cell) {
-                if (fitsBesideSlotsOf(pool, cell, first))
+            for (uint32_t cell = pool.findLowestCellFreeBeyond(first.end);; cell = pool.findLowestCellFreeBeyond(first.end, cell + 1)) {
+                bool fits = true;
+                for (uint32_t next = first.nextRangeOfSlot; fits && next != noRange; next = m_ranges[next].nextRangeOfSlot)
+                    fits = !pool.meetsRangeToCome(cell, m_ranges[next].start, m_ranges[next].end);
+                if (fits)
                     return cell;
             }
-            return pool.findLowestCellFreeBeyond(m_lastEndOfSlot[first.slotIndex]);
         };
 
         forEachRangeBoundaryInOrder(
@@ -1689,7 +1682,6 @@ private:
     Vector<PoolKind> m_poolOfSlot;
     Vector<Range> m_ranges;
     Vector<uint32_t> m_rangesByEnd;
-    Vector<uint32_t> m_lastEndOfSlot;
     Vector<uint32_t> m_cellOfSlot;
 };
 

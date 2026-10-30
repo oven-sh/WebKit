@@ -499,6 +499,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
 }
 
+// The site only looks. The read by name that stands behind its miss files what it finds in the tables, and the site takes that at a later miss.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCacheWithValue, void, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+{
+    LeafOperationScope leaf(*instance->vm);
+    instance->state->siteCaches->didMissRepeatedly(cache);
+    instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, SlotAccess::Read);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
 {
     LeafOperationScope leaf(*instance->vm);

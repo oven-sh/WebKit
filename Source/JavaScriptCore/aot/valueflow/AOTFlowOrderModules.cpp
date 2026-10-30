@@ -234,7 +234,7 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
     modulesByComponent.reserveInitialCapacity(numberOfModules);
     for (uint32_t module = 0; module < numberOfModules; ++module)
         modulesByComponent.append(module);
-    AOT::sort(modulesByComponent, [&](uint32_t left, uint32_t right) {
+    AOT::sortInLine(modulesByComponent, [&](uint32_t left, uint32_t right) {
         return std::pair(components.componentOf[left], left) < std::pair(components.componentOf[right], right);
     });
 

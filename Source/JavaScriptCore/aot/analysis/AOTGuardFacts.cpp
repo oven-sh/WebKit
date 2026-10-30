@@ -65,7 +65,7 @@ struct ReadCollector {
         } else if (locations.isEmpty()) {
             locations = WTF::move(bookkeepingLocations);
         }
-        AOT::sort(locations);
+        AOT::sortInLine(locations);
         return WTF::move(locations);
     }
 

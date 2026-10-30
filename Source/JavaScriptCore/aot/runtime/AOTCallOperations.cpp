@@ -583,6 +583,21 @@ bool readOnTopTestsObjectOfUpdate(VM& vm)
     return position && position->startIsForCallers;
 }
 
+std::optional<PlaceInFunctionText> placeOnTopInFunctionText(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return std::nullopt;
+    const CallSiteCache::Entry& callSite = frames->callSite();
+    FunctionDescription description(frames->frame().function);
+    std::optional<SourcePosition> place = Image::current()->positionOf(callSite.code.index(), callSite.site.callSite);
+    std::optional<SourcePosition> definition = description.definition();
+    std::optional<unsigned> line;
+    if (place && definition && place->source == definition->source && place->lineColumn.line >= definition->lineColumn.line)
+        line = place->lineColumn.line - definition->lineColumn.line;
+    return PlaceInFunctionText { description.sourceFunction(), line };
+}
+
 StringView nameOfConstructorThatRunsOnTop(VM& vm)
 {
     CallFrame* constructorFrame = vm.topCallFrame;

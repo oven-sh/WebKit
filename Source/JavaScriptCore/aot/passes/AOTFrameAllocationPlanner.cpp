@@ -1253,7 +1253,7 @@ void FramePlanner::finishPlan()
             m_plan.add(m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
-    AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);
+    AOT::sortInLine(m_plan.decisions, { }, &FrameDecision::allocation);
 }
 
 } } } // namespace JSC::AOT::Typed

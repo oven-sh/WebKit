@@ -113,17 +113,31 @@ void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext&, ValueFlowNodeID
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 // What a load finds goes by what its name may be.
+struct LoadUnderName {
+    FunctionID function;
+    // The name as the function writes it.
+    ValueID written;
+    // A relative path starts at the folder of this file. None: nobody knows the file.
+    ModuleID referrer;
+};
 struct ModulesThatNamesFind {
-    // Some name may be that of a file of the program, or nobody knows the names.
-    bool fileOfProgram { false };
+    // Nobody knows some name, or only the run time can say what it finds.
+    bool anything { false };
     // Some name finds no module on the list of the program. Native code makes its modules without one.
     bool nativeModule { false };
+    // Some path finds no file of the image. The loader makes data of a file on disk, or throws.
+    bool fileOutsideImage { false };
     Vector<ModuleID, 16> libraryModules;
+    Vector<ModuleID, 4> filesOfProgram;
+
+    bool findsEveryName() const { return !anything && !nativeModule && !fileOutsideImage; }
 };
-// `written` is the name as the function of the load writes it.
-ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext&, FunctionID load, ValueID written, const ValueFlowOperand& name);
-// The run time takes the names all the same: it needs its loader, and what is said about the program counts every module of the library that answers to a name as loaded.
-void noteLoadUnderSpelledNames(ValueFlowRuleContext&, FunctionID load, const ModulesThatNamesFind&, ValueFlowNodeID answer);
+// Calls the functor with each value that the name may be until it answers true.
+using NamesOfLoad = ScopedLambda<void(const ScopedLambda<bool(ValueFlowObjectID)>&)>;
+ModulesThatNamesFind modulesThatNamesFind(const Program&, const ValueFlowUniverse&, RefusedCode, const LoadUnderName&, NOESCAPE const NamesOfLoad&);
+ModulesThatNamesFind modulesThatNamesFind(ValueFlowRuleContext&, const LoadUnderName&, const ValueFlowOperand& name);
+// The run time takes the names all the same: it needs its loader, and what is said about the program counts every module that answers to a name as loaded.
+void noteLoadUnderSpelledNames(ValueFlowRuleContext&, FunctionID load, const ModulesThatNamesFind&, ValueFlowHostNode answers, ValueFlowNodeID answer);
 void requireModule(const ValueFlowStatement&, ValueFlowRuleContext&, ModuleID);
 bool mayAnswerToName(const Program&, ModuleID);
 // A file that is no entry point is found by name only where the program itself loads files by name.

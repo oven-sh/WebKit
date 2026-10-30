@@ -605,7 +605,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             return variable;
         }).iterator->value;
     };
-    AOT::sort(suppliers, { }, [&](const CaptureSupplier& supplier) {
+    AOT::sortInLine(suppliers, { }, [&](const CaptureSupplier& supplier) {
         return std::tuple(plan.closureFunctionOf(supplier.callee), supplier.function, supplier.site);
     });
     for (bool didChange = true; std::exchange(didChange, false);) {
@@ -1046,7 +1046,7 @@ struct ClosureWebs {
         }
         if (isEmpty)
             return;
-        AOT::sort(closuresWithStores);
+        AOT::sortInLine(closuresWithStores);
         objects.ensureSize(function.values.size());
 
         // What a parameter of the target is on this edge: an argument, or what the test in front of the branch has asked. Nothing for a guard.
@@ -1439,7 +1439,7 @@ static ClosureParameterTable findClosureParameters(const Program& program, const
         FieldReference reference = candidates.fields[candidate];
         candidatesOfFunctions.append({ program.at(program.at(reference.layout).fields[reference.field].declared.written()).singleFunction(), candidate });
     }
-    AOT::sort(candidatesOfFunctions);
+    AOT::sortInLine(candidatesOfFunctions);
     BitVector liesInOneField(program.functions.size());
     BitVector liesInField(program.functions.size());
     for (auto fieldsOfFunction : candidatesOfFunctions.span() | std::views::chunk_by([](const auto& a, const auto& b) { return a.first == b.first; })) {
@@ -1544,8 +1544,8 @@ static ClosureParameterTable findClosureParameters(const Program& program, const
         Vector<ClosureParameter> filled;
         for (const Evidence& entry : evidence)
             (entry.isFilled ? filled : refuted).append(entry.parameter);
-        AOT::sort(refuted);
-        AOT::sort(filled);
+        AOT::sortInLine(refuted);
+        AOT::sortInLine(filled);
         if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]]
             dataLogLn("round ", round, ": ", table.parameters.size(), " parameters of ", table.functions.bitCount(), " functions, ", table.capturesOneValue.bitCount(), " functions with one capture, ", asked.size(), " of ", users.size(), " functions asked");
         // Nothing is known of a parameter that nobody fills.
@@ -1748,7 +1748,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     auto layoutOf = [&](const FoundCaptures& store) {
         return candidates.fields[store.candidate].layout;
     };
-    AOT::sort(found, { }, [&](const FoundCaptures& store) {
+    AOT::sortInLine(found, { }, [&](const FoundCaptures& store) {
         return std::tuple { layoutOf(store), store.function, store.environment, store.block, store.candidate, store.indexInBlock, store.store, store.closure };
     });
     BitVector isFilled(candidates.fields.size());
@@ -1906,7 +1906,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
             if (store.indexOfClosure)
                 environmentsOfClosures.append({ store.function, store.closure, store.environment });
         }
-        AOT::sort(environmentsOfClosures);
+        AOT::sortInLine(environmentsOfClosures);
     }
     for (const ClosureParameter& parameter : closureParameters.parameters) {
         PlannedClosure& planned = plan.closures[parameter.candidate];
@@ -1916,7 +1916,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
 
     forEachLayout([&](LayoutID layout, Stores stores, std::span<const Stores> runs, Vector<Member, 16>& members) {
         // Closures that are stored at the same places can share the fields for what they capture.
-        AOT::sort(members, [](const Member& a, const Member& b) {
+        AOT::sortInLine(members, [](const Member& a, const Member& b) {
             if (a.runs != b.runs)
                 return std::ranges::lexicographical_compare(a.runs, b.runs);
             return a.candidate < b.candidate;
@@ -3049,7 +3049,7 @@ static void classifyHolders(const AnalysisContext& context, const EffectContext&
 
     AOT::sort(plan.disqualifiedLayouts);
     removeRepeatedElements(plan.disqualifiedLayouts);
-    AOT::sort(plan.marks, { }, [](const EscapeMark& mark) {
+    AOT::sortInLine(plan.marks, { }, [](const EscapeMark& mark) {
         return std::tuple { mark.point.block, mark.environment, mark.point.index };
     });
     removeRepeatedElements(plan.marks, [](const EscapeMark& a, const EscapeMark& b) {

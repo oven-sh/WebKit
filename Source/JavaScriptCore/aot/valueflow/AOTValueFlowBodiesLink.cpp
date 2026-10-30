@@ -763,7 +763,7 @@ private:
             if (FunctionID body = m_program.modules[index].body)
                 universe.m_modulesWithBodies.append({ body, ModuleID(index) });
         }
-        AOT::sort(universe.m_modulesWithBodies);
+        AOT::sortInLine(universe.m_modulesWithBodies);
 
         universe.m_firstBuiltin = ValueFlowUniverse::markOfLoadedBun().index() + 1;
         universe.m_firstModuleBuiltin = universe.m_firstBuiltin + m_program.builtins().builtinCount();

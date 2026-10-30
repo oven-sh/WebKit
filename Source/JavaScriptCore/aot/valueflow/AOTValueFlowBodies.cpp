@@ -228,7 +228,7 @@ public:
 private:
     static void sortAndRemoveRepeats(auto& list)
     {
-        AOT::sort(list);
+        AOT::sortInLine(list);
         list.shrink(std::ranges::unique(list).begin() - list.begin());
     }
 
@@ -290,7 +290,7 @@ private:
         Vector<uint32_t> order(m_body.sites.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        AOT::sort(order, { }, [&](uint32_t index) {
+        AOT::sortInLine(order, { }, [&](uint32_t index) {
             return std::pair { m_body.sites[index].value, m_body.sites[index].ordinal };
         });
         Vector<uint32_t> placeOf(order.size());
@@ -306,7 +306,7 @@ private:
                 if (object.kind == ValueFlowObjectKind::Site)
                     object.index = placeOf[object.index];
             }
-            AOT::sort(constant.objects);
+            AOT::sortInLine(constant.objects);
         }
         for (Body::Statement& statement : m_body.statements) {
             auto first = std::ranges::lower_bound(m_body.sites, statement.site, { }, &ValueFlowSite::value);
@@ -635,7 +635,7 @@ private:
         const Block& block = m_function.at(id);
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
             ValueID parameter = block.parameters[index];
-            if (!carriesValue(parameter) || (!isBehindCheck(parameter) && (m_function.role != FunctionRole::Library || m_function.kind == FunctionKind::Module)))
+            if (!carriesValue(parameter))
                 continue;
             IncomingValue value = incomingValueOf(m_function, incoming[0], index);
             if (value.kind != IncomingValue::Kind::EdgeResult)
@@ -643,11 +643,39 @@ private:
             EdgeResult result = edgeResultAt(m_function, value.result);
             if (result.kind != EdgeResultKind::NarrowedOperand || (!result.test && !result.caseIndex))
                 continue;
+            bool isInLibraryFunction = m_function.role == FunctionRole::Library && m_function.kind != FunctionKind::Module;
+            if (!isBehindCheck(parameter) && !isInLibraryFunction && !(isExportOfAnotherModule(result.subject) && leadsToLoadOfModule(id)))
+                continue;
             addGuard(guards, { parameter, 0 });
         }
         const Terminator& terminator = m_function.at(incoming[0].from).terminator;
         if (terminator.isConditionalBranch() && !incoming[0].isHandlerEdge())
-            addGuardOfCondition(guards, terminator.conditionOperand(), incoming[0].targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+            addGuardOfCondition(guards, id, terminator.conditionOperand(), incoming[0].targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+    }
+
+    // Among the blocks that are entered only through this one. A guard delays what stands behind it, and in the order of flow's rules that moves other answers, so a test of the program is read only where it decides this much.
+    bool leadsToLoadOfModule(BlockID first) const
+    {
+        Vector<BlockID, 16> blocks { first };
+        for (size_t index = 0; index < blocks.size(); ++index) {
+            for (ValueID id : m_function.at(blocks[index]).values) {
+                Opcode opcode = m_function.at(id).opcode;
+                if (opcode == Opcode::EvaluateModule || opcode == Opcode::ImportModule)
+                    return true;
+            }
+            for (BlockID successor : m_cfg.successors(blocks[index])) {
+                if (m_cfg.incomingEdges(successor).size() == 1)
+                    blocks.append(successor);
+            }
+        }
+        return false;
+    }
+
+    // `if (DEBUG) require("./big")`: a flag of another module decides what this one loads.
+    bool isExportOfAnotherModule(ValueID tested) const
+    {
+        const Value& definition = m_function.at(definitionThroughSameValues(m_function, tested));
+        return definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).module != m_function.module;
     }
 
     void addGuard(GuardsOfBlock& guards, Guard guard)
@@ -659,7 +687,7 @@ private:
     }
 
     // What the edge brings of the operand of the last conversion is a guard already.
-    void addGuardOfCondition(GuardsOfBlock& guards, ValueID condition, EdgeSide side)
+    void addGuardOfCondition(GuardsOfBlock& guards, BlockID block, ValueID condition, EdgeSide side)
     {
         bool isNegated = false;
         ValueID tested = condition;
@@ -678,8 +706,28 @@ private:
                 addGuard(guards, { test.valueOperand(), mask, true });
             return;
         }
+        if (test.opcode == Opcode::StrictEq) {
+            if (leadsToLoadOfModule(block))
+                addGuardsOfComparison(guards, test, side);
+            return;
+        }
         if (isNegated && carriesValue(tested))
             addGuard(guards, { tested, maskOfTruthinessTest(side) });
+    }
+
+    // `if (MODE === "development") require("./tools")`: the edge brings nothing where the arm does not read the name again.
+    void addGuardsOfComparison(GuardsOfBlock& guards, const Value& test, EdgeSide side)
+    {
+        for (uint32_t index = 0; index < 2; ++index) {
+            ValueID compared = test.operand(index);
+            ValueID other = test.operand(index ? 0 : 1);
+            if (!carriesValue(compared) || !isExportOfAnotherModule(compared) || isBehindCheck(other))
+                continue;
+            if (side == EdgeSide::Taken && isStrictlyEqualOnlyToItself(typeOf(other)))
+                addGuard(guards, { compared, maskInside(m_function.at(other).type, ValueFlowMaskKind::Checked) });
+            else if (side == EdgeSide::NotTaken && typeOf(other).isSingleValue())
+                addGuard(guards, { compared, maskOutside(m_function.at(other).type) });
+        }
     }
 
     void addSourcesOfBlockParameters()

@@ -108,7 +108,7 @@ struct TestsMadeForAccesses {
                 });
             });
         }
-        AOT::stableSort(tests, { }, &PassedTest::proof);
+        AOT::stableSortInLine(tests, { }, &PassedTest::proof);
     }
 
     bool isCounted(const PassedTest& test) const
@@ -318,7 +318,7 @@ static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const 
     auto orderKey = [](const SlowHalf& half) {
         return std::tuple { half.location.module, half.location.position };
     };
-    AOT::sort(slowHalves, { }, orderKey);
+    AOT::sortInLine(slowHalves, { }, orderKey);
 
     auto find = [&](Wire::SourceLocation location) -> SlowHalf* {
         auto found = std::ranges::lower_bound(slowHalves, orderKey({ location }), { }, orderKey);

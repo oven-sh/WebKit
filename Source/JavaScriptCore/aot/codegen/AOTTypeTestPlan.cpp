@@ -212,7 +212,7 @@ static void fillPlan(TypeTestPlan& plan, const Program& program, const Type& fro
     Type fromObjects = from.withOnlyObjects();
     plan.objects = computeObjectsVerdict(program, from, to, fromObjects);
     appendObjectTests(plan, program, from, to, fromObjects);
-    AOT::stableSort(plan.cellTests, { }, [](const CellTest& test) {
+    AOT::stableSortInLine(plan.cellTests, { }, [](const CellTest& test) {
         return std::tuple { planOrder[static_cast<size_t>(test.kind)], subjectOf(test) };
     });
     settleVerdict(plan);

@@ -275,7 +275,7 @@ static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
     };
     if (std::ranges::adjacent_find(calls.span().subspan(first), std::not_fn(standsBehind)) == calls.span().end())
         return;
-    AOT::sort(calls.mutableSpan().subspan(first), { }, callOrderOf);
+    AOT::sortInLine(calls.mutableSpan().subspan(first), { }, callOrderOf);
     size_t count = first;
     for (size_t index = first; index < calls.size(); ++index) {
         FlowIndirectCall call = calls[index];
@@ -455,7 +455,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 AOT::sort(groupsOfStatement, { }, orderOfGroup);
                 groupsOfTask.shrink(groupsOfTask.size() - std::ranges::unique(groupsOfStatement, { }, orderOfGroup).size());
                 auto asked = askersAndAskedOfTask.mutableSpan().subspan(firstAskedByStatement);
-                AOT::sort(asked);
+                AOT::sortInLine(asked);
                 askersAndAskedOfTask.shrink(askersAndAskedOfTask.size() - std::ranges::unique(asked).size());
             }
         });

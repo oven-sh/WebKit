@@ -135,6 +135,7 @@ static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() -
 
 inline constexpr int64_t maxTurnsWithoutPoll = 1 << 20;
 inline constexpr unsigned maxValuesPerTurnCopiedWhereLoopRunsRarely = 12;
+inline constexpr unsigned maxValuesPerTurnRunInStretches = 32;
 inline constexpr double frequencyLostToBranchesInFrontOfLoop = 4;
 inline constexpr unsigned maxTermsPerInvariantSum = 4;
 inline constexpr unsigned maxStridedRangeChecksPerLoop = 4;

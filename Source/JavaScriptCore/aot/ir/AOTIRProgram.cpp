@@ -70,11 +70,52 @@ void Program::unlockReplaceableBuiltins()
         if (isUnlocked(member))
             m_functionsCallingUnlockedMembersThatNoRowNames.quickSet(m_builtins.canonicalID(constructor).index());
     }
+    // A row that takes everything from an operand names nothing: Set.prototype.union asks the other set for `has`, `keys` and `size`.
+    // So a member that is unlocked anywhere above the instances of a class counts for each function with such a row and a row for a pristine instance of that class.
+    auto hasUnlockedMemberAbove = [&](BuiltinClassID instanceClass) {
+        for (BuiltinClassID current = instanceClass; current; current = m_builtins.at(current).parent) {
+            BuiltinID prototype = m_builtins.at(current).prototype;
+            bool isHolder = prototype && std::ranges::any_of(unlockedBuiltins(), [&](BuiltinID member) {
+                return m_builtins.canonicalID(m_builtins.at(member).holder) == m_builtins.canonicalID(prototype);
+            });
+            if (isHolder)
+                return true;
+        }
+        return false;
+    };
+    auto forEachParameter = [](const BuiltinOverload& overload, NOESCAPE const Invocable<bool(const BuiltinParameter&)> auto& predicate) {
+        return (overload.receiver && predicate(*overload.receiver)) || std::ranges::any_of(overload.parameters, predicate);
+    };
+    auto asksOperandForUnlockedMemberWithoutName = [&](std::span<const BuiltinOverload> overloads) {
+        return std::ranges::any_of(overloads, [&](const BuiltinOverload& special) {
+            return forEachParameter(special, [&](const BuiltinParameter& pristine) {
+                bool isAbove = std::ranges::any_of(m_builtins.at(pristine.accepted).parts, [&](const BuiltinTypePart& part) {
+                    return !part.pristine.isEmpty() && part.builtinClass && hasUnlockedMemberAbove(part.builtinClass);
+                });
+                return isAbove && std::ranges::any_of(overloads, [&](const BuiltinOverload& general) {
+                    return general.mode == special.mode && forEachParameter(general, [&](const BuiltinParameter& parameter) {
+                        return parameter.operand == pristine.operand && parameter.uses == OperandUses::all();
+                    });
+                });
+            });
+        });
+    };
+
+    // A function that calls such a function under its name is one too: String.prototype.replace calls @@replace, which calls `exec`.
     m_functionsLookingUpUnlockedNames = BitVector(m_builtins.builtinCount());
-    for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
-        for (const BuiltinOverload& overload : m_builtins.overloadsOf(BuiltinID(index))) {
-            if ((overload.receiver && looksUpUnlockedName(*overload.receiver)) || std::ranges::any_of(overload.parameters, looksUpUnlockedName))
-                m_functionsLookingUpUnlockedNames.quickSet(m_builtins.canonicalID(BuiltinID(index)).index());
+    for (bool didMark = true; std::exchange(didMark, false);) {
+        for (uint32_t index = 0; index < m_builtins.builtinCount(); ++index) {
+            std::span<const BuiltinOverload> overloads = m_builtins.overloadsOf(BuiltinID(index));
+            if (overloads.empty() || m_functionsLookingUpUnlockedNames.quickGet(m_builtins.canonicalID(BuiltinID(index)).index()))
+                continue;
+            bool looksUp = asksOperandForUnlockedMemberWithoutName(overloads) || std::ranges::any_of(overloads, [&](const BuiltinOverload& overload) {
+                return forEachParameter(overload, looksUpUnlockedName);
+            });
+            if (!looksUp)
+                continue;
+            m_functionsLookingUpUnlockedNames.quickSet(m_builtins.canonicalID(BuiltinID(index)).index());
+            if (BuiltinName name = m_builtins.at(BuiltinID(index)).name)
+                didMark |= !unlockedNames.quickSet(name.index());
         }
     }
 }
@@ -132,7 +173,7 @@ void Program::collectConstructionStarts()
         function.constructionStarts = { };
     }
     for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
-        AOT::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        AOT::sortInLine(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
         // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
         auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
         starts.shrink(starts.size() - repeated.size());
@@ -391,7 +432,7 @@ void Program::indexNames(const ParallelLoops& loops)
             inheritsFields &= layout.flow.baseState == BaseState::Layout;
         }
         std::span<Holder> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-        AOT::stableSort(ofLayout, { }, &Holder::key);
+        AOT::stableSortInLine(ofLayout, { }, &Holder::key);
         found.shrink(firstOfLayout + (std::ranges::unique(ofLayout, { }, &Holder::key).begin() - ofLayout.begin()));
     });
     parallelSort(loops, holders.mutableSpan(), [&](const Holder& a, const Holder& b) {
@@ -1071,7 +1112,7 @@ Vector<FieldReference> ProgramEditor::changedFields() const
 {
     Locker locker { m_changedFieldsLock };
     Vector<FieldReference> fields = m_changedFields;
-    AOT::sort(fields);
+    AOT::sortInLine(fields);
     removeRepeatedElements(fields);
     return fields;
 }

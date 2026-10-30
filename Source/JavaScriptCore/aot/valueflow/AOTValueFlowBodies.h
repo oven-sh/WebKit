@@ -826,7 +826,7 @@ public:
         StringID text;
     };
     static constexpr uint32_t mostArgumentsLookedAtForTexts = 64;
-    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<ValueFlowNotedOperations>& notedOperations);
+    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
 
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 

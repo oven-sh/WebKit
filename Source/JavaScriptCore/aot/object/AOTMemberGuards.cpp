@@ -574,6 +574,16 @@ static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end,
     return true;
 }
 
+// `Object.setPrototypeOf(Readable, Stream)`: a constructor function below another function. The walk of the caches passes functions too, and names what it passed that may get the name or another parent.
+static bool findsMemberOfObjectAbove(State& state, JSObject* holder, JSObject* end, MemberName& name, ChainObjects& passed)
+{
+    ChainWalk walk = walkChain({ state.instance.globalObject, holder->structure(), holder }, name.uid());
+    if (walk.didFlatten || walk.result != ChainWalkResult::Found || walk.owner != end)
+        return false;
+    passed.appendVector(walk.changeableObjects);
+    return true;
+}
+
 namespace {
 
 class ClassesAbove {
@@ -680,8 +690,14 @@ static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, Cl
 
         bool hasNext = classes.at(index).next;
         JSObject* nextHolder = hasNext ? classes.at(index + 1).holder : objectAboveClasses(state, side);
-        if (!nextHolder || !passOtherObjects(vm, state, holder->getPrototypeDirect(), nextHolder, name, resolution.otherObjects))
+        if (!nextHolder)
             return std::nullopt;
+        size_t numberOfObjectsPassedBelow = resolution.otherObjects.size();
+        if (!passOtherObjects(vm, state, holder->getPrototypeDirect(), nextHolder, name, resolution.otherObjects)) {
+            resolution.otherObjects.shrink(numberOfObjectsPassedBelow);
+            if (hasNext || side != ClassSide::Static || !findsMemberOfObjectAbove(state, holder, nextHolder, name, resolution.otherObjects))
+                return std::nullopt;
+        }
         if (!hasNext)
             return resolution;
     }

@@ -1668,7 +1668,7 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
     Vector<NameStoredThroughDeclaredReceiver> names = std::exchange(m_namesStoredThroughDeclaredReceivers, { });
     if (names.isEmpty())
         return;
-    AOT::sort(names, { }, &NameStoredThroughDeclaredReceiver::order);
+    AOT::sortInLine(names, { }, &NameStoredThroughDeclaredReceiver::order);
     removeRepeatedElements(names, [](const NameStoredThroughDeclaredReceiver& a, const NameStoredThroughDeclaredReceiver& b) {
         return a.order() == b.order();
     });

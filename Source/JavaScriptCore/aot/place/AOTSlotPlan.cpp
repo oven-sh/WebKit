@@ -504,7 +504,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         add(rows.extensionWordOf(id), root, rows.extensionWordOf(root));
         add(rows.extraPropertiesWordOf(id), root, rows.extraPropertiesWordOf(root));
     }
-    AOT::sort(members);
+    AOT::sortInLine(members);
 
     m_rows.reserveInitialCapacity(members.size());
     for (auto [depth, declaringRow, row] : members) {
@@ -640,7 +640,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     m_accesses.removeAllMatching([&](const Access& access) {
         return !access.numberOfRows || setOf(rowsOf(access)[0]) == noSet;
     });
-    AOT::stableSort(m_accesses, { }, [&](const Access& access) {
+    AOT::stableSortInLine(m_accesses, { }, [&](const Access& access) {
         return setOf(rowsOf(access)[0]);
     });
     for (uint32_t index = 0; index < m_accesses.size(); ++index) {
@@ -667,7 +667,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
         m_rows[joined.firstRow + joined.numberOfRows++] = row;
     }
 
-    AOT::sort(m_sets, [](const Set& a, const Set& b) {
+    AOT::sortInLine(m_sets, [](const Set& a, const Set& b) {
         return std::tuple(b.weight.predicted(), a.firstRow) < std::tuple(a.weight.predicted(), b.firstRow);
     });
 }

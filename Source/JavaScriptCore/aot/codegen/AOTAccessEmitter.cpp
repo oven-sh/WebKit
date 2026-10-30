@@ -471,6 +471,67 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
     define(value, join.finish());
 }
 
+// Loads and branches alone, so that the back end sees them. It stands in front of a loop as often as in one, where the code is not fast code.
+void AccessEmitter::generateGetCachedValue(const ValueContext& value)
+{
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    Boxed absent = boxedConstant(JSValue());
+    if (!cache || !identifier) {
+        define(value, absent);
+        return;
+    }
+
+    Pointer site = siteCacheAddress(cache);
+    LBasicBlock isNoValue = newBlock();
+    LBasicBlock isThere = newBlock();
+    LBasicBlock holdsReference = newBlock();
+    LBasicBlock hasOtherStructure = newBlock();
+    LBasicBlock findsNothing = newBlock();
+    Join<Boxed> join(m_out);
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    if (representationOf(value->objectOperand()) != Representation::Cell)
+        branchUnless(isCell(receiver), findsNothing);
+    CellPointer object = unboxCell(receiver);
+    join.add(loadBySlotAtSite(object, site, Slot::Kind::Value, isNoValue, hasOtherStructure));
+
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    m_out.appendTo(isNoValue);
+    Word32 kind(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind())));
+    branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::Absent)), isThere);
+    join.add(undefined());
+
+    // A field of a compiled object above this one: the slot names the word that holds the integer, or with a negative number the reference. A word that says something else is for the lookup.
+    m_out.appendTo(isThere);
+    branchUnless(equal(kind, static_cast<int32_t>(Slot::Kind::InheritedField)), findsNothing);
+    Word32 word(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())));
+    LValue holder = m_out.load64(partOfSlot(Slot::offsetOfPayload()));
+    auto loadWord = [&](Word32 index) {
+        return m_out.load32(m_out.address(m_heaps.root, m_out.add(holder, m_out.shl(m_out.zeroExtPtr(index.value()), 2)), 0));
+    };
+    branchUnless(greaterThan(word, 0), holdsReference);
+    Word32 integer(loadWord(word));
+    branchUnless(greaterThanOrEqual(integer, minInlineInt32), findsNothing);
+    join.add(boxInt32(integer));
+
+    m_out.appendTo(holdsReference);
+    branchUnless(lessThan(word, word32(0)), findsNothing);
+    NarrowReference reference(loadWord(Word32(m_out.neg(word.value()))));
+    branchUnless(isCellReferenceAmongAllWords(reference), findsNothing);
+    join.add(boxCell(decode(reference)));
+
+    m_out.appendTo(hasOtherStructure);
+    branchUnless(countMissAtSite(site), findsNothing);
+    callVoidOperation(value, RuntimeOperation::FillSiteCacheWithValue, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = true });
+    m_out.jump(findsNothing);
+
+    m_out.appendTo(findsNothing);
+    join.add(absent);
+    define(value, join.finish());
+}
+
 void AccessEmitter::putFreeName(const ValueContext& value)
 {
     Boxed stored = in<Boxed>(value->valueOperand());

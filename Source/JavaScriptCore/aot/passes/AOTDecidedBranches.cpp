@@ -169,11 +169,11 @@ static bool mayRefuseChangedClosures(FunctionAnalyses& analyses, const Value& te
 void keepRepeatedTests(FunctionAnalyses& analyses, Vector<BranchOnTypeTest>& branches)
 {
     // The identities of values are asked for only where two tests are for one type.
-    AOT::stableSort(branches, { }, &BranchOnTypeTest::testedType);
+    AOT::stableSortInLine(branches, { }, &BranchOnTypeTest::testedType);
     keepRepeated(branches, &BranchOnTypeTest::testedType);
     for (BranchOnTypeTest& branch : branches)
         branch.subject = analyses.identityOf(branch.subject);
-    AOT::stableSort(branches, { }, &BranchOnTypeTest::test);
+    AOT::stableSortInLine(branches, { }, &BranchOnTypeTest::test);
     // A test that no other branch repeats has nothing to learn from the table.
     keepRepeated(branches, &BranchOnTypeTest::test);
 }
@@ -194,7 +194,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
             m_blocksThatBranchOnTypeTest.append(block);
         }
     }
-    AOT::stableSort(m_branchesByOperand, { }, &BranchOnValue::operand);
+    AOT::stableSortInLine(m_branchesByOperand, { }, &BranchOnValue::operand);
     keepRepeated(m_branchesByOperand, &BranchOnValue::operand);
     keepRepeatedTests(analyses, m_branches);
     if (!m_branches.isEmpty())
@@ -326,7 +326,7 @@ SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types, std
     AOT::sort(testedObjects);
     for (BlockID block : analyses.cfg().reversePostOrder())
         collectTestedReads(testedObjects.span(), block);
-    AOT::stableSort(m_reads, { }, &TestedRead::object);
+    AOT::stableSortInLine(m_reads, { }, &TestedRead::object);
 }
 
 static bool declareSameType(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key)
@@ -546,7 +546,7 @@ TestsOfSameValues::TestsOfSameValues(FunctionAnalyses& analyses, TypeArena& type
             }
         }
     }
-    AOT::stableSort(m_operands, { }, &TestedOperand::subject);
+    AOT::stableSortInLine(m_operands, { }, &TestedOperand::subject);
     size_t end = 0;
     forEachRunOfEqualKeys(m_operands.span(), &TestedOperand::subject, [&](std::span<const TestedOperand> operands) {
         if (operands.size() < 2 || std::ranges::all_of(operands, &TestedOperand::isExpectation))
@@ -675,7 +675,7 @@ void TestsOfSameValues::computeOutcomes()
         }
         if (!entersEdge)
             return;
-        AOT::stableSort(steps, { }, &Step::order);
+        AOT::stableSortInLine(steps, { }, &Step::order);
         for (const Step& step : steps) {
             while (!scopes.isEmpty() && scopes.last().lastNumberBelow < step.number)
                 scopes.removeLast();

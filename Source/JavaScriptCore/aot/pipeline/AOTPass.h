@@ -124,6 +124,8 @@ struct FunctionPassContext {
     bool hasCountersConvertedSinceTestsWerePlaced { false };
     // ConvertCountersToIntegers runs twice behind the rounds. The second run has work only where a bound got its test after the first.
     bool hasConvertedCountersBehindRounds { false };
+    // ConvertCountersToIntegers tries counters whose comparison names no variable in one round only: what it passes on for a counter that stays a number is taken away again, and the next round would pass it on anew.
+    bool hasTriedCountersThatCompareNoVariable { false };
     bool hasBoundsTestedBehindRounds { false };
     // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.
     const OpcodeSet* opcodesWhereRunBegins { nullptr };

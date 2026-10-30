@@ -457,7 +457,7 @@ struct LiteralOrderSolver {
             for (const KeyOrder& order : creations[creation].orders)
                 listedOrders.append(&order);
         }
-        AOT::sort(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
+        AOT::sortInLine(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
             return std::ranges::lexicographical_compare(*a, *b);
         });
 

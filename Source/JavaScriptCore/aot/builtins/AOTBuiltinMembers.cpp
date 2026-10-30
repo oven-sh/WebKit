@@ -342,7 +342,7 @@ Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName n
         }
         existing->classes.append(builtinClass);
     }
-    AOT::sort(methods, { }, &MemberOfClasses::member);
+    AOT::sortInLine(methods, { }, &MemberOfClasses::member);
     return methods;
 }
 

@@ -471,7 +471,7 @@ private:
                 }
             }
         }
-        AOT::sort(m_repeatedArguments, { }, &RepeatedArgument::place);
+        AOT::sortInLine(m_repeatedArguments, { }, &RepeatedArgument::place);
     }
 
     void admitNarrowReferences()
@@ -1280,7 +1280,7 @@ struct ConversionInserter {
             if (ValueID operand = user.operand(operandIndex))
                 operands.append({ operand, operandIndex });
         }
-        AOT::sort(operands);
+        AOT::sortInLine(operands);
         for (size_t index = 1; index < operands.size(); ++index) {
             if (operands[index - 1].first == operands[index].first && formTakenAt(operands[index - 1].second) != formTakenAt(operands[index].second))
                 return true;

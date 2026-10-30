@@ -450,7 +450,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
                 break;
             }
         }
-        AOT::sort(order);
+        AOT::sortInLine(order);
         bool isFilledAtProgramEntry = true;
         auto finishVariablesFilledAtProgramEntry = [&] {
             if (std::exchange(isFilledAtProgramEntry, false))

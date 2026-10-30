@@ -35,7 +35,8 @@ static bool isBodyThatOnlyStartOfProgramEnters(const Program& program, const Flo
 
 static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults& flow, FunctionID id, const Function& function, const StoredBodySummary& body)
 {
-    bool mayBeResumed = body.onReturn().maySuspend();
+    // The function that resumes a generator with a heap frame suspends nowhere: it returns, and a step enters it again.
+    bool mayBeResumed = body.onReturn().maySuspend() || function.role == FunctionRole::CoroutineBody;
     if (mayBeResumed)
         return true;
     if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, id))

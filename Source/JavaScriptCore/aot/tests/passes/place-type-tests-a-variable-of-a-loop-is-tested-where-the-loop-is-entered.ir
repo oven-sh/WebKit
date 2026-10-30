@@ -1,0 +1,89 @@
+# function carry(c, n) { while (--n >= 0) c = Math.floor((c + 3) / 4); return c; }
+# What comes around the loop is a number: the turn has made it. What enters may be anything. Tested in the loop, the variable is any value all the way around, and each turn boxes what the turn before has made.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# STATISTIC: LoopParametersTestedInFrontOfLoops = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="carry" parameters=[{type=number flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything ~ i32):
+    Jump -> next b1(v0, v1)
+  b1(v2: anything ~ number, v3: anything ~ i32):
+    LoopHint
+    v5 = Decrement v3
+    v6 = Integer
+    v7 = GreaterEq v5, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Integer integer=3
+    v9 = Add v2, v8
+    v10 = Integer integer=4
+    v11 = Div v9, v10
+    Jump -> next b1(v11, v5)
+  b3():
+    Return v2
+}
+# Both tests stand in front of the loop, and the head of the loop has a number and an integer. The counter may have left 32 bits by one: that is asked of an integer.
+# CHECK-LABEL: function f0 name="carry"
+# CHECK: = TypeTest v2 testedType=number
+# CHECK: = TypeTest v3 testedType=i32
+# CHECK: [[head]]([[c]]: number, [[n]]: int[-2147483649, 2147483647] ~ i32):
+# CHECK-NEXT: LoopHint
+# CHECK: true = TypeTest [[c]] testedType=number
+# CHECK: Jump -> next [[head]](
+# What fails there begins the generic turn with what has entered, behind a poll of its own.
+# CHECK: = Upcast v2 castType=anything
+# CHECK-NEXT: = Upcast v3 castType=anything
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next [[turn]](
+# CHECK-NEXT: [[turn]](
+# CHECK-NEXT: = Decrement
+
+# A variable that comes around untested is tested where it is used: a test on the edge that enters would buy nothing.
+function f1 name="comesAroundAsAnything" parameters=[{type=i32 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ i32, v1: anything):
+    Jump -> next b1(v0)
+  b1(v2: anything ~ i32):
+    LoopHint
+    v4 = Decrement v2
+    v5 = Integer
+    v6 = GreaterEq v4, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Call v1, -, v4
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="comesAroundAsAnything"
+# CHECK: b2([[n1]]: anything ~ i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest [[n1]] testedType=i32
+
+# The generic turn reads what the head of the loop defines without being handed it. Entered from in front of the loop too, it is handed both.
+function f2 name="clearsBits" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    Jump -> next b1(v0)
+  b1(v1: anything ~ i32):
+    LoopHint
+    v3 = Integer
+    v4 = Eq v1, v3
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v5 = Integer integer=1
+    v6 = Sub v1, v5
+    v7 = BitAnd v1, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="clearsBits"
+# CHECK: ([[x]]: i32):
+# CHECK-NEXT: LoopHint
+# CHECK: true = TypeTest [[x]] testedType=i32
+# CHECK: ([[any]]: anything ~ i32) frequency=Unlikely:
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: = Eq [[any]], [[zero]]
+# CHECK: = TypeTest v1 testedType=i32

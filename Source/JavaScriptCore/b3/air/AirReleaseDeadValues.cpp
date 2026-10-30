@@ -15,6 +15,7 @@
 #include "AirStackColoring.h"
 #include "B3StackmapValue.h"
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -26,19 +27,26 @@ public:
     DeadValueReleaser(Code& code, const StackColoring& coloring)
         : m_code(code)
         , m_coloring(coloring)
-        , m_liveAtTail(code.size())
-        , m_reachesCallAtTail(code.size())
     {
     }
 
     void run()
     {
         numberPlaces();
-        solveBackward();
+        findPlacesOfValues();
+        if (!m_watchedPlaces.isEmpty())
+            solveBackward();
         rewrite();
     }
 
 private:
+    struct Hint {
+        BasicBlock* block;
+        unsigned instIndex;
+        // The places that hold the value and that are worth clearing.
+        BitVector places;
+    };
+
     static StackmapValue* hintOf(const Inst& inst)
     {
         if (inst.kind.opcode != Patch || !inst.origin)
@@ -69,9 +77,6 @@ private:
         m_firstCallArg = m_firstSlot + m_coloring.numberOfWords();
         m_slotOfWord.fill(nullptr, m_coloring.numberOfWords());
         m_numberOfPlaces = m_firstCallArg + m_code.callArgAreaSizeInBytes() / sizeof(uint64_t);
-        m_everyPlace.ensureSize(m_numberOfPlaces);
-        for (unsigned place = 0; place < m_numberOfPlaces; ++place)
-            m_everyPlace.quickSet(place);
         m_neverCleared.ensureSize(m_numberOfPlaces);
         m_registers.forEach([&](Reg reg) {
             if (!RegisterSet::calleeSaveRegisters().contains(reg, IgnoreVectors))
@@ -152,73 +157,12 @@ private:
         inst.extraClobberedRegs().forEach(visit);
     }
 
-    // From the state behind the instruction to the state in front of it.
-    void stepBackward(Inst& inst, BitVector& live, BitVector& reachesCall) const
-    {
-        auto define = [&](unsigned place) {
-            live.quickClear(place);
-            reachesCall.quickClear(place);
-        };
-        forEachClobberedPlace(inst, define);
-        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
-            if (auto place = placeOf(arg); place && Arg::isAnyDef(role) && (arg.isTmp() || width == Width64))
-                define(*place);
-        });
-        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
-            if (auto place = placeOf(arg); place && !arg.isTmp() && (Arg::isAnyUse(role) || role == Arg::UseAddr))
-                live.quickSet(*place);
-            forEachWordTouchedInPart(arg, [&](unsigned word) {
-                live.quickSet(word);
-            });
-        });
-        // This way the registers that addresses are made of count too.
-        inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-            if (auto place = placeOf(Arg(tmp)); place && Arg::isAnyUse(role))
-                live.quickSet(*place);
-        });
-        if (mayCollect(inst))
-            reachesCall = m_everyPlace;
-    }
-
-    static bool mergeInto(BitVector& target, const BitVector& source)
-    {
-        size_t before = target.bitCount();
-        target.merge(source);
-        return target.bitCount() != before;
-    }
-
-    void solveBackward()
-    {
-        for (BasicBlock* block : m_code) {
-            m_liveAtTail[block].ensureSize(m_numberOfPlaces);
-            m_reachesCallAtTail[block].ensureSize(m_numberOfPlaces);
-        }
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (unsigned blockIndex = m_code.size(); blockIndex--;) {
-                BasicBlock* block = m_code[blockIndex];
-                if (!block)
-                    continue;
-                BitVector live = m_liveAtTail[block];
-                BitVector reachesCall = m_reachesCallAtTail[block];
-                for (unsigned instIndex = block->size(); instIndex--;)
-                    stepBackward(block->at(instIndex), live, reachesCall);
-                for (BasicBlock* predecessor : block->predecessors()) {
-                    changed |= mergeInto(m_liveAtTail[predecessor], live);
-                    changed |= mergeInto(m_reachesCallAtTail[predecessor], reachesCall);
-                }
-            }
-        }
-    }
-
     // Walking backward from the hint.
     struct Trail {
         // The places that hold the value here.
         BitVector holds;
         // The places that are written between here and the hint.
         BitVector rewritten;
-        bool isReached { true };
     };
 
     // `found`: the places that hold the value at the hint.
@@ -266,7 +210,7 @@ private:
         // A copy of a copy shows only once the first copy is known to hold the value.
         for (bool grew = true; grew;) {
             grew = false;
-            IndexMap<BasicBlock*, Trail> atTail(m_code.size(), Trail { { }, { }, false });
+            UncheckedKeyHashMap<unsigned, Trail, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> atTail;
             Vector<BasicBlock*, 8> worklist;
             auto walk = [&](BasicBlock* block, unsigned end, Trail trail) {
                 for (unsigned instIndex = end; instIndex--;) {
@@ -274,11 +218,12 @@ private:
                         return;
                     grew |= stepBackward(block->at(instIndex), trail, found);
                 }
+                if (trail.holds.isEmpty())
+                    return;
                 for (BasicBlock* predecessor : block->predecessors()) {
-                    Trail& known = atTail[predecessor];
-                    if (!known.isReached)
-                        known = trail;
-                    else {
+                    auto added = atTail.add(predecessor->index(), trail);
+                    if (!added.isNewEntry) {
+                        Trail& known = added.iterator->value;
                         size_t before = known.rewritten.bitCount();
                         known.rewritten.filter(trail.rewritten);
                         if (!mergeInto(known.holds, trail.holds) && known.rewritten.bitCount() == before)
@@ -287,70 +232,187 @@ private:
                     worklist.append(predecessor);
                 }
             };
-            walk(hintBlock, hintIndex, Trail { found, BitVector(m_numberOfPlaces), true });
+            walk(hintBlock, hintIndex, Trail { found, BitVector(m_numberOfPlaces) });
             while (!worklist.isEmpty()) {
                 BasicBlock* block = worklist.takeLast();
-                walk(block, block->size(), atTail[block]);
+                walk(block, block->size(), atTail.get(block->index()));
             }
         }
         return found;
     }
 
-    // What the hint at that place of the block leaves alone: what is read again, and what is written again before anything may collect.
-    BitVector placesKeptAt(BasicBlock* block, unsigned hintIndex) const
+    void findPlacesOfValues()
     {
-        BitVector live = m_liveAtTail[block];
-        BitVector reachesCall = m_reachesCallAtTail[block];
-        for (unsigned instIndex = block->size(); --instIndex > hintIndex;)
-            stepBackward(block->at(instIndex), live, reachesCall);
-        BitVector kept = m_neverCleared;
-        for (unsigned place = 0; place < m_numberOfPlaces; ++place) {
-            if (live.quickGet(place) || !reachesCall.quickGet(place))
-                kept.quickSet(place);
+        m_watchedIndexOfPlace.fill(notWatched, m_numberOfPlaces);
+        for (BasicBlock* block : m_code) {
+            for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+                Inst& inst = block->at(instIndex);
+                if (!hintOf(inst))
+                    continue;
+                Hint hint { block, instIndex, { } };
+                // The value may have become a constant.
+                if (auto first = inst.args().size() == 2 ? placeOf(inst.args()[1]) : std::nullopt) {
+                    hint.places = placesHoldingValueAt(block, instIndex, *first);
+                    hint.places.exclude(m_neverCleared);
+                    for (unsigned place : hint.places) {
+                        if (m_watchedIndexOfPlace[place] != notWatched)
+                            continue;
+                        m_watchedIndexOfPlace[place] = m_watchedPlaces.size();
+                        m_watchedPlaces.append(place);
+                    }
+                }
+                m_hints.append(WTF::move(hint));
+            }
         }
-        return kept;
+    }
+
+    // Liveness is asked only about the places that some hint would clear. They are few, whatever the size of the function, so a set of them is a word.
+    std::optional<unsigned> watchedIndexOf(const Arg& arg) const
+    {
+        auto place = placeOf(arg);
+        if (!place || m_watchedIndexOfPlace[*place] == notWatched)
+            return std::nullopt;
+        return m_watchedIndexOfPlace[*place];
+    }
+
+    struct Backward {
+        // Read before it is written.
+        BitVector live;
+        // Something may collect before it is written.
+        BitVector meetsCollection;
+        BitVector written;
+    };
+
+    // From the state behind the instruction to the state in front of it.
+    void stepBackward(Inst& inst, Backward& state) const
+    {
+        auto write = [&](unsigned index) {
+            state.live.quickClear(index);
+            state.meetsCollection.quickClear(index);
+            state.written.quickSet(index);
+        };
+        forEachClobberedPlace(inst, [&](unsigned place) {
+            if (m_watchedIndexOfPlace[place] != notWatched)
+                write(m_watchedIndexOfPlace[place]);
+        });
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
+            if (auto index = watchedIndexOf(arg); index && Arg::isAnyDef(role) && (arg.isTmp() || width == Width64))
+                write(*index);
+        });
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+            if (auto index = watchedIndexOf(arg); index && !arg.isTmp() && (Arg::isAnyUse(role) || role == Arg::UseAddr))
+                state.live.quickSet(*index);
+            forEachWordTouchedInPart(arg, [&](unsigned place) {
+                if (m_watchedIndexOfPlace[place] != notWatched)
+                    state.live.quickSet(m_watchedIndexOfPlace[place]);
+            });
+        });
+        // This way the registers that addresses are made of count too.
+        inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+            if (auto index = watchedIndexOf(Arg(tmp)); index && Arg::isAnyUse(role))
+                state.live.quickSet(*index);
+        });
+        if (mayCollect(inst))
+            state.meetsCollection = m_everyWatchedPlace;
+    }
+
+    Backward emptyState() const
+    {
+        unsigned size = m_watchedPlaces.size();
+        return { BitVector(size), BitVector(size), BitVector(size) };
+    }
+
+    static bool mergeInto(BitVector& target, const BitVector& source)
+    {
+        size_t before = target.bitCount();
+        target.merge(source);
+        return target.bitCount() != before;
+    }
+
+    void solveBackward()
+    {
+        m_everyWatchedPlace.ensureSize(m_watchedPlaces.size());
+        for (unsigned index = 0; index < m_watchedPlaces.size(); ++index)
+            m_everyWatchedPlace.quickSet(index);
+
+        // Every instruction is looked at once. What a block does to the state behind it is three words.
+        IndexMap<BasicBlock*, Backward> effectOf(m_code.size());
+        m_atTail = IndexMap<BasicBlock*, Backward>(m_code.size());
+        for (BasicBlock* block : m_code) {
+            Backward effect = emptyState();
+            for (unsigned instIndex = block->size(); instIndex--;)
+                stepBackward(block->at(instIndex), effect);
+            effectOf[block] = WTF::move(effect);
+            m_atTail[block] = emptyState();
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (unsigned blockIndex = m_code.size(); blockIndex--;) {
+                BasicBlock* block = m_code[blockIndex];
+                if (!block)
+                    continue;
+                const Backward& effect = effectOf[block];
+                BitVector live = m_atTail[block].live;
+                live.exclude(effect.written);
+                live.merge(effect.live);
+                BitVector meetsCollection = m_atTail[block].meetsCollection;
+                meetsCollection.exclude(effect.written);
+                meetsCollection.merge(effect.meetsCollection);
+                for (BasicBlock* predecessor : block->predecessors()) {
+                    changed |= mergeInto(m_atTail[predecessor].live, live);
+                    changed |= mergeInto(m_atTail[predecessor].meetsCollection, meetsCollection);
+                }
+            }
+        }
     }
 
     void rewrite()
     {
         const Arg zero = isX86_64() ? Arg::imm(0) : Arg::zeroReg();
         InsertionSet insertionSet(m_code);
-        for (BasicBlock* block : m_code) {
-            bool removesHint = false;
-            for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+        for (unsigned first = 0; first < m_hints.size();) {
+            BasicBlock* block = m_hints[first].block;
+            unsigned end = first;
+            while (end < m_hints.size() && m_hints[end].block == block)
+                ++end;
+            // The hints of a block from the last to the first, with the state behind each.
+            Backward state = m_watchedPlaces.isEmpty() ? emptyState() : m_atTail[block];
+            unsigned instIndex = block->size();
+            for (unsigned hintIndex = end; hintIndex-- > first;) {
+                Hint& hint = m_hints[hintIndex];
+                while (--instIndex > hint.instIndex)
+                    stepBackward(block->at(instIndex), state);
                 Inst& inst = block->at(instIndex);
-                StackmapValue* hint = hintOf(inst);
-                if (!hint)
-                    continue;
                 RegisterSet registers;
-                // The value may have become a constant.
-                if (auto first = inst.args().size() == 2 ? placeOf(inst.args()[1]) : std::nullopt) {
-                    BitVector released = placesHoldingValueAt(block, instIndex, *first);
-                    released.exclude(placesKeptAt(block, instIndex));
-                    for (unsigned place : released) {
-                        if (place < m_firstSlot)
-                            registers.add(Reg::fromIndex(place), IgnoreVectors);
-                        else if (place < m_firstCallArg)
-                            insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::stack(m_slotOfWord[place - m_firstSlot]));
-                        else
-                            insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::callArg(static_cast<int32_t>((place - m_firstCallArg) * sizeof(uint64_t))));
-                    }
+                for (unsigned place : hint.places) {
+                    unsigned index = m_watchedIndexOfPlace[place];
+                    if (state.live.quickGet(index) || !state.meetsCollection.quickGet(index))
+                        continue;
+                    // An earlier hint of the block need not clear it again.
+                    state.meetsCollection.quickClear(index);
+                    if (place < m_firstSlot)
+                        registers.add(Reg::fromIndex(place), IgnoreVectors);
+                    else if (place < m_firstCallArg)
+                        insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::stack(m_slotOfWord[place - m_firstSlot]));
+                    else
+                        insertionSet.insert(instIndex + 1, Move, inst.origin, zero, Arg::callArg(static_cast<int32_t>((place - m_firstCallArg) * sizeof(uint64_t))));
                 }
-                hint->setRegistersToRelease(registers);
-                hint->clobberLate(registers);
-                if (registers.isEmpty()) {
+                StackmapValue* stackmap = hintOf(inst);
+                stackmap->setRegistersToRelease(registers);
+                stackmap->clobberLate(registers);
+                stepBackward(inst, state);
+                if (registers.isEmpty())
                     inst = Inst();
-                    removesHint = true;
-                }
             }
             insertionSet.execute(block);
-            if (removesHint) {
-                block->insts().removeAllMatching([](const Inst& inst) {
-                    return !inst;
-                });
-            }
+            block->insts().removeAllMatching([](const Inst& inst) {
+                return !inst;
+            });
+            first = end;
         }
     }
+
+    static constexpr unsigned notWatched = UINT_MAX;
 
     Code& m_code;
     const StackColoring& m_coloring;
@@ -359,10 +421,12 @@ private:
     unsigned m_firstSlot { 0 };
     unsigned m_firstCallArg { 0 };
     unsigned m_numberOfPlaces { 0 };
-    BitVector m_everyPlace;
     BitVector m_neverCleared;
-    IndexMap<BasicBlock*, BitVector> m_liveAtTail;
-    IndexMap<BasicBlock*, BitVector> m_reachesCallAtTail;
+    Vector<Hint> m_hints;
+    Vector<unsigned> m_watchedPlaces;
+    Vector<unsigned> m_watchedIndexOfPlace;
+    BitVector m_everyWatchedPlace;
+    IndexMap<BasicBlock*, Backward> m_atTail { 0 };
 };
 
 } // anonymous namespace

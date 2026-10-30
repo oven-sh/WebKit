@@ -1031,12 +1031,12 @@ void AllocationSinking::abandonJoinsThatOnlyFeedAbandonedJoins()
 {
     auto indexOfJoin = [](const EntryIntoJoin& entry) { return entry.join.index(); };
     auto indexOfSource = [](const EntryIntoJoin& entry) { return entry.source.index(); };
-    AOT::sort(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
+    AOT::sortInLine(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
         return std::pair { entry.join.index(), entry.source.index() };
     });
     removeRepeatedElements(m_entriesIntoJoins);
     Vector<EntryIntoJoin> entriesBySource = m_entriesIntoJoins;
-    AOT::stableSort(entriesBySource, { }, indexOfSource);
+    AOT::stableSortInLine(entriesBySource, { }, indexOfSource);
 
     auto goesOnlyIntoAbandonedJoins = [&](VirtualObjectID object) {
         const Candidate& candidate = at(object);
@@ -1300,7 +1300,7 @@ Vector<BlockID> AllocationSinking::collectLiveRange(VirtualObjectID object, Bloc
         }
     }
 
-    AOT::sort(region, { }, [&](BlockID block) {
+    AOT::sortInLine(region, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
     return region;

@@ -753,6 +753,12 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
+// It goes where an operand of it is an object that is not built there.
+inline bool goesWithUnbuiltOperands(Opcode opcode)
+{
+    return familyOf(opcode) == OperationFamily::RuntimeValidation || opcode == Opcode::ReleaseHint;
+}
+
 bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed

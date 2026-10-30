@@ -507,7 +507,7 @@ bool FieldStoreRun::acceptsObject(AssignmentPlan::FieldStore& store, JSObject* o
     const RuntimeLayoutTable& layouts = m_state.objects->layouts;
     if (!layouts.fieldAccepts(*store.to, object))
         return false;
-    bool acceptsEveryObjectOfStructure = std::ranges::any_of(layouts.typeOf(*store.to).cellTests(), [&](const RuntimeCellTest& test) {
+    bool acceptsEveryObjectOfStructure = std::ranges::any_of(layouts.typeOf(*store.to).testsOfMoreThanOneFunction(), [&](const RuntimeCellTest& test) {
         return isDecidedByStructure(test, object) && layouts.cellPassesTest(test, object);
     });
     if (acceptsEveryObjectOfStructure) {
@@ -1341,13 +1341,18 @@ static ALWAYS_INLINE RepeatedCopy tryRunPlanAsBefore(VM& vm, State& state, Objec
     return RepeatedCopy::AsThePlanDidBefore;
 }
 
+static RepeatedCopy runPlanAsBeforeAndOfferCopy(VM&, State&, Object& to, AssignmentPlan&, const AssignmentSource&, uint32_t excludedRunNumberPlusOne);
+
 static NEVER_INLINE RepeatedCopy tryRepeatAssignmentByRecentPlan(VM& vm, State& state, Object& to, const Object& from, uint32_t excludedRunNumberPlusOne)
 {
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from.structureID(), from.orderWord(), excludedRunNumberPlusOne);
     if (!plan || &to == &from)
         return RepeatedCopy::IsNotDone;
-    if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne))
+    if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne)) {
+        if (plan->mayCopyWithoutFrame) [[unlikely]]
+            return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
         return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
+    }
     DeferGC deferGC(vm);
     if (!tryFillEmptySlotsAsBefore(vm, to, state, *plan, from))
         return RepeatedCopy::IsNotDone;
@@ -1429,19 +1434,249 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
     return true;
 }
 
+// The target is as the plan has left it.
+static bool tryDescribeCopyFollowingPlan(VM& vm, State& state, const AssignmentPlan& plan, MappedCopy& copy, const Object& target, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
+{
+    using Place = MappedCopy::Place;
+    using MovesFrom = AssignmentPlan::FieldStore::MovesFrom;
+    copy.followedPlan = makeUnique<MappedCopy::FollowedPlan>();
+    MappedCopy::FollowedPlan& followed = *copy.followedPlan;
+    if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
+        return false;
+    uint32_t flagsAfter = plan.orderWordAfterRun & ~orderAndCountMask;
+    bool makesSecondObject = !plan.extraPropertyStores.isEmpty();
+    if (plan.orderWordBeforeRun != unorderedOrderWord || plan.granuleBitsFilled || plan.readsOutOfLineFields || isOrderStoredOutOfLine(plan.orderWordAfterRun) || flagsAfter != (makesSecondObject ? orderWordHasExtraProperties : 0))
+        return false;
+    static_assert(static_cast<unsigned>(MovesFrom::Cell) == static_cast<unsigned>(Place::Cell) + 1 && static_cast<unsigned>(MovesFrom::InlineProperties) == static_cast<unsigned>(Place::InlineProperties) + 1
+        && static_cast<unsigned>(MovesFrom::OutsideProperties) == static_cast<unsigned>(Place::OutsideProperties) + 1);
+    for (AssignmentPlan::FieldStore store : plan.fieldStores) {
+        // A run copies such bits without a move.
+        if (store.copiesBitsUntested)
+            state.objects->caches->assignmentPlans.describeMove(vm, store, target.layout(), &source.compiledObject->state() == &state);
+        if (store.movesFrom == MovesFrom::Nowhere || store.to->isOutOfLine())
+            return false;
+        MappedCopy::Move move = store.move;
+        move.from = static_cast<uint32_t>(store.bytesInSource);
+        move.to = store.to->slot.offset;
+        move.placeInSource = static_cast<Place>(static_cast<unsigned>(store.movesFrom) - 1);
+        copy.moves.append(move);
+    }
+    auto bytesOf = [](PropertyOffset offset) {
+        return static_cast<int32_t>((isInlineOffset(offset) ? offset : offsetInOutOfLineStorage(offset)) * sizeof(EncodedJSValue));
+    };
+    auto placeOf = [](PropertyOffset offset) {
+        return isInlineOffset(offset) ? Place::InlineProperties : Place::OutsideProperties;
+    };
+    for (const AssignmentPlan::ExtraPropertyStore& store : plan.extraPropertyStores) {
+        if (!store.from) {
+            followed.wordMoves.append({ bytesOf(store.sourceOffset), bytesOf(store.offset), placeOf(store.sourceOffset), placeOf(store.offset) });
+            continue;
+        }
+        if (store.from->isOutOfLine())
+            return false;
+        SlotRepresentation representation = store.from->slot.representation();
+        MappedCopy::Move move { store.from->slot.offset, static_cast<uint32_t>(bytesOf(store.offset)), moveKindFor(representation, SlotRepresentation::JSValue, SlotFit::Always), sizeof(EncodedJSValue), false, true, representation, SlotRepresentation::JSValue, 0, 0 };
+        if (move.kind == MappedCopy::MoveKind::OtherForm || move.kind == MappedCopy::MoveKind::Tested)
+            return false;
+        move.placeInTarget = placeOf(store.offset);
+        copy.moves.append(move);
+    }
+    if (source.compiledObject && source.propertyStorage) {
+        std::optional<SlotData> word = source.compiledObject->compiledStructure().extraPropertiesSlot();
+        if (!word)
+            return false;
+        followed.readsSecondObjectOfSource = true;
+        followed.offsetOfSecondObjectWordInSource = word->offset;
+        followed.secondObjectWordOfSourceIsWide = word->representation() == SlotRepresentation::Cell;
+        followed.structureOfSecondObjectOfSource = plan.sourcePropertyStorage;
+    }
+    if (makesSecondObject) {
+        std::optional<SlotData> word = target.compiledStructure().extraPropertiesSlot();
+        Structure* after = plan.extraPropertiesAfter;
+        if (!word || !plan.targetAfter || after->inlineCapacity() != extraPropertiesInlineCapacity || after->isDictionary() || plan.extraPropertyStores.size() != static_cast<size_t>(after->inlineSize() + after->outOfLineSize()))
+            return false;
+        if (cellHeaderFor(plan.targetAfter) >> 32 != cellHeaderFor(plan.target.decode()) >> 32)
+            return false;
+        followed.offsetOfSecondObjectWordInTarget = word->offset;
+        followed.secondObjectWordOfTargetIsWide = word->representation() == SlotRepresentation::Cell;
+        followed.structureOfTargetAfter = plan.targetAfter->id();
+        followed.headerOfNewSecondObject = cellHeaderFor(after);
+        Allocator allocator = subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(extraPropertiesInlineCapacity), AllocatorForMode::EnsureAllocator);
+        if (!allocator)
+            return false;
+        followed.allocatorOfNewSecondObject = allocator.localAllocator();
+        followed.sizeOfNewSecondObject = followed.allocatorOfNewSecondObject->cellSize();
+        if (size_t capacity = after->outOfLineCapacity()) {
+            followed.bytesOfNewStorage = static_cast<uint32_t>(capacity * sizeof(EncodedJSValue));
+            followed.bytesOfNewStorageLeftEmpty = static_cast<uint32_t>((capacity - after->outOfLineSize()) * sizeof(EncodedJSValue));
+            Allocator allocatorOfStorage = vm.auxiliarySpace().allocatorFor(followed.bytesOfNewStorage, AllocatorForMode::EnsureAllocator);
+            if (!allocatorOfStorage)
+                return false;
+            followed.allocatorOfNewStorage = allocatorOfStorage.localAllocator();
+            followed.sizeOfNewStorage = followed.allocatorOfNewStorage->cellSize();
+        }
+    }
+    copy.readsOrdinaryObject = !source.compiledObject;
+    copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
+    copy.orderWordAfter = plan.orderWordAfterRun;
+    copy.structureOfTarget = plan.target;
+    copy.structureOfSource = plan.source;
+    followed.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
+    // The butterfly of an ordinary object lies where a record has these words, so such a copy has no place and always comes with a frame.
+    if (source.compiledObject) {
+        copy.sourceWords = source.compiledObject->orderAndShapeWords();
+        copy.targetWords = followed.targetWords;
+        copy.placeOfOwnedCopy = &placeOfCopyWithoutFrame(state, copy);
+        copy.takesNoFrame = true;
+    }
+    copy.targetWords = UINT64_MAX;
+    return true;
+}
+
+// Whoever calls has compared the Structures and the words of the two. It collects nothing, throws nothing and tells nobody. False with the target as it was.
+static ALWAYS_INLINE bool tryCopyFollowingPlan(Instance& instance, const MappedCopy& copy, JSCell* target, const JSCell* source)
+{
+    using Place = MappedCopy::Place;
+    constexpr unsigned placeMask = MappedCopy::numberOfPlaces - 1;
+    static_assert(hasOneBitSet(MappedCopy::numberOfPlaces));
+    constexpr unsigned inlineProperties = static_cast<unsigned>(Place::InlineProperties);
+    constexpr unsigned outsideProperties = static_cast<unsigned>(Place::OutsideProperties);
+    if (static_cast<uint8_t>(target->cellState()) <= instance.barrierThreshold || target->structure()->mayBePrototype())
+        return false;
+    uint8_t* cellOfTarget = reinterpret_cast<uint8_t*>(target);
+    const uint8_t* cellOfSource = reinterpret_cast<const uint8_t*>(source);
+    const uint8_t* placesOfSource[MappedCopy::numberOfPlaces] { cellOfSource, nullptr, nullptr, nullptr };
+    const JSObject* properties = copy.readsOrdinaryObject ? static_cast<const JSObject*>(source) : nullptr;
+    // Null for a copy out of an ordinary object with all its properties in its cell.
+    const MappedCopy::FollowedPlan* plan = copy.followedPlan.get();
+    if (plan && plan->readsSecondObjectOfSource) {
+        const MappedCopy::FollowedPlan& followed = *plan;
+        const uint8_t* word = cellOfSource + followed.offsetOfSecondObjectWordInSource;
+        properties = followed.secondObjectWordOfSourceIsWide ? *reinterpret_cast<const JSObject* const*>(word) : static_cast<const JSObject*>(MarkedBlockCage::decode(instance.cellCageBase, *reinterpret_cast<const uint32_t*>(word)));
+        if (properties->structureID() != followed.structureOfSecondObjectOfSource)
+            return false;
+    }
+    if (properties) {
+        placesOfSource[inlineProperties] = reinterpret_cast<const uint8_t*>(properties->inlineStorageUnsafe());
+        placesOfSource[outsideProperties] = reinterpret_cast<const uint8_t*>(properties->butterfly()) - sizeof(IndexingHeader);
+    }
+    uint8_t* placesOfTarget[MappedCopy::numberOfPlaces] { cellOfTarget, nullptr, nullptr, nullptr };
+    uint8_t* secondObject = nullptr;
+    uint8_t* storage = nullptr;
+    if (plan && plan->structureOfTargetAfter) {
+        const MappedCopy::FollowedPlan& followed = *plan;
+        auto allocate = [](LocalAllocator* allocator, uint32_t size) ALWAYS_INLINE_LAMBDA {
+            FreeList& freeList = *reinterpret_cast<FreeList*>(reinterpret_cast<uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList());
+            return reinterpret_cast<uint8_t*>(freeList.allocateWithCellSize([]() -> HeapCell* {
+                return nullptr;
+            }, size));
+        };
+        // Storage that no cell points to is nobody's.
+        if (followed.allocatorOfNewStorage) {
+            storage = allocate(followed.allocatorOfNewStorage, followed.sizeOfNewStorage);
+            if (!storage)
+                return false;
+        }
+        secondObject = allocate(followed.allocatorOfNewSecondObject, followed.sizeOfNewSecondObject);
+        if (!secondObject)
+            return false;
+        // Each property has a move. Nothing collects before the last, and where one fails all are cleared.
+        for (uint32_t offset = 0; offset < followed.bytesOfNewStorageLeftEmpty; offset += sizeof(EncodedJSValue)) {
+            *reinterpret_cast<uint64_t*>(storage + offset) = 0;
+            WTF::compilerFence();
+        }
+        static_assert(extraPropertiesInlineCapacity == 2 && JSObject::offsetOfInlineStorage() == 2 * sizeof(uint64_t) && JSObject::butterflyOffset() == sizeof(uint64_t));
+        uint64_t* words = reinterpret_cast<uint64_t*>(secondObject);
+        words[0] = followed.headerOfNewSecondObject;
+        words[1] = storage ? std::bit_cast<uint64_t>(storage + followed.bytesOfNewStorage + sizeof(IndexingHeader)) : 0;
+        words[2] = 0;
+        words[3] = 0;
+        placesOfTarget[inlineProperties] = secondObject + JSObject::offsetOfInlineStorage();
+        placesOfTarget[outsideProperties] = storage + followed.bytesOfNewStorage;
+    }
+    // The collector may find the new cell on the stack.
+    auto fail = [&](const MappedCopy::Move* end) ALWAYS_INLINE_LAMBDA {
+        if (storage)
+            zeroSpan(std::span { storage, plan->bytesOfNewStorage });
+        return clearFieldsMovedInVain(copy, end, target);
+    };
+    uintptr_t cellCageBase = instance.cellCageBase;
+    const uint32_t* literalStrings = instance.runtime.constants.literalStrings;
+    for (const MappedCopy::Move& move : copy.moves) {
+        uint8_t* slotOfTarget = placesOfTarget[static_cast<unsigned>(move.placeInTarget) & placeMask] + static_cast<int32_t>(move.to);
+        const uint8_t* slotOfSource = placesOfSource[static_cast<unsigned>(move.placeInSource) & placeMask] + static_cast<int32_t>(move.from);
+        // A move out of a property expects a value there.
+        bool didMove = (move.placeInSource == Place::Cell || *reinterpret_cast<const uint64_t*>(slotOfSource)) && tryMove(cellCageBase, move, slotOfSource, [&]<typename T>(T bits) ALWAYS_INLINE_LAMBDA {
+            *reinterpret_cast<T*>(slotOfTarget) = bits;
+        }, [] {
+            return false;
+        }, literalStrings);
+        if (!didMove) [[unlikely]]
+            return fail(&move);
+    }
+    if (!secondObject) {
+        *reinterpret_cast<uint32_t*>(cellOfTarget + offsetOfOrderWord) = copy.orderWordAfter;
+        return true;
+    }
+    const MappedCopy::FollowedPlan& followed = *plan;
+    for (const MappedCopy::WordMove& move : followed.wordMoves) {
+        uint64_t word = *reinterpret_cast<const uint64_t*>(placesOfSource[static_cast<unsigned>(move.placeInSource) & placeMask] + move.from);
+        if (!word) [[unlikely]]
+            return fail(copy.moves.end());
+        *reinterpret_cast<uint64_t*>(placesOfTarget[static_cast<unsigned>(move.placeInTarget) & placeMask] + move.to) = word;
+    }
+    uint8_t* word = cellOfTarget + followed.offsetOfSecondObjectWordInTarget;
+    if (followed.secondObjectWordOfTargetIsWide) [[unlikely]]
+        *reinterpret_cast<uint8_t**>(word) = secondObject;
+    else {
+        RELEASE_ASSERT(std::bit_cast<uintptr_t>(secondObject) - cellCageBase < MarkedBlockCage::maxSize);
+        *reinterpret_cast<uint32_t*>(word) = static_cast<uint32_t>(std::bit_cast<uintptr_t>(secondObject) >> MarkedBlockCage::shift);
+    }
+    *reinterpret_cast<uint32_t*>(cellOfTarget + offsetOfOrderWord) = copy.orderWordAfter;
+    *reinterpret_cast<StructureID*>(cellOfTarget + JSCell::structureIDOffset()) = followed.structureOfTargetAfter;
+    return true;
+}
+
+bool tryCopyFollowingPlanWithoutFrame(Instance& instance, JSCell* target, EncodedJSValue encodedSource, uint32_t excludedRunNumberPlusOne)
+{
+    JSValue sourceValue = JSValue::decode(encodedSource);
+    if (!sourceValue.isCell())
+        return false;
+    const JSCell* source = sourceValue.asCell();
+    uint64_t targetWords = *reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(target) + offsetOfOrderWord);
+    uint64_t sourceWords = *reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(source) + offsetOfOrderWord);
+    const MappedCopy* copy = instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(targetWords, sourceWords, excludedRunNumberPlusOne)];
+    if (!copy || !copy->followedPlan || copy->followedPlan->targetWords != targetWords || copy->sourceWords != sourceWords || copy->excludedRunNumberPlusOne != excludedRunNumberPlusOne)
+        return false;
+    if (copy->structureOfTarget != target->structureID() || copy->structureOfSource != source->structureID())
+        return false;
+    return tryCopyFollowingPlan(instance, *copy, target, source);
+}
+
 // The plan has just run as before.
-static NEVER_INLINE void offerCopyOutOfOrdinaryObject(VM& vm, State& state, AssignmentPlan& plan, const Object& target, JSObject* source, uint32_t excludedRunNumberPlusOne)
+static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, AssignmentPlan& plan, const Object& target, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
 {
     AOT_THRESHOLD(uint8_t, maxNumberOfCopiesInVain, 8);
     if (!plan.copyWithoutFrame) {
         auto copy = makeUniqueWithoutFastMallocCheck<MappedCopy>();
-        plan.mayCopyWithoutFrame = !source->butterfly() && tryDescribeCopyOutOfOrdinaryObject(vm, state, plan, *copy, target, excludedRunNumberPlusOne);
+        plan.mayCopyWithoutFrame = !source.compiledObject && !source.object->butterfly() && tryDescribeCopyOutOfOrdinaryObject(vm, state, plan, *copy, target, excludedRunNumberPlusOne);
+        if (!plan.mayCopyWithoutFrame) {
+            *copy = { };
+            plan.mayCopyWithoutFrame = tryDescribeCopyFollowingPlan(vm, state, plan, *copy, target, source, excludedRunNumberPlusOne);
+        }
         if (!plan.mayCopyWithoutFrame)
             return;
         copy->state = MappedCopy::State::IsServed;
         plan.copyWithoutFrame = WTF::move(copy);
     }
     MappedCopy& copy = *plan.copyWithoutFrame;
+    if (!copy.placeOfOwnedCopy) {
+        if (copy.numberOfCopiesInVain > maxNumberOfCopiesInVain) {
+            plan.mayCopyWithoutFrame = false;
+            plan.copyWithoutFrame = nullptr;
+        }
+        return;
+    }
     const MappedCopy*& place = *copy.placeOfOwnedCopy;
     // A collection empties the place. Another copy in it is one of two sources that take turns. An empty free list also brings us back with the place ours, and costs nothing here.
     if (!place) {
@@ -1450,6 +1685,11 @@ static NEVER_INLINE void offerCopyOutOfOrdinaryObject(VM& vm, State& state, Assi
     } else if (place != &copy)
         ++copy.numberOfTurnsLost;
     if (copy.numberOfCopiesInVain > maxNumberOfCopiesInVain || copy.numberOfTurnsLost > maxNumberOfCopiesInVain) {
+        // One of two sources that take turns goes on with a frame, by the same moves.
+        if (copy.numberOfCopiesInVain <= maxNumberOfCopiesInVain && !copy.granuleBitsFilled) {
+            copy.placeOfOwnedCopy = nullptr;
+            return;
+        }
         plan.mayCopyWithoutFrame = false;
         plan.copyWithoutFrame = nullptr;
         return;
@@ -1457,11 +1697,21 @@ static NEVER_INLINE void offerCopyOutOfOrdinaryObject(VM& vm, State& state, Assi
     place = &copy;
 }
 
-static NEVER_INLINE RepeatedCopy runPlanAsBeforeAndOfferCopy(VM& vm, State& state, Object& to, AssignmentPlan& plan, JSObject* from, uint32_t excludedRunNumberPlusOne)
+static NEVER_INLINE RepeatedCopy runPlanAsBeforeAndOfferCopy(VM& vm, State& state, Object& to, AssignmentPlan& plan, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
 {
-    RepeatedCopy way = tryRunPlanAsBefore(vm, state, to, plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
-    if (way != RepeatedCopy::IsNotDone)
-        offerCopyOutOfOrdinaryObject(vm, state, plan, to, from, excludedRunNumberPlusOne);
+    // A copy without a place is made here each time, and so is one whose caller is no compiled code. Any other has lost its place, to a collection or to another copy.
+    if (const MappedCopy* copy = plan.copyWithoutFrame.get(); copy && !copy->granuleBitsFilled && plan.runsAsBeforeOn(to, source, excludedRunNumberPlusOne) && tryCopyFollowingPlan(state.instance, *copy, &to, source.object)) {
+        if (copy->placeOfOwnedCopy && *copy->placeOfOwnedCopy != copy) [[unlikely]]
+            offerCopyWithoutFrame(vm, state, plan, to, source, excludedRunNumberPlusOne);
+        return RepeatedCopy::AsThePlanDidBefore;
+    }
+    AOT_THRESHOLD(uint8_t, maxNumberOfTimesAskedInVain, 4);
+    RepeatedCopy way = tryRunPlanAsBefore(vm, state, to, plan, source, excludedRunNumberPlusOne);
+    if (way != RepeatedCopy::IsNotDone) {
+        plan.numberOfTimesAskedInVain = 0;
+        offerCopyWithoutFrame(vm, state, plan, to, source, excludedRunNumberPlusOne);
+    } else if (!plan.copyWithoutFrame && ++plan.numberOfTimesAskedInVain > maxNumberOfTimesAskedInVain)
+        plan.mayCopyWithoutFrame = false;
     return way;
 }
 
@@ -1476,7 +1726,7 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentFromOrdinaryObject(VM& vm, S
     if (!plan)
         return RepeatedCopy::IsNotDone;
     if (plan->mayCopyWithoutFrame) [[unlikely]]
-        return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, from, excludedRunNumberPlusOne);
+        return runPlanAsBeforeAndOfferCopy(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
     return tryRunPlanAsBefore(vm, state, to, *plan, { from, nullptr, from, 0, { }, true }, excludedRunNumberPlusOne);
 }
 

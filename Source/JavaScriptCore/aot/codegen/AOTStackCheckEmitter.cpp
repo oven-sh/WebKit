@@ -153,7 +153,7 @@ Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, FunctionID id, 
         RELEASE_ASSERT(labels.call.isSet() && labels.resume.isSet());
         checks.append({ id.index(), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.resume) });
     }
-    AOT::sort(checks, { }, &PrologueCheck::callOffset);
+    AOT::sortInLine(checks, { }, &PrologueCheck::callOffset);
     return checks;
 }
 

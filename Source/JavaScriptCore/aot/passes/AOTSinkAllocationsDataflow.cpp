@@ -138,7 +138,7 @@ void SinkingState::set(std::span<ObjectEntry> movedEntries)
     if (addedEntries.isEmpty())
         return;
 
-    AOT::sort(addedEntries, { }, &ObjectEntry::object);
+    AOT::sortInLine(addedEntries, { }, &ObjectEntry::object);
     size_t source = objects.size();
     size_t destination = source + addedEntries.size();
     objects.grow(destination);
@@ -874,7 +874,7 @@ void AllocationSinking::setAside(uint32_t join)
 
 bool buildsOperand(const Program& program, const Value& user, uint32_t operandIndex)
 {
-    return interpretationOf(program, user) == Interpretation::None && familyOf(user.opcode) != OperationFamily::RuntimeValidation && !isHeldOperand(user, operandIndex);
+    return interpretationOf(program, user) == Interpretation::None && !goesWithUnbuiltOperands(user.opcode) && !isHeldOperand(user, operandIndex);
 }
 
 bool AllocationSinking::isBuiltInItsBlock(const Candidate& allocation) const
@@ -957,7 +957,7 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
             return;
         }
     }
-    AOT::sort(state.variants);
+    AOT::sortInLine(state.variants);
     removeRepeatedElements(state.variants);
 }
 

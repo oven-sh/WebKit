@@ -105,7 +105,7 @@ static Vector<EntryBelow> listEntriesBelowEntries(const BuiltinTable& builtins)
         if (isObjectKind(entry.kind) && entry.prototypeLink == BuiltinPrototypeLink::Builtin)
             list.append({ builtins.canonicalID(entry.inheritsFrom), BuiltinID(index) });
     }
-    AOT::sort(list);
+    AOT::sortInLine(list);
     return list;
 }
 
@@ -577,6 +577,99 @@ ModuleID ValueFlowHeapTables::libraryModuleNamed(std::span<const uint8_t> name) 
     return found && equalSpans(textOf(*found), name) ? found->module : ModuleID();
 }
 
+static size_t lastIndexOf(std::span<const uint8_t> text, uint8_t character)
+{
+    for (size_t index = text.size(); index--;) {
+        if (text[index] == character)
+            return index;
+    }
+    return notFound;
+}
+
+static std::span<const uint8_t> withoutExtension(std::span<const uint8_t> path)
+{
+    size_t slash = lastIndexOf(path, '/');
+    size_t name = slash == notFound ? 0 : slash + 1;
+    size_t dot = lastIndexOf(path.subspan(name), '.');
+    return dot == notFound || !dot ? path : path.first(name + dot);
+}
+
+void ValueFlowHeapTables::listSpellingsOfFiles()
+{
+    static constexpr std::array<uint8_t, 6> indexFile { '/', 'i', 'n', 'd', 'e', 'x' };
+    bool isFirst = true;
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        const Module& module = m_program.modules[index];
+        if (module.runtimeModule || module.kind == ModuleKind::External || module.flags.containsAny({ ModuleFlags::IsLibrary, ModuleFlags::IsBundlerHelper }))
+            continue;
+        std::span<const uint8_t> path = m_program.string(module.path);
+        size_t slash = lastIndexOf(path, '/');
+        std::span<const uint8_t> folder = slash == notFound ? std::span<const uint8_t>() : path.first(slash + 1);
+        if (std::exchange(isFirst, false))
+            m_folderOfProgram = folder;
+        size_t common = std::ranges::mismatch(m_folderOfProgram, folder).in1 - m_folderOfProgram.begin();
+        size_t end = lastIndexOf(m_folderOfProgram.first(common), '/');
+        m_folderOfProgram = end == notFound ? std::span<const uint8_t>() : m_folderOfProgram.first(end + 1);
+        if (!mayAnswerToName(ModuleID(index)))
+            continue;
+        std::span<const uint8_t> spelling = withoutExtension(path);
+        m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size()), ModuleID(index) });
+        if (spanHasSuffix(spelling, std::span(indexFile)))
+            m_spellingsOfFiles.append(StartOfPath { module.path, static_cast<uint32_t>(spelling.size() - indexFile.size()), ModuleID(index) });
+    }
+    AOT::sort(m_spellingsOfFiles, [&](StartOfPath first, StartOfPath second) {
+        return std::ranges::lexicographical_compare(textOf(first), textOf(second));
+    });
+}
+
+std::optional<Vector<ModuleID, 2>> ValueFlowHeapTables::filesThatPathFinds(ModuleID from, std::span<const uint8_t> path) const
+{
+    auto isMoreThanPath = [](uint8_t character) {
+        return character == '?' || character == '#' || character == '%' || character == ':' || character == '\\';
+    };
+    std::span<const uint8_t> start = m_program.string(m_program.at(from).path);
+    size_t slash = lastIndexOf(start, '/');
+    if (slash == notFound || m_folderOfProgram.empty() || !spanHasPrefix(start, m_folderOfProgram) || std::ranges::any_of(path, isMoreThanPath))
+        return std::nullopt;
+
+    Vector<uint8_t, 256> joined;
+    joined.append(start.first(slash));
+    while (!path.empty()) {
+        size_t length = std::ranges::find(path, '/') - path.begin();
+        std::span<const uint8_t> part = path.first(length);
+        path = path.subspan(std::min(length + 1, path.size()));
+        if (part.empty() || (part.size() == 1 && part[0] == '.'))
+            continue;
+        if (part.size() == 2 && part[0] == '.' && part[1] == '.') {
+            if (joined.size() < m_folderOfProgram.size())
+                return std::nullopt;
+            joined.shrink(lastIndexOf(joined.span(), '/'));
+            continue;
+        }
+        joined.append('/');
+        joined.append(part);
+    }
+    if (joined.size() + 1 < m_folderOfProgram.size())
+        return std::nullopt;
+
+    Vector<ModuleID, 2> found;
+    auto add = [&](std::span<const uint8_t> spelling) {
+        auto [first, last] = std::ranges::equal_range(m_spellingsOfFiles, spelling, [](std::span<const uint8_t> first, std::span<const uint8_t> second) {
+            return std::ranges::lexicographical_compare(first, second);
+        }, [&](StartOfPath start) {
+            return textOf(start);
+        });
+        for (; first != last; ++first) {
+            if (!found.contains(first->module))
+                found.append(first->module);
+        }
+    };
+    add(joined.span());
+    if (std::span<const uint8_t> shorter = withoutExtension(joined.span()); shorter.size() != joined.size())
+        add(shorter);
+    return found;
+}
+
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
     : m_program(program)
     , m_maker(allSets)
@@ -614,6 +707,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span)))
         m_displayNameKey = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
     listWherePackagesAreNamedInPaths();
+    listSpellingsOfFiles();
 
     m_prototypesAtCreation = ZeroFilledPages<std::atomic<uint64_t>>(universe.numberOfObjects());
     unsigned bitsOfBlocks = std::clamp<unsigned>(std::bit_width(static_cast<uint64_t>(universe.numberOfObjects())) + 2, 12, 20);
@@ -882,7 +976,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 keysOfMembersOfBun.append(universe.keyConstant(key));
         }
         m_keysOfMembersOfBun = maker.of(keysOfMembersOfBun.span());
-        AOT::sort(m_closedHoldersListingNames);
+        AOT::sortInLine(m_closedHoldersListingNames);
         AOT::sort(m_prototypesOfInstancesWithNames);
         for (auto [mark, member] : builtins.marked(BuiltinMark::IsReplacedBySetter)) {
             if (PropertyKeyID key = program.keyOf(builtins.at(member).name))

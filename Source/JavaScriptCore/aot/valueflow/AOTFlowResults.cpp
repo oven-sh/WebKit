@@ -114,7 +114,7 @@ static Vector<AllocationClassID> sortClosureClassesByFunction(const Vector<Alloc
         if (classes[index].closureFunction)
             closureClasses.append(AllocationClassID(index));
     }
-    AOT::stableSort(closureClasses, { }, [&](AllocationClassID id) {
+    AOT::stableSortInLine(closureClasses, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return closureClasses;

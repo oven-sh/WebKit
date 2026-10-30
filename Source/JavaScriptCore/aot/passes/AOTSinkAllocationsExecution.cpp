@@ -236,7 +236,7 @@ void ObjectInterpreter::executeByInterpretation(ValueID id)
     case Interpretation::Guards:
         return executeGuards(id);
     case Interpretation::None:
-        return familyOf(function().at(id).opcode) == OperationFamily::RuntimeValidation ? executeRuntimeValidation(id) : executeOther(id);
+        return goesWithUnbuiltOperands(function().at(id).opcode) ? executeRuntimeValidation(id) : executeOther(id);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -964,7 +964,7 @@ static bool isLateEdge(const VirtualObjectContext& context, const VirtualFamily&
 
 static void canonicalizeVariants(ObjectState& state)
 {
-    AOT::sort(state.variants);
+    AOT::sortInLine(state.variants);
     removeRepeatedElements(state.variants);
     state.normalize();
 }

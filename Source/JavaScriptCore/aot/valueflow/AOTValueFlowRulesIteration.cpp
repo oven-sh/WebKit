@@ -480,8 +480,11 @@ void letNativeCodeStepIterators(ValueFlowRuleContext& context, ClimbingSet escap
     const ValueFlowUniverse& universe = context.universe();
     ValueSetID builtinIterators = context.maker().unite(universe.objectsAllocatedAsIterators(), universe.objectsThatMayBeAnything());
     ClimbingSet iterators = context.restrict(escaped, context.maker().intersect(builtinIterators, universe.knownObjects()));
-    for (ResumeMode mode : { ResumeMode::Next, ResumeMode::Throw, ResumeMode::Return })
-        context.lookup(iterators, iteratorResultsName(mode, Stepper::HolderOfEscapedIterator));
+    // Each by itself: a method is entered with the iterators that find it, whichever of them escaped together.
+    context.forEachMember(iterators, [&](ValueFlowObjectID iterator) {
+        for (ResumeMode mode : { ResumeMode::Next, ResumeMode::Throw, ResumeMode::Return })
+            context.lookup(only(context, iterator), iteratorResultsName(mode, Stepper::HolderOfEscapedIterator));
+    });
 }
 
 void connectOutcomeOfStep(ValueFlowRuleContext& context, ClimbingSet iterators, ResumeMode mode, std::span<const ValueFlowOperand> sent, ValueFlowNodeID target)

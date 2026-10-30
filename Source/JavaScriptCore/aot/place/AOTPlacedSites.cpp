@@ -140,7 +140,7 @@ static void foldEqualUses(Vector<Use>& sorted)
 template<typename Use>
 static void sortAndFold(Vector<Use>& uses)
 {
-    AOT::sort(uses, isOrderedBefore<Use>);
+    AOT::sortInLine(uses, isOrderedBefore<Use>);
     foldEqualUses(uses);
 }
 
@@ -611,7 +611,7 @@ static void mergeSiteList(const ParallelLoops& loops, FunctionSitesArray functio
     if constexpr (isWeighted || (std::is_trivially_copyable_v<Use> && std::is_default_constructible_v<Use>))
         parallelSort(loops, all.mutableSpan(), isOrderedBefore<Use>);
     else
-        AOT::sort(all, isOrderedBefore<Use>);
+        AOT::sortInLine(all, isOrderedBefore<Use>);
     foldEqualUses(all);
     if constexpr (isWeighted)
         all.shrinkToFit();

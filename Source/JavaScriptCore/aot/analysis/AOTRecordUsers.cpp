@@ -105,7 +105,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
             isKeyOfMarkedField[key.index()] = 1;
             addAt(nodes.of(reference.layout), isReadFromOperands[key.index()] ? bitOfKey(key) | seenByCodeOfOperands : bitOfKey(key));
         }
-        AOT::sort(fieldsOfEnvironments);
+        AOT::sortInLine(fieldsOfEnvironments);
     }
     for (VariableID id : changed.variables)
         addAt(nodes.of(id), seenByAll);

@@ -153,7 +153,7 @@ enum class EstimateOf : uint8_t { Ranks, Classes };
 
 static void mergeEdges(WeightedCallList& calls)
 {
-    AOT::stableSort(calls, [](const WeightedCall& a, const WeightedCall& b) {
+    AOT::stableSortInLine(calls, [](const WeightedCall& a, const WeightedCall& b) {
         return a.node < b.node;
     });
     size_t mergedSize = 0;
@@ -904,7 +904,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         drainWorklist();
     }
     if (calls.size() > numberOfSortedCalls)
-        AOT::sort(calls, { }, &WeightedCall::node);
+        AOT::sortInLine(calls, { }, &WeightedCall::node);
     return calls;
 }
 
@@ -1404,7 +1404,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (double numberOfCalls = estimateIndirectCalls(call))
                     countedByFlow.append({ call.callee, numberOfCalls });
             }
-            AOT::stableSort(countedByFlow, { }, [](const auto& entry) {
+            AOT::stableSortInLine(countedByFlow, { }, [](const auto& entry) {
                 return entry.first.index();
             });
 
@@ -1433,7 +1433,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 mergeCallsOfBody();
         }
 
-        AOT::sort(blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
+        AOT::sortInLine(blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
         size_t numberOfGroups = 0;
         for (const HeatBlockGroup& group : blockGroups) {
             if (numberOfGroups && blockGroups[numberOfGroups - 1].frequency == group.frequency)
@@ -2019,7 +2019,7 @@ private:
                     inside.append(MembersInside { cycle, set, group.numberOfMembers });
             }
         }
-        AOT::sort(inside, [](const MembersInside& a, const MembersInside& b) {
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
             return std::tuple(a.set, a.cycle) < std::tuple(b.set, b.cycle);
         });
         size_t numberOfMerged = 0;
@@ -2030,7 +2030,7 @@ private:
                 inside[numberOfMerged++] = entry;
         }
         inside.shrink(numberOfMerged);
-        AOT::sort(inside, [](const MembersInside& a, const MembersInside& b) {
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
             return std::tuple(a.set, a.numberOfMembers) < std::tuple(b.set, b.numberOfMembers);
         });
         uint32_t nextSet = 0;
@@ -2043,7 +2043,7 @@ private:
         }
         while (nextSet <= m_numberOfLongSets)
             firstSum[nextSet++] = sums.size();
-        AOT::sort(inside, [](const MembersInside& a, const MembersInside& b) {
+        AOT::sortInLine(inside, [](const MembersInside& a, const MembersInside& b) {
             return std::tuple(a.cycle, a.set) < std::tuple(b.cycle, b.set);
         });
         Vector<uint32_t> firstInside(FillWith { }, cycles.size() + 1, 0u);

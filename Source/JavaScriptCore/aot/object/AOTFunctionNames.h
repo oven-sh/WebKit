@@ -30,6 +30,9 @@ enum class NameForm : uint8_t { AsWritten, InFrames, CalculatedDisplayName };
 // callee: the function object that runs in the frame, where the frame has recorded it. Nobody has seen one that lies in a frame, so it has no name but that of its function.
 JS_EXPORT_PRIVATE String functionName(VM&, const FunctionDescription&, NameForm, JSObject* callee = nullptr, bool calleeLiesInFrame = false);
 JSString* functionSourceText(JSGlobalObject*, FunctionID);
+// UTF-8. Empty where the executable does not hold the text.
+std::span<const Latin1Character> functionSourceBytes(FunctionID);
+std::span<const Latin1Character> functionSourceBytesOfSource(FunctionID);
 
 String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);

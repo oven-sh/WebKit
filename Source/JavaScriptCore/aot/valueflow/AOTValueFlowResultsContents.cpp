@@ -851,7 +851,7 @@ private:
         Vector<uint32_t> byComponent(m_containers.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        AOT::sort(byComponent, { }, [&](uint32_t index) {
+        AOT::sortInLine(byComponent, { }, [&](uint32_t index) {
             return std::pair { components.componentOf[index], index };
         });
         Vector<uint32_t> levelOfComponent;

@@ -475,6 +475,9 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
         if (read == target)
             return "getters called by a list"_s;
         if (read) {
+            // Every name may have been left out.
+            if (!hasOwnPropertiesToCopy(read))
+                return "getters called by a list"_s;
             if (record && tryRepeatAssignment(vm, *instance->state, target, read, 0) != RepeatedCopy::IsNotDone)
                 return "getters called by a list, then as the copy before"_s;
             ExcludedKeys nothing;
@@ -592,12 +595,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
+// A function of its own, so that the copy by a map saves no registers for it.
+static NEVER_INLINE OperationReturnType<void> JIT_OPERATION_ATTRIBUTES copyDataPropertiesFollowingPlan(Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
+{
+    if (!count && tryCopyFollowingPlanWithoutFrame(*instance, target, source, excludedRun))
+        return { nullptr };
+    AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
+}
+
 // The stub in front calls it where a copy that takes no frame is kept at the place of this one.
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
         return { nullptr };
-    AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
+    AOT_MUST_TAIL_CALL return copyDataPropertiesFollowingPlan(instance, target, source, excludedRun, count, excludedKeys);
 }
 
 static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)

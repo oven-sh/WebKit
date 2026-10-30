@@ -27,6 +27,7 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTRepresentation.h"
+#include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
@@ -378,7 +379,7 @@ struct RedundantReadElimination {
         Vector<uint32_t> order(m_accesses.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        AOT::sort(order, { }, [&](uint32_t index) {
+        AOT::sortInLine(order, { }, [&](uint32_t index) {
             return std::tuple { accessAt(index).location, accessAt(index).base, index };
         });
         size_t numberOfAccessesWithCompany = 0;
@@ -1311,7 +1312,7 @@ struct RedundantReadElimination {
             if (!m_states[block.index()].accesses.isEmpty())
                 blocks.append(block);
         }
-        AOT::sort(blocks, { }, [&](BlockID block) {
+        AOT::sortInLine(blocks, { }, [&](BlockID block) {
             return m_cfg.reversePostOrderIndex(block);
         });
 
@@ -1909,17 +1910,29 @@ static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
-static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context, Opcode opcode, AbstractHeapSet heapsRead, NOESCAPE const Invocable<bool(ValueID, const Value&)> auto& mayBeDropped, NOESCAPE const Invocable<std::pair<ValueID, ValueID>(const Value&)> auto& operandsOf, NOESCAPE const Invocable<bool(const Value&, const Value&)> auto& hasSamePayload)
+namespace {
+
+struct RepeatedRead {
+    Opcode opcode;
+    AbstractHeapSet heapsRead;
+    bool (*mayBeDropped)(FunctionPassContext&, ValueID, const Value&);
+    std::pair<ValueID, ValueID> (*operandsOf)(const Value&);
+    bool (*hasSamePayload)(const Value& earlier, const Value& read);
+};
+
+} // anonymous namespace
+
+static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context, const RepeatedRead& kind)
 {
     AOT_THRESHOLD(unsigned, maxValuesBehindRepeatedRead, 64);
-    if (!context.analyses.opcodesOfValues().contains(opcode))
+    if (!context.analyses.opcodesOfValues().contains(kind.opcode))
         return PassOutcome::Unchanged;
 
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     const CFG& cfg = analyses.cfg();
     auto identitiesOf = [&](const Value& read) {
-        auto [first, second] = operandsOf(read);
+        auto [first, second] = kind.operandsOf(read);
         return std::pair { analyses.identityOf(first), analyses.identityOf(second) };
     };
     auto findEarlierRead = [&](BlockID block, uint32_t index, const Value& read) -> ValueID {
@@ -1932,9 +1945,9 @@ static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context,
                     return { };
                 const Value& earlier = function.at(values[index]);
                 Effects effects = analyses.effectsOf(values[index]).onAnyEdge();
-                if (effects.mayRunOtherCode() || effects.writes.containsAny(heapsRead))
+                if (effects.mayRunOtherCode() || effects.writes.containsAny(kind.heapsRead))
                     return { };
-                if (earlier.opcode == opcode && earlier.type == read.type && hasSamePayload(earlier, read) && identitiesOf(earlier) == operands)
+                if (earlier.opcode == kind.opcode && earlier.type == read.type && kind.hasSamePayload(earlier, read) && identitiesOf(earlier) == operands)
                     return values[index];
             }
             std::span<const BlockID> predecessors = cfg.predecessors(block);
@@ -1960,7 +1973,7 @@ static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context,
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            if (value.opcode != opcode || keptReads.get(values[index].index()) || !mayBeDropped(values[index], value))
+            if (value.opcode != kind.opcode || keptReads.get(values[index].index()) || !kind.mayBeDropped(context, values[index], value))
                 continue;
             ValueID first = findEarlierRead(block, index, value);
             if (!first)
@@ -2002,25 +2015,25 @@ static PassOutcome dropRepeatedReadsOnStraightWays(FunctionPassContext& context,
 // `list[k]` behind `list[k]` on a straight way, with nothing between them that writes elements or runs code of the program: `if (list[k] > list[k + 1]) { swap }`. The second takes what the first found.
 static PassOutcome dropRepeatedElementReads(FunctionPassContext& context)
 {
-    return dropRepeatedReadsOnStraightWays(context, Opcode::GetArrayElement, AbstractHeapSet { AbstractHeap::Elements, AbstractHeap::ArrayStorage }, [&](ValueID id, const Value&) {
+    return dropRepeatedReadsOnStraightWays(context, { Opcode::GetArrayElement, { AbstractHeap::Elements, AbstractHeap::ArrayStorage }, [](FunctionPassContext& context, ValueID id, const Value&) {
         return !context.analyses.effectsOf(id).onAnyEdge().mayExitSideways();
     }, [](const Value& read) {
         return std::pair { read.arrayOperand(), read.positionOperand() };
     }, [](const Value& earlier, const Value& read) {
         return earlier.arrayStorage() == read.arrayStorage() && earlier.readsHoleAsNaN() == read.readsHoleAsNaN();
-    });
+    } });
 }
 
 static PassOutcome dropRepeatedPrivateReads(FunctionPassContext& context)
 {
-    return dropRepeatedReadsOnStraightWays(context, Opcode::PrivateGet, AbstractHeapSet { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords }, [&](ValueID, const Value& read) {
+    return dropRepeatedReadsOnStraightWays(context, { Opcode::PrivateGet, { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords }, [](FunctionPassContext& context, ValueID, const Value& read) {
         const Field& field = context.program.at(read.layout()).fields[read.field()];
         return field.form.isEmpty() && !field.flags.contains(FieldFlags::IsBrand);
     }, [](const Value& read) {
         return std::pair { read.objectOperand(), read.tokenOperand() };
     }, [](const Value& earlier, const Value& read) {
         return earlier.layout() == read.layout() && earlier.field() == read.field();
-    });
+    } });
 }
 
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
@@ -2199,6 +2212,8 @@ namespace {
 constexpr AbstractHeapSet carriedHeaps = heapsOfVariables | AbstractHeapSet { AbstractHeap::ObjectFields };
 // The results of these tests hold until something writes what they read.
 constexpr OpcodeSet objectTestsHoistedBeforeLoops { Opcode::HasBirthFieldsFilled };
+// They go ahead of a loop together with a question to a site that stands behind them. By themselves they do not: the first test of the loop is then made twice, which a loop of few turns does not earn back.
+constexpr OpcodeSet objectTestsHoistedAheadOfQuestionsToSites { Opcode::IsSlotFilled, Opcode::AreMembersUnchanged };
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -2240,7 +2255,7 @@ struct LoopEditor {
         Vector<const NaturalLoop*, 8> sorted;
         for (unsigned index = 0; index < loops.numLoops(); ++index)
             sorted.append(&loops.loop(index));
-        AOT::stableSort(sorted, { }, &NaturalLoop::size);
+        AOT::stableSortInLine(sorted, { }, &NaturalLoop::size);
         Vector<BlockID, 8> headers;
         for (const NaturalLoop* loop : sorted)
             headers.append(loop->header());
@@ -2334,7 +2349,7 @@ struct VariableCarrier : LoopEditor {
     PassOutcome run()
     {
         bool hoistedObjectTests = false;
-        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops)) {
+        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops | OpcodeSet { Opcode::GetCachedValue })) {
             for (BlockID header : headersFromInnermost()) {
                 const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
                 if (loop && isHeaderOfLoopOfProgram(header) && moveLeadingTestsAheadOf(*loop, LeadingTests::OfObjects))
@@ -2884,6 +2899,15 @@ struct VariableCarrier : LoopEditor {
             });
         };
 
+        OpcodeSet objectTests = objectTestsHoistedBeforeLoops;
+        for (unsigned position = 0; wanted == LeadingTests::OfObjects && position < loop.size(); ++position) {
+            bool asksSite = std::ranges::any_of(m_function.at(loop.at(position)).values, [&](ValueID value) {
+                return m_function.at(value).opcode == Opcode::GetCachedValue;
+            });
+            if (asksSite)
+                objectTests = objectTests | objectTestsHoistedAheadOfQuestionsToSites;
+        }
+
         Vector<LeadingTest, 4> tests;
         Vector<ValueID, 4> proven;
         for (BlockID id = loop.header();;) {
@@ -2899,7 +2923,7 @@ struct VariableCarrier : LoopEditor {
                 Opcode opcode = m_function.at(value).opcode;
                 return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
-            if (wanted == LeadingTests::OfObjects && !objectTestsHoistedBeforeLoops.contains(test.opcode)) {
+            if (wanted == LeadingTests::OfObjects && !objectTests.contains(test.opcode)) {
                 bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
                     return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
                 });
@@ -2926,10 +2950,11 @@ struct VariableCarrier : LoopEditor {
                 test.forEachOperand([&](ValueID operand, uint32_t) {
                     testsOnlyLoopInvariantValues &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
                 });
-                if (!testsOnlyLoopInvariantValues || taken.proofs.isEmpty() || !noWriteClobbersReadsOf(loop, block.values.last()))
+                bool needsProof = !objectTestsHoistedAheadOfQuestionsToSites.contains(test.opcode);
+                if (!testsOnlyLoopInvariantValues || (needsProof && taken.proofs.isEmpty()) || !noWriteClobbersReadsOf(loop, block.values.last()))
                     break;
                 tests.append({ id, std::nullopt });
-                proven.append(m_function.at(taken.block).parameters.last());
+                proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
                 id = taken.block;
                 continue;
             }
@@ -3203,6 +3228,7 @@ struct LoopPathSeparator : LoopEditor {
         Vector<TypeID> typesOfCarriedValues { };
         BitVector carriedValuesThatMayBeUnspecified { };
         bool letsVariablesBeCarried { false };
+        bool onlyLeavesTestWithOneAnswer { false };
         BitVector emptyPathsThatStay { };
     };
 
@@ -3241,10 +3267,26 @@ struct LoopPathSeparator : LoopEditor {
             }
             return std::nullopt;
         };
+        // The test leaves the loop in the back end only where its failing path does not come back, and the copy of this loop comes back each turn. The copy of the loop around it comes back behind all the turns of this one.
+        auto findPlanOfLoopAround = [&](const SeparationPlan& plan) -> std::optional<SeparationPlan> {
+            const NaturalLoop* around = m_analyses.naturalLoops().innerMostOuterLoop(*m_analyses.naturalLoops().headerOf(plan.header));
+            if (!plan.onlyLeavesTestWithOneAnswer || !around || m_isFinishedHeader.get(around->header().index()))
+                return std::nullopt;
+            m_likelyPathCannotLeave = false;
+            constexpr bool paysForLoopInside = true;
+            std::optional<SeparationPlan> planAround = planFor(*around, true, PathsThatOnlyCompute::LeaveWhereTheyWidenParameters, paysForLoopInside);
+            if (!planAround && m_likelyPathCannotLeave)
+                planAround = planFor(*around, false, PathsThatOnlyCompute::LeaveWhereTheyWidenParameters, paysForLoopInside);
+            if (planAround)
+                m_isFinishedHeader.set(around->header().index());
+            return planAround;
+        };
         unsigned numberOfSeparatedLoops = 0;
         while (std::optional<SeparationPlan> plan = findPlan()) {
             if (m_context.exceeds(LimitID::MaxSeparatedLoopsPerFunction, numberOfSeparatedLoops + 1))
                 break;
+            if (std::optional<SeparationPlan> planAround = findPlanOfLoopAround(*plan))
+                plan = WTF::move(planAround);
             separate(*plan);
             ++numberOfSeparatedLoops;
         }
@@ -3404,6 +3446,27 @@ struct LoopPathSeparator : LoopEditor {
             }
         }
         return false;
+    }
+
+    // What a site remembers of an object is asked once, ahead of the loop, where what stays runs no other code and stores to no object.
+    bool letsSiteBeAskedAheadOfLoop(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        auto staysQuiet = [](const Effects& effects) {
+            return !effects.mayRunOtherCode() && !effects.writes.containsAny(heapsThatLookupsByNameRead);
+        };
+        bool asksSite = false;
+        for (size_t index : isInLoop) {
+            if (leaves.get(index))
+                continue;
+            if (!staysQuiet(m_analyses.effectsOfTerminator(BlockID(index)).onAnyEdge()))
+                return false;
+            for (ValueID value : m_function.blocks[index].values) {
+                if (!staysQuiet(m_analyses.effectsOf(value).onAnyEdge()))
+                    return false;
+                asksSite |= m_function.at(value).opcode == Opcode::GetCachedValue;
+            }
+        }
+        return asksSite;
     }
 
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
@@ -3622,7 +3685,7 @@ struct LoopPathSeparator : LoopEditor {
         return leavesWithPathsThatOnlyCompute;
     }
 
-    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute)
+    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute, bool paysForLoopInside = false)
     {
         BlockID header = loop.header();
         if (!isExpectedToRun(m_context, loop).predicted())
@@ -3663,8 +3726,10 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves) && !(isShort && (leavesAllocationAlone(isInLoop, leaves) || leavesTestWithOneAnswer(isInLoop, leaves))))
+        bool paysByItself = movesTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || letsSiteBeAskedAheadOfLoop(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves));
+        if (!paysByItself && !(isShort && (paysForLoopInside || leavesTestWithOneAnswer(isInLoop, leaves))))
             return std::nullopt;
+        plan.onlyLeavesTestWithOneAnswer = !paysByItself;
 
         BitVector isEntryOfCopy(m_function.blocks.size());
         for (size_t index : leaves) {
@@ -4022,7 +4087,8 @@ PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
 {
     if (!context.function.hasBody() || !context.analyses.naturalLoops().numLoops())
         return PassOutcome::Unchanged;
-    PassOutcome outcome = LoopPathSeparator { { context } }.run();
+    PassOutcome outcome = askSitesBeforeReadsByNameInQuietLoops(context);
+    outcome |= LoopPathSeparator { { context } }.run();
     outcome |= VariableCarrier { { context } }.run();
     // SimplifyCasts runs inside this pass, and what it says it has kept holds for the function as it left it.
     context.keptAnalyses = { };

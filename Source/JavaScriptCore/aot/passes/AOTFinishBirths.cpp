@@ -338,6 +338,10 @@ private:
             numberKeysOf(allocation.layout());
             hasSuchAllocation = true;
         });
+        forEachStoreIntoLiteralMadeElsewhere([&](ValueID, LayoutID layout) {
+            numberKeysOf(layout);
+            hasSuchAllocation = true;
+        });
         if (!hasSuchAllocation)
             return;
         for (BlockID block : m_cfg.reversePostOrder()) {
@@ -357,6 +361,7 @@ private:
             if (!isFilledWhenBorn(allocation))
                 addObject(id, { allocation.layout() });
         });
+        addLiteralsFilledHere();
         if (m_objects.isEmpty())
             return;
         bool hasFoundParameter = true;
@@ -375,6 +380,52 @@ private:
                 }
             }
         }
+    }
+
+    // `(function (E) { E.A = 0; E.B = 1; })(E || (E = {}))`: the literal is filled through a parameter, and behind a join where the function has been inlined.
+    void forEachStoreIntoLiteralMadeElsewhere(NOESCAPE const Invocable<void(ValueID receiver, LayoutID)> auto& functor) const
+    {
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                const Value& value = m_function.at(id);
+                if ((!birthStoresBySlot.contains(value.opcode) && !birthStoresByName.contains(value.opcode)) || !value.receivers())
+                    continue;
+                // Flow names the functions that fill.
+                if (!value.accessSite() || m_context.inputs.flow.seesOnlyFinishedObjects(value.accessSite()))
+                    continue;
+                // A store by name may list only what has been seen to arrive.
+                auto layouts = m_program.at(value.receivers()).all();
+                if (!layouts)
+                    continue;
+                ValueID receiver;
+                for (LayoutID layout : *layouts) {
+                    if (m_program.at(layout).kind != LayoutKind::Record || !hasFieldsFilledAtBirth(m_program, layout))
+                        continue;
+                    if (!receiver)
+                        receiver = m_context.analyses.identityOf(value.objectOperand());
+                    if (m_function.at(receiver).opcode != Opcode::NewObject)
+                        functor(receiver, layout);
+                }
+            }
+        }
+    }
+
+    void addLiteralsFilledHere()
+    {
+        forEachStoreIntoLiteralMadeElsewhere([&](ValueID receiver, LayoutID layout) {
+            if (std::optional<uint32_t> object = objectDefinedBy(receiver)) {
+                if (m_isMadeElsewhere.get(*object) && !m_layouts[*object].contains(layout))
+                    m_layouts[*object].append(layout);
+                return;
+            }
+            m_isMadeElsewhere.set(m_objects.size());
+            addObject(receiver, { layout });
+        });
+    }
+
+    State stateOfObjectMadeElsewhere() const
+    {
+        return { BitVector(m_keys.size()), BitVector(m_keys.size()), BitVector(m_keys.size()), true, true, false, true, true };
     }
 
     void forEachAllocationWithSuchFields(NOESCAPE const Invocable<void(ValueID, const Value&)> auto& functor) const
@@ -422,7 +473,7 @@ private:
                 if (edge.block != block)
                     continue;
                 for (uint32_t index = 0; index < target.parameters.size(); ++index) {
-                    if (std::optional<uint32_t> parameter = objectDefinedBy(target.parameters[index]))
+                    if (std::optional<uint32_t> parameter = objectDefinedBy(target.parameters[index]); parameter && !m_isMadeElsewhere.get(*parameter))
                         functor(predecessor, *parameter, *objectNamedBy(edge.arguments[index]));
                 }
             }
@@ -477,6 +528,8 @@ private:
                 states[object] = nothingKnown();
             else if (comesAroundLoop.quickGet(object))
                 states[object].forgetWhatLoopMayUndo();
+            if (m_isMadeElsewhere.get(object) && m_function.at(block).parameters.contains(m_objects[object]))
+                states[object] = stateOfObjectMadeElsewhere();
         }
         return states;
     }
@@ -514,7 +567,7 @@ private:
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             const Value& value = m_function.at(block.values[index]);
             if (std::optional<uint32_t> born = objectDefinedBy(block.values[index]))
-                states[*born] = stateAtBirth(value);
+                states[*born] = m_isMadeElsewhere.get(*born) ? stateOfObjectMadeElsewhere() : stateAtBirth(value);
             Effects effects = m_context.analyses.effectsOf(block.values[index]).onAnyEdge();
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 std::optional<uint32_t> object = objectNamedBy(operand);
@@ -626,6 +679,7 @@ private:
     Function& m_function;
     const CFG& m_cfg;
     BitVector m_isObject;
+    BitVector m_isMadeElsewhere;
     Vector<ValueID, 4> m_objects;
     Vector<Layouts, 4> m_layouts;
     Vector<PropertyKeyID, 16> m_keys;

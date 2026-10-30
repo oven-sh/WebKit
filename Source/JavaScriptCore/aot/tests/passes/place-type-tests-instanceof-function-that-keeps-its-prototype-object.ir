@@ -21,7 +21,7 @@ function f2 name="instance-of-a-function-that-keeps-its-prototype-object" parame
     Return v2
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: true = Boolean boolean=true
-# CHECK: = AreMembersUnchanged conditions={{*}}{layout=L0 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L0 side=Static}, {kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK: = AreMembersUnchanged conditions={{*}}{layout=L0 side=Static key=@@hasInstance}, {kind=InstancePrototypeUnchanged layout=L0}]
 # CHECK-NOT: HasLayoutPrototype
 # Where that test fails the guards of the function may not have begun: it may have made no object yet.
 # CHECK: BeginMemberGuards layout=L0

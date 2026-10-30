@@ -279,7 +279,7 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
             });
         });
     }));
-    AOT::stableSort(listings, { }, &Listing::first);
+    AOT::stableSortInLine(listings, { }, &Listing::first);
     // A type says which integer, string or boolean, not which fraction: a read of such a field becomes the number itself.
     struct ConstantField {
         FieldReference field;

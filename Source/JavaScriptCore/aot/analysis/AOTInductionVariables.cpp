@@ -439,7 +439,7 @@ static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop
         if (relationalOperators.contains(function.at(terminator.conditionOperand()).opcode))
             testingBlocks.append(block);
     }
-    AOT::sort(testingBlocks, { }, [&](BlockID block) {
+    AOT::sortInLine(testingBlocks, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
 

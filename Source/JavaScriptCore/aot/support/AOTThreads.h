@@ -291,7 +291,7 @@ void sortOnPool(const ParallelLoops& loops, std::span<T> list, const Less& isLes
             return all.subspan(start, count * (run + 1) / runs - start);
         };
         forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
-            AOT::sort(runOf(from, run, numberOfRuns), isLess);
+            AOT::sortInLine(runOf(from, run, numberOfRuns), isLess);
         });
         // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
         constexpr size_t partsPerRound = 4 * numberOfRuns;
@@ -323,7 +323,7 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
 {
     AOT_THRESHOLD(size_t, fewestForPool, 1 << 13);
     if (list.size() < fewestForPool) {
-        AOT::sort(list, isLess);
+        AOT::sortInLine(list, isLess);
         return;
     }
     sortOnPool(loops, list, isLess);

@@ -1104,6 +1104,17 @@ Butterfly* JSObject::createInitialIndexedStorage(VM& vm, unsigned length)
 
 Butterfly* JSObject::createInitialUndecided(VM& vm, unsigned length)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Transition before DeferGC: when the Structure heap is at its limit, that allocation has to be able to trigger a GC.
+    StructureID oldStructureID = this->structureID();
+    Structure* oldStructure = oldStructureID.decode();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateUndecided, &deferred);
+    DeferGC deferGC(vm);
+    Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
+    nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
+    setStructure(vm, newStructure);
+#else
     DeferGC deferGC(vm);
     Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
     StructureID oldStructureID = this->structureID();
@@ -1114,11 +1125,24 @@ Butterfly* JSObject::createInitialUndecided(VM& vm, unsigned length)
         nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
         setStructure(vm, newStructure);
     }
+#endif
     return newButterfly;
 }
 
 ContiguousJSValues JSObject::createInitialInt32(VM& vm, unsigned length)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    StructureID oldStructureID = this->structureID();
+    Structure* oldStructure = oldStructureID.decode();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateInt32, &deferred);
+    DeferGC deferGC(vm);
+    Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
+    for (unsigned i = newButterfly->vectorLength(); i--;)
+        newButterfly->contiguous().at(this, i).setWithoutWriteBarrier(JSValue());
+    nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
+    setStructure(vm, newStructure);
+#else
     DeferGC deferGC(vm);
     Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
     for (unsigned i = newButterfly->vectorLength(); i--;)
@@ -1131,11 +1155,24 @@ ContiguousJSValues JSObject::createInitialInt32(VM& vm, unsigned length)
         nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
         setStructure(vm, newStructure);
     }
+#endif
     return newButterfly->contiguousInt32();
 }
 
 ContiguousDoubles JSObject::createInitialDouble(VM& vm, unsigned length)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    StructureID oldStructureID = this->structureID();
+    Structure* oldStructure = oldStructureID.decode();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateDouble, &deferred);
+    DeferGC deferGC(vm);
+    Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
+    for (unsigned i = newButterfly->vectorLength(); i--;)
+        newButterfly->contiguousDouble().at(this, i) = PNaN;
+    nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
+    setStructure(vm, newStructure);
+#else
     DeferGC deferGC(vm);
     Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
     for (unsigned i = newButterfly->vectorLength(); i--;)
@@ -1148,11 +1185,24 @@ ContiguousDoubles JSObject::createInitialDouble(VM& vm, unsigned length)
         nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
         setStructure(vm, newStructure);
     }
+#endif
     return newButterfly->contiguousDouble();
 }
 
 ContiguousJSValues JSObject::createInitialContiguous(VM& vm, unsigned length)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    StructureID oldStructureID = this->structureID();
+    Structure* oldStructure = oldStructureID.decode();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::AllocateContiguous, &deferred);
+    DeferGC deferGC(vm);
+    Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
+    for (unsigned i = newButterfly->vectorLength(); i--;)
+        newButterfly->contiguous().at(this, i).setWithoutWriteBarrier(JSValue());
+    nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
+    setStructure(vm, newStructure);
+#else
     DeferGC deferGC(vm);
     Butterfly* newButterfly = createInitialIndexedStorage(vm, length);
     for (unsigned i = newButterfly->vectorLength(); i--;)
@@ -1165,6 +1215,7 @@ ContiguousJSValues JSObject::createInitialContiguous(VM& vm, unsigned length)
         nukeStructureAndSetButterfly(vm, oldStructureID, newButterfly);
         setStructure(vm, newStructure);
     }
+#endif
     return newButterfly->contiguous();
 }
 

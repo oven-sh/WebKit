@@ -75,7 +75,7 @@ private:
             if (!record.relationHoldsOnEntry)
                 return;
             auto counted = analyzeCountedLoop({ m_proc, *m_loops, *loop, phiChildren, [&](Value* value) { return !m_loops->belongsTo(value->owner, *loop); }, std::nullopt });
-            if (counted && counted->inductionVariable == record.phi)
+            if (counted && counted->inductionVariable == record.phi && counted->relationHoldsOnEntry)
                 m_entryChecks.append({ counted->preHeader, counted->relation, counted->start, counted->bound });
         });
     }

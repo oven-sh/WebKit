@@ -614,6 +614,9 @@ void checkSortsOf(const Vector<uint32_t>& keys)
     std::ranges::sort(expected, { }, &Record::key);
     AOT_TEST_CHECK(sorted == expected);
 #endif
+    Vector<Record> sortedInLine = createRecords<Record>(keys);
+    AOT::sortInLine(sortedInLine, { }, &Record::key);
+    AOT_TEST_CHECK(sortedInLine == sorted);
 
     sorted = createRecords<Record>(keys);
     expected = sorted;
@@ -623,6 +626,9 @@ void checkSortsOf(const Vector<uint32_t>& keys)
     AOT::stableSort(sorted, isGreater);
     std::ranges::stable_sort(expected, isGreater);
     AOT_TEST_CHECK(sorted == expected);
+    sortedInLine = createRecords<Record>(keys);
+    AOT::stableSortInLine(sortedInLine, isGreater);
+    AOT_TEST_CHECK(sortedInLine == expected);
 }
 
 } // namespace
@@ -633,6 +639,7 @@ static void testSortLeavesEqualElementsWhereTheStandardLibraryDoes()
         checkSortsOf<SortedRecord<1>>(keys);
         checkSortsOf<SortedRecord<2>>(keys);
         checkSortsOf<SortedRecord<5>>(keys);
+        checkSortsOf<SortedRecord<20>>(keys);
         checkSortsOf<SortedRecordWithList>(keys);
     });
 }

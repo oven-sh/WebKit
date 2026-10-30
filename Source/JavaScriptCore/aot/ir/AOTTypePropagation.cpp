@@ -365,7 +365,7 @@ void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
         uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
         positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
     }
-    AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
+    AOT::sortInLine(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
     for (auto [position, id] : positions)
         m_restartedValuesFromLastToFirst.append(id);
 }

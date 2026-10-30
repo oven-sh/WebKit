@@ -390,7 +390,7 @@ public:
         addFillsBesideAllocations();
         if (m_readsZeroEncodingCandidate)
             findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
-        AOT::sort(m_uses.accesses, accessIsOrderedBefore);
+        AOT::sortInLine(m_uses.accesses, accessIsOrderedBefore);
         foldEqualAccesses(m_uses.accesses);
         AOT::sort(m_uses.variablesNamed);
         removeRepeatedElements(m_uses.variablesNamed);

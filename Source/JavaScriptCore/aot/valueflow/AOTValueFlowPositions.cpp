@@ -925,7 +925,7 @@ bool ValueFlowPositions::isDataFromOutside(ValueFlowObjectID object)
             if (statements[position].kind == ValueFlowStatementKind::Operation && statements[position].site)
                 m_operationsBySite.append({ statements[position].site.index(), position });
         }
-        AOT::sort(m_operationsBySite);
+        AOT::sortInLine(m_operationsBySite);
         m_hasOperationsBySite = true;
     }
     for (auto [index, position] : std::ranges::equal_range(m_operationsBySite, site->value.index(), { }, &std::pair<uint32_t, uint32_t>::first))

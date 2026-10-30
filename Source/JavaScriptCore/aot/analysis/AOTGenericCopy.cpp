@@ -170,7 +170,7 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
         }
     }
 
-    AOT::sort(points, { }, [&](ProgramPoint point) {
+    AOT::sortInLine(points, { }, [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });
     return points;
@@ -940,7 +940,7 @@ void GenericCopy::addVariablesTo(SSARepair& repair)
     AOT::sort(values);
     removeRepeatedElements(values);
 
-    AOT::stableSort(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
+    AOT::stableSortInLine(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
     std::span<const OtherDefinition> remaining = m_otherDefinitions.span();
     for (ValueID value : values) {
         std::optional<SSARepair::Variable> variable = repair.findVariable(value);

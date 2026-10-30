@@ -13,6 +13,7 @@
         RUN(testDenseInterferenceLimit()); \
         RUN(testManySlotsShareCells()); \
         RUN(testSlotsLiveAcrossManyBlocks()); \
+        RUN(testSlotsReadAgainInLateBlocksShareCells()); \
         RUN(testDeadCodeEliminationFollowsLongChainInAnyBlockOrder()); \
         RUN(testManySlotsDropMovesToThemselves()); \
         RUN(testManySlotsInRandomGraphs()); \
@@ -481,6 +482,49 @@ void testSlotsLiveAcrossManyBlocks()
     code.resetReachability();
     allocateStackByGraphColoring(code);
     CHECK(countDistinctOffsets(code) == slotCount);
+}
+
+// Each slot is written and read in a block of its own and read once more in a block that is laid out behind all of those. No two of them are live together.
+static void checkSlotsReadAgainInLateBlocksShareCells(unsigned numberOfSlotsLiveThroughout)
+{
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    Vector<StackSlot*> slotsLiveThroughout;
+    for (unsigned i = 0; i < numberOfSlotsLiveThroughout; ++i)
+        slotsLiveThroughout.append(code.addStackSlot(8, StackSlotKind::Spill));
+    Vector<StackSlot*> slots;
+    for (unsigned i = 0; i < slotCountBeyondGraphs; ++i)
+        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+
+    Vector<BasicBlock*> earlyBlocks;
+    for (unsigned i = 0; i <= slots.size(); ++i)
+        earlyBlocks.append(code.addBlock());
+    earlyBlocks[0]->append(Move, nullptr, Arg::imm(0), returnTmp());
+    for (StackSlot* slot : slotsLiveThroughout)
+        earlyBlocks[0]->append(Move, nullptr, argumentTmp(0), Arg::stack(slot));
+    for (unsigned i = 0; i < slots.size(); ++i) {
+        appendSlotStoreAndLoad(earlyBlocks[i], slots[i]);
+        BasicBlock* lateBlock = code.addBlock();
+        appendBranchTest(earlyBlocks[i], argumentTmp(1), lateBlock, earlyBlocks[i + 1]);
+        lateBlock->append(Move, nullptr, Arg::stack(slots[i]), returnTmp());
+        appendReturn(lateBlock);
+    }
+    for (StackSlot* slot : slotsLiveThroughout) {
+        earlyBlocks.last()->append(Move, nullptr, Arg::stack(slot), argumentTmp(1));
+        earlyBlocks.last()->append(Add64, nullptr, argumentTmp(1), returnTmp());
+    }
+    appendReturn(earlyBlocks.last());
+    code.resetReachability();
+    allocateStackByGraphColoring(code);
+    checkLiveSlotsDoNotOverlap(code);
+    CHECK(countDistinctOffsets(code) == numberOfSlotsLiveThroughout + 1);
+}
+
+void testSlotsReadAgainInLateBlocksShareCells()
+{
+    checkSlotsReadAgainInLateBlocksShareCells(0);
+    checkSlotsReadAgainInLateBlocksShareCells(100);
 }
 
 // Each link of the chain stands in a block of its own, and the blocks alternate between the two ends of the list of blocks,

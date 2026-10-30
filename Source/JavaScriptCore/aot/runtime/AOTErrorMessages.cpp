@@ -451,8 +451,192 @@ static bool isWrittenBehindDot(StringView member)
     return true;
 }
 
+static bool isPartOfName(Latin1Character character)
+{
+    return isASCIIAlphanumeric(character) || character == '_' || character == '$' || character >= 0x80;
+}
+
+static bool isQuote(Latin1Character character)
+{
+    return character == '"' || character == '\'' || character == '`';
+}
+
+// The place of the bracket that `text[close]` closes. Knows texts in quotes and nothing else of the language, as the engine's functionCallBase(): where that
+// is not enough the brackets do not pair up, or the answer is quoted as it stands in the source.
+static std::optional<size_t> findOpeningBracket(std::span<const Latin1Character> text, size_t close)
+{
+    unsigned depth = 0;
+    for (size_t at = close + 1; at--;) {
+        Latin1Character character = text[at];
+        if (character == '\n')
+            return std::nullopt;
+        if (isQuote(character)) {
+            size_t opening = at;
+            do {
+                if (!opening || text[opening - 1] == '\n')
+                    return std::nullopt;
+                --opening;
+            } while (text[opening] != character || (opening && text[opening - 1] == '\\'));
+            at = opening;
+        } else if (character == ')' || character == ']')
+            ++depth;
+        else if ((character == '(' || character == '[') && !--depth)
+            return at;
+    }
+    return std::nullopt;
+}
+
+static std::optional<size_t> findClosingBracket(std::span<const Latin1Character> text, size_t open)
+{
+    unsigned depth = 0;
+    for (size_t at = open; at < text.size(); ++at) {
+        Latin1Character character = text[at];
+        if (character == '\n')
+            return std::nullopt;
+        if (isQuote(character)) {
+            for (++at; at < text.size() && text[at] != character; ++at) {
+                if (text[at] == '\n')
+                    return std::nullopt;
+                if (text[at] == '\\')
+                    ++at;
+            }
+        } else if (character == '(' || character == '[')
+            ++depth;
+        else if ((character == ')' || character == ']') && !--depth)
+            return at;
+    }
+    return std::nullopt;
+}
+
+// `a.b` of `a.b.c` and `make("x")[0]` of `make("x")[0].c`, where `end` is the place of the last dot or of its `?`: names, dots, and what stands in brackets behind them.
+static std::optional<size_t> startOfPathInFrontOf(std::span<const Latin1Character> text, size_t end)
+{
+    size_t start = end;
+    while (true) {
+        size_t part = start;
+        while (part && (text[part - 1] == ')' || text[part - 1] == ']')) {
+            std::optional<size_t> opening = findOpeningBracket(text, part - 1);
+            if (!opening)
+                return std::nullopt;
+            part = *opening;
+            if (part >= 2 && text[part - 1] == '.' && text[part - 2] == '?')
+                part -= 2;
+        }
+        size_t name = part;
+        while (name && isPartOfName(text[name - 1]))
+            --name;
+        // `(null).c`: Bun's transpiler prints what stands in brackets of its own in its own way.
+        if (name == part)
+            return std::nullopt;
+        if (name && text[name - 1] == '#')
+            --name;
+        start = name;
+        if (!start || text[start - 1] != '.')
+            return start;
+        size_t before = start - 1;
+        // `...a.b`
+        if (before && text[before - 1] == '.')
+            return start;
+        if (before && text[before - 1] == '?')
+            --before;
+        start = before;
+    }
+}
+
+enum class WrittenReads : uint8_t { None, Same, Differ };
+
+// Each place in `text[from, to)` that reads `member` behind a dot. Same: all spell what they read it from alike, and `found` holds that with the member.
+static WrittenReads findWrittenReads(std::span<const Latin1Character> text, size_t from, size_t to, StringView member, std::span<const Latin1Character>& found)
+{
+    for (size_t at = from + 1; at + member.length() <= to; ++at) {
+        if (text[at - 1] != '.' || (at + member.length() < text.size() && isPartOfName(text[at + member.length()])))
+            continue;
+        if (!equal(member, text.subspan(at, member.length())))
+            continue;
+        size_t dot = at - 1;
+        if (dot && text[dot - 1] == '?')
+            --dot;
+        std::optional<size_t> start = startOfPathInFrontOf(text, dot);
+        if (!start)
+            return WrittenReads::Differ;
+        std::span<const Latin1Character> read = text.subspan(*start, at + member.length() - *start);
+        if (found.data() && !equalSpans(found, read))
+            return WrittenReads::Differ;
+        found = read;
+    }
+    return found.data() ? WrittenReads::Same : WrittenReads::None;
+}
+
+using FindInText = WrittenReads (*)(std::span<const Latin1Character>, size_t from, size_t to, StringView, std::span<const Latin1Character>& found);
+
+// What the function on top spells at the place that failed. The text of the function is all there is to go by, so this answers only where the line of the place,
+// or else the whole function, has one such place, or spells each of them alike.
+static String findOnTop(VM& vm, StringView name, FindInText find)
+{
+    if (name.isEmpty() || !name.containsOnlyASCII())
+        return { };
+    std::optional<PlaceInFunctionText> place = placeOnTopInFunctionText(vm);
+    if (!place)
+        return { };
+    std::span<const Latin1Character> text = functionSourceBytesOfSource(place->function);
+    std::span<const Latin1Character> found;
+    WrittenReads reads = WrittenReads::None;
+    if (place->line) {
+        size_t lineStart = 0;
+        for (unsigned line = 0; line < *place->line && lineStart < text.size(); ++line) {
+            while (lineStart < text.size() && text[lineStart] != '\n')
+                ++lineStart;
+            ++lineStart;
+        }
+        size_t lineEnd = std::min(lineStart, text.size());
+        while (lineEnd < text.size() && text[lineEnd] != '\n')
+            ++lineEnd;
+        if (lineStart < lineEnd)
+            reads = find(text, lineStart, lineEnd, name, found);
+    }
+    // Types that took lines of their own are not in the text, so the line may be another.
+    if (reads == WrittenReads::None)
+        reads = find(text, 0, text.size(), name, found);
+    return reads == WrittenReads::Same ? String::fromUTF8(found) : String();
+}
+
+// Each place in `text[from, to)` that calls `name`, which is the callee as it is written or the last of its names. `found` holds the call with its arguments, and `new` in front of it.
+static WrittenReads findWrittenCalls(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::span<const Latin1Character>& found)
+{
+    for (size_t at = from; at + name.length() < to; ++at) {
+        if (text[at + name.length()] != '(' || (at && (isPartOfName(text[at - 1]) || text[at - 1] == '#')))
+            continue;
+        if (!equal(name, text.subspan(at, name.length())))
+            continue;
+        size_t start = at;
+        if (at && text[at - 1] == '.') {
+            size_t dot = at - 1;
+            if (dot && text[dot - 1] == '?')
+                --dot;
+            std::optional<size_t> path = startOfPathInFrontOf(text, dot);
+            if (!path)
+                return WrittenReads::Differ;
+            start = *path;
+        }
+        std::optional<size_t> close = findClosingBracket(text, at + name.length());
+        if (!close)
+            return WrittenReads::Differ;
+        if (start >= 4 && text[start - 4] == 'n' && text[start - 3] == 'e' && text[start - 2] == 'w' && text[start - 1] == ' ' && (start == 4 || !isPartOfName(text[start - 5])))
+            start -= 4;
+        std::span<const Latin1Character> call = text.subspan(start, *close + 1 - start);
+        if (found.data() && !equalSpans(found, call))
+            return WrittenReads::Differ;
+        found = call;
+    }
+    return found.data() ? WrittenReads::Same : WrittenReads::None;
+}
+
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)
 {
+    if (isWrittenBehindDot(member)) {
+        if (String written = findOnTop(globalObject->vm(), member, findWrittenReads); !written.isNull())
+            return createNotAnObjectErrorQuoting(written, globalObject, base);
+    }
     String source;
     if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
         source = isWrittenBehindDot(member) ? tryMakeString(description, '.', member) : tryMakeString(description, "[\""_s, member, "\"]"_s);
@@ -501,19 +685,30 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString(name, "()"_s);
+    String source = findOnTop(globalObject->vm(), name, findWrittenCalls);
+    if (source.isNull() || source.startsWith("new "_s))
+        source = name.isNull() ? String() : tryMakeString(name, "()"_s);
     return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
+}
+
+static String quoteConstruction(VM& vm, StringView name)
+{
+    String source = findOnTop(vm, name, findWrittenCalls);
+    // Bun's transpiler prints `new K()` as `new K`.
+    if (source.isNull() || !source.startsWith("new "_s) || source.endsWith("()"_s))
+        source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    return source;
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    String source = quoteConstruction(globalObject->vm(), name);
     return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
 }
 
 void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name)
 {
-    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    String source = quoteConstruction(globalObject->vm(), name);
     SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
     CallData constructData;
     constructData.type = CallData::Type::Native;

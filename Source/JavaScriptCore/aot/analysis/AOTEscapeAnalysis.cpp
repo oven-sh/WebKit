@@ -41,7 +41,7 @@ static Vector<Containment> collectLeakedContainments(const PointsToResults& resu
         if (entry.isLeaked)
             leaked.append({ entry.container, entry.object });
     }
-    AOT::sort(leaked);
+    AOT::sortInLine(leaked);
     removeRepeatedElements(leaked);
     return leaked;
 }
@@ -328,7 +328,7 @@ void EscapeAnalysis::computeContents(const PointsToResults& results)
     containments.reserveInitialCapacity(results.contents.size());
     for (const SolvedContents& entry : results.contents)
         containments.append({ entry.container, entry.object });
-    AOT::sort(containments);
+    AOT::sortInLine(containments);
     removeRepeatedElements(containments);
 
     groupByIndex(numberOfObjects(), m_firstContent, m_contents, [&](const auto& visit) {
@@ -445,7 +445,7 @@ void EscapeAnalysis::listUses() const
         return OrderedUse { useLists.orderOf(m_sharedUses[m_unlistedUses[index].sharedUse].use), static_cast<uint32_t>(index) };
     });
     if (!std::ranges::is_sorted(orderedUses, { }, &OrderedUse::order))
-        AOT::stableSort(orderedUses, { }, &OrderedUse::order);
+        AOT::stableSortInLine(orderedUses, { }, &OrderedUse::order);
     Vector<uint32_t, 32> nextPosition(m_firstUse.span().first(m_objects.size()));
     m_uses.grow(m_firstUse.last());
     for (const OrderedUse& ordered : orderedUses) {
@@ -645,7 +645,7 @@ void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLis
     if (candidates.isEmpty())
         return;
 
-    AOT::sort(candidates, { }, [](const AllocationInCycle& candidate) {
+    AOT::sortInLine(candidates, { }, [](const AllocationInCycle& candidate) {
         return std::pair { candidate.block, candidate.index };
     });
 

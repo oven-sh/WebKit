@@ -867,7 +867,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
 
     auto join = [&]<typename Entry>(Vector<Entry> Chunk::* list, Vector<Entry>& joined) {
         forEachIndexInParallel(loops, filled.size(), [&](unsigned index) {
-            AOT::sort(filled[index]->*list);
+            AOT::sortInLine(filled[index]->*list);
             removeRepeatedElements(filled[index]->*list);
         });
         size_t size = 0;

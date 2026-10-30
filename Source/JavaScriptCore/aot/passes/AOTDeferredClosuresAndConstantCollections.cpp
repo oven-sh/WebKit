@@ -814,14 +814,14 @@ struct DeferralAnalysis {
         }
         for (const ClosureStore& store : closureStores)
             places.append({ { store.layout, store.field }, store.closureFunction, { store.function, store.store } });
-        AOT::sort(places);
+        AOT::sortInLine(places);
         removeRepeatedElements(places);
 
         using Maker = std::pair<LayoutID, FunctionID>;
         Vector<Maker> makers = places.map([](const Place& place) {
             return Maker { place.field.layout, place.operation.function };
         });
-        AOT::sort(makers);
+        AOT::sortInLine(makers);
 
         states.fill({ }, firstRows.last());
         keysOfCandidates.ensureSize(program.types.numberOfPropertyKeys());
@@ -856,7 +856,7 @@ struct DeferralAnalysis {
             layoutsWithEnvironmentCandidates.quickSet(field.layout.index());
             state.isRejected |= numberOfFunctions > 1;
         }
-        AOT::sort(candidatesByKey);
+        AOT::sortInLine(candidatesByKey);
         for (const ClosureStore& store : closureStores)
             states[rowOf({ store.layout, store.field })].isGivenWhereLayoutIsExpected |= store.level != KnowledgeLevel::Proven;
 
@@ -1063,7 +1063,7 @@ struct DeferralAnalysis {
         }
         AOT::sort(initializingStores);
         AOT::sort(storesToFreshObjects);
-        AOT::sort(describedAllocations);
+        AOT::sortInLine(describedAllocations);
 
         // One summary per key, kept at the index of the first candidate with that key.
         struct AnyObjectStoreSummary {

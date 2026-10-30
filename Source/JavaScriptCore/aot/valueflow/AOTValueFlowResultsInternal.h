@@ -868,6 +868,9 @@ struct ValueFlowConstructions {
         Vector<PropertyKeyID> keysStoredAtBirth;
         Vector<PropertyKeyID> keysStoredWithValueAtBirth;
         Vector<FieldReference> fieldsStoredAtBirth;
+        // No proof: the object is seen without them. The mark of the cell says when they are stored.
+        Vector<PropertyKeyID> keysStoredBehindLiteral;
+        Vector<PropertyKeyID> keysStoredWithValueBehindLiteral;
         Vector<FieldOrder> orders;
         Vector<PropertyKeyID> inheritedKeysThatStoresMayNotCreate;
     };
@@ -890,6 +893,14 @@ struct ValueFlowConstructions {
         if (key)
             return std::ranges::binary_search(construction.keysStoredAtBirth, key);
         return std::ranges::binary_search(construction.fieldsStoredAtBirth, declaration);
+    }
+    bool isStoredBehindLiteral(LayoutID layout, PropertyKeyID key) const
+    {
+        return key && std::ranges::binary_search(layouts[layout.index()].keysStoredBehindLiteral, key);
+    }
+    bool isStoredWithValueBehindLiteral(LayoutID layout, PropertyKeyID key) const
+    {
+        return key && std::ranges::binary_search(layouts[layout.index()].keysStoredWithValueBehindLiteral, key);
     }
     bool isStoredWithValueAtBirth(LayoutID layout, PropertyKeyID key) const
     {

@@ -289,7 +289,7 @@ struct ConstructionEventCollector {
                 events.append({ .kind = ConstructionEventKind::Exit, .point = pointBeforeTerminatorOf(function, block) });
         }
 
-        AOT::sort(events, { }, [](const ConstructionEvent& event) {
+        AOT::sortInLine(events, { }, [](const ConstructionEvent& event) {
             return std::tuple { event.point.block, event.point.index, event.kind, event.operandIndex, event.name, event.operand };
         });
         removeRepeatedElements(events);
@@ -555,7 +555,7 @@ std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const ValueFlowR
         if (statement.kind == ValueFlowStatementKind::Operation)
             result->statements.append(&statement);
     }
-    AOT::sort(result->statements, { }, &ValueFlowStatement::site);
+    AOT::sortInLine(result->statements, { }, &ValueFlowStatement::site);
     return result;
 }
 
@@ -1702,6 +1702,222 @@ void listNamesStoredByEveryMaker(const ConstructionGraph& graph, std::span<const
     }
 }
 
+// `const table = {}; table.a = 1; table.b = 2;` in the body of a file, and what tsc emits for an enum or a namespace: `(function (E) { E[E["A"] = 0] = "A"; })(E || (E = {}));`.
+// The stores that follow the literal in a straight line fill the object as a constructor fills `this`.
+class StoresBehindLiterals {
+public:
+    struct Keys {
+        void append(const Keys& other)
+        {
+            all.appendVector(other.all);
+            storedWithValue.appendVector(other.storedWithValue);
+            functionsThatStore.appendVector(other.functionsThatStore);
+        }
+
+        Vector<PropertyKeyID> all;
+        Vector<PropertyKeyID> storedWithValue;
+        Vector<FunctionID, 1> functionsThatStore;
+    };
+    using KeysByLiteral = MapByNumber<uint32_t, Keys>;
+
+    explicit StoresBehindLiterals(const Program& program)
+        : m_program(program)
+    {
+    }
+
+    KeysByLiteral inBodyOfFile(FunctionID body)
+    {
+        KeysByLiteral keys;
+        for (Followed& followed : follow(m_program.at(body), std::nullopt)) {
+            // Other functions find the object in a variable of the file. One that only the body holds is read as often as the body runs.
+            if (!followed.isHeldByVariable || followed.keys.all.isEmpty())
+                continue;
+            m_functionsThatFill.appendVector(followed.keys.functionsThatStore);
+            keys.add(followed.object.index(), WTF::move(followed.keys));
+        }
+        if (!keys.isEmpty())
+            m_functionsThatFill.append(body);
+        return keys;
+    }
+
+    // They hold objects that are not finished.
+    Vector<FunctionID> takeFunctionsThatFill() { return std::exchange(m_functionsThatFill, { }); }
+
+private:
+    struct Followed {
+        ValueID object;
+        uint32_t line { 0 };
+        bool isHeldByVariable { false };
+        Keys keys;
+    };
+
+    // Blocks that a jump forward joins have one number.
+    static Vector<uint32_t> numberLines(const Function& function, const CFG& cfg)
+    {
+        Vector<uint32_t> lines(function.blocks.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        auto find = [&](uint32_t block) {
+            while (lines[block] != block)
+                block = lines[block] = lines[lines[block]];
+            return block;
+        };
+        for (BlockID block : cfg.reversePostOrder()) {
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Jump)
+                continue;
+            BlockID next = terminator.targets[0].block;
+            if (cfg.reversePostOrderIndex(next) > cfg.reversePostOrderIndex(block))
+                lines[find(next.index())] = find(block.index());
+        }
+        for (uint32_t block = 0; block < lines.size(); ++block)
+            lines[block] = find(block);
+        return lines;
+    }
+
+    bool isLiteralOfRecord(const Value& value) const
+    {
+        LayoutID layout;
+        if (value.opcode == Opcode::NewObject)
+            layout = value.layout();
+        else if (value.opcode == Opcode::Data) {
+            if (const DataNode::Object* object = m_program.at(value.data()).root.tryAs<DataNode::Object>())
+                layout = object->layout;
+        }
+        return layout && m_program.at(layout).kind == LayoutKind::Record && !m_program.at(layout).isDerived();
+    }
+
+    // A function that is made for this one call: it runs as often as the call.
+    static FunctionID calleeOf(const Function& function, const Vector<uint32_t>& numberOfUses, const Value& call)
+    {
+        ValueID callee = call.operand(OperandIndex::Call::callee);
+        while (numberOfUses[callee.index()] == 1 && isCast(function.at(callee).opcode))
+            callee = function.at(callee).operand(0);
+        return numberOfUses[callee.index()] == 1 && function.at(callee).opcode == Opcode::NewClosure ? function.at(callee).function() : FunctionID();
+    }
+
+    static Vector<uint32_t> countUses(const Function& function, const CFG& cfg)
+    {
+        Vector<uint32_t> numberOfUses(FillWith { }, function.values.size(), 0u);
+        auto count = [&](ValueID operand, uint32_t) {
+            if (operand)
+                ++numberOfUses[operand.index()];
+        };
+        for (BlockID id : cfg.reversePostOrder()) {
+            const Block& block = function.at(id);
+            for (ValueID value : block.values)
+                function.at(value).forEachOperand(count);
+            block.terminator.forEachOperand(count);
+            for (const Target& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    count(argument, 0);
+            }
+        }
+        return numberOfUses;
+    }
+
+    Keys keysStoredInto(FunctionID callee, uint32_t entryParameter)
+    {
+        uint64_t number = static_cast<uint64_t>(callee.index()) << 32 | entryParameter;
+        // A function that calls itself finds nothing here.
+        if (auto entry = m_keysOfParameters.add(number, Keys()); !entry.isNewEntry)
+            return entry.iterator->value;
+        const Function& function = m_program.at(callee);
+        if (!function.hasBody() || function.isUnsplitCoroutine() || function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }))
+            return { };
+        Vector<Followed, 1> followed = follow(function, entryParameter);
+        if (!followed[0].keys.all.isEmpty())
+            followed[0].keys.functionsThatStore.append(callee);
+        m_keysOfParameters.set(number, followed[0].keys);
+        return WTF::move(followed[0].keys);
+    }
+
+    // The literals of the function, or one of its parameters.
+    Vector<Followed, 1> follow(const Function& function, std::optional<uint32_t> entryParameter)
+    {
+        CFG cfg(function);
+        Vector<uint32_t> lines = numberLines(function, cfg);
+        std::optional<Vector<uint32_t>> numberOfUses;
+        Vector<Followed, 1> followed;
+        MapByNumber<uint32_t, uint32_t> objectOfValue;
+        MapByNumber<uint32_t, uint32_t> objectInVariable;
+        auto begin = [&](ValueID object, BlockID block) {
+            objectOfValue.add(object.index(), followed.size());
+            followed.append({ object, lines[block.index()], false, { } });
+        };
+        auto objectNamedBy = [&](ValueID value) -> std::optional<uint32_t> {
+            if (!value)
+                return std::nullopt;
+            return objectOfValue.getOptional(sameObjectThroughConversionsToObject(function, value).valueInFrontOfFacts().index());
+        };
+        if (entryParameter)
+            begin(function.at(entryBlock).parameters[*entryParameter], entryBlock);
+
+        for (BlockID id : cfg.reversePostOrder()) {
+            const Block& block = function.at(id);
+            auto objectFilledBy = [&](ValueID receiver) -> Followed* {
+                std::optional<uint32_t> object = objectNamedBy(receiver);
+                return object && followed[*object].line == lines[id.index()] ? &followed[*object] : nullptr;
+            };
+            for (ValueID valueID : block.values) {
+                const Value& value = function.at(valueID);
+                switch (value.opcode) {
+                case Opcode::NewObject:
+                case Opcode::Data:
+                    if (!entryParameter && isLiteralOfRecord(value))
+                        begin(valueID, id);
+                    break;
+                case Opcode::GetModuleVariable:
+                    if (std::optional<uint32_t> object = objectInVariable.getOptional(value.variable().index()))
+                        objectOfValue.add(valueID.index(), *object);
+                    break;
+                case Opcode::PutModuleVariable:
+                    if (std::optional<uint32_t> object = objectNamedBy(value.valueOperand())) {
+                        objectInVariable.set(value.variable().index(), *object);
+                        followed[*object].isHeldByVariable = true;
+                    } else
+                        objectInVariable.remove(value.variable().index());
+                    break;
+                case Opcode::PropSet:
+                case Opcode::PropDefine:
+                    if (Followed* object = objectFilledBy(value.objectOperand()); object && !m_program.isIndexLike(value.key())) {
+                        object->keys.all.append(value.key());
+                        if (!m_program.typeOf(function, value.valueOperand()).mayBeUndefinedOrNull())
+                            object->keys.storedWithValue.append(value.key());
+                    }
+                    break;
+                case Opcode::Call:
+                    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                        std::optional<uint32_t> object = objectNamedBy(operand);
+                        if (!object || followed[*object].line != lines[id.index()])
+                            return;
+                        if (!numberOfUses)
+                            numberOfUses = countUses(function, cfg);
+                        FunctionID callee = calleeOf(function, *numberOfUses, value);
+                        if (std::optional<uint32_t> parameter = callee ? entryParameterOf(m_program.at(callee), value, operandIndex) : std::nullopt)
+                            followed[*object].keys.append(keysStoredInto(callee, *parameter));
+                    });
+                    break;
+                default:
+                    break;
+                }
+            }
+            for (const Target& target : block.terminator.targets) {
+                const Block& next = function.at(target.block);
+                for (uint32_t index = 0; index < target.arguments.size() && index < next.parameters.size(); ++index) {
+                    if (std::optional<uint32_t> object = objectNamedBy(target.arguments[index]))
+                        objectOfValue.add(next.parameters[index].index(), *object);
+                }
+            }
+        }
+        return followed;
+    }
+
+    const Program& m_program;
+    Vector<FunctionID> m_functionsThatFill;
+    HashMap<uint64_t, Keys, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysOfParameters;
+};
+
 void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueFlowConstructions& result)
 {
     using KeysByLayout = MapByNumber<uint32_t, Vector<PropertyKeyID>>;
@@ -1717,6 +1933,10 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
         });
     };
     Vector<KeysByLayout> keysOfWorker(inputs.loops().width());
+    // With what is stored behind the literal.
+    Vector<KeysByLayout> laterKeysOfWorker(inputs.loops().width());
+    Vector<KeysByLayout> laterKeysWithValueOfWorker(inputs.loops().width());
+    Vector<Vector<FunctionID>> functionsThatFillOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data, ValueFlowNotedOperation::PieceOutsideSlots })))
@@ -1724,9 +1944,34 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
         if (!inputs.isReached(id) && !isUnsolvedCode(inputs, tables, id))
             return;
         const Function& function = program.functions[index];
+        StoresBehindLiterals::KeysByLiteral keysBehindLiterals;
+        if (function.kind == FunctionKind::Module) {
+            StoresBehindLiterals stores(program);
+            keysBehindLiterals = stores.inBodyOfFile(id);
+            functionsThatFillOfWorker[worker].appendVector(stores.takeFunctionsThatFill());
+        }
+        auto keepKeysOfLiteral = [&](LayoutID layout, Vector<PropertyKeyID>&& keys, const StoresBehindLiterals::Keys* keysBehind) {
+            Vector<PropertyKeyID> laterKeys = keys;
+            Vector<PropertyKeyID> laterKeysWithValue;
+            if (keysBehind) {
+                laterKeys.appendVector(keysBehind->all);
+                AOT::sort(laterKeys);
+                removeRepeatedElements(laterKeys);
+                laterKeysWithValue = keysBehind->storedWithValue;
+                AOT::sort(laterKeysWithValue);
+                removeRepeatedElements(laterKeysWithValue);
+            }
+            keepCommonKeys(keysOfWorker[worker], layout.index(), WTF::move(keys));
+            keepCommonKeys(laterKeysOfWorker[worker], layout.index(), WTF::move(laterKeys));
+            keepCommonKeys(laterKeysWithValueOfWorker[worker], layout.index(), WTF::move(laterKeysWithValue));
+        };
+        auto keysBehind = [&](const Value& literal) -> const StoresBehindLiterals::Keys* {
+            auto found = keysBehindLiterals.find(static_cast<uint32_t>(&literal - function.values.begin()));
+            return found == keysBehindLiterals.end() ? nullptr : &found->value;
+        };
         for (const Value& value : function.values) {
             if (value.opcode == Opcode::Data) {
-                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t, const DataNode& node) {
+                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t ordinal, const DataNode& node) {
                     const DataNode::Object* object = node.tryAs<DataNode::Object>();
                     if (!object || !object->layout || program.at(object->layout).kind != LayoutKind::Record || program.at(object->layout).isDerived())
                         return;
@@ -1738,14 +1983,14 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
                             break;
                     }
                     AOT::sort(keys);
-                    keepCommonKeys(keysOfWorker[worker], object->layout.index(), WTF::move(keys));
+                    keepKeysOfLiteral(object->layout, WTF::move(keys), ordinal ? nullptr : keysBehind(value));
                 });
                 continue;
             }
             if (value.opcode == Opcode::DefineGetter || value.opcode == Opcode::DefineSetter || value.opcode == Opcode::ElemDefine || value.opcode == Opcode::CopyDataProperties) {
                 const Value& object = function.at(value.operand(0));
                 if (object.opcode == Opcode::NewObject && program.at(object.layout()).kind == LayoutKind::Record)
-                    keepCommonKeys(keysOfWorker[worker], object.layout().index(), { });
+                    keepKeysOfLiteral(object.layout(), { }, nullptr);
                 continue;
             }
             if (value.opcode != Opcode::NewObject)
@@ -1759,15 +2004,25 @@ void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTa
                     keys.append(key);
             }
             AOT::sort(keys);
-            keepCommonKeys(keysOfWorker[worker], value.layout().index(), WTF::move(keys));
+            keepKeysOfLiteral(value.layout(), WTF::move(keys), keysBehind(value));
         }
     });
-    for (KeysByLayout& keysOfOneWorker : keysOfWorker.mutableSpan().subspan(1)) {
-        for (auto& [layout, keys] : keysOfOneWorker)
-            keepCommonKeys(keysOfWorker[0], layout, WTF::move(keys));
+    for (Vector<KeysByLayout>* keysOfWorkers : { &keysOfWorker, &laterKeysOfWorker, &laterKeysWithValueOfWorker }) {
+        for (KeysByLayout& keysOfOneWorker : keysOfWorkers->mutableSpan().subspan(1)) {
+            for (auto& [layout, keys] : keysOfOneWorker)
+                keepCommonKeys((*keysOfWorkers)[0], layout, WTF::move(keys));
+        }
     }
     for (auto& [layout, keys] : keysOfWorker[0])
         result.layouts[layout].keysStoredAtBirth = WTF::move(keys);
+    for (auto& [layout, keys] : laterKeysOfWorker[0])
+        result.layouts[layout].keysStoredBehindLiteral = WTF::move(keys);
+    for (auto& [layout, keys] : laterKeysWithValueOfWorker[0])
+        result.layouts[layout].keysStoredWithValueBehindLiteral = WTF::move(keys);
+    for (const Vector<FunctionID>& functionsThatFill : functionsThatFillOfWorker) {
+        for (FunctionID function : functionsThatFill)
+            result.functionsSeeingOnlyFinishedObjects.quickClear(function.index());
+    }
 }
 
 } // anonymous namespace

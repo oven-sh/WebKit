@@ -874,7 +874,7 @@ void PointsToSolver::findNarrowedCopies()
         else
             addCopiesOfOperandsOf(terminator);
     }
-    AOT::sort(m_narrowedCopies);
+    AOT::sortInLine(m_narrowedCopies);
     removeRepeatedElements(m_narrowedCopies);
 }
 
@@ -2014,7 +2014,7 @@ void PointsToSolver::collectContents()
             if (slot.slot)
                 slots.append(&slot);
         });
-        AOT::sort(slots.mutableSpan(), [](const SlotState* a, const SlotState* b) {
+        AOT::sortInLine(slots.mutableSpan(), [](const SlotState* a, const SlotState* b) {
             return *a->slot < *b->slot;
         });
         auto appendSorted = [&](const SlotState& slot) {
@@ -2025,7 +2025,7 @@ void PointsToSolver::collectContents()
                 return a.object < b.object;
             };
             if (!std::ranges::is_sorted(entries, hasEarlierObject))
-                AOT::sort(entries, hasEarlierObject);
+                AOT::sortInLine(entries, hasEarlierObject);
         };
         appendSorted(state->unknownSlot);
         for (const SlotState* slot : slots)

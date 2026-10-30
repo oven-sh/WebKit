@@ -448,7 +448,7 @@ static void appendCellsOfClass(const BuiltinClass& builtinClass, Vector<BuiltinC
 
 static void sortAndRemoveKeysWithoutCell(const BuiltinTable& builtins, Vector<BuiltinCellKey>& cells)
 {
-    AOT::sort(cells, { }, &BuiltinCellKey::encoded);
+    AOT::sortInLine(cells, { }, &BuiltinCellKey::encoded);
     removeRepeatedElements(cells);
     cells.removeAllMatching([&](BuiltinCellKey key) {
         return !key.hasCell(builtins);
@@ -537,7 +537,7 @@ static void numberKeyCells(const PlacementContext& context, const BodyScansForPl
     removeRepeatedElements(uses, [](const KeyCellUse& first, const KeyCellUse& later) {
         return first.key == later.key;
     });
-    AOT::sort(uses, { }, [](const KeyCellUse& use) {
+    AOT::sortInLine(uses, { }, [](const KeyCellUse& use) {
         return std::tuple(use.module, use.sourceFunction, use.key);
     });
 

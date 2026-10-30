@@ -160,11 +160,30 @@ JSArray* copyFrameArrayToHeap(Instance* instance, JSCell* frameArray)
     return copy;
 }
 
+// An array that takes no more elements, one whose length is fixed, and one below a prototype with elements of its own keep a map beside the vector or store the slow way. A frozen one may keep its elements where they were.
+static bool mayRefuseOrRunOtherCode(JSArray* array)
+{
+    IndexingType type = array->indexingType();
+    if (hasAnyArrayStorage(type))
+        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
+    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
+    // A list that is being made is none of these: the array is the receiver of Array.prototype.push, which refuses, runs the code of others and counts past the last index in a frame of its own.
+    if (hasAnyArrayStorage(target->indexingType()) || mayRefuseOrRunOtherCode(target)) [[unlikely]] {
+        MarkedArgumentBuffer elements;
+        for (unsigned i = 0, length = source->length(); i < length; ++i) {
+            elements.append(source->getIndex(globalObject, i));
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+        }
+        callMethodInEngine(instance, Builtins::ArrayPrototypePush, target, elements);
+        OPERATION_RETURN(scope);
+    }
     // No dense storage holds more, and element by element the rest would go into a sparse map.
     if (static_cast<uint64_t>(target->length()) + source->length() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -468,15 +487,6 @@ unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value)
         butterfly->contiguous().at(array, length).set(vm, array, value);
     butterfly->setPublicLength(length + 1);
     return length + 1;
-}
-
-// An array that takes no more elements, one whose length is fixed, and one below a prototype with elements of its own keep a map beside the vector or store the slow way. A frozen one may keep its elements where they were.
-static bool mayRefuseOrRunOtherCode(JSArray* array)
-{
-    IndexingType type = array->indexingType();
-    if (hasAnyArrayStorage(type))
-        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
-    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
 }
 
 static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue value)

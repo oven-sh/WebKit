@@ -539,7 +539,7 @@ private:
             if (m_claims[row].hasStorage)
                 m_rowsByFamily.append(row);
         }
-        AOT::sort(m_rowsByFamily, { }, [&](SlotRow row) {
+        AOT::sortInLine(m_rowsByFamily, { }, [&](SlotRow row) {
             return std::pair(inheritedRows.declaringRowOf(row), row);
         });
         std::span<const SlotRow> rows = m_rowsByFamily.span();
@@ -583,7 +583,7 @@ private:
             for (SlotRow row : unit.rows)
                 unitsByRow.append({ row, &unit });
         }
-        AOT::sort(unitsByRow);
+        AOT::sortInLine(unitsByRow);
 
         SiteWeight weightSaved = 0;
         SiteWeight weightSpent = 0;

@@ -905,7 +905,13 @@ private:
     void leavePollToCopy(RegionCloner& cloner, const Plan& plan)
     {
         if (!fitsOneStretch(plan)) {
-            if (plan.sideTests.isEmpty() && plan.testedOperandOfBranch)
+            // The end of the stretch takes a register. In a long turn that costs more than the poll, which is one instruction of many.
+            unsigned numberOfValues = 0;
+            for (BasicBlock* block : plan.blocks) {
+                for (Value* value : *block)
+                    numberOfValues += countsTowardsSize(value);
+            }
+            if (plan.sideTests.isEmpty() && plan.testedOperandOfBranch && numberOfValues <= Limits::maxValuesPerTurnRunInStretches)
                 runCopyInStretches(cloner, plan);
             else {
                 BasicBlock* headerOfCopy = cloner.cloneBlocks(plan.blocks.span()).get(plan.header);

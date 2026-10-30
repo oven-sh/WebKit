@@ -191,7 +191,7 @@ static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, 
         tests = tests.subspan(count);
         if (sharers.size() < 2)
             continue;
-        AOT::sort(conditions, { }, orderOfCondition);
+        AOT::sortInLine(conditions, { }, orderOfCondition);
         conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
 
         Value shared = makeTestOfConditions(conditions);
@@ -293,7 +293,7 @@ public:
             return *known;
         uint32_t number = m_tests.size();
         m_tests.append({ WTF::move(made), { }, { }, { }, false });
-        AOT::sort(conditions, { }, orderOfCondition);
+        AOT::sortInLine(conditions, { }, orderOfCondition);
         for (const MemberConditionRecord& condition : conditions)
             m_testsByCondition.append({ condition, number });
         m_tests.last().sortedConditions = WTF::move(conditions);
@@ -304,7 +304,7 @@ public:
     // Every test has been added.
     void finishAdding()
     {
-        AOT::sort(m_testsByCondition, { }, [](const auto& entry) { return std::pair { orderOfCondition(entry.first), entry.second }; });
+        AOT::sortInLine(m_testsByCondition, { }, [](const auto& entry) { return std::pair { orderOfCondition(entry.first), entry.second }; });
     }
 
     const Value& at(uint32_t test) const LIFETIME_BOUND { return m_tests[test].test; }
@@ -595,7 +595,7 @@ static TestSites collectTestSites(FunctionPassContext& context)
         return !paysToTestIn(heatClassOf(context, site.point.block).predicted(), isCompactFunction, paysInColdCode);
     });
     const CFG& cfg = context.analyses.cfg();
-    AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
+    AOT::sortInLine(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
     shareConditionsTests(context, sites);
     askForConditionsTestsInFront(context, sites);
     return sites;
@@ -621,7 +621,7 @@ static void dropSitesBeyondConditionLimit(FunctionPassContext& context, TestSite
         for (TestConditionID condition : conditionOfTest.subspan(site.firstTest, site.numberOfTests))
             heaviestFirst[condition.index()].first += heat;
     }
-    AOT::sort(heaviestFirst, [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
+    AOT::sortInLine(heaviestFirst, [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second < b.second; });
     BitVector isChosen;
     for (auto [weight, condition] : heaviestFirst.span().first(static_cast<size_t>(limit)))
         isChosen.set(condition);
@@ -1275,7 +1275,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
             plan.rejoinPoints.append(ProgramPoint::atHeadOf(block));
     }
     auto orderOf = [&](ProgramPoint point) { return std::pair { cfg.reversePostOrderIndex(point.block), point.index }; };
-    AOT::sort(plan.rejoinPoints, { }, orderOf);
+    AOT::sortInLine(plan.rejoinPoints, { }, orderOf);
     removeRepeatedElements(plan.rejoinPoints);
     for (ProgramPoint point : splitPoints) {
         if (mayRejoinAt(point))
@@ -1349,7 +1349,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         }
     }
 
-    AOT::sort(plan.rejoinPointsWithoutTests, { }, orderOf);
+    AOT::sortInLine(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);
     plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) { return isSplitPoint(point) || std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf); });
 }
@@ -1556,7 +1556,7 @@ static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSit
             context.gaveUp(LimitID::MaxClonedBytesPerStretch, plan.sites.sites[plan.requirements[index].site].use);
     }
 
-    AOT::stableSort(plan.tests, { }, [&](const PlannedTest& test) {
+    AOT::stableSortInLine(plan.tests, { }, [&](const PlannedTest& test) {
         if (test.position == PlannedTestPosition::BeforeUse)
             return std::tuple { cfg.reversePostOrderIndex(test.point.block), test.point.index, 0u };
         return std::tuple { cfg.reversePostOrderIndex(test.edge.from), UINT32_MAX, test.edge.targetIndex };
@@ -1958,7 +1958,7 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
         LayoutID layout = layouts.span()[index];
         return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), heat.allocationsOf(layout).predicted() }, layout };
     });
-    AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
+    AOT::stableSortInLine(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
     // Every declaration kept is a fast path at each access of the subject, and the last one picked out of many seldom arrives.
     size_t maxKept = maxDeclarations > 1 ? maxDeclarations - 1 : maxDeclarations;
@@ -2655,7 +2655,7 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     Vector<ValueID> subjects = findSubjects(context);
     for (NamedUse& use : uses)
         use.subject = subjects[use.receiver.index()];
-    AOT::stableSort(uses, { }, &NamedUse::subject);
+    AOT::stableSortInLine(uses, { }, &NamedUse::subject);
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
@@ -2993,7 +2993,7 @@ struct TestPlacer {
         if (!goesOnBehindStretches) {
             for (const Cut& cut : cuts)
                 pointsOfTests.append(cut.key());
-            AOT::sort(pointsOfTests);
+            AOT::sortInLine(pointsOfTests);
         }
         for (const StretchRange& range : clonedRanges()) {
             if (range.begin)
@@ -3017,7 +3017,7 @@ struct TestPlacer {
         keepRejoinPoints(plan.rejoinPointsWithoutTests, rejoinPointsWithoutTests);
         keepRejoinPoints(plan.splitPoints, splitPoints);
 
-        AOT::sort(cuts, { }, &Cut::key);
+        AOT::sortInLine(cuts, { }, &Cut::key);
         removeRepeatedElements(cuts, [](const Cut& a, const Cut& b) { return a.point == b.point; });
         for (const PlannedTest& test : plan.tests) {
             if (standsBeforeUse(test))
@@ -3229,7 +3229,7 @@ struct TestPlacer {
                 for (BlockID block : regions[stretch].blocks)
                     stretchesByBlock.append({ block.index(), stretch });
             }
-            AOT::sort(stretchesByBlock);
+            AOT::sortInLine(stretchesByBlock);
             removeRepeatedElements(stretchesByBlock);
             auto stretchesOf = [&](BlockID block) { return std::ranges::equal_range(stretchesByBlock, block.index(), { }, &BlockAndStretch::first); };
             for (auto [edge, blockOnEdge] : splitEdges) {
@@ -4084,7 +4084,7 @@ struct TestPlacer {
                     uses.append(NarrowableUse { identity, alias, use });
             }
         }
-        AOT::stableSort(uses, { }, &NarrowableUse::identity);
+        AOT::stableSortInLine(uses, { }, &NarrowableUse::identity);
 
         // The blocks that a block dominates have consecutive numbers, so each test visits only the uses behind it.
         struct UseInTree {
@@ -4096,7 +4096,7 @@ struct TestPlacer {
         Vector<UseInTree> usesInTree(uses.size(), [&](size_t index) {
             return UseInTree { uses[index].identity, dominators.numberOf(uses[index].use.block), static_cast<uint32_t>(index) };
         });
-        AOT::sort(usesInTree, { }, [](const UseInTree& use) { return std::tuple { use.identity, use.numberOfBlock, use.index }; });
+        AOT::sortInLine(usesInTree, { }, [](const UseInTree& use) { return std::tuple { use.identity, use.numberOfBlock, use.index }; });
         Vector<uint32_t, 16> dominatedUses;
         auto findUsesDominatedBy = [&](BlockID block, ValueID identity) -> std::span<const uint32_t> {
             dominatedUses.shrink(0);
@@ -4348,7 +4348,7 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
             settle(singleElementSpan(id));
     }
 
-    AOT::sort(reads, { }, [](const PropertyRead& read) { return std::pair { read.place, read.read }; });
+    AOT::sortInLine(reads, { }, [](const PropertyRead& read) { return std::pair { read.place, read.read }; });
     Vector<ValueID, 4> readsOfOnePlace;
     for (size_t index = 0; index < reads.size(); ++index) {
         readsOfOnePlace.append(reads[index].read);
@@ -4869,6 +4869,191 @@ static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext&
     return PassOutcome::Changed;
 }
 
+namespace {
+
+struct TestInFrontOfLoop {
+    uint32_t parameterIndex;
+    TypeID testedType;
+    Origin origin;
+};
+
+} // anonymous namespace
+
+// The header does nothing but ask its first question, and where that fails the generic copy of the turn begins.
+static bool beginsWithTestThatLeavesForGenericCopy(FunctionPassContext& context, BlockID id)
+{
+    const Function& function = context.function;
+    const Block& header = function.at(id);
+    if (header.isHandlerBlock() || !header.terminator.isConditionalBranch() || function.at(header.terminator.conditionOperand()).opcode != Opcode::TypeTest)
+        return false;
+    const Target& whenFailed = header.terminator.notTaken();
+    if (!whenFailed.proofs.isEmpty() || function.at(whenFailed.block).frequency.predicted() == BlockFrequency::Normal)
+        return false;
+    return std::ranges::all_of(header.values, [&](ValueID value) {
+        const Value& operation = function.at(value);
+        if (operation.opcode == Opcode::LoopHint)
+            return !operation.throwsOwedError() && !operation.leavesOwedError();
+        return value == header.terminator.conditionOperand() || isRematerializable(operation) || isCastWithoutTest(operation.opcode);
+    });
+}
+
+// The one type that the likely code of the loop tests the parameter for, under any of its casts.
+static std::optional<TestInFrontOfLoop> findTestOfLoopParameter(FunctionPassContext& context, const NaturalLoop& loop, uint32_t parameterIndex)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    std::optional<TestInFrontOfLoop> found;
+    Vector<ValueID, 4> names { function.at(loop.header()).parameters[parameterIndex] };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (use.kind != Use::Kind::Operand || use.operandIndex)
+                continue;
+            const Value& user = function.at(use.user);
+            if (isCastWithoutTest(user.opcode)) {
+                names.append(use.user);
+                continue;
+            }
+            const Block& block = function.at(use.block);
+            if (user.opcode != Opcode::TypeTest || block.frequency.predicted() != BlockFrequency::Normal || !context.analyses.naturalLoops().belongsTo(use.block, loop))
+                continue;
+            if (!block.terminator.isConditionalBranch() || block.terminator.conditionOperand() != use.user || function.at(block.terminator.notTaken().block).frequency.predicted() == BlockFrequency::Normal)
+                continue;
+            if (found && found->testedType != user.testedType())
+                return std::nullopt;
+            found = TestInFrontOfLoop { parameterIndex, user.testedType(), user.origin() };
+        }
+    }
+    return found;
+}
+
+// `while (--n >= 0) { .. c = Math.floor(v / base); }` with n and c parameters of the function: what comes around the loop is a number, and what enters it may be anything.
+// So the variable is any value all the way around: each turn tests it, and boxes the number that the turn before has made. Tested where the loop is entered, it is a number in the loop.
+static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.cfg().hasCycle() || !analyses.opcodesOfValues().contains(Opcode::TypeTest))
+        return PassOutcome::Unchanged;
+
+    struct Entrance {
+        Edge edge;
+        BlockID header;
+        Vector<TestInFrontOfLoop, 4> tests;
+    };
+    Vector<Entrance, 2> entrances;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    auto typeOf = [&](ValueID value) -> const Type& { return context.types.at(function.at(value).type); };
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        const Block& header = function.at(loop.header());
+        std::span<const Edge> incomingEdges = analyses.cfg().incomingEdges(loop.header());
+        if (header.parameters.isEmpty() || header.frequency.predicted() != BlockFrequency::Normal || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
+            continue;
+        if (!beginsWithTestThatLeavesForGenericCopy(context, loop.header()))
+            continue;
+        for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
+            std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
+            if (!test)
+                continue;
+            const Type& tested = context.types.at(test->testedType);
+            auto needsNoTest = [&](Edge edge) {
+                const Type& type = typeOf(targetOf(function, edge).arguments[parameterIndex]);
+                return type.isSubsetOf(tested, context.program) || (tested.isNumber() && type.isNumber());
+            };
+            auto isLikelyTurn = [&](Edge edge) { return loops.belongsTo(edge.from, loop) && function.at(edge.from).frequency.predicted() == BlockFrequency::Normal; };
+            bool comesAroundTested = false;
+            bool comesAroundUntested = false;
+            for (Edge edge : incomingEdges) {
+                if (isLikelyTurn(edge))
+                    (needsNoTest(edge) ? comesAroundTested : comesAroundUntested) = true;
+            }
+            if (!comesAroundTested || comesAroundUntested)
+                continue;
+            for (Edge edge : incomingEdges) {
+                if (needsNoTest(edge))
+                    continue;
+                size_t position = entrances.findIf([&](const Entrance& entrance) { return entrance.edge == edge; });
+                if (position == notFound) {
+                    position = entrances.size();
+                    entrances.append(Entrance { edge, loop.header(), { } });
+                }
+                entrances[position].tests.append(*test);
+            }
+        }
+    }
+    if (entrances.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    // What the header defines, and the same for a value that has entered and failed its test. The generic copy reads the header's values wherever it likes: until now the header stood in front of all of it.
+    Vector<std::pair<ValueID, ValueID>, 16> definedAgain;
+    unsigned numberOfTests = 0;
+    for (const Entrance& entrance : entrances) {
+        const Arguments entering = targetOf(function, entrance.edge).arguments;
+        Arguments arguments = entering;
+        builder.setHandler(std::nullopt);
+        builder.setOrigin(function.at(entrance.edge.from).terminator.origin());
+        BlockID first = builder.addBlock(function.at(entrance.edge.from).frequency);
+        BlockID failed = builder.addBlock(BlockFrequency::Unlikely);
+        builder.redirectEdge(entrance.edge, first, { });
+        builder.moveToEndOf(first);
+        for (const TestInFrontOfLoop& test : entrance.tests) {
+            builder.setOrigin(test.origin);
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(entering[test.parameterIndex], test.testedType), OperandIndex::TypeTest::value, BlockFrequency::Normal, BlockFrequency::Unlikely);
+            arguments[test.parameterIndex] = branch.provenOnTaken;
+            builder.moveToEndOf(branch.notTaken);
+            builder.emitJump(failed);
+            builder.moveToEndOf(branch.taken);
+            ++numberOfTests;
+        }
+        builder.emitJump(entrance.header, WTF::move(arguments));
+
+        size_t firstOfEntrance = definedAgain.size();
+        auto definedHere = [&](ValueID value) {
+            for (auto [inHeader, here] : definedAgain.span().subspan(firstOfEntrance)) {
+                if (inHeader == value)
+                    return here;
+            }
+            return value;
+        };
+        builder.moveToEndOf(failed);
+        Vector<ValueID, 8> parameters(function.at(entrance.header).parameters.span());
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            Value held = IRBuilder::make(Opcode::Upcast, { entering[index] });
+            held.setCastType(function.at(parameters[index]).type);
+            definedAgain.append({ parameters[index], builder.append(WTF::move(held)) });
+        }
+        Vector<ValueID, 8> values(function.at(entrance.header).values.span());
+        for (ValueID value : values) {
+            if (value == function.at(entrance.header).terminator.conditionOperand())
+                continue;
+            Value again(function.at(value));
+            for (uint32_t operandIndex = 0; operandIndex < again.numberOfOperands(); ++operandIndex)
+                again.setOperand(operandIndex, definedHere(again.operand(operandIndex)));
+            builder.setOrigin(again.origin());
+            ValueID here = builder.append(WTF::move(again));
+            if (function.at(value).opcode != Opcode::LoopHint)
+                definedAgain.append({ value, here });
+        }
+        Target whenFailed = function.at(entrance.header).terminator.notTaken();
+        for (ValueID& argument : whenFailed.arguments)
+            argument = definedHere(argument);
+        builder.emitJump(whenFailed.block, WTF::move(whenFailed.arguments));
+    }
+
+    analyses.didChangeControlFlow();
+    SSARepair repair(builder, analyses);
+    for (auto [inHeader, again] : definedAgain) {
+        std::optional<SSARepair::Variable> variable = repair.findVariable(inHeader);
+        repair.addDefinition(variable ? *variable : repair.addVariable(inHeader), again);
+    }
+    repair.run();
+    analyses.didChangeControlFlow();
+    context.build.statistics().count(StatisticID::LoopParametersTestedInFrontOfLoops, numberOfTests);
+    retypeValues(context);
+    return PassOutcome::Changed;
+}
+
 PassOutcome placeTypeTests(FunctionPassContext& context)
 {
     const Heat& heat = context.inputs.heat;
@@ -4903,6 +5088,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
         expectations.takeBack();
         context.analyses.didChangeTypes();
     }
+    outcome |= testLoopParametersInFrontOfLoops(context);
     // Whoever edits blocks, operands or edges here drops what that makes stale.
     context.keptAnalyses = outcome == PassOutcome::Unchanged ? allAnalyses - FunctionAnalysis::Effects : controlFlowAnalyses | analysesThatReadNoTypes;
     return outcome | marked;

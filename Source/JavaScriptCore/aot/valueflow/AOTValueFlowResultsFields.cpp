@@ -785,7 +785,7 @@ struct FieldResults {
             });
             return found != births.end() && found->function == function && found->allocation == allocation;
         };
-        AOT::sort(births, { }, [](const BirthWithCopies& birth) {
+        AOT::sortInLine(births, { }, [](const BirthWithCopies& birth) {
             return std::pair { birth.function, birth.allocation };
         });
         allocationsBornWithCopies = births.map([](const BirthWithCopies& birth) {
@@ -825,7 +825,7 @@ struct FieldResults {
         Vector<uint32_t> birthsByLayout(births.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        AOT::sort(birthsByLayout, { }, [&](uint32_t index) {
+        AOT::sortInLine(birthsByLayout, { }, [&](uint32_t index) {
             return std::pair { births[index].layout, index };
         });
         Vector<uint32_t> firstBirthOfLayout;
@@ -1855,7 +1855,7 @@ struct FieldResults {
             [&] { layoutsWithField = collectLayoutsWithFields(isCandidate); },
             [&] { declaredViews = declaredViewsOf(program, declaredLayoutsWithKeys); },
         });
-        AOT::stableSort(layoutsWithKeys, std::greater { }, [&](uint32_t index) {
+        AOT::stableSortInLine(layoutsWithKeys, std::greater { }, [&](uint32_t index) {
             return keysByLayout[index].size();
         });
         forEachIndexInParallel(loops, layoutsWithKeys.size(), [&](unsigned position, unsigned worker) {
@@ -1889,7 +1889,7 @@ struct FieldResults {
             });
             return std::pair { depth, layoutsWithKeys[position] };
         });
-        AOT::sort(fromBasesDown);
+        AOT::sortInLine(fromBasesDown);
         std::optional<Vector<uint32_t>> counts;
         for (auto [depth, index] : fromBasesDown) {
             LayoutID layout(index);
@@ -1948,6 +1948,8 @@ struct FieldResults {
                 ValueSetID stored = ValueSets::nothing;
                 ValueFlowNumbers storedNumbers;
                 bool isStoredBeforeObjectsLeak = true;
+                bool isStoredBehindLiterals = build.isEnabled(FlowResultKind::Initialization, index);
+                bool isStoredWithValueBehindLiterals = true;
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
                 bool isGivenUnknownValues = false;
@@ -1973,6 +1975,8 @@ struct FieldResults {
                             possible.add(ObjectMutation::RedefineProperty);
                     }
                     isStoredBeforeObjectsLeak &= holdsSinceBirth(below, key) || (constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { }));
+                    isStoredBehindLiterals &= constructions.isStoredBehindLiteral(below, key);
+                    isStoredWithValueBehindLiterals &= constructions.isStoredWithValueBehindLiteral(below, key);
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
                 if (hasOneFormOfValue && formOfValue && !field.accessor.isAccessor())
@@ -1981,6 +1985,8 @@ struct FieldResults {
                 ClaimsOfFieldsEnabled enabled = claimsEnabledFor(index);
                 enabled.storeCounts &= !sets.isEmpty(stored);
                 claimWhatNeverHappens(field.flow, Writers(writes.span(), open), isStoredBeforeObjectsLeak, enabled);
+                if (isStoredBehindLiterals && !isFirst && !field.accessor.isAccessor() && field.flow.occupancy == Occupancy::Unknown)
+                    field.flow.occupancy = isStoredWithValueBehindLiterals ? Occupancy::FilledWithValueAtBirth : Occupancy::FilledAtBirth;
                 if (inheritsNothing)
                     field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 application.layouts[index].appendedFields.append(WTF::move(field));
@@ -2402,7 +2408,9 @@ struct FieldResults {
             if (!hasObjects(id) || !build.isEnabled(FlowResultKind::Initialization, index))
                 return;
             forEachFieldOfObjectsWith(program, application, id, [&](FieldReference declaration, const Field& field) {
-                uint8_t said = (constructions.isStoredAtBirth(id, field.key, declaration) ? isStored : isLeftOut) | (constructions.isStoredWithValueAtBirth(id, field.key) ? 0 : isLeftWithoutValue);
+                bool isStoredSoon = constructions.isStoredAtBirth(id, field.key, declaration) || constructions.isStoredBehindLiteral(id, field.key);
+                bool isStoredWithValue = constructions.isStoredWithValueAtBirth(id, field.key) || constructions.isStoredWithValueBehindLiteral(id, field.key);
+                uint8_t said = (isStoredSoon ? isStored : isLeftOut) | (isStoredWithValue ? 0 : isLeftWithoutValue);
                 AtomicRef(atBirth[firstFieldOfLayout[declaration.layout.index()] + declaration.field]).fetch_or(said, std::memory_order_relaxed);
             });
         });
@@ -2698,7 +2706,7 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
         forEachFieldOfObjectsWith(program, application, LayoutID(index), [&](FieldReference declaration, const Field& field) {
             fieldsOfObjectsWith[index].append({ field.key ? field.key.index() : NamesThroughPlaceholders::none, declaration });
         });
-        AOT::stableSort(fieldsOfObjectsWith[index], { }, &FieldUnderKey::key);
+        AOT::stableSortInLine(fieldsOfObjectsWith[index], { }, &FieldUnderKey::key);
     });
     Vector<uint32_t> firstFieldOfLayout = numberFields(program);
     Vector<uint8_t> isStoredWithoutName(FillWith { }, firstFieldOfLayout.last(), static_cast<uint8_t>(0));

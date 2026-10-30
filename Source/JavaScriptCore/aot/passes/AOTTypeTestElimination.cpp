@@ -138,7 +138,7 @@ private:
                 add(m_pointProofs, location.block, location.placement == ValuePlacement::Parameter ? 0 : location.index + 1, proof.condition);
         }
         for (PlacedProofs* list : { &m_edgeProofs, &m_pointProofs })
-            AOT::stableSort(list->sorted, { }, [](const PlacedProof& proof) { return std::pair { proof.block.index(), proof.place }; });
+            AOT::stableSortInLine(list->sorted, { }, [](const PlacedProof& proof) { return std::pair { proof.block.index(), proof.place }; });
     }
 
     // Nobody asks for a condition behind its last requirement.

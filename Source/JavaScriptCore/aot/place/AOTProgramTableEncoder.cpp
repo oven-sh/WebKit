@@ -422,6 +422,10 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
             if (std::optional<RuntimeCellTest> encoded = encodeCellTest(encoder, records, test))
                 cellTests.append(*encoded);
         }
+        // RuntimeType::testsOfOneFunctionEach().
+        AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? test.operand : -1;
+        });
         for (StringID literal : plan.stringLiterals) {
             if (!numbered.isLeftOut(literal))
                 literalStrings.append(literal);
@@ -1233,7 +1237,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     PartWithoutNames rest(encoder);
     if (!rest.isWritten())
         return parts;
-    AOT::sort(guards, { }, [](const auto& entry) {
+    AOT::sortInLine(guards, { }, [](const auto& entry) {
         const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
     });
@@ -1480,7 +1484,7 @@ static void encodeShapeSetBits(TableEncoder& encoder)
 template<typename T>
 static void setSortedTable(TableEncoder& encoder, ProgramTableIndex index, Vector<T>& items, auto... order)
 {
-    AOT::sort(items, order...);
+    AOT::sortInLine(items, order...);
     encoder.setTable(index, items);
 }
 
@@ -1864,7 +1868,7 @@ void encodeFieldTable(TableEncoder& encoder)
             if (encoder.identifiers.hasFieldTableColumn(field.name))
                 named.fields.append({ field.name, FieldTableEntry::forField(layout, field).bits, FieldRecordIndex::create(field, layout.indexOf(field), writer.at<RuntimeType>(field.type), typeOfAnyValue).bits });
         }
-        AOT::sort(named.fields.mutableSpan().subspan(begin));
+        AOT::sortInLine(named.fields.mutableSpan().subspan(begin));
         named.endRow(shape, 0, begin);
     }
 
@@ -1892,7 +1896,7 @@ void encodeFieldTable(TableEncoder& encoder)
         named.endRow(0, rank, begin);
     }
 
-    AOT::sort(named.rows, [&](const FieldTableRow& a, const FieldTableRow& b) {
+    AOT::sortInLine(named.rows, [&](const FieldTableRow& a, const FieldTableRow& b) {
         if (a.size() != b.size())
             return a.size() > b.size();
         auto fieldsOfA = named.fieldsOf(a);
@@ -2037,7 +2041,7 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
             distinct.append({ bits, 0, 0 });
         ++distinct.last().count;
     }
-    AOT::stableSort(distinct, std::ranges::greater { }, &DistinctRecord::count);
+    AOT::stableSortInLine(distinct, std::ranges::greater { }, &DistinctRecord::count);
     for (uint32_t number = 0; number < distinct.size(); ++number)
         distinct[number].number = number;
 
@@ -2045,7 +2049,7 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
     result.records = Vector<FunctionRecordData>(std::min<size_t>(distinct.size(), functionRecordIsListedByFunction), [&](size_t number) {
         return std::bit_cast<FunctionRecordData>(distinct[number].bits);
     });
-    AOT::sort(distinct, { }, &DistinctRecord::bits);
+    AOT::sortInLine(distinct, { }, &DistinctRecord::bits);
     result.numbers = Vector<uint8_t>(recordsOfFunctions.size(), [&](size_t index) {
         uint32_t number = std::ranges::lower_bound(distinct, std::bit_cast<uint32_t>(recordsOfFunctions[index]), { }, &DistinctRecord::bits)->number;
         if (number < functionRecordIsListedByFunction)
@@ -2178,7 +2182,7 @@ static void appendFunctionTexts(TableEncoder& encoder)
     Vector<uint8_t> text;
     for (size_t module = 0; module < moduleRanges.size(); ++module) {
         Vector<RetainedTextRange>& ranges = moduleRanges[module];
-        AOT::sort(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
+        AOT::sortInLine(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
             return a.start != b.start ? a.start < b.start : a.end > b.end;
         });
         size_t count = 0;
@@ -2214,7 +2218,7 @@ static void appendFunctionTexts(TableEncoder& encoder)
         uint32_t start = range.textOffset + function.text.start - range.start;
         return FunctionTextEntry { functions[index].entrypoint.index(), start, start + function.text.end - function.text.start };
     });
-    AOT::sort(entries, { }, &FunctionTextEntry::function);
+    AOT::sortInLine(entries, { }, &FunctionTextEntry::function);
 
     uint32_t entriesOffset = encoder.writer.append(entries);
     uint32_t textOffset = encoder.writer.append(text);
@@ -2655,7 +2659,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
         if (!isNeverEvaluated(program, module) && (!isBundlerHelperModule(program, module) || isBundlerHelperNamedByProgram(program, ModuleID(index))))
             modulesByPath.append(index);
     }
-    AOT::sort(modulesByPath, [&](uint32_t left, uint32_t right) {
+    AOT::sortInLine(modulesByPath, [&](uint32_t left, uint32_t right) {
         return std::ranges::lexicographical_compare(program.string(program.modules[left].path), program.string(program.modules[right].path));
     });
     encoder.setTable(ProgramTableIndex::modulesByPath, encodeModuleNumbers(encoder, modulesByPath));
@@ -2978,7 +2982,7 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
         return std::pair { place.function.index(), place.position };
     };
     // Of two forms of one call the one that knows its callee comes first.
-    AOT::sort(places, { }, [&](const WrittenTailCall& place) {
+    AOT::sortInLine(places, { }, [&](const WrittenTailCall& place) {
         return std::tuple { placeOf(place), !place.callee, place.callee ? place.callee.index() : 0 };
     });
     places.shrink(std::ranges::unique(places, { }, placeOf).begin() - places.begin());

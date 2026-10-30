@@ -304,8 +304,8 @@ struct TestEvents::Collector {
                 break;
             }
         }
-        AOT::stableSort(parameterProofItems, { }, orderOf);
-        AOT::stableSort(valueProofItems, { }, orderOf);
+        AOT::stableSortInLine(parameterProofItems, { }, orderOf);
+        AOT::stableSortInLine(valueProofItems, { }, orderOf);
         requirements = requirementItems.span();
         valueProofs = valueProofItems.span();
         parameterProofs = parameterProofItems.span();

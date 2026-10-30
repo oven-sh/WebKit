@@ -494,7 +494,7 @@ void NumbersOfPositions::findValuesBehindEveryCheck(const FlowResultTables& tabl
                     m_passedValues[index].append({ contents.parameters[parameter], valuePassedOn(function, edge, parameter) });
             }
         }
-        AOT::sort(m_passedValues[index], { }, &PassedValue::order);
+        AOT::sortInLine(m_passedValues[index], { }, &PassedValue::order);
     });
 }
 
@@ -786,7 +786,7 @@ void NumbersOfPositions::addSharedWriters()
         });
         first = end;
     }
-    AOT::sort(rangesOfPositions);
+    AOT::sortInLine(rangesOfPositions);
     removeRepeatedElements(rangesOfPositions);
 
     size_t next = 0;
@@ -2468,8 +2468,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 claim.holdsInEveryVersion &= !isMadeFromSuchValue.get(function.at(claim.claim).valueOperand().index());
         }
     }
-    AOT::sort(update.proofs, { }, &FlowValueProof::value);
-    AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);
+    AOT::sortInLine(update.proofs, { }, &FlowValueProof::value);
+    AOT::sortInLine(update.claims, { }, &FlowClaimUpdate::claim);
 
     Vector<std::pair<ValueID, BlockID>, 2> checkedTailCalls;
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -2517,7 +2517,7 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
             bool isOnlyExpected = declared.isExpected() && !position.isProven;
             update.proofs.append(FlowValueProof { read, isOnlyExpected ? TypeTable::anything : types.intern(held.withoutPrimitives(Primitive::Absent)) });
         }
-        AOT::sort(update.proofs, { }, &FlowValueProof::value);
+        AOT::sortInLine(update.proofs, { }, &FlowValueProof::value);
     }
 }
 

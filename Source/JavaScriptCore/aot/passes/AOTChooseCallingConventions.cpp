@@ -43,7 +43,6 @@
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 #include <wtf/PrintStream.h>
-#include <wtf/UnionFind.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -114,7 +113,31 @@ struct EntryRequest {
     uint8_t firstOmittedGPR;
 };
 
-struct ConventionResultNode : WTF::UnionFind<ConventionResultNode> { };
+// Functions that return in one location. WTF::UnionFind shortens the way of the node that is asked about and of no other, so a row of n tail calls took n * n / 2 steps.
+class ConventionResultClasses {
+public:
+    explicit ConventionResultClasses(uint32_t count)
+        : m_next(count, [](size_t index) { return static_cast<uint32_t>(index); })
+    {
+    }
+
+    uint32_t find(uint32_t index)
+    {
+        while (m_next[index] != index) {
+            m_next[index] = m_next[m_next[index]];
+            index = m_next[index];
+        }
+        return index;
+    }
+
+    void unify(uint32_t first, uint32_t second)
+    {
+        m_next[find(first)] = find(second);
+    }
+
+private:
+    Vector<uint32_t> m_next;
+};
 
 enum class CalledCodeKind : uint8_t { Unknown, None, FunctionWithStackCheck };
 
@@ -609,7 +632,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     };
     auto boxMixedClasses = [&] {
         unsigned callByValue = count;
-        Vector<ConventionResultNode> nodes(count + 1);
+        ConventionResultClasses classes(count + 1);
         for (TailCallSite& site : sites) {
             if (site.requirement != TailCallRequirement::Required)
                 continue;
@@ -618,17 +641,17 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
                 site.requirement = TailCallRequirement::Allowed;
                 continue;
             }
-            nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
+            classes.unify(site.caller.index(), site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index());
         }
         // A call through the method table enters the lookup or any entrypoint of its selector, and reads the result from where the lookup returns it.
         for (uint32_t index : findIndicesInParallel(loops, count, [&](unsigned index) { return program.functions[index].hasBody() && program.functions[index].role == FunctionRole::TableEntrypoint; })) {
             if (FunctionID lookup = inputs.derivedFunctions->find(tableLookupKey(selectorOfTableFunction(program.functions[index]))))
-                nodes[index].unify(&nodes[lookup.index()]);
+                classes.unify(index, lookup.index());
         }
 
         Vector<uint32_t> roots(count + 1);
         for (unsigned index = 0; index <= count; ++index)
-            roots[index] = static_cast<uint32_t>(nodes[index].find() - nodes.span().data());
+            roots[index] = classes.find(index);
 
         BitVector isMixed(count + 1);
         isMixed.quickSet(roots[callByValue]);
